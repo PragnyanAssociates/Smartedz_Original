@@ -5,7 +5,7 @@
 
 
 // ✅ CORRECT (AFTER)
-const PUBLIC_BACKEND_URL = 'https://vivekanandapublicschoolweblessonplan-production.up.railway.app';
+const PUBLIC_BACKEND_URL = 'https://smartedzoriginal-production.up.railway.app';
 
 // This URL is for static files like images
 export const SERVER_URL = PUBLIC_BACKEND_URL; 

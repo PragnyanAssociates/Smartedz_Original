@@ -1,131 +1,151 @@
-import React, { useState, useEffect } from 'react';
-import { FaEdit, FaTrash, FaPlus, FaSearch, FaUserShield, FaChalkboardTeacher, FaUserGraduate } from 'react-icons/fa';
-
-const CLASSES = ['LKG', 'UKG', 'Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5', 'Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10'];
+import React, { useState, useEffect, useMemo } from 'react';
+import apiClient from '../api/client';
+import { FaEdit, FaTrash, FaPlus, FaSearch, FaUserShield, FaUsers, FaGraduationCap } from 'react-icons/fa';
 
 export default function AdminLM() {
     const [users, setUsers] = useState([]);
-    const [activeTab, setActiveTab] = useState('Super Admin');
+    const [roles, setRoles] = useState([]);
+    const [classes, setClasses] = useState([]);
+    const [activeTab, setActiveTab] = useState('');
     const [isModalOpen, setIsModalOpen] = useState(false);
-    const [search, setSearch] = useState('');
+    const [searchQuery, setSearchQuery] = useState("");
+    const [currentYear, setCurrentYear] = useState(null);
+
     const [formData, setFormData] = useState({
-        username: '', password: '', full_name: '', role: 'Student', class_group: 'Class 1', roll_no: '', phone_no: ''
+        username: '', password: '', full_name: '', role: '', 
+        class_id: '', roll_no: '', phone_no: '', admission_no: ''
     });
 
-    const fetchUsers = async () => {
-        const res = await fetch('http://localhost:3001/api/users');
-        const data = await res.json();
-        setUsers(data);
+    const fetchData = async () => {
+        try {
+            const [uRes, rRes, cRes, yRes] = await Promise.all([
+                apiClient.get('/users'),
+                apiClient.get('/roles'),
+                apiClient.get('/classes'),
+                apiClient.get('/academic-year/current')
+            ]);
+            setUsers(uRes.data);
+            setRoles(rRes.data);
+            setClasses(cRes.data);
+            setCurrentYear(yRes.data);
+            if (rRes.data.length > 0) setActiveTab(rRes.data[0].role_name);
+        } catch (e) { console.error(e); }
     };
 
-    useEffect(() => { fetchUsers(); }, []);
+    useEffect(() => { fetchData(); }, []);
 
-    const handleSave = async () => {
-        await fetch('http://localhost:3001/api/users', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(formData)
-        });
-        setIsModalOpen(false);
-        fetchUsers();
-    };
-
-    const handleDelete = async (id) => {
-        if (window.confirm("Delete this user?")) {
-            await fetch(`http://localhost:3001/api/users/${id}`, { method: 'DELETE' });
-            fetchUsers();
-        }
+    const handleSave = async (e) => {
+        e.preventDefault();
+        try {
+            // Include class and current academic year in the payload
+            await apiClient.post('/users', { ...formData, academic_year_id: currentYear?.id });
+            setIsModalOpen(false);
+            fetchData();
+        } catch (error) { alert("Failed to save user"); }
     };
 
     const filteredUsers = users.filter(u => 
         u.role === activeTab && 
-        (u.full_name.toLowerCase().includes(search.toLowerCase()) || u.username.includes(search))
+        (u.full_name.toLowerCase().includes(searchQuery.toLowerCase()) || u.username.includes(searchQuery))
     );
 
     return (
-        <div className="p-4 bg-slate-50 min-h-screen">
-            <div className="flex justify-between items-center mb-6">
-                <h1 className="text-2xl font-bold text-gray-800">User Management</h1>
-                <button onClick={() => setIsModalOpen(true)} className="bg-indigo-600 text-white px-4 py-2 rounded-lg flex items-center gap-2">
-                    <FaPlus /> Add User
+        <div className="admin-lm-wrapper">
+            <style>{`
+                .admin-lm-wrapper { padding: 20px; }
+                .top-info { background: #1e293b; color: white; padding: 15px 25px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; }
+                .tabs-flex { display: flex; gap: 10px; margin-bottom: 20px; overflow-x: auto; padding-bottom: 10px; }
+                .role-tab { padding: 12px 24px; background: white; border: 1px solid #e2e8f0; border-radius: 12px; cursor: pointer; font-weight: 700; color: #64748b; white-space: nowrap; }
+                .role-tab.active { background: #4f46e5; color: white; border-color: #4f46e5; }
+                .user-table { width: 100%; background: white; border-radius: 15px; border-collapse: collapse; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.02); }
+                .user-table th { background: #f8fafc; padding: 15px; text-align: left; font-size: 12px; color: #64748b; }
+                .user-table td { padding: 15px; border-top: 1px solid #f1f5f9; }
+                .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 100; }
+                .modal-box { background: white; padding: 30px; border-radius: 20px; width: 500px; max-width: 90%; }
+            `}</style>
+
+            <div className="top-info">
+                <div>
+                    <h2 style={{margin:0}}>User Management</h2>
+                    <span style={{fontSize:'12px', opacity:0.7}}>Active Management Context: {currentYear?.year_name || 'Loading...'}</span>
+                </div>
+                <button onClick={() => setIsModalOpen(true)} style={{background:'white', color:'#1e293b', border:'none', padding:'10px 20px', borderRadius:'8px', fontWeight:'bold', cursor:'pointer'}}>
+                    + Create New Account
                 </button>
             </div>
 
-            {/* Tabs */}
-            <div className="flex gap-4 border-b mb-6">
-                {['Super Admin', 'Admin', 'Teacher', 'Student'].map(role => (
-                    <button 
-                        key={role}
-                        onClick={() => setActiveTab(role)}
-                        className={`pb-2 px-4 font-semibold ${activeTab === role ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500'}`}
-                    >
-                        {role}s
+            <div className="tabs-flex">
+                {roles.map(r => (
+                    <button key={r.id} className={`role-tab ${activeTab === r.role_name ? 'active' : ''}`} onClick={() => setActiveTab(r.role_name)}>
+                        {r.role_name}s
                     </button>
                 ))}
             </div>
 
-            {/* Search */}
-            <div className="mb-4 relative">
-                <FaSearch className="absolute left-3 top-3 text-gray-400" />
+            <div style={{marginBottom: '20px'}}>
                 <input 
-                    type="text" placeholder="Search by name or username..." 
-                    className="w-full pl-10 pr-4 py-2 border rounded-xl"
-                    value={search} onChange={(e) => setSearch(e.target.value)}
+                    placeholder={`Search within ${activeTab}s...`} 
+                    style={{width:'100%', padding:'12px', borderRadius:'10px', border:'1px solid #e2e8f0', boxSizing:'border-box'}}
+                    value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
                 />
             </div>
 
-            {/* Table */}
-            <div className="bg-white rounded-xl shadow overflow-hidden">
-                <table className="w-full text-left">
-                    <thead className="bg-gray-50 border-b">
-                        <tr>
-                            <th className="p-4">Name</th>
-                            <th className="p-4">Username</th>
-                            <th className="p-4">Class/Group</th>
-                            <th className="p-4">Phone</th>
-                            <th className="p-4 text-right">Actions</th>
+            <table className="user-table">
+                <thead>
+                    <tr>
+                        <th>NAME</th>
+                        <th>USERNAME</th>
+                        <th>ACADEMIC INFO</th>
+                        <th>ACTIONS</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {filteredUsers.map(u => (
+                        <tr key={u.id}>
+                            <td style={{fontWeight:'bold'}}>{u.full_name}</td>
+                            <td>{u.username}</td>
+                            <td>
+                                <span style={{fontSize:'12px', background:'#f1f5f9', padding:'4px 8px', borderRadius:'5px'}}>
+                                    {u.role === 'Student' ? `Current: ${u.class_group}` : 'Staff Member'}
+                                </span>
+                            </td>
+                            <td>
+                                <button style={{color:'#ef4444', background:'none', border:'none', cursor:'pointer'}}><FaTrash/></button>
+                            </td>
                         </tr>
-                    </thead>
-                    <tbody>
-                        {filteredUsers.map(u => (
-                            <tr key={u.id} className="border-b hover:bg-gray-50">
-                                <td className="p-4 font-medium">{u.full_name}</td>
-                                <td className="p-4 text-gray-600">{u.username}</td>
-                                <td className="p-4">{u.class_group || 'N/A'}</td>
-                                <td className="p-4">{u.phone_no || 'N/A'}</td>
-                                <td className="p-4 text-right flex justify-end gap-2">
-                                    <button className="text-blue-600 p-2 hover:bg-blue-50 rounded"><FaEdit /></button>
-                                    <button onClick={() => handleDelete(u.id)} className="text-red-600 p-2 hover:bg-red-50 rounded"><FaTrash /></button>
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
+                    ))}
+                </tbody>
+            </table>
 
-            {/* Add Modal */}
             {isModalOpen && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-                    <div className="bg-white rounded-2xl w-full max-w-2xl p-6">
-                        <h2 className="text-xl font-bold mb-4">Add New User</h2>
-                        <div className="grid grid-cols-2 gap-4">
-                            <input placeholder="Full Name" className="border p-2 rounded" onChange={e => setFormData({...formData, full_name: e.target.value})} />
-                            <input placeholder="Username" className="border p-2 rounded" onChange={e => setFormData({...formData, username: e.target.value})} />
-                            <input placeholder="Password" type="text" className="border p-2 rounded" onChange={e => setFormData({...formData, password: e.target.value})} />
-                            <select className="border p-2 rounded" onChange={e => setFormData({...formData, role: e.target.value})}>
-                                <option value="Student">Student</option>
-                                <option value="Teacher">Teacher</option>
-                                <option value="Admin">Admin</option>
+                <div className="modal">
+                    <div className="modal-box">
+                        <h3>Create {formData.role} Account</h3>
+                        <form onSubmit={handleSave} style={{display:'flex', flexDirection:'column', gap:'15px'}}>
+                            <input required placeholder="Full Name" onChange={e => setFormData({...formData, full_name: e.target.value})} />
+                            <input required placeholder="Username" onChange={e => setFormData({...formData, username: e.target.value})} />
+                            <input required type="text" placeholder="Password" onChange={e => setFormData({...formData, password: e.target.value})} />
+                            
+                            <select onChange={e => setFormData({...formData, role: e.target.value})}>
+                                <option value="">Select Role</option>
+                                {roles.map(r => <option key={r.id} value={r.role_name}>{r.role_name}</option>)}
                             </select>
-                            <select className="border p-2 rounded" onChange={e => setFormData({...formData, class_group: e.target.value})}>
-                                {CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
-                            </select>
-                            <input placeholder="Phone No" className="border p-2 rounded" onChange={e => setFormData({...formData, phone_no: e.target.value})} />
-                        </div>
-                        <div className="flex justify-end gap-2 mt-6">
-                            <button onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-gray-600">Cancel</button>
-                            <button onClick={handleSave} className="bg-indigo-600 text-white px-6 py-2 rounded-lg">Save User</button>
-                        </div>
+
+                            {formData.role === 'Student' && (
+                                <>
+                                    <select required onChange={e => setFormData({...formData, class_id: e.target.value})}>
+                                        <option value="">Select Class</option>
+                                        {classes.map(c => <option key={c.id} value={c.id}>{c.class_name}</option>)}
+                                    </select>
+                                    <input placeholder="Roll Number" onChange={e => setFormData({...formData, roll_no: e.target.value})} />
+                                </>
+                            )}
+
+                            <div style={{display:'flex', gap:'10px', marginTop:'20px'}}>
+                                <button type="submit" style={{flex:1, background:'#4f46e5', color:'white', border:'none', padding:'12px', borderRadius:'10px', fontWeight:'bold'}}>Save User</button>
+                                <button type="button" onClick={() => setIsModalOpen(false)} style={{flex:1, background:'#f1f5f9', border:'none', padding:'12px', borderRadius:'10px'}}>Cancel</button>
+                            </div>
+                        </form>
                     </div>
                 </div>
             )}

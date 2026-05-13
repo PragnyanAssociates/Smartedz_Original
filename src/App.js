@@ -1,9 +1,9 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import WelcomePage from './pages/WelcomePage';
-import LoginScreen from './pages/LoginScreen';
-import Dashboard from './pages/Dashboard';
+import WelcomePage from './Screens/WelcomePage';
+import LoginScreen from './Screens/LoginScreen';
+import Dashboard from './Screens/Dashboard';
 
 // Protected Route Wrapper
 const ProtectedRoute = ({ children }) => {
