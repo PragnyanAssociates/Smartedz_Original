@@ -4,7 +4,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import WelcomePage from './Screens/WelcomePage';
 import LoginScreen from './Screens/LoginScreen';
 import Dashboard from './Screens/Dashboard';
-import DashboardHeader from './Screens/DashboardHeader'; // Ensure this file exists
+import DashboardHeader from './Screens/DashboardHeader'; 
 
 // Protected Route Wrapper
 const ProtectedRoute = ({ children }) => {
@@ -45,8 +45,6 @@ function App() {
                 </ProtectedRoute>
               } 
             />
-            
-            {/* You can add more protected screens here later that need the header */}
             
           </Route>
 

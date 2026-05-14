@@ -234,7 +234,6 @@ app.put('/api/academic-years/set-current/:id', async (req, res) => {
     }
 });
 
-// --- CLASS & SECTION MANAGEMENT ---
 app.get('/api/classes', async (req, res) => {
     const [rows] = await db.query('SELECT * FROM classes ORDER BY id ASC');
     res.json(rows);
@@ -281,19 +280,13 @@ app.delete('/api/sections/:id', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// --- BATCH PROMOTION ENGINE ---
 app.post('/api/promotion/execute', async (req, res) => {
     const { student_ids, target_year_id, target_class_id, target_section_id } = req.body;
     const connection = await db.getConnection();
     try {
         await connection.beginTransaction();
         for (let id of student_ids) {
-            // Update the user's master record with their new class and section
-            await connection.query(
-                `UPDATE users SET class_id = ?, section_id = ? WHERE id = ?`, 
-                [target_class_id, target_section_id, id]
-            );
-            // Log it in the academic records for historical tracking
+            await connection.query(`UPDATE users SET class_id = ?, section_id = ? WHERE id = ?`, [target_class_id, target_section_id, id]);
             await connection.query(
                 `INSERT INTO student_academic_records (user_id, academic_year_id, class_id, section_id, status) VALUES (?,?,?,?, 'active')`,
                 [id, target_year_id, target_class_id, target_section_id]
@@ -307,6 +300,93 @@ app.post('/api/promotion/execute', async (req, res) => {
     } finally {
         connection.release();
     }
+});
+
+
+// ==========================================================
+// --- TIMETABLE ENGINE & TEACHERS Block ---
+// ==========================================================
+
+// Get all teachers (Users mapped to roles with 'Teacher' in name or class_group defined)
+app.get('/api/teachers', async (req, res) => {
+    try {
+        const [rows] = await db.query(`
+            SELECT u.id, u.full_name, u.subjects_taught, u.class_group 
+            FROM users u 
+            JOIN roles r ON u.role_id = r.id 
+            WHERE r.role_name LIKE '%Teacher%' OR u.class_group IS NOT NULL
+            ORDER BY u.full_name ASC
+        `);
+        res.json(rows);
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// Period Management
+app.get('/api/timetable/periods', async (req, res) => {
+    try {
+        const [rows] = await db.query('SELECT * FROM timetable_periods ORDER BY period_number ASC');
+        res.json(rows);
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/api/timetable/periods', async (req, res) => {
+    try {
+        const { period_number, start_time, end_time, is_break, name } = req.body;
+        await db.query(
+            'INSERT INTO timetable_periods (period_number, start_time, end_time, is_break, name) VALUES (?, ?, ?, ?, ?)',
+            [period_number, start_time, end_time, is_break ? 1 : 0, name || 'Class']
+        );
+        res.json({ message: "Period Created" });
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.delete('/api/timetable/periods/:id', async (req, res) => {
+    try {
+        await db.query('DELETE FROM timetable_periods WHERE id = ?', [req.params.id]);
+        res.json({ message: "Period Deleted" });
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// Slots Management
+app.get('/api/timetable/slots/:class_id/:section_id', async (req, res) => {
+    try {
+        const [rows] = await db.query(`
+            SELECT s.*, u.full_name as teacher_name 
+            FROM timetable_slots s 
+            LEFT JOIN users u ON s.teacher_id = u.id 
+            WHERE s.class_id = ? AND s.section_id = ?
+        `, [req.params.class_id, req.params.section_id]);
+        res.json(rows);
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/api/timetable/slots/teacher/:teacher_id', async (req, res) => {
+    try {
+        const [rows] = await db.query(`
+            SELECT s.*, c.class_name, sec.section_name 
+            FROM timetable_slots s 
+            LEFT JOIN classes c ON s.class_id = c.id
+            LEFT JOIN sections sec ON s.section_id = sec.id
+            WHERE s.teacher_id = ?
+        `, [req.params.teacher_id]);
+        res.json(rows);
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/api/timetable/slots', async (req, res) => {
+    const { class_id, section_id, day_of_week, period_id, subject_name, teacher_id } = req.body;
+    try {
+        // Use UPSERT (Insert on Duplicate Key Update) so we can cleanly overwrite slots
+        const query = `
+            INSERT INTO timetable_slots (class_id, section_id, day_of_week, period_id, subject_name, teacher_id) 
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE 
+            subject_name = VALUES(subject_name), 
+            teacher_id = VALUES(teacher_id)
+        `;
+        await db.query(query, [class_id, section_id, day_of_week, period_id, subject_name || null, teacher_id || null]);
+        res.json({ message: "Slot Saved Successfully" });
+    } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 const PORT = process.env.PORT || 3001;

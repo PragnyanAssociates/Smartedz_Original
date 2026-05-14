@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, Suspense, lazy } from "react";
+import React, { useState, useEffect, useMemo, useRef, Suspense, lazy } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext.jsx";
 import apiClient from "../api/client";
@@ -8,7 +8,9 @@ import { MdSearch, MdClose, MdMenu, MdNotifications } from "react-icons/md";
 // 1. DYNAMIC IMPORTS (CODE-SPLITTING)
 // ----------------------------------------------------------------------
 const AdminLM = lazy(() => import("./AdminLM"));
-const ProfileScreen = lazy(() => import("./Profile.jsx")); // Restored Profile Screen
+const ProfileScreen = lazy(() => import("./Profile.jsx")); 
+// FIXED IMPORT PATH based on your folder structure
+const TimetableScreen = lazy(() => import("../components/Timetable/TimetableScreen.jsx")); 
 
 // --- ICONS & UI HELPERS ---
 function UserIcon() { return (<svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="7" r="4" strokeLinecap="round" /><path d="M5.5 21a6.5 6.5 0 0113 0" strokeLinecap="round" /></svg>) }
@@ -41,13 +43,9 @@ function ProfileAvatar({ className = "w-7 h-7 sm:w-8 sm:h-8" }) {
   );
 }
 
-// STRICTLY PRESERVED NEW DB MAPPING, MAPPED TO OLD FLATICON IMAGES
+// STRICTLY PRESERVED NEW DB MAPPING
 const ALL_MODULES = [
-  { id: "dashboard", title: "Overview", imageSource: "https://cdn-icons-png.flaticon.com/128/1828/1828859.png", alwaysShow: true },
-  { id: "qa_acad_adm", title: "Admissions", imageSource: "https://cdn-icons-png.flaticon.com/128/10220/10220958.png", dbModuleName: "Admissions" },
-  { id: "qa_admin_alumni", title: "Alumni", imageSource: "https://cdn-icons-png.flaticon.com/128/9517/9517272.png", dbModuleName: "Alumni" },
-  { id: "qa_acad_fees", title: "Fees Management", imageSource: "https://cdn-icons-png.flaticon.com/128/18277/18277055.png", dbModuleName: "Fees Management" },
-  { id: "qa_acad_tt", title: "Timetable", imageSource: "https://cdn-icons-png.flaticon.com/128/1254/1254275.png", dbModuleName: "Timetable" },
+  { id: "qa_acad_tt", title: "Timetable", imageSource: "https://cdn-icons-png.flaticon.com/128/1254/1254275.png", dbModuleName: "TimetableScreen" }, // Fixed dbModuleName to match AdminLM
   { id: "qa_acad_sa", title: "Attendance", imageSource: "https://cdn-icons-png.flaticon.com/128/10293/10293877.png", dbModuleName: "Attendance" },
   { id: "qa_extra_SI", title: "Syllabus", imageSource: "https://cdn-icons-png.flaticon.com/128/4394/4394562.png", dbModuleName: "Syllabus" },
   { id: "qa_acad_lp", title: "Lesson Plan", imageSource: "https://cdn-icons-png.flaticon.com/128/5344/5344646.png", dbModuleName: "Lesson Plan" },
@@ -62,7 +60,6 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   
-  // States from New Code & Old Code Combined
   const [activeModuleId, setActiveModuleId] = useState("dashboard");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isMobileSubMenuOpen, setIsMobileSubMenuOpen] = useState(false);
@@ -78,7 +75,6 @@ export default function Dashboard() {
   const searchRef = useRef(null);
   const dropdownRef = useRef(null);
 
-  // STRICTLY PRESERVED NEW PERMISSIONS LOGIC
   useEffect(() => {
     const fetchPermissions = async () => {
       if (!user?.role) return;
@@ -176,13 +172,15 @@ export default function Dashboard() {
       case "ArrowUp": e.preventDefault(); setSelectedIndex((prev) => (prev > 0 ? prev - 1 : sidebarMenu.length - 1)); break;
       case "Enter": e.preventDefault(); setSelectedIndex(selectedIndex); if (selectedIndex >= 0 && selectedIndex < sidebarMenu.length) handleSelectItem(sidebarMenu[selectedIndex]); break;
       case "Escape": setShowDropdown(false); setSelectedIndex(-1); setIsSearchExpanded(false); searchRef.current?.blur(); break;
+      default: break;
     }
   };
 
   const renderActiveModule = () => {
     switch (activeModuleId) {
       case "qa_admin_login": return <AdminLM />;
-      case "profile": return <ProfileScreen />; // Restored Profile Route
+      case "profile": return <ProfileScreen />; 
+      case "qa_acad_tt": return <TimetableScreen />; // Added Timetable Connection
       default: return (
         <div className="flex flex-col items-center justify-center min-h-[300px] p-8 text-center text-slate-500">
           <div className="text-6xl mb-4">🛠️</div>
@@ -196,11 +194,10 @@ export default function Dashboard() {
   const activeModule = ALL_MODULES.find(m => m.id === activeModuleId) || ALL_MODULES[0];
 
   return (
-    // EXACT OLD BACKGROUND (bg-slate-50)
     <div className="h-full overflow-hidden bg-slate-50 flex flex-col font-sans">
       <main className="w-full flex-1 flex flex-col min-h-0 overflow-hidden relative">
         
-        {/* MOBILE HEADER (EXACT OLD CSS) */}
+        {/* MOBILE HEADER */}
         <div className="md:hidden bg-slate-100 border-b border-slate-300 p-3 flex items-center justify-between z-20 shrink-0">
           <div className="flex items-center gap-2">
             <button onClick={() => setIsMobileMenuOpen(true)} className="p-2 -ml-2 text-slate-600 hover:bg-slate-200 rounded-lg transition-colors">
@@ -226,10 +223,9 @@ export default function Dashboard() {
 
         <div className="border-y border-slate-200 shadow-sm flex flex-col md:flex-row overflow-hidden w-full flex-1 min-h-0 relative">
           
-          {/* SIDEBAR (EXACT OLD CSS: bg-slate-100, border-slate-400) */}
+          {/* SIDEBAR */}
           <aside className={`fixed inset-y-0 left-0 w-64 transform transition-transform duration-300 ease-in-out z-50 md:z-10 ${isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"} md:relative md:translate-x-0 md:flex md:w-56 lg:w-64 shrink-0 border-r border-slate-400 bg-slate-100 flex-col h-full shadow-[4px_0_16px_rgba(0,0,0,0.04)]`}>
             
-            {/* SIDEBAR HEADER (EXACT OLD CSS) */}
             <div className="px-4 h-[72px] border-b border-slate-200 bg-slate-100 flex items-center justify-between gap-4 shrink-0">
               <div 
                 className="flex-1 min-w-0 text-left cursor-pointer group" 
@@ -250,13 +246,7 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* SIDEBAR MODULES (EXACT OLD CSS & CUSTOM SCROLLBAR) */}
-            <div className="flex-1 overflow-y-auto p-2 bg-slate-100 min-h-0 text-left 
-              [&::-webkit-scrollbar]:w-1.5
-              [&::-webkit-scrollbar-track]:bg-transparent
-              [&::-webkit-scrollbar-thumb]:bg-slate-300
-              [&::-webkit-scrollbar-thumb]:rounded-full
-              hover:[&::-webkit-scrollbar-thumb]:bg-slate-400">
+            <div className="flex-1 overflow-y-auto p-2 bg-slate-100 min-h-0 text-left custom-scrollbar">
               
               <div className="px-3 py-1 mb-1 flex items-center justify-between border-b border-slate-300 pb-1.5 min-h-[28px] relative">
                 {!isSearchExpanded ? (
@@ -309,7 +299,6 @@ export default function Dashboard() {
                 {sidebarMenu.map((module) => {
                   const isActive = activeModuleId === module.id;
                   return (
-                    // EXACT OLD CSS FOR ACTIVE AND INACTIVE TABS
                     <button 
                       key={module.id} 
                       onClick={() => handleSelectItem(module)} 
@@ -323,7 +312,6 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* SIDEBAR FOOTER & PROFILE (RESTORED EXACTLY FROM OLD CODE) */}
             <div className="p-3 border-t border-slate-300 bg-slate-100 shrink-0">
               <div className="flex items-center gap-2 w-full">
                 <button 
@@ -352,10 +340,8 @@ export default function Dashboard() {
             </div>
           </aside>
 
-          {/* MAIN CONTENT AREA (EXACT OLD CSS: bg-slate-50) */}
           <div className="flex-1 flex flex-col overflow-hidden relative min-h-0 bg-slate-50 w-full">
             
-            {/* DESKTOP HEADER (Styled with Tailwind to match your image reference and old aesthetic) */}
             <div className="hidden md:flex bg-slate-100 px-6 py-5 border-b border-slate-300 justify-between items-center shrink-0">
               <div className="flex flex-col">
                 <h2 className="text-xl font-bold text-slate-800">
@@ -372,7 +358,6 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* MOBILE ONLY: BOTTOM SHEET TRIGGER */}
             <div className="md:hidden w-full bg-white relative border-b border-slate-200 shadow-sm">
               <button 
                 onClick={() => setIsMobileSubMenuOpen(true)}
@@ -393,7 +378,6 @@ export default function Dashboard() {
               </button>
             </div>
 
-            {/* MOBILE VIEW: BOTTOM SHEET OVERLAY */}
             {isMobileSubMenuOpen && (
               <div className="fixed inset-0 z-50 flex flex-col justify-end md:hidden">
                 <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity" onClick={() => setIsMobileSubMenuOpen(false)}></div>
@@ -430,7 +414,6 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* RENDER THE ACTIVE MODULE */}
             <div className="flex-1 overflow-y-auto relative bg-transparent w-full flex flex-col p-2 md:p-3 custom-scrollbar text-left" id="module-render-area">
               <Suspense fallback={
                 <div className="flex h-full w-full items-center justify-center text-slate-400">
