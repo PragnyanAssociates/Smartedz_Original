@@ -9,6 +9,7 @@ import { MdAddCircle, MdClass, MdOutlineViewModule } from 'react-icons/md';
 const AcademicYearSettings = () => {
     const [years, setYears] = useState([]);
     const [loading, setLoading] = useState(false);
+    const [editingYearId, setEditingYearId] = useState(null);
     const [newYear, setNewYear] = useState({ name: '', start: '', end: '' });
 
     const fetchYears = async () => {
@@ -22,18 +23,60 @@ const AcademicYearSettings = () => {
 
     useEffect(() => { fetchYears(); }, []);
 
+    // Safely format date to YYYY-MM-DD for HTML input
+    const formatDate = (dateString) => {
+        const d = new Date(dateString);
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    };
+
+    const handleEditYear = (y) => {
+        setEditingYearId(y.id);
+        setNewYear({
+            name: y.year_name,
+            start: formatDate(y.start_date),
+            end: formatDate(y.end_date)
+        });
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+
+    const handleDeleteYear = async (id) => {
+        if (window.confirm("Are you sure you want to delete this Academic Year?")) {
+            try {
+                await apiClient.delete(`/academic-years/${id}`);
+                if (editingYearId === id) {
+                    setEditingYearId(null);
+                    setNewYear({ name: '', start: '', end: '' });
+                }
+                fetchYears();
+            } catch (e) { alert("Failed to delete year. It might be in use."); }
+        }
+    };
+
     const handleAdd = async (e) => {
         e.preventDefault();
         try {
-            await apiClient.post('/academic-years', { 
-                year_name: newYear.name, 
-                start_date: newYear.start, 
-                end_date: newYear.end 
-            });
-            alert("New Academic Year Created Successfully!");
+            if (editingYearId) {
+                await apiClient.put(`/academic-years/${editingYearId}`, { 
+                    year_name: newYear.name, 
+                    start_date: newYear.start, 
+                    end_date: newYear.end 
+                });
+                alert("Academic Year Updated Successfully!");
+                setEditingYearId(null);
+            } else {
+                await apiClient.post('/academic-years', { 
+                    year_name: newYear.name, 
+                    start_date: newYear.start, 
+                    end_date: newYear.end 
+                });
+                alert("New Academic Year Created Successfully!");
+            }
             setNewYear({ name: '', start: '', end: '' });
             fetchYears();
-        } catch (e) { alert("Failed to add year"); }
+        } catch (e) { alert("Failed to save year."); }
     };
 
     const setCurrentYear = async (id) => {
@@ -57,17 +100,19 @@ const AcademicYearSettings = () => {
                 .input-box input { padding: 12px; border: 1px solid #e2e8f0; border-radius: 10px; outline: none; background: #f8fafc; }
                 .input-box input:focus { border-color: #4f46e5; background: white; }
                 .add-ay-btn { background: #4f46e5; color: white; border: none; padding: 12px; border-radius: 10px; font-weight: 700; cursor: pointer; align-self: flex-end; height: 43px;}
+                .btn-cancel { background: #f1f5f9; color: #475569; border: none; padding: 12px; border-radius: 10px; font-weight: 700; cursor: pointer; align-self: flex-end; height: 43px; margin-right: 10px;}
                 
                 .year-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
                 .year-card { background: white; padding: 20px; border-radius: 16px; border: 1px solid #e2e8f0; position: relative; transition: 0.3s; }
                 .year-card.active { border-color: #4f46e5; background: #f5f3ff; box-shadow: 0 10px 15px -3px rgba(79, 70, 229, 0.1); }
                 .status-badge { position: absolute; top: 15px; right: 15px; padding: 4px 10px; border-radius: 20px; font-size: 10px; font-weight: 800; }
+                .card-actions { display: flex; gap: 8px; margin-top: 15px; justify-content: flex-end; }
             `}</style>
 
             <div className="setup-card">
                 <div style={{display:'flex', alignItems:'center', gap:'10px'}}>
                     <MdAddCircle size={24} color="#4f46e5" />
-                    <h2 style={{margin:0}}>Setup New Session</h2>
+                    <h2 style={{margin:0}}>{editingYearId ? "Edit Session" : "Setup New Session"}</h2>
                 </div>
                 <form className="form-row" onSubmit={handleAdd}>
                     <div className="input-box">
@@ -82,7 +127,10 @@ const AcademicYearSettings = () => {
                         <label>End Date</label>
                         <input required type="date" value={newYear.end} onChange={e => setNewYear({...newYear, end: e.target.value})} />
                     </div>
-                    <button type="submit" className="add-ay-btn">Initialize Year</button>
+                    <div style={{display: 'flex', alignSelf: 'flex-end'}}>
+                        {editingYearId && <button type="button" className="btn-cancel" onClick={() => { setEditingYearId(null); setNewYear({ name: '', start: '', end: '' }); }}>Cancel</button>}
+                        <button type="submit" className="add-ay-btn">{editingYearId ? "Update Session" : "Initialize Year"}</button>
+                    </div>
                 </form>
             </div>
 
@@ -102,6 +150,7 @@ const AcademicYearSettings = () => {
                             <span>to</span>
                             <span>{new Date(y.end_date).toLocaleDateString()}</span>
                         </div>
+                        
                         {!y.is_current && (
                             <button 
                                 onClick={() => setCurrentYear(y.id)}
@@ -110,6 +159,11 @@ const AcademicYearSettings = () => {
                                 Activate This Session
                             </button>
                         )}
+                        
+                        <div className="card-actions">
+                            <button className="icon-btn edit" onClick={() => handleEditYear(y)}><FaEdit size={16}/></button>
+                            <button className="icon-btn delete" onClick={() => handleDeleteYear(y.id)}><FaTrash size={16}/></button>
+                        </div>
                     </div>
                 ))}
             </div>
@@ -124,15 +178,26 @@ const ClassSettings = ({ classes, sections, loadData }) => {
     const [newClassName, setNewClassName] = useState('');
     const [selectedClassId, setSelectedClassId] = useState(null);
     const [newSectionName, setNewSectionName] = useState('');
+    const [editingClassId, setEditingClassId] = useState(null);
 
     const handleAddClass = async (e) => {
         e.preventDefault();
         if (!newClassName) return;
         try {
-            await apiClient.post('/classes', { class_name: newClassName });
+            if (editingClassId) {
+                await apiClient.put(`/classes/${editingClassId}`, { class_name: newClassName });
+                setEditingClassId(null);
+            } else {
+                await apiClient.post('/classes', { class_name: newClassName });
+            }
             setNewClassName('');
             loadData();
-        } catch (error) { alert("Failed to create class."); }
+        } catch (error) { alert("Failed to save class."); }
+    };
+
+    const handleEditClass = (c) => {
+        setEditingClassId(c.id);
+        setNewClassName(c.class_name);
     };
 
     const handleDeleteClass = async (id) => {
@@ -140,6 +205,10 @@ const ClassSettings = ({ classes, sections, loadData }) => {
             try {
                 await apiClient.delete(`/classes/${id}`);
                 if (selectedClassId === id) setSelectedClassId(null);
+                if (editingClassId === id) {
+                    setEditingClassId(null);
+                    setNewClassName('');
+                }
                 loadData();
             } catch (error) { alert("Failed to delete class."); }
         }
@@ -195,7 +264,8 @@ const ClassSettings = ({ classes, sections, loadData }) => {
                 <h3><MdClass size={22} color="#4f46e5"/> Manage Classes</h3>
                 <form className="add-form" onSubmit={handleAddClass}>
                     <input placeholder="e.g. Class 1, Nursery" value={newClassName} onChange={e => setNewClassName(e.target.value)} />
-                    <button type="submit" className="btn-primary"><FaPlus/></button>
+                    {editingClassId && <button type="button" className="btn-cancel" style={{padding: '0 15px'}} onClick={() => { setEditingClassId(null); setNewClassName(''); }}><FaTimes/></button>}
+                    <button type="submit" className="btn-primary">{editingClassId ? <FaCheck/> : <FaPlus/>}</button>
                 </form>
 
                 <div className="list-container">
@@ -203,7 +273,10 @@ const ClassSettings = ({ classes, sections, loadData }) => {
                     {classes.map(c => (
                         <div key={c.id} className={`list-item ${selectedClassId === c.id ? 'selected' : ''}`} onClick={() => setSelectedClassId(c.id)}>
                             <span>{c.class_name}</span>
-                            <button className="icon-btn delete" onClick={(e) => { e.stopPropagation(); handleDeleteClass(c.id); }}><FaTrash size={14}/></button>
+                            <div style={{display: 'flex', gap: '5px'}}>
+                                <button className="icon-btn edit" onClick={(e) => { e.stopPropagation(); handleEditClass(c); }}><FaEdit size={14}/></button>
+                                <button className="icon-btn delete" onClick={(e) => { e.stopPropagation(); handleDeleteClass(c.id); }}><FaTrash size={14}/></button>
+                            </div>
                         </div>
                     ))}
                 </div>
@@ -658,7 +731,7 @@ export default function AdminLM() {
                 apiClient.get('/users'),
                 apiClient.get('/academic-years'),
                 apiClient.get('/classes'),
-                apiClient.get('/sections') // New endpoint
+                apiClient.get('/sections') 
             ]);
             setRoles(r.data);
             setUsers(u.data);

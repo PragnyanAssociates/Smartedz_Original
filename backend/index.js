@@ -199,6 +199,24 @@ app.post('/api/academic-years', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
+// NEW: Edit Academic Year
+app.put('/api/academic-years/:id', async (req, res) => {
+    try {
+        const { year_name, start_date, end_date } = req.body;
+        await db.query('UPDATE academic_years SET year_name = ?, start_date = ?, end_date = ? WHERE id = ?', 
+            [year_name, start_date, end_date, req.params.id]);
+        res.json({ message: "Academic Year Updated" });
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// NEW: Delete Academic Year
+app.delete('/api/academic-years/:id', async (req, res) => {
+    try {
+        await db.query('DELETE FROM academic_years WHERE id = ?', [req.params.id]);
+        res.json({ message: "Academic Year Deleted" });
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
 app.put('/api/academic-years/set-current/:id', async (req, res) => {
     const connection = await db.getConnection();
     try {
@@ -228,9 +246,16 @@ app.post('/api/classes', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
+// NEW: Edit Class Route
+app.put('/api/classes/:id', async (req, res) => {
+    try {
+        await db.query('UPDATE classes SET class_name = ? WHERE id = ?', [req.body.class_name, req.params.id]);
+        res.json({ message: "Class Updated" });
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
 app.delete('/api/classes/:id', async (req, res) => {
     try {
-        // Delete related sections first to avoid foreign key conflicts if ON DELETE CASCADE isn't set
         await db.query('DELETE FROM sections WHERE class_id = ?', [req.params.id]);
         await db.query('DELETE FROM classes WHERE id = ?', [req.params.id]);
         res.json({ message: "Class and its sections deleted" });
