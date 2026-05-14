@@ -185,4 +185,6 @@ app.post('/api/promotion/execute', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-app.listen(3001, () => console.log("✅ ERP Backend organized and running on 3001"));
+// To this:
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => console.log(`✅ ERP Backend running on port ${PORT}`));
