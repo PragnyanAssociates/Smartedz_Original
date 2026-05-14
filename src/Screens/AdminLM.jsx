@@ -1,9 +1,247 @@
 import React, { useState, useEffect } from 'react';
 import apiClient from '../api/client';
 import { FaUsers, FaCogs, FaCalendarAlt, FaLayerGroup, FaArrowUp, FaTrash, FaEdit, FaCheck, FaPlus, FaShieldAlt, FaTimes } from 'react-icons/fa';
+import { MdAddCircle, MdClass, MdOutlineViewModule } from 'react-icons/md';
 
 // ==========================================
-// 1. ROLE CREATION COMPONENT
+// 1. ACADEMIC YEAR COMPONENT (Integrated)
+// ==========================================
+const AcademicYearSettings = () => {
+    const [years, setYears] = useState([]);
+    const [loading, setLoading] = useState(false);
+    const [newYear, setNewYear] = useState({ name: '', start: '', end: '' });
+
+    const fetchYears = async () => {
+        try {
+            setLoading(true);
+            const res = await apiClient.get('/academic-years');
+            setYears(res.data);
+        } catch (e) { console.error(e); }
+        finally { setLoading(false); }
+    };
+
+    useEffect(() => { fetchYears(); }, []);
+
+    const handleAdd = async (e) => {
+        e.preventDefault();
+        try {
+            await apiClient.post('/academic-years', { 
+                year_name: newYear.name, 
+                start_date: newYear.start, 
+                end_date: newYear.end 
+            });
+            alert("New Academic Year Created Successfully!");
+            setNewYear({ name: '', start: '', end: '' });
+            fetchYears();
+        } catch (e) { alert("Failed to add year"); }
+    };
+
+    const setCurrentYear = async (id) => {
+        if (window.confirm("Changing the current year will move the whole system context to this year. Continue?")) {
+            try {
+                await apiClient.put(`/academic-years/set-current/${id}`);
+                fetchYears();
+                window.location.reload();
+            } catch (e) { alert("Update failed"); }
+        }
+    };
+
+    return (
+        <div className="ay-container animate-fade">
+            <style>{`
+                .ay-container { font-family: 'Inter', sans-serif; }
+                .setup-card { background: white; padding: 30px; border-radius: 20px; border: 1px solid #e2e8f0; margin-bottom: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.02); }
+                .form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 20px; }
+                .input-box { display: flex; flex-direction: column; gap: 5px; }
+                .input-box label { font-size: 12px; font-weight: 700; color: #64748b; }
+                .input-box input { padding: 12px; border: 1px solid #e2e8f0; border-radius: 10px; outline: none; background: #f8fafc; }
+                .input-box input:focus { border-color: #4f46e5; background: white; }
+                .add-ay-btn { background: #4f46e5; color: white; border: none; padding: 12px; border-radius: 10px; font-weight: 700; cursor: pointer; align-self: flex-end; height: 43px;}
+                
+                .year-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
+                .year-card { background: white; padding: 20px; border-radius: 16px; border: 1px solid #e2e8f0; position: relative; transition: 0.3s; }
+                .year-card.active { border-color: #4f46e5; background: #f5f3ff; box-shadow: 0 10px 15px -3px rgba(79, 70, 229, 0.1); }
+                .status-badge { position: absolute; top: 15px; right: 15px; padding: 4px 10px; border-radius: 20px; font-size: 10px; font-weight: 800; }
+            `}</style>
+
+            <div className="setup-card">
+                <div style={{display:'flex', alignItems:'center', gap:'10px'}}>
+                    <MdAddCircle size={24} color="#4f46e5" />
+                    <h2 style={{margin:0}}>Setup New Session</h2>
+                </div>
+                <form className="form-row" onSubmit={handleAdd}>
+                    <div className="input-box">
+                        <label>Session Name</label>
+                        <input required placeholder="e.g. 2025-2026" value={newYear.name} onChange={e => setNewYear({...newYear, name: e.target.value})} />
+                    </div>
+                    <div className="input-box">
+                        <label>Start Date</label>
+                        <input required type="date" value={newYear.start} onChange={e => setNewYear({...newYear, start: e.target.value})} />
+                    </div>
+                    <div className="input-box">
+                        <label>End Date</label>
+                        <input required type="date" value={newYear.end} onChange={e => setNewYear({...newYear, end: e.target.value})} />
+                    </div>
+                    <button type="submit" className="add-ay-btn">Initialize Year</button>
+                </form>
+            </div>
+
+            <h3 style={{color: '#1e293b', marginBottom: '20px'}}>Historical & Active Sessions</h3>
+            <div className="year-grid">
+                {years.map(y => (
+                    <div key={y.id} className={`year-card ${y.is_current ? 'active' : ''}`}>
+                        <span className="status-badge" style={{
+                            background: y.is_current ? '#4f46e5' : '#e2e8f0',
+                            color: y.is_current ? 'white' : '#64748b'
+                        }}>
+                            {y.is_current ? 'CURRENT SESSION' : 'ARCHIVED'}
+                        </span>
+                        <h4 style={{margin: '0 0 10px 0', fontSize: '20px'}}>{y.year_name}</h4>
+                        <div style={{display:'flex', gap:'10px', color:'#64748b', fontSize:'13px'}}>
+                            <span>📅 {new Date(y.start_date).toLocaleDateString()}</span>
+                            <span>to</span>
+                            <span>{new Date(y.end_date).toLocaleDateString()}</span>
+                        </div>
+                        {!y.is_current && (
+                            <button 
+                                onClick={() => setCurrentYear(y.id)}
+                                style={{marginTop: '20px', width: '100%', padding: '10px', background: 'white', border: '1px solid #4f46e5', color: '#4f46e5', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer'}}
+                            >
+                                Activate This Session
+                            </button>
+                        )}
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+};
+
+// ==========================================
+// 2. CLASS SETTINGS COMPONENT (New)
+// ==========================================
+const ClassSettings = ({ classes, sections, loadData }) => {
+    const [newClassName, setNewClassName] = useState('');
+    const [selectedClassId, setSelectedClassId] = useState(null);
+    const [newSectionName, setNewSectionName] = useState('');
+
+    const handleAddClass = async (e) => {
+        e.preventDefault();
+        if (!newClassName) return;
+        try {
+            await apiClient.post('/classes', { class_name: newClassName });
+            setNewClassName('');
+            loadData();
+        } catch (error) { alert("Failed to create class."); }
+    };
+
+    const handleDeleteClass = async (id) => {
+        if (window.confirm("Delete this class? All linked sections will also be removed.")) {
+            try {
+                await apiClient.delete(`/classes/${id}`);
+                if (selectedClassId === id) setSelectedClassId(null);
+                loadData();
+            } catch (error) { alert("Failed to delete class."); }
+        }
+    };
+
+    const handleAddSection = async (e) => {
+        e.preventDefault();
+        if (!newSectionName || !selectedClassId) return;
+        try {
+            await apiClient.post('/sections', { class_id: selectedClassId, section_name: newSectionName });
+            setNewSectionName('');
+            loadData();
+        } catch (error) { alert("Failed to add section."); }
+    };
+
+    const handleDeleteSection = async (id) => {
+        if (window.confirm("Delete this section?")) {
+            try {
+                await apiClient.delete(`/sections/${id}`);
+                loadData();
+            } catch (error) { alert("Failed to delete section."); }
+        }
+    };
+
+    const activeSections = sections.filter(s => s.class_id === selectedClassId);
+
+    return (
+        <div className="class-settings-layout animate-fade">
+            <style>{`
+                .class-settings-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; }
+                .module-card { background: white; border-radius: 16px; padding: 25px; border: 1px solid #e2e8f0; box-shadow: 0 4px 15px rgba(0,0,0,0.02); }
+                .module-card h3 { margin: 0 0 20px 0; color: #1e293b; display: flex; align-items: center; gap: 10px; }
+                
+                .add-form { display: flex; gap: 10px; margin-bottom: 25px; }
+                .add-form input { flex: 1; padding: 12px 15px; border: 1px solid #cbd5e1; border-radius: 8px; outline: none; background: #f8fafc; }
+                .add-form input:focus { border-color: #4f46e5; background: white; }
+                
+                .list-container { display: flex; flex-direction: column; gap: 10px; max-height: 400px; overflow-y: auto; padding-right: 5px; }
+                .list-item { 
+                    display: flex; justify-content: space-between; align-items: center; 
+                    padding: 15px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; cursor: pointer; transition: 0.2s;
+                }
+                .list-item:hover { border-color: #cbd5e1; }
+                .list-item.selected { background: #eef2ff; border-color: #4f46e5; }
+                .list-item span { font-weight: 700; color: #334155; }
+                .list-item.selected span { color: #4f46e5; }
+                
+                .empty-hint { text-align: center; color: #94a3b8; padding: 40px 20px; font-style: italic; }
+            `}</style>
+
+            {/* LEFT: CLASSES */}
+            <div className="module-card">
+                <h3><MdClass size={22} color="#4f46e5"/> Manage Classes</h3>
+                <form className="add-form" onSubmit={handleAddClass}>
+                    <input placeholder="e.g. Class 1, Nursery" value={newClassName} onChange={e => setNewClassName(e.target.value)} />
+                    <button type="submit" className="btn-primary"><FaPlus/></button>
+                </form>
+
+                <div className="list-container">
+                    {classes.length === 0 && <div className="empty-hint">No classes created yet.</div>}
+                    {classes.map(c => (
+                        <div key={c.id} className={`list-item ${selectedClassId === c.id ? 'selected' : ''}`} onClick={() => setSelectedClassId(c.id)}>
+                            <span>{c.class_name}</span>
+                            <button className="icon-btn delete" onClick={(e) => { e.stopPropagation(); handleDeleteClass(c.id); }}><FaTrash size={14}/></button>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            {/* RIGHT: SECTIONS */}
+            <div className="module-card" style={{ opacity: selectedClassId ? 1 : 0.5, pointerEvents: selectedClassId ? 'auto' : 'none' }}>
+                <h3><MdOutlineViewModule size={22} color="#4f46e5"/> Manage Sections</h3>
+                {selectedClassId ? (
+                    <>
+                        <p style={{marginTop: '-15px', marginBottom: '20px', color: '#64748b', fontSize: '13px'}}>
+                            Adding sections for: <strong>{classes.find(c => c.id === selectedClassId)?.class_name}</strong>
+                        </p>
+                        <form className="add-form" onSubmit={handleAddSection}>
+                            <input placeholder="e.g. A, B, Section C" value={newSectionName} onChange={e => setNewSectionName(e.target.value)} />
+                            <button type="submit" className="btn-primary"><FaPlus/></button>
+                        </form>
+
+                        <div className="list-container">
+                            {activeSections.length === 0 && <div className="empty-hint">No sections assigned to this class.</div>}
+                            {activeSections.map(s => (
+                                <div key={s.id} className="list-item">
+                                    <span>Section {s.section_name}</span>
+                                    <button className="icon-btn delete" onClick={() => handleDeleteSection(s.id)}><FaTrash size={14}/></button>
+                                </div>
+                            ))}
+                        </div>
+                    </>
+                ) : (
+                    <div className="empty-hint" style={{marginTop: '20px'}}>Select a class from the left to manage its sections.</div>
+                )}
+            </div>
+        </div>
+    );
+};
+
+// ==========================================
+// 3. ROLE CREATION COMPONENT
 // ==========================================
 const RoleCreation = ({ roles, loadData }) => {
     const [roleInput, setRoleInput] = useState('');
@@ -62,14 +300,13 @@ const RoleCreation = ({ roles, loadData }) => {
 };
 
 // ==========================================
-// 2. ROLE PERMISSIONS COMPONENT
+// 4. ROLE PERMISSIONS COMPONENT
 // ==========================================
 const RolePermissions = ({ roles }) => {
-    // These EXACTLY match the dbModuleName in Dashboard.jsx
     const availableModules = [
-        'Admissions', 'Alumni', 'Finance', 'Timetable', 'Attendance', 
-        'Syllabus', 'Homework', 'Examinations', 'Marks Entry', 
-        'Group Chat', 'Transport', 'Users', 'Settings'
+        'Admissions', 'Alumni', 'Fees Management', 'Timetable', 'Attendance', 
+        'Syllabus', 'Lesson Plan', 'Exams & Schedules', 'Marks Entry', 
+        'Group Chat', 'Transport', 'Manage Login'
     ];
     
     const [selectedRoleId, setSelectedRoleId] = useState('');
@@ -83,6 +320,9 @@ const RolePermissions = ({ roles }) => {
 
     useEffect(() => {
         if (selectedRoleId) {
+            const currentRole = roles.find(r => r.id.toString() === selectedRoleId);
+            const isSuperAdmin = currentRole?.role_name === 'Super Admin' || currentRole?.role_name === 'SUPER ADMIN';
+
             apiClient.get(`/roles/${selectedRoleId}/permissions`).then(res => {
                 const fetchedPerms = res.data;
                 const initialPerms = availableModules.map(mod => {
@@ -97,13 +337,16 @@ const RolePermissions = ({ roles }) => {
                             is_hidden: isHidden 
                         };
                     } else {
+                        if (isSuperAdmin) {
+                            return { module_name: mod, can_read: true, can_edit: true, can_delete: true, is_hidden: false };
+                        }
                         return { module_name: mod, can_read: false, can_edit: false, can_delete: false, is_hidden: true };
                     }
                 });
                 setPermissions(initialPerms);
             }).catch(err => console.error("Error fetching permissions", err));
         }
-    }, [selectedRoleId]);
+    }, [selectedRoleId, roles]);
 
     const handleToggle = (moduleName, field) => {
         setPermissions(prev => prev.map(p => {
@@ -198,7 +441,7 @@ const RolePermissions = ({ roles }) => {
 };
 
 // ==========================================
-// 3. USER LIST COMPONENT
+// 5. USER LIST COMPONENT
 // ==========================================
 const UserList = ({ roles, users, subTab, setSubTab, loadData }) => {
     const [isUserModalOpen, setIsUserModalOpen] = useState(false);
@@ -226,7 +469,7 @@ const UserList = ({ roles, users, subTab, setSubTab, loadData }) => {
         setEditingUserId(userObj.id);
         setNewUser({
             ...userObj,
-            password: userObj.password || '', // ensure it exists in form
+            password: userObj.password || '', 
             email: userObj.email || '',
             phone_no: userObj.phone_no || '',
             aadhar_no: userObj.aadhar_no || '',
@@ -394,7 +637,7 @@ const UserList = ({ roles, users, subTab, setSubTab, loadData }) => {
 };
 
 // ==========================================
-// 4. MAIN PARENT COMPONENT
+// 6. MAIN PARENT COMPONENT
 // ==========================================
 export default function AdminLM() {
     const [mainTab, setMainTab] = useState('users');
@@ -404,21 +647,24 @@ export default function AdminLM() {
     const [users, setUsers] = useState([]);
     const [years, setYears] = useState([]);
     const [classes, setClasses] = useState([]);
+    const [sections, setSections] = useState([]);
     const [loading, setLoading] = useState(false);
 
     const loadData = async () => {
         setLoading(true);
         try {
-            const [r, u, y, c] = await Promise.all([
+            const [r, u, y, c, s] = await Promise.all([
                 apiClient.get('/roles'),
                 apiClient.get('/users'),
                 apiClient.get('/academic-years'),
-                apiClient.get('/classes')
+                apiClient.get('/classes'),
+                apiClient.get('/sections') // New endpoint
             ]);
             setRoles(r.data);
             setUsers(u.data);
             setYears(y.data);
             setClasses(c.data);
+            setSections(s.data);
             if (r.data.length > 0 && !subTab) setSubTab(r.data[0].role_name);
         } catch (e) { console.error("Sync Error", e); }
         setLoading(false);
@@ -509,9 +755,9 @@ export default function AdminLM() {
                 {mainTab === 'users' && <UserList roles={roles} users={users} subTab={subTab} setSubTab={setSubTab} loadData={loadData} />}
                 {mainTab === 'roles' && <RoleCreation roles={roles} loadData={loadData} />}
                 {mainTab === 'permissions' && <RolePermissions roles={roles} />}
+                {mainTab === 'academic' && <AcademicYearSettings />}
+                {mainTab === 'classes' && <ClassSettings classes={classes} sections={sections} loadData={loadData} />}
                 
-                {mainTab === 'academic' && <div className="card">Academic Year logic integrated with backend.</div>}
-                {mainTab === 'classes' && <div className="card">Class/Section Management integrated.</div>}
                 {mainTab === 'promotion' && <div className="card">Batch Promotion module ready for next session.</div>}
             </div>
         </div>

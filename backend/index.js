@@ -75,7 +75,6 @@ app.post('/api/users', async (req, res) => {
     }
 });
 
-// NEW: Edit User Route
 app.put('/api/users/:id', async (req, res) => {
     const d = req.body;
     try {
@@ -102,7 +101,6 @@ app.put('/api/users/:id', async (req, res) => {
     }
 });
 
-// NEW: Delete User Route
 app.delete('/api/users/:id', async (req, res) => {
     try {
         await db.query('DELETE FROM users WHERE id = ?', [req.params.id]);
@@ -192,9 +190,70 @@ app.get('/api/academic-years', async (req, res) => {
     res.json(rows);
 });
 
+app.post('/api/academic-years', async (req, res) => {
+    try {
+        const { year_name, start_date, end_date } = req.body;
+        await db.query('INSERT INTO academic_years (year_name, start_date, end_date, is_current) VALUES (?, ?, ?, 0)', 
+            [year_name, start_date, end_date]);
+        res.json({ message: "Academic Year Created" });
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.put('/api/academic-years/set-current/:id', async (req, res) => {
+    const connection = await db.getConnection();
+    try {
+        await connection.beginTransaction();
+        await connection.query('UPDATE academic_years SET is_current = 0');
+        await connection.query('UPDATE academic_years SET is_current = 1 WHERE id = ?', [req.params.id]);
+        await connection.commit();
+        res.json({ message: "Current Year Updated" });
+    } catch (error) {
+        await connection.rollback();
+        res.status(500).json({ error: error.message });
+    } finally {
+        connection.release();
+    }
+});
+
+// --- CLASS & SECTION MANAGEMENT ---
 app.get('/api/classes', async (req, res) => {
-    const [rows] = await db.query('SELECT * FROM classes ORDER BY class_name ASC');
+    const [rows] = await db.query('SELECT * FROM classes ORDER BY id ASC');
     res.json(rows);
+});
+
+app.post('/api/classes', async (req, res) => {
+    try {
+        await db.query('INSERT INTO classes (class_name) VALUES (?)', [req.body.class_name]);
+        res.json({ message: "Class Created" });
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.delete('/api/classes/:id', async (req, res) => {
+    try {
+        // Delete related sections first to avoid foreign key conflicts if ON DELETE CASCADE isn't set
+        await db.query('DELETE FROM sections WHERE class_id = ?', [req.params.id]);
+        await db.query('DELETE FROM classes WHERE id = ?', [req.params.id]);
+        res.json({ message: "Class and its sections deleted" });
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/api/sections', async (req, res) => {
+    const [rows] = await db.query('SELECT * FROM sections ORDER BY section_name ASC');
+    res.json(rows);
+});
+
+app.post('/api/sections', async (req, res) => {
+    try {
+        await db.query('INSERT INTO sections (class_id, section_name) VALUES (?, ?)', [req.body.class_id, req.body.section_name]);
+        res.json({ message: "Section Created" });
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.delete('/api/sections/:id', async (req, res) => {
+    try {
+        await db.query('DELETE FROM sections WHERE id = ?', [req.params.id]);
+        res.json({ message: "Section Deleted" });
+    } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.post('/api/promotion/execute', async (req, res) => {

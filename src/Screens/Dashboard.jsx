@@ -4,31 +4,24 @@ import { useAuth } from "../context/AuthContext.jsx";
 import apiClient from "../api/client";
 import { MdSearch, MdMenu, MdNotifications, MdLogout, MdMail, MdPhone } from "react-icons/md";
 
-// Assets
 import vspngoLogo from "../assets/vpsnewlogo.png";
 
-// --- LAZY LOAD MODULES ---
 const AdminLM = lazy(() => import("./AdminLM"));
-const AcademicYearSettings = lazy(() => import("./AcademicYearSettings"));
 
-// --- DYNAMIC DBOBJECT MODULE MAP ---
-// Note: I have removed the hardcoded "roles" array. The application now uses
-// the database exactly as configured in the 'Role Permissions' screen.
 const ALL_MODULES = [
   { id: "dashboard", title: "Overview", icon: "📊", alwaysShow: true },
   { id: "qa_acad_adm", title: "Admissions", icon: "🎒", dbModuleName: "Admissions" },
   { id: "qa_admin_alumni", title: "Alumni", icon: "🎓", dbModuleName: "Alumni" },
-  { id: "qa_acad_fees", title: "Fees Management", icon: "💸", dbModuleName: "Finance" },
+  { id: "qa_acad_fees", title: "Fees Management", icon: "💸", dbModuleName: "Fees Management" },
   { id: "qa_acad_tt", title: "Timetable", icon: "📅", dbModuleName: "Timetable" },
   { id: "qa_acad_sa", title: "Attendance", icon: "📝", dbModuleName: "Attendance" },
   { id: "qa_extra_SI", title: "Syllabus", icon: "📖", dbModuleName: "Syllabus" },
-  { id: "qa_acad_lp", title: "Lesson Plan", icon: "📋", dbModuleName: "Homework" },
-  { id: "qa_acad_exams1", title: "Exams & Schedules", icon: "✍️", dbModuleName: "Examinations" },
+  { id: "qa_acad_lp", title: "Lesson Plan", icon: "📋", dbModuleName: "Lesson Plan" },
+  { id: "qa_acad_exams1", title: "Exams & Schedules", icon: "✍️", dbModuleName: "Exams & Schedules" },
   { id: "qa_teacher_marks", title: "Marks Entry", icon: "📊", dbModuleName: "Marks Entry" },
   { id: "qa_admin_chat", title: "Group Chat", icon: "💬", dbModuleName: "Group Chat" },
   { id: "qa_transport", title: "Transport", icon: "🚌", dbModuleName: "Transport" },
-  { id: "qa_admin_login", title: "Manage Login", icon: "🔐", dbModuleName: "Users" },
-  { id: "academic_year", title: "Academic Year", icon: "⚙️", dbModuleName: "Settings" },
+  { id: "qa_admin_login", title: "Manage Login", icon: "🔐", dbModuleName: "Manage Login" }
 ];
 
 export default function Dashboard() {
@@ -40,11 +33,9 @@ export default function Dashboard() {
   const [searchQuery, setSearchQuery] = useState("");
   const [unreadCount, setUnreadCount] = useState(0);
 
-  // --- PERMISSIONS STATE ---
   const [rolePermissions, setRolePermissions] = useState([]);
   const [permissionsLoaded, setPermissionsLoaded] = useState(false);
 
-  // --- FETCH DYNAMIC ROLE PERMISSIONS FROM DATABASE ---
   useEffect(() => {
     const fetchPermissions = async () => {
       if (!user?.role) return;
@@ -65,29 +56,30 @@ export default function Dashboard() {
     fetchPermissions();
   }, [user]);
 
-  // --- STRICT PERMISSION BASED MENU FILTERING ---
   const sidebarMenu = useMemo(() => {
     if (!permissionsLoaded) return [];
 
     return ALL_MODULES.filter(m => {
-      // Always show the overview dashboard to everyone
       if (m.alwaysShow) return true;
 
-      // Check database to see if module is permitted
       const perm = rolePermissions.find(p => p.module_name === m.dbModuleName);
+      
       if (perm) {
-        // If they have ANY permission (read, edit, or delete), it is NOT hidden.
-        // It completely disappears if all are false/0.
+        // If a DB record exists, STRICTLY follow it for EVERYONE (including Super Admin).
+        // If it was marked "Hide completely", these will be false/0, so it hides.
         return perm.can_read === 1 || perm.can_edit === 1 || perm.can_delete === 1 || 
                perm.can_read === true || perm.can_edit === true || perm.can_delete === true;
       }
       
-      // If there is no DB record for this module yet, it remains hidden for safety.
+      // FALLBACK: If no DB record exists yet, Super Admin defaults to seeing it, others default to hidden.
+      if (user?.role === "Super Admin" || user?.role === "SUPER ADMIN") {
+          return true;
+      }
+
       return false;
     }).filter(m => m.title.toLowerCase().includes(searchQuery.toLowerCase()));
-  }, [searchQuery, rolePermissions, permissionsLoaded]);
+  }, [searchQuery, rolePermissions, permissionsLoaded, user]);
 
-  // --- FETCH NOTIFICATIONS (Real-time logic) ---
   useEffect(() => {
     const fetchUnread = async () => {
       try {
@@ -110,7 +102,6 @@ export default function Dashboard() {
   const renderActiveModule = () => {
     switch (activeModuleId) {
       case "qa_admin_login": return <AdminLM />;
-      case "academic_year": return <AcademicYearSettings />;
       default: return (
         <div className="empty-state">
           <div className="icon">🛠️</div>
