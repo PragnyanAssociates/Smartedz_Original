@@ -1,5 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
+
+// Assets
 import vspngoLogo from "../assets/vpsnewlogo.png";
 import schoolImage from "../assets/schoolcover.jpg";
 
@@ -7,189 +9,88 @@ export default function WelcomePage() {
   const navigate = useNavigate();
 
   return (
-    <div className="welcome-wrapper">
-      {/* ALL STYLES IN ONE PLACE */}
+    <div className="flex min-h-screen flex-col xl:flex-row bg-white overflow-x-hidden">
+      {/* Animation Styles */}
       <style>{`
-        .welcome-wrapper {
-          display: flex;
-          flex-direction: column;
-          min-height: 100vh;
-          background: white;
-          font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-          overflow-x: hidden;
-          margin: 0;
-        }
-
-        @media (min-width: 1280px) {
-          .welcome-wrapper { flex-direction: row; }
-        }
-
-        /* LEFT SIDE CONTENT */
-        .content-panel {
-          flex: 1;
-          display: flex;
-          flex-direction: column;
-          justify-content: center;
-          padding: 40px 24px;
-          background-color: #ffffff;
-          z-index: 10;
-        }
-
-        @media (min-width: 1280px) {
-          .content-panel { 
-            flex: 0 0 45%; 
-            padding: 0 80px;
-          }
-        }
-
-        .logo-container {
-          margin-bottom: 40px;
-          animation: fadeInUp 0.8s ease-out forwards;
-        }
-
-        .logo-img {
-          height: 90px;
-          width: auto;
-          object-fit: contain;
-        }
-
-        .main-heading {
-          font-size: 42px;
-          font-weight: 800;
-          color: #1a1a1a;
-          line-height: 1.1;
-          margin: 0 0 20px 0;
-          opacity: 0;
-          animation: fadeInUp 0.8s ease-out 0.2s forwards;
-        }
-
-        @media (min-width: 640px) {
-          .main-heading { font-size: 56px; }
-        }
-
-        .description {
-          font-size: 18px;
-          color: #666;
-          line-height: 1.6;
-          max-width: 450px;
-          margin-bottom: 40px;
-          opacity: 0;
-          animation: fadeInUp 0.8s ease-out 0.4s forwards;
-        }
-
-        /* INDIGO BUTTON */
-        .cta-button {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          background-color: #4f46e5;
-          color: white;
-          padding: 16px 36px;
-          font-size: 18px;
-          font-weight: 700;
-          border-radius: 50px;
-          border: none;
-          cursor: pointer;
-          box-shadow: 0 10px 25px rgba(79, 70, 229, 0.3);
-          transition: all 0.3s ease;
-          opacity: 0;
-          animation: fadeInUp 0.8s ease-out 0.6s forwards;
-          text-decoration: none;
-        }
-
-        .cta-button:hover {
-          background-color: #4338ca;
-          transform: translateY(-3px);
-          box-shadow: 0 15px 30px rgba(79, 70, 229, 0.4);
-        }
-
-        .button-icon {
-          margin-left: 12px;
-          width: 20px;
-          height: 20px;
-          transition: transform 0.3s ease;
-        }
-
-        .cta-button:hover .button-icon {
-          transform: translateX(5px);
-        }
-
-        /* RIGHT SIDE IMAGE */
-        .image-panel {
-          display: none;
-          flex: 1;
-          position: relative;
-          background: #f0f2f5;
-        }
-
-        @media (min-width: 1280px) {
-          .image-panel { display: block; }
-        }
-
-        .bg-image {
-          position: absolute;
-          inset: 0;
-          width: 100%;
-          height: 100%;
-          object-fit: cover;
-        }
-
-        /* MOBILE IMAGE */
-        .mobile-hero-img {
-          width: 100%;
-          height: 300px;
-          object-fit: cover;
-        }
-
-        @media (min-width: 1280px) {
-          .mobile-hero-img { display: none; }
-        }
-
-        /* ANIMATIONS */
         @keyframes fadeInUp {
-          from {
-            opacity: 0;
-            transform: translateY(30px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
+          from { opacity: 0; transform: translateY(20px); }
+          to { opacity: 1; transform: translateY(0); }
         }
+        .animate-fade-in-up { animation: fadeInUp 0.8s ease-out forwards; }
+        .animate-fade-in-up-delay-1 { animation: fadeInUp 0.8s ease-out 0.2s forwards; }
+        .animate-fade-in-up-delay-2 { animation: fadeInUp 0.8s ease-out 0.4s forwards; }
+        .animate-fade-in-up-delay-3 { animation: fadeInUp 0.8s ease-out 0.6s forwards; }
+        .animate-fade-in-up-delay-4 { animation: fadeInUp 0.8s ease-out 0.8s forwards; }
       `}</style>
 
-      {/* LEFT SIDE: Text and Logo */}
-      <div className="content-panel">
-        <div className="logo-container">
-          <img src={vspngoLogo} alt="School Logo" className="logo-img" />
+      {/* LEFT SIDE: Content Panel */}
+      <div className="flex w-full flex-col justify-between bg-gray-50 px-6 py-4 sm:px-12 xl:w-1/2 xl:px-12 z-10 shadow-xl xl:shadow-none min-h-[50vh] xl:min-h-screen">
+        
+        {/* Top Spacer / Main Content Container */}
+        <div className="flex-1 flex flex-col justify-center max-w-lg w-full">
+          
+          {/* School Logo */}
+          <div className="mb-0 sm:mb-2 animate-fade-in-up opacity-0">
+            <img
+              src={vspngoLogo || "/placeholder.svg"}
+              alt="Vivekananda Public School Logo"
+              className="h-20 w-auto xs:h-24 sm:h-28 md:h-36 lg:h-40 object-contain"
+            />
+          </div>
+
+          {/* Text Content */}
+          <div className="space-y-4 sm:space-y-6">
+            <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight text-gray-900 animate-fade-in-up-delay-1 opacity-0 leading-tight">
+              Welcome to the Future of School Management
+            </h1>
+
+            <p className="text-base sm:text-lg text-gray-600 animate-fade-in-up-delay-2 opacity-0 leading-relaxed max-w-md">
+              The unified platform to manage your institution's resources, students, and operations seamlessly.
+            </p>
+
+            {/* CTA Button */}
+            <div className="pt-2 sm:pt-4 animate-fade-in-up-delay-3 opacity-0">
+              <button
+                type="button"
+                onClick={() => navigate('/login')}
+                aria-label="Proceed to the application"
+                className="group relative inline-flex items-center justify-center rounded-full bg-indigo-600 px-8 py-3.5 text-base sm:text-lg font-semibold text-white shadow-lg transition-all duration-300 hover:bg-indigo-700 hover:shadow-indigo-500/30 hover:-translate-y-1 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+              >
+                <span>Get Started</span>
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                  className="ml-2 h-5 w-5 transition-transform duration-300 group-hover:translate-x-1"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M3 10a.75.75 0 01.75-.75h10.638L10.23 5.29a.75.75 0 111.04-1.08l5.5 5.25a.75.75 0 010 1.08l-5.5 5.25a.75.75 0 11-1.04-1.08l4.158-3.96H3.75A.75.75 0 013 10z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+              </button>
+            </div>
+          </div>
         </div>
 
-        <div className="text-content">
-          <h1 className="main-heading">
-            Welcome to the Future <br />
-            <span style={{color: '#333'}}>of School Management</span>
-          </h1>
-
-          <p className="description">
-            The unified platform to manage your institution's resources, students, and operations seamlessly.
-          </p>
-
-          <button className="cta-button" onClick={() => navigate('/login')}>
-            Get Started
-            <svg className="button-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" />
-            </svg>
-          </button>
+        {/* Footer: Powered By */}
+        <div className="mt-2 sm:mt-4 animate-fade-in-up-delay-4 opacity-0 w-full max-w-lg">
         </div>
       </div>
 
-      {/* RIGHT SIDE: Desktop Image */}
-      <div className="image-panel">
-        <img src={schoolImage} alt="School Classroom" className="bg-image" />
+      {/* RIGHT SIDE: Image Panel */}
+      <div className="relative w-full flex-1 xl:flex-none min-h-[16rem] sm:min-h-[20rem] xl:h-auto xl:w-1/2 xl:w-7/12 bg-indigo-50">
+        <img
+          src={schoolImage || "/placeholder.svg"}
+          alt="Students in a classroom"
+          className="absolute inset-0 h-full w-full object-cover object-center"
+          loading="eager"
+        />
+        {/* Gradient Overlay */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/10 to-transparent xl:bg-gradient-to-r xl:from-black/5 xl:to-transparent"></div>
       </div>
 
-      {/* MOBILE HERO IMAGE */}
-      <img src={schoolImage} alt="School" className="mobile-hero-img" />
     </div>
   );
 }

@@ -6,6 +6,7 @@ import pragnyanLogo from '../assets/vpsnewlogo.png';
 import storage from '../utils/storage';
 
 export default function LoginScreen() {
+  // STRICTLY PRESERVED NEW LOGIC STATES
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -15,6 +16,7 @@ export default function LoginScreen() {
   const { login } = useAuth();
   const navigate = useNavigate();
 
+  // STRICTLY PRESERVED NEW API LOGIC
   const handleLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -35,258 +37,258 @@ export default function LoginScreen() {
     }
   };
 
+  // STRICTLY PRESERVED OLD UI & TAILWIND DESIGN
   return (
-    <div className="login-page">
-      <style>{`
-        .login-page {
-          min-height: 100vh;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          background: #eef2f7;
-          font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-          padding: 20px;
-        }
+    <div className="min-h-screen flex items-center justify-center p-4 bg-slate-50 relative overflow-hidden">
+      {/* Decorative background blobs */}
+      <div className="pointer-events-none absolute -top-40 -left-40 opacity-50">
+        <div className="w-96 h-96 bg-blue-200/50 rounded-full blur-3xl" />
+      </div>
+      <div className="pointer-events-none absolute -bottom-40 -right-40 opacity-50">
+        <div className="w-96 h-96 bg-indigo-200/50 rounded-full blur-3xl" />
+      </div>
 
-        .login-card {
-          display: flex;
-          width: 100%;
-          max-width: 1000px;
-          min-height: 550px;
-          background: white;
-          border-radius: 20px;
-          overflow: hidden;
-          box-shadow: 0 20px 40px rgba(0,0,0,0.05);
-        }
-
-        /* LEFT SIDE: Branding */
-        .branding-side {
-          flex: 1;
-          background-color: #f1f4f9;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          padding: 40px;
-          text-align: center;
-        }
-
-        .branding-side img {
-          width: 180px;
-          margin-bottom: 25px;
-        }
-
-        .tagline {
-          color: #64748b;
-          font-size: 16px;
-          margin-top: 20px;
-        }
-
-        /* RIGHT SIDE: Form */
-        .form-side {
-          flex: 1;
-          padding: 60px;
-          display: flex;
-          flex-direction: column;
-          justify-content: center;
-        }
-
-        .form-header {
-          text-align: center;
-          margin-bottom: 40px;
-        }
-
-        .form-header h2 {
-          font-size: 32px;
-          font-weight: 700;
-          color: #1e293b;
-          margin: 0;
-        }
-
-        .form-header p {
-          color: #94a3b8;
-          font-size: 15px;
-          margin: 10px 0 0 0;
-        }
-
-        .input-group {
-          margin-bottom: 25px;
-        }
-
-        .input-group label {
-          display: block;
-          font-size: 15px;
-          font-weight: 600;
-          color: #475569;
-          margin-bottom: 10px;
-        }
-
-        .input-container {
-          position: relative;
-          display: flex;
-          align-items: center;
-        }
-
-        .input-container svg {
-          position: absolute;
-          left: 15px;
-          color: #94a3b8;
-          width: 20px;
-          height: 20px;
-        }
-
-        .login-input {
-          width: 100%;
-          padding: 14px 15px 14px 45px;
-          background: #ebf2ff;
-          border: 1px solid #dbeafe;
-          border-radius: 12px;
-          font-size: 16px;
-          color: #1e293b;
-          outline: none;
-          transition: 0.3s;
-        }
-
-        .login-input:focus {
-          background: #fff;
-          border-color: #4f46e5;
-          box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.1);
-        }
-
-        .eye-toggle {
-          position: absolute;
-          right: 15px;
-          background: none;
-          border: none;
-          color: #94a3b8;
-          cursor: pointer;
-          display: flex;
-          align-items: center;
-        }
-
-        .login-button {
-          width: 100%;
-          background: #4f46e5;
-          color: white;
-          padding: 16px;
-          border: none;
-          border-radius: 12px;
-          font-size: 18px;
-          font-weight: 700;
-          cursor: pointer;
-          transition: 0.3s;
-          margin-top: 15px;
-        }
-
-        .login-button:hover {
-          background: #4338ca;
-          transform: translateY(-2px);
-          box-shadow: 0 10px 20px rgba(79, 70, 229, 0.2);
-        }
-
-        .error-message {
-          color: #e11d48;
-          background: #fff1f2;
-          padding: 12px;
-          border-radius: 10px;
-          font-size: 14px;
-          margin-bottom: 20px;
-          text-align: center;
-          font-weight: 500;
-        }
-
-        .back-link {
-          text-align: center;
-          margin-top: 30px;
-        }
-
-        .back-link button {
-          background: none;
-          border: none;
-          color: #475569;
-          font-weight: 600;
-          cursor: pointer;
-          font-size: 14px;
-        }
-
-        @media (max-width: 850px) {
-          .branding-side { display: none; }
-          .login-card { max-width: 450px; }
-        }
-      `}</style>
-
-      <div className="login-card">
-        {/* LEFT Branding Section */}
-        <div className="branding-side">
-          <img src={pragnyanLogo} alt="School Logo" />
-          <p className="tagline">Secure, Simple, and Efficient.</p>
-        </div>
-
-        {/* RIGHT Form Section */}
-        <div className="form-side">
-          <div className="form-header">
-            <h2>School Login</h2>
-            <p>Welcome back! Please enter your details.</p>
+      <div className="w-full max-w-4xl z-10 animate-slide-up">
+        <div className="grid md:grid-cols-2 bg-white rounded-2xl shadow-2xl shadow-slate-300/60 overflow-hidden border border-slate-200/50">
+          {/* Left Column: Branding & Illustration */}
+          <div className="hidden md:flex flex-col justify-center items-center p-8 md:p-12 bg-gradient-to-br from-slate-100 to-gray-200/70 border-r border-slate-200/50">
+            <img
+              src={pragnyanLogo}
+              alt="School Logo"
+              className="w-48 h-48 object-contain mb-6"
+              onError={(e) => (e.target.style.display = 'none')}
+            />
+            <p className="text-slate-600 mt-2 text-center">Secure, Simple, and Efficient.</p>
           </div>
 
-          {error && <div className="error-message">{error}</div>}
-
-          <form onSubmit={handleLogin}>
-            <div className="input-group">
-              <label>Username</label>
-              <div className="input-container">
-                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
-                </svg>
-                <input 
-                  type="text" 
-                  className="login-input" 
-                  placeholder="Enter username" 
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  required 
-                />
-              </div>
+          {/* Right Column: Form */}
+          <div className="p-8 md:p-12">
+            <div className="flex md:hidden items-center justify-center mb-6">
+              <img
+                src={pragnyanLogo}
+                alt="Logo"
+                className="w-32 h-32 object-contain"
+                onError={(e) => (e.target.style.display = 'none')}
+              />
             </div>
+            <h2 className="text-2xl md:text-3xl font-bold text-slate-800 text-center mb-1">
+              School Login
+            </h2>
+            <p className="text-center text-slate-500 mb-8">
+              Welcome back! Please enter your details.
+            </p>
 
-            <div className="input-group">
-              <label>Password</label>
-              <div className="input-container">
-                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
-                </svg>
-                <input 
-                  type={showPassword ? "text" : "password"} 
-                  className="login-input" 
-                  placeholder="••••••" 
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required 
-                />
-                <button 
-                  type="button" 
-                  className="eye-toggle" 
-                  onClick={() => setShowPassword(!showPassword)}
+            {/* Error Message Display */}
+            {error && (
+              <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-500 rounded-lg flex items-start gap-3">
+                <svg
+                  className="w-5 h-5 text-red-500 mt-0.5 flex-shrink-0"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
                 >
-                  {showPassword ? (
-                    <svg style={{left:'auto', right:'0'}} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.542-7a9.961 9.961 0 012.617-4.326m3.48-2.26A9.956 9.956 0 0112 5c4.478 0 8.268 2.943 9.542 7a9.96 9.96 0 01-4.166 5.13M3 3l18 18"></path></svg>
-                  ) : (
-                    <svg style={{left:'auto', right:'0'}} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
-                  )}
+                  <path
+                    fillRule="evenodd"
+                    d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+                <p className="text-red-700 text-sm font-medium">{error}</p>
+              </div>
+            )}
+
+            <form onSubmit={handleLogin} className="space-y-6">
+              {/* Username Input */}
+              <div>
+                <label
+                  htmlFor="username"
+                  className="block mb-2 text-slate-700 font-semibold tracking-wide"
+                >
+                  Username
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <svg
+                      className="h-5 w-5 text-slate-400"
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+                      />
+                    </svg>
+                  </div>
+                  <input
+                    id="username"
+                    type="text"
+                    className="w-full pl-10 pr-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    placeholder="Enter your username"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    autoComplete="username"
+                    disabled={loading}
+                    aria-label="Username"
+                    aria-invalid={!!error}
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* Password Input */}
+              <div>
+                <label
+                  htmlFor="password"
+                  className="block mb-2 text-slate-700 font-semibold tracking-wide"
+                >
+                  Password
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <svg
+                      className="h-5 w-5 text-slate-400"
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+                      />
+                    </svg>
+                  </div>
+
+                  <input
+                    id="password"
+                    type={showPassword ? 'text' : 'password'}
+                    className="w-full pl-10 pr-12 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    placeholder="Enter password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    autoComplete="current-password"
+                    disabled={loading}
+                    aria-label="Password"
+                    aria-invalid={!!error}
+                    required
+                  />
+
+                  {/* Eye Icon Button */}
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-indigo-600 transition disabled:opacity-50"
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    disabled={loading}
+                  >
+                    {showPassword ? (
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        className="h-5 w-5"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+                        />
+                      </svg>
+                    ) : (
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        className="h-5 w-5"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.542-7a9.961 9.961 0 012.617-4.326m3.48-2.26A9.956 9.956 0 0112 5c4.478 0 8.268 2.943 9.542 7a9.96 9.96 0 01-4.166 5.13M3 3l18 18"
+                        />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Login Button */}
+              <button
+                type="submit"
+                disabled={loading}
+                className={`w-full bg-indigo-600 text-white font-bold py-3 px-6 rounded-xl transition-all duration-300 ease-out transform hover:bg-indigo-700 hover:-translate-y-0.5 focus:outline-none focus:ring-4 focus:ring-indigo-500/50 active:scale-[0.98] text-lg tracking-wide ${
+                  loading ? 'opacity-70 cursor-not-allowed' : ''
+                }`}
+              >
+                {loading ? (
+                  <div className="flex items-center justify-center space-x-2">
+                    <svg
+                      className="animate-spin h-5 w-5 text-white"
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                    >
+                      <circle
+                        className="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                      ></circle>
+                      <path
+                        className="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V4a8 8 0 00-8 8h4z"
+                      ></path>
+                    </svg>
+                    <span>Authenticating...</span>
+                  </div>
+                ) : (
+                  'Login'
+                )}
+              </button>
+
+              <div className="text-center">
+                <button
+                  type="button"
+                  onClick={() => navigate('/')}
+                  className="font-semibold text-slate-600 hover:text-slate-700 hover:underline"
+                >
+                  Back to Welcome Page
                 </button>
               </div>
-            </div>
-
-            <button type="submit" className="login-button" disabled={loading}>
-              {loading ? "Authenticating..." : "Login"}
-            </button>
-          </form>
-
-          <div className="back-link">
-            <button onClick={() => navigate('/')}>Back to Welcome Page</button>
+            </form>
           </div>
         </div>
       </div>
+
+      {/* Custom CSS for slide-up animation */}
+      <style>{`
+        @keyframes slide-up {
+          0% {
+            opacity: 0;
+            transform: translateY(30px) scale(0.98);
+          }
+          100% {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+          }
+        }
+        .animate-slide-up {
+          animation: slide-up 0.7s ease-out both;
+        }
+      `}</style>
     </div>
   );
 }
