@@ -50,7 +50,6 @@ app.get('/api/users', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// UPDATED: Now handles all the new fields from the React Add User Modal
 app.post('/api/users', async (req, res) => {
     const d = req.body;
     try {
@@ -63,28 +62,52 @@ app.post('/api/users', async (req, res) => {
         `;
         
         const values = [
-            d.username, 
-            d.password, 
-            d.full_name, 
-            d.email || null, 
-            d.role_id, 
-            d.status || 'active',
-            d.roll_no || null, 
-            d.admission_no || null, 
-            d.parent_name || null, 
-            d.phone_no || null, 
-            d.aadhar_no || null,
-            d.pen_no || null, 
-            d.admission_date || null, 
-            d.joining_date || null, 
-            d.experience || null, 
-            d.class_group || null
+            d.username, d.password, d.full_name, d.email || null, d.role_id, d.status || 'active',
+            d.roll_no || null, d.admission_no || null, d.parent_name || null, d.phone_no || null, d.aadhar_no || null,
+            d.pen_no || null, d.admission_date || null, d.joining_date || null, d.experience || null, d.class_group || null
         ];
 
         await db.query(query, values);
         res.json({ message: "User Created Successfully" });
     } catch (error) { 
         console.error("Error creating user:", error);
+        res.status(500).json({ error: error.message }); 
+    }
+});
+
+// NEW: Edit User Route
+app.put('/api/users/:id', async (req, res) => {
+    const d = req.body;
+    try {
+        const query = `
+            UPDATE users SET 
+                username=?, password=?, full_name=?, email=?, role_id=?, status=?, 
+                roll_no=?, admission_no=?, parent_name=?, phone_no=?, aadhar_no=?, 
+                pen_no=?, admission_date=?, joining_date=?, experience=?, class_group=?
+            WHERE id=?
+        `;
+        
+        const values = [
+            d.username, d.password, d.full_name, d.email || null, d.role_id, d.status || 'active',
+            d.roll_no || null, d.admission_no || null, d.parent_name || null, d.phone_no || null, d.aadhar_no || null,
+            d.pen_no || null, d.admission_date || null, d.joining_date || null, d.experience || null, d.class_group || null,
+            req.params.id
+        ];
+
+        await db.query(query, values);
+        res.json({ message: "User Updated Successfully" });
+    } catch (error) { 
+        console.error("Error updating user:", error);
+        res.status(500).json({ error: error.message }); 
+    }
+});
+
+// NEW: Delete User Route
+app.delete('/api/users/:id', async (req, res) => {
+    try {
+        await db.query('DELETE FROM users WHERE id = ?', [req.params.id]);
+        res.json({ message: "User Deleted Successfully" });
+    } catch (error) { 
         res.status(500).json({ error: error.message }); 
     }
 });
@@ -185,6 +208,5 @@ app.post('/api/promotion/execute', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// To this:
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`✅ ERP Backend running on port ${PORT}`));
