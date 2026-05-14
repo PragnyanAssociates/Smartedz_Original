@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import apiClient from '../api/client';
 import { FaUsers, FaCogs, FaCalendarAlt, FaLayerGroup, FaArrowUp, FaTrash, FaEdit, FaCheck, FaPlus, FaShieldAlt, FaTimes } from 'react-icons/fa';
-import { MdAddCircle, MdClass, MdOutlineViewModule } from 'react-icons/md';
+import { MdAddCircle, MdClass, MdOutlineViewModule, MdArrowForward } from 'react-icons/md';
 
 // ==========================================
-// 1. ACADEMIC YEAR COMPONENT (Integrated)
+// 1. ACADEMIC YEAR COMPONENT
 // ==========================================
 const AcademicYearSettings = () => {
     const [years, setYears] = useState([]);
@@ -23,7 +23,6 @@ const AcademicYearSettings = () => {
 
     useEffect(() => { fetchYears(); }, []);
 
-    // Safely format date to YYYY-MM-DD for HTML input
     const formatDate = (dateString) => {
         const d = new Date(dateString);
         const year = d.getFullYear();
@@ -34,11 +33,7 @@ const AcademicYearSettings = () => {
 
     const handleEditYear = (y) => {
         setEditingYearId(y.id);
-        setNewYear({
-            name: y.year_name,
-            start: formatDate(y.start_date),
-            end: formatDate(y.end_date)
-        });
+        setNewYear({ name: y.year_name, start: formatDate(y.start_date), end: formatDate(y.end_date) });
         window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
@@ -59,19 +54,11 @@ const AcademicYearSettings = () => {
         e.preventDefault();
         try {
             if (editingYearId) {
-                await apiClient.put(`/academic-years/${editingYearId}`, { 
-                    year_name: newYear.name, 
-                    start_date: newYear.start, 
-                    end_date: newYear.end 
-                });
+                await apiClient.put(`/academic-years/${editingYearId}`, { year_name: newYear.name, start_date: newYear.start, end_date: newYear.end });
                 alert("Academic Year Updated Successfully!");
                 setEditingYearId(null);
             } else {
-                await apiClient.post('/academic-years', { 
-                    year_name: newYear.name, 
-                    start_date: newYear.start, 
-                    end_date: newYear.end 
-                });
+                await apiClient.post('/academic-years', { year_name: newYear.name, start_date: newYear.start, end_date: newYear.end });
                 alert("New Academic Year Created Successfully!");
             }
             setNewYear({ name: '', start: '', end: '' });
@@ -97,8 +84,8 @@ const AcademicYearSettings = () => {
                 .form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 20px; }
                 .input-box { display: flex; flex-direction: column; gap: 5px; }
                 .input-box label { font-size: 12px; font-weight: 700; color: #64748b; }
-                .input-box input { padding: 12px; border: 1px solid #e2e8f0; border-radius: 10px; outline: none; background: #f8fafc; }
-                .input-box input:focus { border-color: #4f46e5; background: white; }
+                .input-box input, .input-box select { padding: 12px; border: 1px solid #e2e8f0; border-radius: 10px; outline: none; background: #f8fafc; }
+                .input-box input:focus, .input-box select:focus { border-color: #4f46e5; background: white; }
                 .add-ay-btn { background: #4f46e5; color: white; border: none; padding: 12px; border-radius: 10px; font-weight: 700; cursor: pointer; align-self: flex-end; height: 43px;}
                 .btn-cancel { background: #f1f5f9; color: #475569; border: none; padding: 12px; border-radius: 10px; font-weight: 700; cursor: pointer; align-self: flex-end; height: 43px; margin-right: 10px;}
                 
@@ -138,28 +125,19 @@ const AcademicYearSettings = () => {
             <div className="year-grid">
                 {years.map(y => (
                     <div key={y.id} className={`year-card ${y.is_current ? 'active' : ''}`}>
-                        <span className="status-badge" style={{
-                            background: y.is_current ? '#4f46e5' : '#e2e8f0',
-                            color: y.is_current ? 'white' : '#64748b'
-                        }}>
+                        <span className="status-badge" style={{ background: y.is_current ? '#4f46e5' : '#e2e8f0', color: y.is_current ? 'white' : '#64748b' }}>
                             {y.is_current ? 'CURRENT SESSION' : 'ARCHIVED'}
                         </span>
                         <h4 style={{margin: '0 0 10px 0', fontSize: '20px'}}>{y.year_name}</h4>
                         <div style={{display:'flex', gap:'10px', color:'#64748b', fontSize:'13px'}}>
-                            <span>📅 {new Date(y.start_date).toLocaleDateString()}</span>
-                            <span>to</span>
-                            <span>{new Date(y.end_date).toLocaleDateString()}</span>
+                            <span>📅 {new Date(y.start_date).toLocaleDateString()}</span><span>to</span><span>{new Date(y.end_date).toLocaleDateString()}</span>
                         </div>
                         
                         {!y.is_current && (
-                            <button 
-                                onClick={() => setCurrentYear(y.id)}
-                                style={{marginTop: '20px', width: '100%', padding: '10px', background: 'white', border: '1px solid #4f46e5', color: '#4f46e5', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer'}}
-                            >
+                            <button onClick={() => setCurrentYear(y.id)} style={{marginTop: '20px', width: '100%', padding: '10px', background: 'white', border: '1px solid #4f46e5', color: '#4f46e5', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer'}}>
                                 Activate This Session
                             </button>
                         )}
-                        
                         <div className="card-actions">
                             <button className="icon-btn edit" onClick={() => handleEditYear(y)}><FaEdit size={16}/></button>
                             <button className="icon-btn delete" onClick={() => handleDeleteYear(y.id)}><FaTrash size={16}/></button>
@@ -172,7 +150,7 @@ const AcademicYearSettings = () => {
 };
 
 // ==========================================
-// 2. CLASS SETTINGS COMPONENT (New)
+// 2. CLASS SETTINGS COMPONENT
 // ==========================================
 const ClassSettings = ({ classes, sections, loadData }) => {
     const [newClassName, setNewClassName] = useState('');
@@ -205,10 +183,7 @@ const ClassSettings = ({ classes, sections, loadData }) => {
             try {
                 await apiClient.delete(`/classes/${id}`);
                 if (selectedClassId === id) setSelectedClassId(null);
-                if (editingClassId === id) {
-                    setEditingClassId(null);
-                    setNewClassName('');
-                }
+                if (editingClassId === id) { setEditingClassId(null); setNewClassName(''); }
                 loadData();
             } catch (error) { alert("Failed to delete class."); }
         }
@@ -241,25 +216,18 @@ const ClassSettings = ({ classes, sections, loadData }) => {
                 .class-settings-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; }
                 .module-card { background: white; border-radius: 16px; padding: 25px; border: 1px solid #e2e8f0; box-shadow: 0 4px 15px rgba(0,0,0,0.02); }
                 .module-card h3 { margin: 0 0 20px 0; color: #1e293b; display: flex; align-items: center; gap: 10px; }
-                
                 .add-form { display: flex; gap: 10px; margin-bottom: 25px; }
                 .add-form input { flex: 1; padding: 12px 15px; border: 1px solid #cbd5e1; border-radius: 8px; outline: none; background: #f8fafc; }
                 .add-form input:focus { border-color: #4f46e5; background: white; }
-                
                 .list-container { display: flex; flex-direction: column; gap: 10px; max-height: 400px; overflow-y: auto; padding-right: 5px; }
-                .list-item { 
-                    display: flex; justify-content: space-between; align-items: center; 
-                    padding: 15px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; cursor: pointer; transition: 0.2s;
-                }
+                .list-item { display: flex; justify-content: space-between; align-items: center; padding: 15px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; cursor: pointer; transition: 0.2s; }
                 .list-item:hover { border-color: #cbd5e1; }
                 .list-item.selected { background: #eef2ff; border-color: #4f46e5; }
                 .list-item span { font-weight: 700; color: #334155; }
                 .list-item.selected span { color: #4f46e5; }
-                
                 .empty-hint { text-align: center; color: #94a3b8; padding: 40px 20px; font-style: italic; }
             `}</style>
 
-            {/* LEFT: CLASSES */}
             <div className="module-card">
                 <h3><MdClass size={22} color="#4f46e5"/> Manage Classes</h3>
                 <form className="add-form" onSubmit={handleAddClass}>
@@ -282,7 +250,6 @@ const ClassSettings = ({ classes, sections, loadData }) => {
                 </div>
             </div>
 
-            {/* RIGHT: SECTIONS */}
             <div className="module-card" style={{ opacity: selectedClassId ? 1 : 0.5, pointerEvents: selectedClassId ? 'auto' : 'none' }}>
                 <h3><MdOutlineViewModule size={22} color="#4f46e5"/> Manage Sections</h3>
                 {selectedClassId ? (
@@ -314,9 +281,10 @@ const ClassSettings = ({ classes, sections, loadData }) => {
 };
 
 // ==========================================
-// 3. ROLE CREATION COMPONENT
+// 3. ROLE CREATION & PERMISSIONS
 // ==========================================
 const RoleCreation = ({ roles, loadData }) => {
+    // Keep exact logic as before...
     const [roleInput, setRoleInput] = useState('');
     const [editingRoleId, setEditingRoleId] = useState(null);
 
@@ -345,18 +313,10 @@ const RoleCreation = ({ roles, loadData }) => {
         <div className="card animate-fade">
             <h2 style={{margin:'0 0 20px 0', color: '#111827'}}>Role Management</h2>
             <div className="role-input-container">
-                <input 
-                    placeholder="Enter Role Name (e.g. Librarian)" 
-                    value={roleInput} 
-                    onChange={e => setRoleInput(e.target.value)} 
-                    className="role-text-input"
-                />
-                <button className="btn-primary" onClick={handleSaveRole}>
-                    {editingRoleId ? <><FaCheck/> Update Role</> : <><FaPlus/> Save Role</>}
-                </button>
+                <input placeholder="Enter Role Name (e.g. Librarian)" value={roleInput} onChange={e => setRoleInput(e.target.value)} className="role-text-input" />
+                <button className="btn-primary" onClick={handleSaveRole}>{editingRoleId ? <><FaCheck/> Update Role</> : <><FaPlus/> Save Role</>}</button>
                 {editingRoleId && <button className="btn-cancel" onClick={() => {setEditingRoleId(null); setRoleInput('');}}>Cancel</button>}
             </div>
-
             <div className="role-grid">
                 {roles.map(r => (
                     <div key={r.id} className="role-item-card">
@@ -372,24 +332,16 @@ const RoleCreation = ({ roles, loadData }) => {
     );
 };
 
-// ==========================================
-// 4. ROLE PERMISSIONS COMPONENT
-// ==========================================
 const RolePermissions = ({ roles }) => {
     const availableModules = [
         'Admissions', 'Alumni', 'Fees Management', 'Timetable', 'Attendance', 
         'Syllabus', 'Lesson Plan', 'Exams & Schedules', 'Marks Entry', 
         'Group Chat', 'Transport', 'Manage Login'
     ];
-    
     const [selectedRoleId, setSelectedRoleId] = useState('');
     const [permissions, setPermissions] = useState([]);
 
-    useEffect(() => {
-        if (roles.length > 0 && !selectedRoleId) {
-            setSelectedRoleId(roles[0].id.toString());
-        }
-    }, [roles, selectedRoleId]);
+    useEffect(() => { if (roles.length > 0 && !selectedRoleId) setSelectedRoleId(roles[0].id.toString()); }, [roles, selectedRoleId]);
 
     useEffect(() => {
         if (selectedRoleId) {
@@ -402,17 +354,9 @@ const RolePermissions = ({ roles }) => {
                     const found = fetchedPerms.find(f => f.module_name === mod);
                     if (found) {
                         const isHidden = (!found.can_read && !found.can_edit && !found.can_delete);
-                        return { 
-                            ...found, 
-                            can_read: !!found.can_read, 
-                            can_edit: !!found.can_edit, 
-                            can_delete: !!found.can_delete, 
-                            is_hidden: isHidden 
-                        };
+                        return { ...found, can_read: !!found.can_read, can_edit: !!found.can_edit, can_delete: !!found.can_delete, is_hidden: isHidden };
                     } else {
-                        if (isSuperAdmin) {
-                            return { module_name: mod, can_read: true, can_edit: true, can_delete: true, is_hidden: false };
-                        }
+                        if (isSuperAdmin) return { module_name: mod, can_read: true, can_edit: true, can_delete: true, is_hidden: false };
                         return { module_name: mod, can_read: false, can_edit: false, can_delete: false, is_hidden: true };
                     }
                 });
@@ -425,18 +369,9 @@ const RolePermissions = ({ roles }) => {
         setPermissions(prev => prev.map(p => {
             if (p.module_name === moduleName) {
                 let updated = { ...p, [field]: !p[field] };
-                
-                if (field === 'is_hidden' && updated.is_hidden) {
-                    updated.can_read = false;
-                    updated.can_edit = false;
-                    updated.can_delete = false;
-                } else if (field !== 'is_hidden' && updated[field]) {
-                    updated.is_hidden = false;
-                }
-                if (!updated.can_read && !updated.can_edit && !updated.can_delete) {
-                    updated.is_hidden = true;
-                }
-
+                if (field === 'is_hidden' && updated.is_hidden) { updated.can_read = false; updated.can_edit = false; updated.can_delete = false; } 
+                else if (field !== 'is_hidden' && updated[field]) { updated.is_hidden = false; }
+                if (!updated.can_read && !updated.can_edit && !updated.can_delete) { updated.is_hidden = true; }
                 return updated;
             }
             return p;
@@ -447,9 +382,7 @@ const RolePermissions = ({ roles }) => {
         try {
             await apiClient.post(`/roles/${selectedRoleId}/permissions`, { permissions });
             alert("Permissions updated successfully!");
-        } catch (error) {
-            alert("Failed to update permissions.");
-        }
+        } catch (error) { alert("Failed to update permissions."); }
     };
 
     if (roles.length === 0) return <div className="card">Please create a role first in the Role Creation tab.</div>;
@@ -457,66 +390,39 @@ const RolePermissions = ({ roles }) => {
     return (
         <div className="card animate-fade">
             <h2 style={{margin:'0 0 20px 0'}}>Assign Module Permissions</h2>
-            
             <div style={{ marginBottom: '25px', display: 'flex', alignItems: 'center', gap: '15px' }}>
                 <label style={{ fontWeight: '700', color: '#1e293b' }}>Select Role to Configure:</label>
-                <select 
-                    value={selectedRoleId} 
-                    onChange={(e) => setSelectedRoleId(e.target.value)}
-                    style={{ padding: '10px 15px', borderRadius: '8px', border: '1px solid #cbd5e1', minWidth: '250px', outline: 'none', background: '#f8fafc', fontWeight: '600' }}
-                >
-                    {roles.map(r => (
-                        <option key={r.id} value={r.id}>{r.role_name}</option>
-                    ))}
+                <select value={selectedRoleId} onChange={(e) => setSelectedRoleId(e.target.value)} style={{ padding: '10px 15px', borderRadius: '8px', border: '1px solid #cbd5e1', minWidth: '250px', outline: 'none', background: '#f8fafc', fontWeight: '600' }}>
+                    {roles.map(r => <option key={r.id} value={r.id}>{r.role_name}</option>)}
                 </select>
             </div>
-
             <div style={{ borderRadius: '12px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
                 <table className="data-table" style={{ margin: 0 }}>
-                    <thead>
-                        <tr>
-                            <th>Module Name</th>
-                            <th style={{ textAlign: 'center' }}>Hide completely</th>
-                            <th style={{ textAlign: 'center' }}>Read Only</th>
-                            <th style={{ textAlign: 'center' }}>Edit / Add</th>
-                            <th style={{ textAlign: 'center' }}>Delete</th>
-                        </tr>
-                    </thead>
+                    <thead><tr><th>Module Name</th><th style={{ textAlign: 'center' }}>Hide completely</th><th style={{ textAlign: 'center' }}>Read Only</th><th style={{ textAlign: 'center' }}>Edit / Add</th><th style={{ textAlign: 'center' }}>Delete</th></tr></thead>
                     <tbody>
                         {permissions.map((p, index) => (
                             <tr key={p.module_name} style={{ background: index % 2 === 0 ? 'white' : '#f8fafc' }}>
                                 <td style={{ fontWeight: 600, color: '#334155' }}>{p.module_name}</td>
-                                <td style={{ textAlign: 'center' }}>
-                                    <input type="checkbox" checked={p.is_hidden} onChange={() => handleToggle(p.module_name, 'is_hidden')} style={{ cursor: 'pointer', transform: 'scale(1.3)', accentColor: '#64748b' }} />
-                                </td>
-                                <td style={{ textAlign: 'center' }}>
-                                    <input type="checkbox" checked={p.can_read} onChange={() => handleToggle(p.module_name, 'can_read')} style={{ cursor: 'pointer', transform: 'scale(1.3)', accentColor: '#4f46e5' }} />
-                                </td>
-                                <td style={{ textAlign: 'center' }}>
-                                    <input type="checkbox" checked={p.can_edit} onChange={() => handleToggle(p.module_name, 'can_edit')} style={{ cursor: 'pointer', transform: 'scale(1.3)', accentColor: '#4f46e5' }} />
-                                </td>
-                                <td style={{ textAlign: 'center' }}>
-                                    <input type="checkbox" checked={p.can_delete} onChange={() => handleToggle(p.module_name, 'can_delete')} style={{ cursor: 'pointer', transform: 'scale(1.3)', accentColor: '#ef4444' }} />
-                                </td>
+                                <td style={{ textAlign: 'center' }}><input type="checkbox" checked={p.is_hidden} onChange={() => handleToggle(p.module_name, 'is_hidden')} style={{ cursor: 'pointer', transform: 'scale(1.3)', accentColor: '#64748b' }} /></td>
+                                <td style={{ textAlign: 'center' }}><input type="checkbox" checked={p.can_read} onChange={() => handleToggle(p.module_name, 'can_read')} style={{ cursor: 'pointer', transform: 'scale(1.3)', accentColor: '#4f46e5' }} /></td>
+                                <td style={{ textAlign: 'center' }}><input type="checkbox" checked={p.can_edit} onChange={() => handleToggle(p.module_name, 'can_edit')} style={{ cursor: 'pointer', transform: 'scale(1.3)', accentColor: '#4f46e5' }} /></td>
+                                <td style={{ textAlign: 'center' }}><input type="checkbox" checked={p.can_delete} onChange={() => handleToggle(p.module_name, 'can_delete')} style={{ cursor: 'pointer', transform: 'scale(1.3)', accentColor: '#ef4444' }} /></td>
                             </tr>
                         ))}
                     </tbody>
                 </table>
             </div>
-
             <div style={{ marginTop: '25px', display: 'flex', justifyContent: 'flex-end' }}>
-                <button className="btn-primary" onClick={handleSavePermissions}>
-                    <FaCheck/> Save Permissions
-                </button>
+                <button className="btn-primary" onClick={handleSavePermissions}><FaCheck/> Save Permissions</button>
             </div>
         </div>
     );
 };
 
 // ==========================================
-// 5. USER LIST COMPONENT
+// 4. USER LIST COMPONENT (Updated with Class/Section dropdown)
 // ==========================================
-const UserList = ({ roles, users, subTab, setSubTab, loadData }) => {
+const UserList = ({ roles, users, classes, sections, subTab, setSubTab, loadData }) => {
     const [isUserModalOpen, setIsUserModalOpen] = useState(false);
     const [editingUserId, setEditingUserId] = useState(null);
 
@@ -524,7 +430,7 @@ const UserList = ({ roles, users, subTab, setSubTab, loadData }) => {
         username: '', password: '', full_name: '', email: '', role_id: '',
         status: 'active', roll_no: '', admission_no: '', parent_name: '',
         phone_no: '', aadhar_no: '', pen_no: '', admission_date: '',
-        joining_date: '', experience: '', class_group: ''
+        joining_date: '', experience: '', class_group: '', class_id: '', section_id: ''
     };
     const [newUser, setNewUser] = useState(emptyUser);
 
@@ -549,7 +455,9 @@ const UserList = ({ roles, users, subTab, setSubTab, loadData }) => {
             roll_no: userObj.roll_no || '',
             admission_no: userObj.admission_no || '',
             class_group: userObj.class_group || '',
-            experience: userObj.experience || ''
+            experience: userObj.experience || '',
+            class_id: userObj.class_id || '',
+            section_id: userObj.section_id || ''
         });
         setIsUserModalOpen(true);
     };
@@ -560,9 +468,7 @@ const UserList = ({ roles, users, subTab, setSubTab, loadData }) => {
                 await apiClient.delete(`/users/${id}`);
                 alert("User deleted successfully!");
                 loadData();
-            } catch (error) {
-                alert("Error deleting user: " + (error.response?.data?.error || error.message));
-            }
+            } catch (error) { alert("Error deleting user: " + (error.response?.data?.error || error.message)); }
         }
     };
 
@@ -579,11 +485,11 @@ const UserList = ({ roles, users, subTab, setSubTab, loadData }) => {
             setIsUserModalOpen(false);
             setNewUser(emptyUser);
             loadData();
-        } catch (error) {
-            console.error(error);
-            alert("Error saving user: " + (error.response?.data?.error || error.message));
-        }
+        } catch (error) { console.error(error); alert("Error saving user."); }
     };
+
+    const selectedRoleObj = roles.find(r => r.id.toString() === newUser.role_id?.toString());
+    const isStudent = selectedRoleObj && selectedRoleObj.role_name.toLowerCase().includes('student');
 
     return (
         <div className="animate-fade">
@@ -625,7 +531,6 @@ const UserList = ({ roles, users, subTab, setSubTab, loadData }) => {
                 </table>
             </div>
 
-            {/* Add/Edit User Modal */}
             {isUserModalOpen && (
                 <div className="modal-overlay">
                     <div className="modal-content animate-fade">
@@ -635,18 +540,9 @@ const UserList = ({ roles, users, subTab, setSubTab, loadData }) => {
                         </div>
                         <form onSubmit={handleSaveUser}>
                             <div className="form-grid">
-                                <div className="form-group">
-                                    <label>Full Name *</label>
-                                    <input required name="full_name" value={newUser.full_name} onChange={handleUserInputChange} />
-                                </div>
-                                <div className="form-group">
-                                    <label>Username *</label>
-                                    <input required name="username" value={newUser.username} onChange={handleUserInputChange} />
-                                </div>
-                                <div className="form-group">
-                                    <label>Password *</label>
-                                    <input required type="password" name="password" value={newUser.password} onChange={handleUserInputChange} placeholder={editingUserId ? "(Provide password)" : ""} />
-                                </div>
+                                <div className="form-group"><label>Full Name *</label><input required name="full_name" value={newUser.full_name} onChange={handleUserInputChange} /></div>
+                                <div className="form-group"><label>Username *</label><input required name="username" value={newUser.username} onChange={handleUserInputChange} /></div>
+                                <div className="form-group"><label>Password *</label><input required type="password" name="password" value={newUser.password} onChange={handleUserInputChange} placeholder={editingUserId ? "(Provide password)" : ""} /></div>
                                 <div className="form-group">
                                     <label>Assign Role *</label>
                                     <select required name="role_id" value={newUser.role_id} onChange={handleUserInputChange}>
@@ -654,14 +550,8 @@ const UserList = ({ roles, users, subTab, setSubTab, loadData }) => {
                                         {roles.map(r => <option key={r.id} value={r.id}>{r.role_name}</option>)}
                                     </select>
                                 </div>
-                                <div className="form-group">
-                                    <label>Email Address</label>
-                                    <input type="email" name="email" value={newUser.email} onChange={handleUserInputChange} />
-                                </div>
-                                <div className="form-group">
-                                    <label>Phone Number</label>
-                                    <input name="phone_no" value={newUser.phone_no} onChange={handleUserInputChange} />
-                                </div>
+                                <div className="form-group"><label>Email Address</label><input type="email" name="email" value={newUser.email} onChange={handleUserInputChange} /></div>
+                                <div className="form-group"><label>Phone Number</label><input name="phone_no" value={newUser.phone_no} onChange={handleUserInputChange} /></div>
                                 <div className="form-group">
                                     <label>Status</label>
                                     <select name="status" value={newUser.status} onChange={handleUserInputChange}>
@@ -669,32 +559,42 @@ const UserList = ({ roles, users, subTab, setSubTab, loadData }) => {
                                         <option value="inactive">Inactive</option>
                                     </select>
                                 </div>
-                                <div className="form-group">
-                                    <label>Aadhar No</label>
-                                    <input name="aadhar_no" value={newUser.aadhar_no} onChange={handleUserInputChange} />
-                                </div>
+                                <div className="form-group"><label>Aadhar No</label><input name="aadhar_no" value={newUser.aadhar_no} onChange={handleUserInputChange} /></div>
                             </div>
                             
                             <hr style={{margin: '20px 0', border: 'none', borderTop: '1px solid #e2e8f0'}} />
-                            <h4 style={{marginBottom: '15px', color: '#64748b'}}>Optional Academic Details</h4>
+                            <h4 style={{marginBottom: '15px', color: '#64748b'}}>Academic Details</h4>
                             
                             <div className="form-grid">
-                                <div className="form-group">
-                                    <label>Roll No</label>
-                                    <input name="roll_no" value={newUser.roll_no} onChange={handleUserInputChange} />
-                                </div>
-                                <div className="form-group">
-                                    <label>Admission No</label>
-                                    <input name="admission_no" value={newUser.admission_no} onChange={handleUserInputChange} />
-                                </div>
-                                <div className="form-group">
-                                    <label>Class Group (If Teacher)</label>
-                                    <input name="class_group" value={newUser.class_group} onChange={handleUserInputChange} />
-                                </div>
-                                <div className="form-group">
-                                    <label>Experience (If Staff)</label>
-                                    <input name="experience" value={newUser.experience} onChange={handleUserInputChange} />
-                                </div>
+                                <div className="form-group"><label>Roll No</label><input name="roll_no" value={newUser.roll_no} onChange={handleUserInputChange} /></div>
+                                <div className="form-group"><label>Admission No</label><input name="admission_no" value={newUser.admission_no} onChange={handleUserInputChange} /></div>
+                                
+                                {/* DYNAMIC CONDITIONAL RENDERING BASED ON ROLE */}
+                                {isStudent ? (
+                                    <>
+                                        <div className="form-group">
+                                            <label>Assign Class *</label>
+                                            <select required name="class_id" value={newUser.class_id} onChange={handleUserInputChange}>
+                                                <option value="">Select Class</option>
+                                                {classes.map(c => <option key={c.id} value={c.id}>{c.class_name}</option>)}
+                                            </select>
+                                        </div>
+                                        <div className="form-group">
+                                            <label>Assign Section *</label>
+                                            <select required name="section_id" value={newUser.section_id} onChange={handleUserInputChange}>
+                                                <option value="">Select Section</option>
+                                                {sections.filter(s => s.class_id.toString() === newUser.class_id?.toString()).map(s => (
+                                                    <option key={s.id} value={s.id}>{s.section_name}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <>
+                                        <div className="form-group"><label>Class Group (If Teacher)</label><input name="class_group" value={newUser.class_group} onChange={handleUserInputChange} /></div>
+                                        <div className="form-group"><label>Experience (If Staff)</label><input name="experience" value={newUser.experience} onChange={handleUserInputChange} /></div>
+                                    </>
+                                )}
                             </div>
 
                             <div style={{display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '25px'}}>
@@ -710,7 +610,158 @@ const UserList = ({ roles, users, subTab, setSubTab, loadData }) => {
 };
 
 // ==========================================
-// 6. MAIN PARENT COMPONENT
+// 6. STUDENT PROMOTION COMPONENT (NEW)
+// ==========================================
+const StudentPromotion = ({ users, classes, sections, years, loadData }) => {
+    const [fromClass, setFromClass] = useState('');
+    const [fromSection, setFromSection] = useState('');
+    
+    const [toYear, setToYear] = useState('');
+    const [toClass, setToClass] = useState('');
+    const [toSection, setToSection] = useState('');
+
+    const [selectedStudents, setSelectedStudents] = useState([]);
+
+    // Filter to find eligible students based on selected fromClass and fromSection
+    const eligibleStudents = users.filter(u => 
+        u.role?.toLowerCase().includes('student') && 
+        u.class_id?.toString() === fromClass && 
+        u.section_id?.toString() === fromSection
+    );
+
+    const handleSelectAll = (e) => {
+        if(e.target.checked) setSelectedStudents(eligibleStudents.map(s => s.id));
+        else setSelectedStudents([]);
+    };
+
+    const handleSelect = (id) => {
+        if(selectedStudents.includes(id)) setSelectedStudents(selectedStudents.filter(sid => sid !== id));
+        else setSelectedStudents([...selectedStudents, id]);
+    };
+
+    const handlePromote = async () => {
+        if(!toYear || !toClass || !toSection) return alert("Please select Target Year, Class, and Section.");
+        if(selectedStudents.length === 0) return alert("Please select at least one student to promote.");
+
+        try {
+            await apiClient.post('/promotion/execute', {
+                student_ids: selectedStudents,
+                target_year_id: toYear,
+                target_class_id: toClass,
+                target_section_id: toSection
+            });
+            alert("Students Promoted Successfully!");
+            setSelectedStudents([]);
+            loadData();
+        } catch(e) { alert("Failed to promote students."); }
+    };
+
+    return (
+        <div className="card animate-fade">
+            <style>{`
+                .promo-grid { display: grid; grid-template-columns: 1fr auto 1fr; gap: 20px; align-items: center; margin-bottom: 30px; }
+                .promo-box { background: #f8fafc; padding: 25px; border-radius: 12px; border: 1px solid #e2e8f0; }
+                .promo-box h3 { margin-top: 0; color: #1e293b; font-size: 16px; margin-bottom: 15px; }
+                .promo-arrow { background: #eef2ff; color: #4f46e5; width: 50px; height: 50px; border-radius: 50%; display: flex; justify-content: center; align-items: center; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+                .input-box { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+                .input-box label { font-size: 12px; font-weight: 700; color: #64748b; }
+                .input-box select { padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; outline: none; background: white; }
+                .custom-checkbox { width: 18px; height: 18px; cursor: pointer; accent-color: #4f46e5; }
+            `}</style>
+            
+            <h2 style={{margin:'0 0 20px 0'}}>Batch Promotion Engine</h2>
+            <p style={{color:'#64748b', marginBottom: '30px'}}>Select current students and promote them to their next academic year and class.</p>
+
+            <div className="promo-grid">
+                <div className="promo-box">
+                    <h3>Current Status (From)</h3>
+                    <div className="input-box">
+                        <label>Select Current Class</label>
+                        <select value={fromClass} onChange={e => {setFromClass(e.target.value); setFromSection(''); setSelectedStudents([]);}}>
+                            <option value="">-- Choose Class --</option>
+                            {classes.map(c => <option key={c.id} value={c.id}>{c.class_name}</option>)}
+                        </select>
+                    </div>
+                    <div className="input-box">
+                        <label>Select Current Section</label>
+                        <select value={fromSection} onChange={e => {setFromSection(e.target.value); setSelectedStudents([]);}} disabled={!fromClass}>
+                            <option value="">-- Choose Section --</option>
+                            {sections.filter(s => s.class_id.toString() === fromClass).map(s => <option key={s.id} value={s.id}>{s.section_name}</option>)}
+                        </select>
+                    </div>
+                </div>
+
+                <div className="promo-arrow"><MdArrowForward size={28}/></div>
+
+                <div className="promo-box" style={{background: '#f0fdf4', borderColor: '#bbf7d0'}}>
+                    <h3 style={{color: '#166534'}}>Promote To (Target)</h3>
+                    <div className="input-box">
+                        <label>Target Academic Year</label>
+                        <select value={toYear} onChange={e => setToYear(e.target.value)}>
+                            <option value="">-- Choose Year --</option>
+                            {years.map(y => <option key={y.id} value={y.id}>{y.year_name}</option>)}
+                        </select>
+                    </div>
+                    <div className="input-box">
+                        <label>Target Class</label>
+                        <select value={toClass} onChange={e => {setToClass(e.target.value); setToSection('');}}>
+                            <option value="">-- Choose Class --</option>
+                            {classes.map(c => <option key={c.id} value={c.id}>{c.class_name}</option>)}
+                        </select>
+                    </div>
+                    <div className="input-box">
+                        <label>Target Section</label>
+                        <select value={toSection} onChange={e => setToSection(e.target.value)} disabled={!toClass}>
+                            <option value="">-- Choose Section --</option>
+                            {sections.filter(s => s.class_id.toString() === toClass).map(s => <option key={s.id} value={s.id}>{s.section_name}</option>)}
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            {fromClass && fromSection && (
+                <div style={{border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden'}}>
+                    <table className="data-table" style={{margin: 0}}>
+                        <thead>
+                            <tr>
+                                <th style={{width: '50px', textAlign: 'center'}}>
+                                    <input type="checkbox" className="custom-checkbox" 
+                                        checked={selectedStudents.length === eligibleStudents.length && eligibleStudents.length > 0} 
+                                        onChange={handleSelectAll} 
+                                    />
+                                </th>
+                                <th>Student Name</th>
+                                <th>Roll No / Admission No</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {eligibleStudents.length === 0 && <tr><td colSpan="3" style={{textAlign: 'center', padding: '30px', color: '#94a3b8'}}>No students found in this class and section.</td></tr>}
+                            {eligibleStudents.map(s => (
+                                <tr key={s.id}>
+                                    <td style={{textAlign: 'center'}}>
+                                        <input type="checkbox" className="custom-checkbox" 
+                                            checked={selectedStudents.includes(s.id)} 
+                                            onChange={() => handleSelect(s.id)} 
+                                        />
+                                    </td>
+                                    <td style={{fontWeight: 'bold', color: '#1e293b'}}>{s.full_name}</td>
+                                    <td style={{color: '#64748b'}}>{s.roll_no || 'N/A'} / {s.admission_no || 'N/A'}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                    <div style={{padding: '20px', background: '#f8fafc', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                        <span style={{fontWeight: 'bold', color: '#475569'}}>{selectedStudents.length} Students Selected</span>
+                        <button className="btn-primary" onClick={handlePromote} disabled={selectedStudents.length === 0}>Execute Promotion</button>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+// ==========================================
+// 7. MAIN PARENT COMPONENT
 // ==========================================
 export default function AdminLM() {
     const [mainTab, setMainTab] = useState('users');
@@ -751,58 +802,37 @@ export default function AdminLM() {
                 .master-admin-layout { font-family: 'Inter', sans-serif; padding: 20px; background-color: #f8fafc; min-height: 100vh;}
                 
                 .main-tab-nav { display: flex; flex-wrap: wrap; gap: 30px; border-bottom: 2px solid #e2e8f0; margin-bottom: 30px; }
-                .tab-trigger { 
-                    padding: 10px 0; cursor: pointer; border: none; background: none; 
-                    font-weight: 700; color: #94a3b8; display: flex; align-items: center; gap: 8px; 
-                    border-bottom: 3px solid transparent; transition: 0.2s; font-size: 14px;
-                }
+                .tab-trigger { padding: 10px 0; cursor: pointer; border: none; background: none; font-weight: 700; color: #94a3b8; display: flex; align-items: center; gap: 8px; border-bottom: 3px solid transparent; transition: 0.2s; font-size: 14px; }
                 .tab-trigger:hover { color: #4f46e5; }
                 .tab-trigger.active { color: #4f46e5; border-bottom-color: #4f46e5; }
-
                 .sub-tab-bar { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 5px; }
-                .sub-tab { 
-                    padding: 8px 20px; border-radius: 50px; border: none; 
-                    background: transparent; cursor: pointer; font-size: 14px; font-weight: 600; color: #64748b;
-                    transition: all 0.3s ease;
-                }
+                .sub-tab { padding: 8px 20px; border-radius: 50px; border: none; background: transparent; cursor: pointer; font-size: 14px; font-weight: 600; color: #64748b; transition: all 0.3s ease; }
                 .sub-tab.active { background: #4f46e5; color: white; box-shadow: 0 4px 10px rgba(79, 70, 229, 0.2); }
-
                 .card { background: white; border-radius: 16px; padding: 30px; border: 1px solid #f1f5f9; box-shadow: 0 4px 20px rgba(0,0,0,0.03); }
                 .card.no-padding { padding: 0; overflow: hidden; }
-
                 .role-input-container { display: flex; gap: 15px; margin-bottom: 30px; align-items: center; }
                 .role-text-input { flex: 1; padding: 14px 20px; border-radius: 8px; border: 1px solid #cbd5e1; outline: none; font-size: 14px; background: white; transition: 0.2s; }
                 .role-text-input:focus { border-color: #4f46e5; box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1); }
-
                 .role-grid { display: flex; flex-wrap: wrap; gap: 20px; margin-top: 10px; }
-                .role-item-card { 
-                    background: white; border: 1px solid #e2e8f0; padding: 15px 20px; 
-                    border-radius: 12px; display: flex; justify-content: space-between; align-items: center;
-                    min-width: 200px; box-shadow: 0 2px 4px rgba(0,0,0,0.02); transition: 0.2s;
-                }
+                .role-item-card { background: white; border: 1px solid #e2e8f0; padding: 15px 20px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; min-width: 200px; box-shadow: 0 2px 4px rgba(0,0,0,0.02); transition: 0.2s; }
                 .role-item-card:hover { border-color: #cbd5e1; box-shadow: 0 4px 6px rgba(0,0,0,0.04); }
                 .role-name { font-weight: 700; color: #1e293b; font-size: 15px; }
-
                 .data-table { width: 100%; border-collapse: collapse; background: white; }
                 .data-table th { text-align: left; padding: 16px 24px; background: #f8fafc; color: #64748b; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid #e2e8f0; }
                 .data-table td { padding: 16px 24px; border-bottom: 1px solid #f1f5f9; font-size: 14px; }
                 .data-table tr:last-child td { border-bottom: none; }
-
                 .btn-primary { background: #5a67d8; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: 8px; transition: 0.2s; font-size: 14px; }
                 .btn-primary:hover { background: #4c51bf; }
+                .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
                 .btn-cancel { background: #f1f5f9; color: #475569; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: 600; transition: 0.2s;}
                 .btn-cancel:hover { background: #e2e8f0; }
-                
                 .icon-btn { border: none; background: transparent; padding: 6px; border-radius: 6px; cursor: pointer; transition: 0.2s; display: flex; align-items: center; justify-content: center; }
                 .icon-btn.edit { color: #3b82f6; }
                 .icon-btn.delete { color: #ef4444; }
                 .icon-btn:hover { background: #f1f5f9; }
-
                 .status-pill { padding: 6px 14px; border-radius: 20px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; }
                 .status-pill.active { background: #dcfce7; color: #166534; }
                 .status-pill.inactive { background: #fee2e2; color: #991b1b; }
-
-                /* Modal Styles */
                 .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(15, 23, 42, 0.6); display: flex; justify-content: center; align-items: center; z-index: 1000; backdrop-filter: blur(4px); }
                 .modal-content { background: white; padding: 30px 40px; border-radius: 16px; width: 700px; max-width: 95%; max-height: 90vh; overflow-y: auto; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04); }
                 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
@@ -810,7 +840,6 @@ export default function AdminLM() {
                 .form-group label { font-size: 13px; font-weight: 600; color: #475569; }
                 .form-group input, .form-group select { padding: 12px 16px; border: 1px solid #cbd5e1; border-radius: 8px; outline: none; font-size: 14px; transition: border-color 0.2s; background: #f8fafc; }
                 .form-group input:focus, .form-group select:focus { border-color: #4f46e5; background: white; box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1); }
-
                 .animate-fade { animation: fadeIn 0.4s ease; }
                 @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
             `}</style>
@@ -825,13 +854,14 @@ export default function AdminLM() {
             </nav>
 
             <div className="content-area">
-                {mainTab === 'users' && <UserList roles={roles} users={users} subTab={subTab} setSubTab={setSubTab} loadData={loadData} />}
+                {mainTab === 'users' && <UserList roles={roles} users={users} classes={classes} sections={sections} subTab={subTab} setSubTab={setSubTab} loadData={loadData} />}
                 {mainTab === 'roles' && <RoleCreation roles={roles} loadData={loadData} />}
                 {mainTab === 'permissions' && <RolePermissions roles={roles} />}
                 {mainTab === 'academic' && <AcademicYearSettings />}
                 {mainTab === 'classes' && <ClassSettings classes={classes} sections={sections} loadData={loadData} />}
                 
-                {mainTab === 'promotion' && <div className="card">Batch Promotion module ready for next session.</div>}
+                {/* BATCH PROMOTION SCREEN RENDERED HERE */}
+                {mainTab === 'promotion' && <StudentPromotion users={users} classes={classes} sections={sections} years={years} loadData={loadData} />}
             </div>
         </div>
     );

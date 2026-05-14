@@ -57,14 +57,15 @@ app.post('/api/users', async (req, res) => {
             INSERT INTO users (
                 username, password, full_name, email, role_id, status, 
                 roll_no, admission_no, parent_name, phone_no, aadhar_no, 
-                pen_no, admission_date, joining_date, experience, class_group
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                pen_no, admission_date, joining_date, experience, class_group, class_id, section_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
         
         const values = [
             d.username, d.password, d.full_name, d.email || null, d.role_id, d.status || 'active',
             d.roll_no || null, d.admission_no || null, d.parent_name || null, d.phone_no || null, d.aadhar_no || null,
-            d.pen_no || null, d.admission_date || null, d.joining_date || null, d.experience || null, d.class_group || null
+            d.pen_no || null, d.admission_date || null, d.joining_date || null, d.experience || null, d.class_group || null,
+            d.class_id || null, d.section_id || null
         ];
 
         await db.query(query, values);
@@ -82,7 +83,8 @@ app.put('/api/users/:id', async (req, res) => {
             UPDATE users SET 
                 username=?, password=?, full_name=?, email=?, role_id=?, status=?, 
                 roll_no=?, admission_no=?, parent_name=?, phone_no=?, aadhar_no=?, 
-                pen_no=?, admission_date=?, joining_date=?, experience=?, class_group=?
+                pen_no=?, admission_date=?, joining_date=?, experience=?, class_group=?,
+                class_id=?, section_id=?
             WHERE id=?
         `;
         
@@ -90,6 +92,7 @@ app.put('/api/users/:id', async (req, res) => {
             d.username, d.password, d.full_name, d.email || null, d.role_id, d.status || 'active',
             d.roll_no || null, d.admission_no || null, d.parent_name || null, d.phone_no || null, d.aadhar_no || null,
             d.pen_no || null, d.admission_date || null, d.joining_date || null, d.experience || null, d.class_group || null,
+            d.class_id || null, d.section_id || null,
             req.params.id
         ];
 
@@ -199,7 +202,6 @@ app.post('/api/academic-years', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// NEW: Edit Academic Year
 app.put('/api/academic-years/:id', async (req, res) => {
     try {
         const { year_name, start_date, end_date } = req.body;
@@ -209,7 +211,6 @@ app.put('/api/academic-years/:id', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// NEW: Delete Academic Year
 app.delete('/api/academic-years/:id', async (req, res) => {
     try {
         await db.query('DELETE FROM academic_years WHERE id = ?', [req.params.id]);
@@ -246,7 +247,6 @@ app.post('/api/classes', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// NEW: Edit Class Route
 app.put('/api/classes/:id', async (req, res) => {
     try {
         await db.query('UPDATE classes SET class_name = ? WHERE id = ?', [req.body.class_name, req.params.id]);
@@ -281,15 +281,32 @@ app.delete('/api/sections/:id', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
+// --- BATCH PROMOTION ENGINE ---
 app.post('/api/promotion/execute', async (req, res) => {
-    const { student_ids, target_year_id, target_class_id } = req.body;
+    const { student_ids, target_year_id, target_class_id, target_section_id } = req.body;
+    const connection = await db.getConnection();
     try {
+        await connection.beginTransaction();
         for (let id of student_ids) {
-            await db.query(`INSERT INTO student_academic_records (user_id, academic_year_id, class_id, status) VALUES (?,?,?, 'active')`,
-            [id, target_year_id, target_class_id]);
+            // Update the user's master record with their new class and section
+            await connection.query(
+                `UPDATE users SET class_id = ?, section_id = ? WHERE id = ?`, 
+                [target_class_id, target_section_id, id]
+            );
+            // Log it in the academic records for historical tracking
+            await connection.query(
+                `INSERT INTO student_academic_records (user_id, academic_year_id, class_id, section_id, status) VALUES (?,?,?,?, 'active')`,
+                [id, target_year_id, target_class_id, target_section_id]
+            );
         }
+        await connection.commit();
         res.json({ message: "Promotion Complete" });
-    } catch (error) { res.status(500).json({ error: error.message }); }
+    } catch (error) { 
+        await connection.rollback();
+        res.status(500).json({ error: error.message }); 
+    } finally {
+        connection.release();
+    }
 });
 
 const PORT = process.env.PORT || 3001;
