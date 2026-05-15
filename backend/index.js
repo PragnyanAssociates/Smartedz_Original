@@ -150,19 +150,21 @@ app.delete('/api/developer/institution/:id', async (req, res) => {
 // --- 3. SUPER ADMIN ENDPOINTS (School Internal) ---
 // ==========================================================
 
-// GET School Specific Data (Users, Classes, Years)
+// GET School Specific Data (Users, Classes, Years, Roles)
 app.get('/api/admin/data/:instId', async (req, res) => {
     const { instId } = req.params;
     try {
         const [users] = await db.execute('SELECT * FROM users WHERE institutionId = ?', [instId]);
         const [classes] = await db.execute('SELECT * FROM classes WHERE institutionId = ?', [instId]);
         const [years] = await db.execute('SELECT * FROM academic_years WHERE institutionId = ?', [instId]);
+        const [roles] = await db.execute('SELECT * FROM roles WHERE institutionId = ?', [instId]);
         const [inst] = await db.execute('SELECT * FROM institutions WHERE id = ?', [instId]);
         
         res.json({ 
             users, 
             classes, 
             academicYears: years, 
+            roles,
             institution: inst[0] 
         });
     } catch (err) { 
@@ -170,13 +172,14 @@ app.get('/api/admin/data/:instId', async (req, res) => {
     }
 });
 
-// ADD New Internal User (Teacher, Admin, etc.)
+// ADD New Internal User (Enhanced with student fields)
 app.post('/api/admin/users', async (req, res) => {
-    const { name, email, password, role, institutionId, modules } = req.body;
+    const { name, email, password, role, institutionId, modules, phone_no, roll_no, admission_no, class_id, section, status } = req.body;
     try {
         await db.execute(
-            'INSERT INTO users (name, email, password, role, institutionId, modules) VALUES (?, ?, ?, ?, ?, ?)',
-            [name, email, password, role, institutionId, modules]
+            `INSERT INTO users (name, email, password, role, institutionId, modules, phone_no, roll_no, admission_no, class_id, section, status) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [name, email, password, role, institutionId, modules, phone_no, roll_no, admission_no, class_id, section, status || 'active']
         );
         res.json({ success: true });
     } catch (err) { 
@@ -184,7 +187,8 @@ app.post('/api/admin/users', async (req, res) => {
     }
 });
 
-// ADD New Class
+// --- CLASS & SECTION MANAGEMENT ---
+
 app.post('/api/admin/classes', async (req, res) => {
     const { className, section, institutionId } = req.body;
     try {
@@ -198,14 +202,82 @@ app.post('/api/admin/classes', async (req, res) => {
     }
 });
 
-// ADD New Academic Year
+app.delete('/api/admin/classes/:id', async (req, res) => {
+    try {
+        await db.execute('DELETE FROM classes WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- ACADEMIC YEAR MANAGEMENT ---
+
 app.post('/api/admin/academics', async (req, res) => {
     const { name, startDate, endDate, institutionId } = req.body;
     try {
         await db.execute(
-            'INSERT INTO academic_years (name, startDate, endDate, isActive, institutionId) VALUES (?, ?, ?, 1, ?)',
+            'INSERT INTO academic_years (name, startDate, endDate, isActive, institutionId) VALUES (?, ?, ?, 0, ?)',
             [name, startDate, endDate, institutionId]
         );
+        res.json({ success: true });
+    } catch (err) { 
+        res.status(500).json({ error: err.message }); 
+    }
+});
+
+app.put('/api/admin/academics/set-active/:id', async (req, res) => {
+    const { id } = req.params;
+    const { institutionId } = req.body;
+    try {
+        // Reset all to inactive for this school first
+        await db.execute('UPDATE academic_years SET isActive = 0 WHERE institutionId = ?', [institutionId]);
+        // Set the chosen one to active
+        await db.execute('UPDATE academic_years SET isActive = 1 WHERE id = ?', [id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- ROLE & PERMISSION MANAGEMENT ---
+
+app.post('/api/admin/roles', async (req, res) => {
+    const { role_name, institutionId } = req.body;
+    try {
+        await db.execute('INSERT INTO roles (role_name, institutionId) VALUES (?, ?)', [role_name, institutionId]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/admin/permissions/:roleId', async (req, res) => {
+    try {
+        const [rows] = await db.execute('SELECT * FROM permissions WHERE role_id = ?', [req.params.roleId]);
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/admin/permissions', async (req, res) => {
+    const { role_id, permissions } = req.body; // permissions is an array of objects
+    try {
+        // Clean existing permissions for this role first
+        await db.execute('DELETE FROM permissions WHERE role_id = ?', [role_id]);
+        
+        for (const p of permissions) {
+            await db.execute(
+                'INSERT INTO permissions (role_id, module_name, can_read, can_edit, can_delete, is_hidden) VALUES (?, ?, ?, ?, ?, ?)',
+                [role_id, p.module_name, p.can_read, p.can_edit, p.can_delete, p.is_hidden]
+            );
+        }
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- STUDENT PROMOTION ENGINE ---
+
+app.post('/api/admin/promote', async (req, res) => {
+    const { studentIds, targetClassId, targetSection } = req.body;
+    try {
+        // studentIds should be an array [1, 2, 3]
+        const placeholders = studentIds.map(() => '?').join(',');
+        const query = `UPDATE users SET class_id = ?, section = ? WHERE id IN (${placeholders})`;
+        await db.execute(query, [targetClassId, targetSection, ...studentIds]);
         res.json({ success: true });
     } catch (err) { 
         res.status(500).json({ error: err.message }); 
