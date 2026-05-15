@@ -1,83 +1,104 @@
-import React, { useState } from 'react';
-import { useAppContext } from '../store';
+import React, { useState, useEffect } from 'react';
+import { useAuth } from '../context/AuthContext';
 import { Button, Card, CardContent, CardHeader, Badge, Modal, Input, Label, Select } from '../components/ui';
-import { Users, GraduationCap, Calendar, LogOut, Plus, Shield } from 'lucide-react';
+import { Users, Plus, Shield, Trash2 } from 'lucide-react';
 
 export default function SuperAdminDashboard() {
-  const { currentUser, setCurrentUser, users, classes, academicYears, refreshData, API_URL } = useAppContext();
-  const [activeTab, setActiveTab] = useState('users');
+  const { user, usersList, refreshData, API_URL } = useAuth();
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
+  const [instData, setInstData] = useState(null);
   const [userForm, setUserForm] = useState({ name: '', email: '', password: '', role: 'Teacher', modules: '' });
+
+  // Fetch specific institution details (name and logo) on load
+  useEffect(() => {
+    const fetchInst = async () => {
+        const res = await fetch(`${API_URL}/api/admin/data/${user.institutionId}`);
+        const data = await res.json();
+        setInstData(data.institution);
+    };
+    if (user?.institutionId) fetchInst();
+  }, [user]);
 
   const handleCreateUser = async (e) => {
     e.preventDefault();
-    await fetch(`${API_URL}/api/admin/users`, {
+    const res = await fetch(`${API_URL}/api/admin/users`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...userForm, institutionId: currentUser.institutionId })
+      body: JSON.stringify({ ...userForm, institutionId: user.institutionId })
     });
-    refreshData();
-    setIsUserModalOpen(false);
+    if (res.ok) { refreshData(); setIsUserModalOpen(false); }
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex">
-      <aside className="w-64 bg-slate-900 text-white p-6 space-y-4">
-        <div className="text-xl font-bold flex items-center gap-2"><GraduationCap /> ERP Admin</div>
-        <nav className="space-y-2">
-          <Button variant="ghost" className="w-full justify-start" onClick={() => setActiveTab('users')}>Users</Button>
-          <Button variant="ghost" className="w-full justify-start" onClick={() => setActiveTab('academics')}>Academics</Button>
-        </nav>
-        <Button variant="destructive" className="w-full" onClick={() => setCurrentUser(null)}><LogOut className="mr-2 h-4 w-4" /> Logout</Button>
-      </aside>
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* School Custom Header */}
+      <div className="bg-white border-b px-8 py-4 flex items-center justify-between shadow-sm">
+        <div className="flex items-center gap-4">
+            {instData?.logo ? (
+                <img src={instData.logo} alt="logo" className="h-12 w-12 object-contain p-1 border rounded-lg bg-slate-50" />
+            ) : (
+                <div className="h-12 w-12 bg-blue-100 rounded-lg" />
+            )}
+            <div>
+                <h1 className="text-xl font-bold text-slate-800">{instData?.name || "Loading..."}</h1>
+                <p className="text-[10px] text-blue-600 font-bold uppercase tracking-widest">Institution Dashboard</p>
+            </div>
+        </div>
+        <Button onClick={() => setIsUserModalOpen(true)} className="bg-blue-600"><Plus size={16} className="mr-1"/> Add Staff</Button>
+      </div>
 
-      <main className="flex-1 p-8">
-        <div className="flex justify-between items-center mb-8">
-          <h1 className="text-2xl font-bold">Manage {activeTab === 'users' ? 'Staff & Students' : 'Academic Structure'}</h1>
-          <Button onClick={() => setIsUserModalOpen(true)}><Plus className="mr-2 h-4 w-4" /> Add New</Button>
+      <div className="p-8 overflow-auto flex-1 space-y-6">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          <Card className="bg-gradient-to-br from-blue-600 to-blue-700 text-white border-none shadow-lg shadow-blue-100">
+            <CardContent className="p-6">
+              <Users className="mb-2 opacity-50" />
+              <p className="text-xs opacity-80 font-bold uppercase">Total Users</p>
+              <h3 className="text-4xl font-bold">{usersList.length}</h3>
+            </CardContent>
+          </Card>
         </div>
 
-        <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
-          <table className="w-full text-left">
-            <thead className="bg-slate-50 border-b">
-              <tr>
-                <th className="p-4">Name</th>
-                <th className="p-4">Email</th>
-                <th className="p-4">Role</th>
-                <th className="p-4">Modules Assigned</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map(u => (
-                <tr key={u.id} className="border-b">
-                  <td className="p-4 font-medium">{u.name}</td>
-                  <td className="p-4">{u.email}</td>
-                  <td className="p-4"><Badge>{u.role}</Badge></td>
-                  <td className="p-4 text-sm text-slate-500">{u.modules || 'All Access'}</td>
+        <Card className="border-slate-200">
+          <CardHeader className="bg-slate-50/50">
+            <h3 className="font-bold text-slate-700">Staff & Permissions</h3>
+          </CardHeader>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="text-slate-500 text-xs uppercase border-b bg-slate-50">
+                  <th className="p-4">Name</th>
+                  <th className="p-4">Email</th>
+                  <th className="p-4">Role</th>
+                  <th className="p-4">Modules</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </main>
+              </thead>
+              <tbody>
+                {usersList.map(u => (
+                  <tr key={u.id} className="border-b hover:bg-slate-50/50 transition-colors">
+                    <td className="p-4 font-semibold text-slate-800">{u.name}</td>
+                    <td className="p-4 text-slate-500 text-sm">{u.email}</td>
+                    <td className="p-4"><Badge className={u.role === 'Super Admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-50 text-blue-700'}>{u.role}</Badge></td>
+                    <td className="p-4 text-xs font-bold text-blue-600">{u.modules || "FULL ACCESS"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      </div>
 
-      <Modal isOpen={isUserModalOpen} onClose={() => setIsUserModalOpen(false)} title="Create New User">
+      <Modal isOpen={isUserModalOpen} onClose={() => setIsUserModalOpen(false)} title="Create User Account">
         <form onSubmit={handleCreateUser} className="space-y-4">
-          <Label>Full Name</Label>
-          <Input required onChange={e => setUserForm({...userForm, name: e.target.value})} />
-          <Label>Email</Label>
-          <Input type="email" required onChange={e => setUserForm({...userForm, email: e.target.value})} />
-          <Label>Password</Label>
-          <Input required onChange={e => setUserForm({...userForm, password: e.target.value})} />
-          <Label>Role</Label>
+          <Input required placeholder="Full Name" onChange={e => setUserForm({...userForm, name: e.target.value})} />
+          <Input type="email" required placeholder="Email" onChange={e => setUserForm({...userForm, email: e.target.value})} />
+          <Input required placeholder="Password" onChange={e => setUserForm({...userForm, password: e.target.value})} />
           <Select onChange={e => setUserForm({...userForm, role: e.target.value})}>
-            <option value="Admin">Admin</option>
             <option value="Teacher">Teacher</option>
-            <option value="Student">Student</option>
+            <option value="Admin">Admin</option>
+            <option value="Principal">Principal</option>
           </Select>
-          <Label>Assign Modules (comma separated)</Label>
-          <Input placeholder="Academics, Finance, Exams" onChange={e => setUserForm({...userForm, modules: e.target.value})} />
-          <Button type="submit" className="w-full">Create User & Assign Access</Button>
+          <Input placeholder="Modules (e.g. Finance, Academics)" onChange={e => setUserForm({...userForm, modules: e.target.value})} />
+          <Button type="submit" className="w-full py-4">Create User</Button>
         </form>
       </Modal>
     </div>

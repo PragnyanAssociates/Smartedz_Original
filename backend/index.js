@@ -8,7 +8,6 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// Railway Connection
 const db = mysql.createPool({
     uri: process.env.DATABASE_URL,
     waitForConnections: true,
@@ -37,7 +36,7 @@ app.post('/api/login', async (req, res) => {
 // --- DEVELOPER ENDPOINTS ---
 app.get('/api/developer/data', async (req, res) => {
     try {
-        const [insts] = await db.execute('SELECT * FROM institutions');
+        const [insts] = await db.execute('SELECT * FROM institutions ORDER BY created_at DESC');
         const [users] = await db.execute('SELECT id, name, email, role, institutionId FROM users');
         res.json({ institutions: insts, users });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -65,6 +64,61 @@ app.post('/api/developer/onboard', async (req, res) => {
     } finally { conn.release(); }
 });
 
+// NEW: Update Institution
+app.put('/api/developer/institution/:id', async (req, res) => {
+    const { id } = req.params;
+    const { name, type, logo } = req.body;
+    try {
+        await db.execute(
+            'UPDATE institutions SET name = ?, type = ?, logo = ? WHERE id = ?',
+            [name, type, logo, id]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// NEW & UPDATED: Update Institution and its Super Admin
+app.put('/api/developer/institution/:id', async (req, res) => {
+    const { id } = req.params;
+    const { name, type, logo, superAdminName, superAdminEmail, superAdminPassword } = req.body;
+    
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+
+        // 1. Update Institution Profile
+        await conn.execute(
+            'UPDATE institutions SET name = ?, type = ?, logo = ? WHERE id = ?',
+            [name, type, logo, id]
+        );
+
+        // 2. Update the associated Super Admin user for this institution
+        await conn.execute(
+            'UPDATE users SET name = ?, email = ?, password = ? WHERE institutionId = ? AND role = "Super Admin"',
+            [superAdminName, superAdminEmail, superAdminPassword, id]
+        );
+
+        await conn.commit();
+        res.json({ success: true });
+    } catch (err) {
+        await conn.rollback();
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    } finally {
+        conn.release();
+    }
+});
+
+// NEW: Delete Institution
+app.delete('/api/developer/institution/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        // Cascade delete should be set in SQL, otherwise delete users manually here
+        await db.execute('DELETE FROM institutions WHERE id = ?', [id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // --- SUPER ADMIN ENDPOINTS ---
 app.get('/api/admin/data/:instId', async (req, res) => {
     const { instId } = req.params;
@@ -72,38 +126,12 @@ app.get('/api/admin/data/:instId', async (req, res) => {
         const [users] = await db.execute('SELECT * FROM users WHERE institutionId = ?', [instId]);
         const [classes] = await db.execute('SELECT * FROM classes WHERE institutionId = ?', [instId]);
         const [years] = await db.execute('SELECT * FROM academic_years WHERE institutionId = ?', [instId]);
-        res.json({ users, classes, academicYears: years });
+        const [inst] = await db.execute('SELECT * FROM institutions WHERE id = ?', [instId]);
+        res.json({ users, classes, academicYears: years, institution: inst[0] });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.post('/api/admin/users', async (req, res) => {
-    const { name, email, password, role, institutionId, modules } = req.body;
-    try {
-        await db.execute(
-            'INSERT INTO users (name, email, password, role, institutionId, modules) VALUES (?, ?, ?, ?, ?, ?)',
-            [name, email, password, role, institutionId, modules]
-        );
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/api/admin/classes', async (req, res) => {
-    const { className, section, institutionId } = req.body;
-    try {
-        await db.execute('INSERT INTO classes (className, section, institutionId) VALUES (?, ?, ?)',
-            [className, section, institutionId]);
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/api/admin/academics', async (req, res) => {
-    const { name, startDate, endDate, institutionId } = req.body;
-    try {
-        await db.execute('INSERT INTO academic_years (name, startDate, endDate, isActive, institutionId) VALUES (?, ?, ?, 1, ?)',
-            [name, startDate, endDate, institutionId]);
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
+// Remaining admin routes... (omitted for brevity, keep your existing ones)
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`Backend Active on Port ${PORT}`));
