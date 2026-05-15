@@ -19,10 +19,16 @@ export const Card = ({ children, className = '' }) => <div className={`bg-white 
 export const CardHeader = ({ children, className = '' }) => <div className={`p-4 border-b border-slate-100 ${className}`}>{children}</div>;
 export const CardTitle = ({ children, className = '' }) => <h3 className={`text-lg font-bold text-slate-900 ${className}`}>{children}</h3>;
 export const CardContent = ({ children, className = '' }) => <div className={`p-4 ${className}`}>{children}</div>;
-export const Input = ({ className = '', ...props }) => <input className={`w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white ${className}`} {...props} />;
+export const Input = ({ className = '', ...props }) => (
+  <input className={`w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-slate-50/50 hover:bg-white ${className}`} {...props} />
+);
 export const Label = ({ children, className = '' }) => <label className={`block text-sm font-semibold text-slate-700 mb-1 ${className}`}>{children}</label>;
 export const Badge = ({ children, className = '' }) => <span className={`px-2 py-1 rounded-md text-xs font-bold uppercase bg-slate-100 text-slate-700 ${className}`}>{children}</span>;
-export const Select = ({ children, ...props }) => <select className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" {...props}>{children}</select>;
+export const Select = ({ children, ...props }) => (
+  <select className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-slate-50/50 cursor-pointer appearance-none" {...props}>
+    {children}
+  </select>
+);
 
 export const Modal = ({ isOpen, onClose, title, children }) => {
   if (!isOpen) return null;
