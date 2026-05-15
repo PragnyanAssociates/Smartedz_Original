@@ -1,65 +1,88 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Users, Calendar as CalendarIcon, TrendingUp } from 'lucide-react';
+import { Users, Layers, Calendar, ShieldCheck, GraduationCap, UserCheck } from 'lucide-react';
+import { API_BASE_URL } from '../apiConfig';
 
 export default function Overview() {
-  const { user, usersList } = useAuth();
+  const { user } = useAuth();
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!user?.institutionId) return;
+    fetch(`${API_BASE_URL}/admin/data/${user.institutionId}`)
+      .then(r => r.json())
+      .then(j => { setData(j); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [user]);
+
+  if (loading) {
+    return (
+      <div className="h-96 flex items-center justify-center">
+        <div className="w-8 h-8 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+  if (!data) return null;
+
+  const totalStudents = data.users.filter(u => (u.role || '').toLowerCase().includes('student')).length;
+  const totalStaff    = data.users.filter(u => !(u.role || '').toLowerCase().includes('student')).length;
+  const activeYear    = data.academicYears.find(y => y.isActive);
+
+  const cards = [
+    { label: 'Total Users',   value: data.users.length,        icon: Users,         color: 'blue' },
+    { label: 'Students',      value: totalStudents,            icon: GraduationCap, color: 'emerald' },
+    { label: 'Staff',         value: totalStaff,               icon: UserCheck,     color: 'amber' },
+    { label: 'Classes',       value: data.classes.length,      icon: Layers,        color: 'purple' },
+    { label: 'Roles Defined', value: data.roles.length,        icon: ShieldCheck,   color: 'rose' },
+    { label: 'Active Year',   value: activeYear?.name || '—',  icon: Calendar,      color: 'slate' },
+  ];
+
+  const colorMap = {
+    blue:    'bg-blue-50 text-blue-600',
+    emerald: 'bg-emerald-50 text-emerald-600',
+    amber:   'bg-amber-50 text-amber-600',
+    purple:  'bg-purple-50 text-purple-600',
+    rose:    'bg-rose-50 text-rose-600',
+    slate:   'bg-slate-100 text-slate-600',
+  };
 
   return (
-    <div className="space-y-10 animate-in fade-in duration-500">
-      {/* Greeting Section */}
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-4xl font-black text-slate-900 tracking-tight">
-            Good afternoon, {user?.name?.split(' ')[0]} 👋
-          </h2>
-          <p className="text-slate-500 font-medium text-lg mt-2">Here is your academic overview for today.</p>
-        </div>
-        <div className="bg-white px-6 py-3 rounded-2xl border shadow-sm flex items-center gap-3">
-          <CalendarIcon className="text-blue-500" size={20} />
-          <span className="font-bold text-slate-700">
-            {new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
-          </span>
-        </div>
+    <div className="space-y-10 animate-in fade-in duration-700">
+      <div>
+        <h2 className="text-3xl font-black text-slate-900 tracking-tight">
+          Welcome back, {user?.name?.split(' ')[0]} 👋
+        </h2>
+        <p className="text-slate-500 font-medium mt-1">
+          Here's what's happening at {data.institution?.name || 'your institution'} today.
+        </p>
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-        {/* Total Staff Card */}
-        <div className="bg-blue-600 p-8 rounded-[2.5rem] text-white shadow-2xl shadow-blue-200 relative overflow-hidden group">
-          <div className="absolute top-0 right-0 p-6 opacity-20 group-hover:scale-110 transition-transform duration-500">
-            <Users size={120} />
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-5">
+        {cards.map(c => (
+          <div key={c.label} className="bg-white rounded-3xl border border-slate-100 p-6 shadow-sm hover:shadow-md transition-all">
+            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${colorMap[c.color]} mb-4`}>
+              <c.icon size={22} />
+            </div>
+            <p className="text-3xl font-black text-slate-800">{c.value}</p>
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">{c.label}</p>
           </div>
-          <div className="flex items-center gap-2 mb-6 font-black text-[10px] uppercase tracking-widest opacity-80">
-            <div className="w-2 h-2 rounded-full bg-white animate-pulse"></div> Total Staff
-          </div>
-          <h3 className="text-6xl font-black mb-2">{usersList.length}</h3>
-          <p className="text-blue-100 font-bold text-sm uppercase">Active Registry Users</p>
-        </div>
+        ))}
+      </div>
 
-        {/* Attendance Card */}
-        <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col justify-between">
-          <div className="flex justify-between items-start mb-4">
-            <p className="text-slate-500 font-bold text-xs uppercase tracking-widest">Attendance Status</p>
-            <div className="w-10 h-10 rounded-full border-4 border-blue-600 border-t-transparent animate-spin"></div>
-          </div>
-          <div>
-            <h3 className="text-5xl font-black text-slate-800">82.5%</h3>
-            <p className="text-blue-500 font-bold text-[10px] mt-2 uppercase tracking-tighter">Up to date</p>
-          </div>
-        </div>
-
-        {/* Performance Card */}
-        <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col justify-between">
-          <div className="flex justify-between items-start mb-4">
-            <p className="text-slate-500 font-bold text-xs uppercase tracking-widest">Overall Performance</p>
-            <TrendingUp className="text-emerald-500" />
-          </div>
-          <div>
-            <h3 className="text-5xl font-black text-slate-800">66%</h3>
-            <p className="text-slate-400 font-medium text-[10px] mt-2 uppercase tracking-tighter">Average Grade Rating</p>
-          </div>
-        </div>
+      <div className="bg-white rounded-3xl border border-slate-100 p-8 shadow-sm">
+        <h3 className="text-lg font-bold text-slate-800 mb-2">Quick Start</h3>
+        <p className="text-slate-500 text-sm font-medium mb-6">
+          New here? Set things up in this order — each step unlocks the next.
+        </p>
+        <ol className="space-y-3 list-decimal list-inside text-sm text-slate-600 font-medium">
+          <li>Go to <strong>Manage Logins → Roles</strong> and create the roles your school needs.</li>
+          <li>Switch to <strong>Classes</strong> and create every class (with sections if applicable).</li>
+          <li>Open <strong>Academics</strong> and create the current academic year, then click "Set as Active".</li>
+          <li>Use <strong>Users</strong> to add Teachers, Students, Admins, etc.</li>
+          <li>Configure <strong>Permissions</strong> per role for each module.</li>
+          <li>At the end of the year, use <strong>Promotion</strong> to move students up.</li>
+        </ol>
       </div>
     </div>
   );

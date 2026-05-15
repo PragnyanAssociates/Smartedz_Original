@@ -14,7 +14,10 @@ const ProtectedRoute = ({ children }) => {
 function UnifiedDashboard() {
   const { user } = useAuth();
   if (user?.role === 'Developer') return <DeveloperDashboard />;
-  if (user?.role === 'Super Admin') return <SuperAdminDashboard />;
+  // Super Admin AND every other school role (Teacher, Student, etc.) share
+  // the SuperAdminDashboard shell. The sidebar / permissions decide what
+  // each role can actually see and do.
+  if (user) return <SuperAdminDashboard />;
   return <div className="p-10 text-center font-bold">Role access not configured.</div>;
 }
 
@@ -25,19 +28,15 @@ function App() {
         <Routes>
           <Route path="/" element={<WelcomePage />} />
           <Route path="/login" element={<LoginScreen />} />
-          
-          {/* 
-              Direct route to Dashboard. 
-              The layout (Sidebar/Header) is handled inside 
-              the SuperAdminDashboard component itself.
-          */}
-          <Route 
-            path="/dashboard" 
+
+          {/* Single dashboard route. Layout (Sidebar / Header) lives inside the dashboard components. */}
+          <Route
+            path="/dashboard"
             element={
               <ProtectedRoute>
                 <UnifiedDashboard />
               </ProtectedRoute>
-            } 
+            }
           />
 
           <Route path="*" element={<Navigate to="/" />} />

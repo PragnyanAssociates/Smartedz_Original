@@ -5,7 +5,6 @@ import Overview from './Overview';
 import ManageLogin from './ManageLogin';
 
 export default function SuperAdminDashboard() {
-  // Set 'overview' as the default active screen
   const [activeTab, setActiveTab] = useState('overview');
 
   const renderContent = () => {
@@ -27,10 +26,8 @@ export default function SuperAdminDashboard() {
   return (
     <div className="flex flex-col h-screen bg-[#F8FAFC]">
       <DashboardHeader />
-
       <div className="flex flex-1 overflow-hidden">
         <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
-
         <main className="flex-1 overflow-y-auto p-8 custom-scrollbar">
           {renderContent()}
         </main>

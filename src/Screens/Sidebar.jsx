@@ -1,32 +1,34 @@
 import React from 'react';
 import { useAuth } from '../context/AuthContext';
-import { 
-  LayoutDashboard, Wallet, Calendar, Users, BookOpen, 
-  FileText, ClipboardList, Video, MonitorPlay, 
-  BarChart3, Search, LogOut, ShieldCheck 
+import {
+  LayoutDashboard, Wallet, Calendar, Users, BookOpen,
+  FileText, ClipboardList, Video, MonitorPlay,
+  BarChart3, Search, LogOut, ShieldCheck
 } from 'lucide-react';
 
 export default function Sidebar({ activeTab, setActiveTab }) {
   const { user, logout } = useAuth();
 
   const menuItems = [
-    { id: 'overview', icon: LayoutDashboard, label: 'Overview' },
-    { id: 'manage-login', icon: ShieldCheck, label: 'Manage Logins' },
-    { id: 'payments', icon: Wallet, label: 'Payments & Receipts' },
-    { id: 'timetable', icon: Calendar, label: 'Timetable' },
-    { id: 'attendance', icon: Users, label: 'My Attendance' },
-    { id: 'syllabus', icon: BookOpen, label: 'Syllabus' },
-    { id: 'lesson-plan', icon: FileText, label: 'Lesson Plan' },
-    { id: 'homework', icon: ClipboardList, label: 'Homework' },
-    { id: 'workshop', icon: Video, label: 'Workshop Videos' },
-    { id: 'online-classes', icon: MonitorPlay, label: 'Online Classes' },
-    { id: 'progress', icon: BarChart3, label: 'Progress Reports' },
+    { id: 'overview',       icon: LayoutDashboard, label: 'Overview' },
+    { id: 'manage-login',   icon: ShieldCheck,     label: 'Manage Logins' },
+    { id: 'payments',       icon: Wallet,          label: 'Payments & Receipts' },
+    { id: 'timetable',      icon: Calendar,        label: 'Timetable' },
+    { id: 'attendance',     icon: Users,           label: 'My Attendance' },
+    { id: 'syllabus',       icon: BookOpen,        label: 'Syllabus' },
+    { id: 'lesson-plan',    icon: FileText,        label: 'Lesson Plan' },
+    { id: 'homework',       icon: ClipboardList,   label: 'Homework' },
+    { id: 'workshop',       icon: Video,           label: 'Workshop Videos' },
+    { id: 'online-classes', icon: MonitorPlay,     label: 'Online Classes' },
+    { id: 'progress',       icon: BarChart3,       label: 'Progress Reports' },
   ];
 
   return (
     <aside className="w-72 bg-white border-r border-slate-200 flex flex-col h-[calc(100vh-120px)] sticky top-[120px] overflow-hidden shrink-0">
       <div className="p-6">
-        <h2 className="text-xl font-black text-slate-800 tracking-tight leading-none">Super Admin</h2>
+        <h2 className="text-xl font-black text-slate-800 tracking-tight leading-none">
+          {user?.role || 'Dashboard'}
+        </h2>
         <p className="text-[9px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-2">Administrative Control</p>
       </div>
 
@@ -41,15 +43,14 @@ export default function Sidebar({ activeTab, setActiveTab }) {
         <div className="px-4 mb-3">
           <span className="text-[9px] font-black text-slate-300 uppercase tracking-[0.3em]">Main Menu</span>
         </div>
-        
+
         {menuItems.map((item) => (
-          <button 
-            key={item.id} 
+          <button
+            key={item.id}
             onClick={() => setActiveTab(item.id)}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all group ${
               activeTab === item.id ? 'bg-blue-600 text-white shadow-lg shadow-blue-100' : 'text-slate-500 hover:bg-blue-50'
-            }`}
-          >
+            }`}>
             <item.icon size={18} className={activeTab === item.id ? 'text-white' : 'text-slate-400 group-hover:text-blue-500'} />
             <span className="text-sm font-bold tracking-tight">{item.label}</span>
           </button>

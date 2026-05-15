@@ -1,65 +1,78 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import { API_BASE_URL } from '../apiConfig';
 
-const AuthContext = createContext();
+const AuthContext = createContext(null);
 
-export const AuthProvider = ({ children }) => {
-    const [user, setUser] = useState(JSON.parse(localStorage.getItem('user')));
-    const [token, setToken] = useState(localStorage.getItem('token'));
-    const [institutions, setInstitutions] = useState([]);
-    const [usersList, setUsersList] = useState([]);
-    const [classes, setClasses] = useState([]);
-    const [academicYears, setAcademicYears] = useState([]);
+// Strip the trailing /api so components doing `${API_URL}/api/login` still work.
+// (Many of the existing screens build URLs like `${API_URL}/api/...`.)
+const API_ROOT = API_BASE_URL.replace(/\/api$/, '');
 
-    const API_URL = 'https://smartedzoriginal-production.up.railway.app';
+export function AuthProvider({ children }) {
+  const [user, setUser]   = useState(null);
+  const [token, setToken] = useState(null);
 
-    const login = (userData, userToken) => {
-        setUser(userData);
-        setToken(userToken);
-        localStorage.setItem('token', userToken);
-        localStorage.setItem('user', JSON.stringify(userData));
-    };
+  // Developer-only data (populated when a Developer logs in)
+  const [institutions, setInstitutions] = useState([]);
+  const [usersList, setUsersList]       = useState([]);
 
-    const logout = () => {
-        setUser(null);
-        setToken(null);
-        localStorage.clear();
-    };
+  // -------- restore session from localStorage on first load --------
+  useEffect(() => {
+    const savedUser  = localStorage.getItem('smartedz_user');
+    const savedToken = localStorage.getItem('smartedz_token');
+    if (savedUser && savedToken) {
+      try {
+        setUser(JSON.parse(savedUser));
+        setToken(savedToken);
+      } catch { /* ignore parse error */ }
+    }
+  }, []);
 
-    const refreshData = async () => {
-        if (!user || !token) return;
-        try {
-            const endpoint = user.role === 'Developer' 
-                ? `${API_URL}/api/developer/data` 
-                : `${API_URL}/api/admin/data/${user.institutionId}`;
-            
-            const res = await fetch(endpoint, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            const data = await res.json();
-            
-            if (user.role === 'Developer') {
-                setInstitutions(data.institutions || []);
-                setUsersList(data.users || []);
-            } else {
-                setUsersList(data.users || []);
-                setClasses(data.classes || []);
-                setAcademicYears(data.academicYears || []);
-            }
-        } catch (err) { console.error("Refresh failed:", err); }
-    };
+  // -------- login / logout ---------------------------------------
+  const login = (newUser, newToken) => {
+    setUser(newUser);
+    setToken(newToken);
+    localStorage.setItem('smartedz_user', JSON.stringify(newUser));
+    localStorage.setItem('smartedz_token', newToken);
+  };
 
-    useEffect(() => { if (user) refreshData(); }, [user]);
+  const logout = () => {
+    setUser(null);
+    setToken(null);
+    setInstitutions([]);
+    setUsersList([]);
+    localStorage.removeItem('smartedz_user');
+    localStorage.removeItem('smartedz_token');
+    window.location.href = '/login';
+  };
 
-    return (
-        <AuthContext.Provider value={{ 
-            user, token, login, logout, 
-            institutions, usersList, classes, academicYears, 
-            refreshData, API_URL 
-        }}>
-            {children}
-        </AuthContext.Provider>
-    );
-};
+  // -------- Developer-only: refresh institutions + global user list ----
+  const refreshData = useCallback(async () => {
+    if (!user || user.role !== 'Developer') return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/developer/data`);
+      const json = await res.json();
+      setInstitutions(json.institutions || []);
+      setUsersList(json.users || []);
+    } catch (err) {
+      console.error('refreshData error:', err);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (user?.role === 'Developer') refreshData();
+  }, [user, refreshData]);
+
+  return (
+    <AuthContext.Provider value={{
+      user, token,
+      API_URL: API_ROOT,        // backward-compat: components build `${API_URL}/api/...`
+      API_BASE_URL,             // explicit alias if you want it
+      login, logout,
+      institutions, usersList, refreshData
+    }}>
+      {children}
+    </AuthContext.Provider>
+  );
+}
 
 export const useAuth = () => useContext(AuthContext);
-export const useAppContext = useAuth; // Helper so screens don't break
