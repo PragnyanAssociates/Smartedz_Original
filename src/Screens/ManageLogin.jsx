@@ -4,11 +4,11 @@ import { Users, ShieldCheck, Calendar, Layers, CircleArrowUp, CircleCheck } from
 import { API_BASE_URL } from '../apiConfig';
 
 import UserTab        from './UserTab';
-// import RolesTab       from './manage/RolesTab';
-// import PermissionsTab from './manage/PermissionsTab';
-// import AcademicsTab   from './manage/AcademicsTab';
-// import ClassesTab     from './manage/ClassesTab';
-// import PromotionTab   from './manage/PromotionTab';
+import Rolestab       from './Rolestab';
+import Permissionstab from './Permissionstab';
+import Academicstab   from './Academicstab';
+import Classestab     from './Classestab';
+import Promotiontab   from './Promotiontab';
 
 export default function ManageLogin() {
   const { user } = useAuth();
@@ -35,11 +35,11 @@ export default function ManageLogin() {
 
   const tabs = [
     { id: 'users',       label: 'Users',       icon: Users },
-    // { id: 'roles',       label: 'Roles',       icon: ShieldCheck },
-    // { id: 'permissions', label: 'Permissions', icon: CircleCheck },
-    // { id: 'academics',   label: 'Academics',   icon: Calendar },
-    // { id: 'classes',     label: 'Classes',     icon: Layers },
-    // { id: 'promotion',   label: 'Promotion',   icon: CircleArrowUp },
+    { id: 'roles',       label: 'Roles',       icon: ShieldCheck },
+    { id: 'permissions', label: 'Permissions', icon: CircleCheck },
+    { id: 'academics',   label: 'Academics',   icon: Calendar },
+    { id: 'classes',     label: 'Classes',     icon: Layers },
+    { id: 'promotion',   label: 'Promotion',   icon: CircleArrowUp },
   ];
 
   const tabProps = { data, fetchData, user };
@@ -71,11 +71,11 @@ export default function ManageLogin() {
         ) : (
           <>
             {activeTab === 'users'       && <UserTab {...tabProps} />}
-            {/* {activeTab === 'roles'       && <RolesTab {...tabProps} />}
-            {activeTab === 'permissions' && <PermissionsTab {...tabProps} />}
-            {activeTab === 'academics'   && <AcademicsTab {...tabProps} />}
-            {activeTab === 'classes'     && <ClassesTab {...tabProps} />}
-            {activeTab === 'promotion'   && <PromotionTab {...tabProps} />} */}
+            {activeTab === 'roles'       && <Rolestab {...tabProps} />}
+            {activeTab === 'permissions' && <Permissionstab {...tabProps} />}
+            {activeTab === 'academics'   && <Academicstab {...tabProps} />}
+            {activeTab === 'classes'     && <Classestab {...tabProps} />}
+            {activeTab === 'promotion'   && <Promotiontab {...tabProps} />}
           </>
         )}
       </div>
