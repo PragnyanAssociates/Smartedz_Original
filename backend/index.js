@@ -1,7 +1,7 @@
 // =====================================================================
 //  SmartEdz ERP - Unified Backend (single file)
 //  Sections:
-//   1. AUTHENTICATION
+//   1. AUTHENTICATION (with plan-expiry enforcement)
 //   2. DEVELOPER ENDPOINTS
 //   3. SUPER ADMIN — School Aggregate Data
 //   4. USERS — Full CRUD
@@ -38,22 +38,55 @@ const JWT_SECRET = process.env.JWT_SECRET || 'unified_erp_key_2025';
 // =====================================================================
 //  MODULE REGISTRY
 //  MUST stay in sync with frontend/src/modules.js (MODULE_NAMES).
-//  These are the names that appear in the Permissions matrix and that
-//  the Sidebar filters by. Add a new screen to BOTH places.
+//  Only modules that actually exist as screens belong here.
+//  Add a new module to BOTH files when you ship the screen.
 // =====================================================================
 const DEFAULT_MODULES = [
     'Overview',
-    'Manage Logins',
-    'Payments & Receipts',
-    'Timetable',
-    'My Attendance',
-    'Syllabus',
-    'Lesson Plan',
-    'Homework',
-    'Workshop Videos',
-    'Online Classes',
-    'Progress Reports'
+    'Manage Logins'
 ];
+
+// =====================================================================
+//  PLAN / SUBSCRIPTION HELPERS
+//  Maps each plan label to how many days it grants.
+//  "Full Time" returns null, which the expiry calc treats as never-expiring.
+// =====================================================================
+const PLAN_DAYS = {
+    '7 days':   7,
+    '30 days':  30,
+    '90 days':  90,
+    '180 days': 180,
+    '1 year':   365,
+    '3 years':  365 * 3,
+    'Full Time': null
+};
+
+// Returns: { planEndDate: Date|null, daysLeft: number|null, expired: boolean }
+function computePlanStatus(plan, startDateStr) {
+    const days = PLAN_DAYS[plan];
+    if (days === null || days === undefined) {
+        return { planEndDate: null, daysLeft: null, expired: false };
+    }
+    const start = new Date(startDateStr);
+    if (isNaN(start.getTime())) {
+        return { planEndDate: null, daysLeft: null, expired: false };
+    }
+    const end = new Date(start);
+    end.setDate(end.getDate() + days);
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const endMid = new Date(end);
+    endMid.setHours(0, 0, 0, 0);
+
+    const msPerDay = 1000 * 60 * 60 * 24;
+    const daysLeft = Math.ceil((endMid - today) / msPerDay);
+    return {
+        planEndDate: end.toISOString().slice(0, 10), // YYYY-MM-DD
+        daysLeft,
+        expired: daysLeft < 0
+    };
+}
 
 
 // =====================================================================
@@ -61,6 +94,7 @@ const DEFAULT_MODULES = [
 // =====================================================================
 // Login uses email + password only. The user's role comes from the DB,
 // so Developer / Super Admin / Teacher / Student all use the same form.
+// School-side users are also blocked if their institution's plan expired.
 app.post('/api/login', async (req, res) => {
     const { email, password } = req.body;
     try {
@@ -75,6 +109,25 @@ app.post('/api/login', async (req, res) => {
         if (user.status === 'inactive') {
             return res.status(403).json({ success: false, message: 'Your account has been deactivated. Contact your administrator.' });
         }
+
+        // -- Plan check (Developer bypasses; they have no institutionId anyway) --
+        if (user.role !== 'Developer' && user.institutionId) {
+            const [instRows] = await db.execute(
+                'SELECT usage_plan, plan_start_date FROM institutions WHERE id = ?',
+                [user.institutionId]
+            );
+            if (instRows.length > 0) {
+                const { usage_plan, plan_start_date } = instRows[0];
+                const status = computePlanStatus(usage_plan, plan_start_date);
+                if (status.expired) {
+                    return res.status(403).json({
+                        success: false,
+                        message: 'Your institution\'s plan has expired. Please contact SmartEdz to renew.'
+                    });
+                }
+            }
+        }
+
         const token = jwt.sign(
             { id: user.id, role: user.role, instId: user.institutionId },
             JWT_SECRET,
@@ -100,26 +153,39 @@ app.post('/api/login', async (req, res) => {
 // === 2. DEVELOPER ENDPOINTS ==========================================
 // =====================================================================
 
-// --- 2.1 Read all institutions + users
+// --- 2.1 Read all institutions + users (with computed plan status)
 app.get('/api/developer/data', async (req, res) => {
     try {
         const [insts] = await db.execute('SELECT * FROM institutions ORDER BY created_at DESC');
         const [users] = await db.execute('SELECT id, name, email, role, institutionId, password FROM users');
-        res.json({ institutions: insts, users });
+
+        // Decorate each institution with planEndDate / daysLeft / expired
+        const decorated = insts.map(inst => ({
+            ...inst,
+            ...computePlanStatus(inst.usage_plan, inst.plan_start_date)
+        }));
+
+        res.json({ institutions: decorated, users });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // --- 2.2 Onboard a new institution + initial Super Admin
 app.post('/api/developer/onboard', async (req, res) => {
     const { name, type, logo, schoolKey, school_email, phone,
+            usage_plan, plan_start_date,
             superAdminName, superAdminEmail, superAdminPassword } = req.body;
+
+    // Validate plan
+    const plan = PLAN_DAYS.hasOwnProperty(usage_plan) ? usage_plan : 'Full Time';
+    const startDate = plan_start_date || new Date().toISOString().slice(0, 10);
+
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
 
         const [inst] = await conn.execute(
-            'INSERT INTO institutions (name, type, logo, schoolKey, school_email, phone) VALUES (?, ?, ?, ?, ?, ?)',
-            [name, type, logo, schoolKey, school_email, phone]
+            'INSERT INTO institutions (name, type, logo, schoolKey, school_email, phone, usage_plan, plan_start_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            [name, type, logo, schoolKey, school_email, phone, plan, startDate]
         );
         const instId = inst.insertId;
 
@@ -146,13 +212,18 @@ app.post('/api/developer/onboard', async (req, res) => {
 app.put('/api/developer/institution/:id', async (req, res) => {
     const { id } = req.params;
     const { name, type, logo, school_email, phone,
+            usage_plan, plan_start_date,
             superAdminName, superAdminEmail, superAdminPassword } = req.body;
+
+    const plan = PLAN_DAYS.hasOwnProperty(usage_plan) ? usage_plan : 'Full Time';
+    const startDate = plan_start_date || new Date().toISOString().slice(0, 10);
+
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
         await conn.execute(
-            'UPDATE institutions SET name = ?, type = ?, logo = ?, school_email = ?, phone = ? WHERE id = ?',
-            [name, type, logo, school_email, phone, id]
+            'UPDATE institutions SET name = ?, type = ?, logo = ?, school_email = ?, phone = ?, usage_plan = ?, plan_start_date = ? WHERE id = ?',
+            [name, type, logo, school_email, phone, plan, startDate, id]
         );
         await conn.execute(
             'UPDATE users SET name = ?, email = ?, password = ? WHERE institutionId = ? AND role = "Super Admin"',
@@ -187,12 +258,18 @@ app.get('/api/admin/data/:instId', async (req, res) => {
         const [years]   = await db.execute('SELECT * FROM academic_years WHERE institutionId = ? ORDER BY startDate DESC', [instId]);
         const [roles]   = await db.execute('SELECT * FROM roles WHERE institutionId = ? ORDER BY role_name', [instId]);
         const [inst]    = await db.execute('SELECT * FROM institutions WHERE id = ?', [instId]);
+
+        // Include the institution's plan status so the dashboard header can warn
+        const institution = inst[0]
+            ? { ...inst[0], ...computePlanStatus(inst[0].usage_plan, inst[0].plan_start_date) }
+            : null;
+
         res.json({
             users, classes,
             academicYears: years,
             roles,
             modules: DEFAULT_MODULES,
-            institution: inst[0]
+            institution
         });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -433,8 +510,6 @@ app.post('/api/admin/classes', async (req, res) => {
 });
 
 // --- 8.1b Bulk-create: one class with many sections at once
-// Body: { className: 'Class 5', sections: ['A','B','C'], institutionId: 1 }
-// To create a class with NO sections, pass sections: [null]
 app.post('/api/admin/classes/bulk', async (req, res) => {
     const { className, sections, institutionId } = req.body;
     if (!className || !institutionId || !Array.isArray(sections) || sections.length === 0) {
