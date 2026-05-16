@@ -8,7 +8,7 @@
 //   5. ROLES — Full CRUD
 //   6. PERMISSIONS
 //   7. ACADEMIC YEARS — Full CRUD
-//   8. CLASSES — Full CRUD
+//   8. CLASSES — Full CRUD (single + bulk-create)
 //   9. STUDENT PROMOTION
 //  10. HEALTH CHECK
 // =====================================================================
@@ -385,7 +385,7 @@ app.delete('/api/admin/academics/:id', async (req, res) => {
 // === 8. CLASSES — Full CRUD ==========================================
 // =====================================================================
 
-// --- 8.1 Create
+// --- 8.1 Create (single row — kept for backward compatibility)
 app.post('/api/admin/classes', async (req, res) => {
     const { className, section, institutionId } = req.body;
     try {
@@ -395,6 +395,53 @@ app.post('/api/admin/classes', async (req, res) => {
         );
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 8.1b Bulk-create: one class with many sections at once
+// Body: { className: 'Class 5', sections: ['A','B','C'], institutionId: 1 }
+// To create a class with NO sections, pass sections: [null]
+app.post('/api/admin/classes/bulk', async (req, res) => {
+    const { className, sections, institutionId } = req.body;
+    if (!className || !institutionId || !Array.isArray(sections) || sections.length === 0) {
+        return res.status(400).json({ error: 'className, institutionId and a non-empty sections array are required.' });
+    }
+
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        const created = [];
+        const skipped = [];
+
+        for (const rawSection of sections) {
+            // Normalize: trim non-null strings, keep null as null
+            const section = (rawSection === null || rawSection === undefined || rawSection === '')
+                ? null
+                : String(rawSection).trim();
+
+            try {
+                await conn.execute(
+                    'INSERT INTO classes (className, section, institutionId) VALUES (?, ?, ?)',
+                    [className, section, institutionId]
+                );
+                created.push(section ?? '(no section)');
+            } catch (err) {
+                // ER_DUP_ENTRY = 1062 — class+section already exists for this institution
+                if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
+                    skipped.push(section ?? '(no section)');
+                } else {
+                    throw err;   // anything else is a real error → rollback
+                }
+            }
+        }
+
+        await conn.commit();
+        res.json({ success: true, created: created.length, createdSections: created, skipped });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally {
+        conn.release();
+    }
 });
 
 // --- 8.2 Update

@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Users, CircleArrowUp, Search } from 'lucide-react';
-import { API_BASE_URL } from '../../api';
+import { API_BASE_URL } from '../apiConfig';
 
 export default function PromotionTab({ data, fetchData }) {
   const [sourceClassId, setSourceClassId]       = useState('');

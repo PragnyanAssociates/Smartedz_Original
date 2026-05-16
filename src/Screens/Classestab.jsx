@@ -1,11 +1,21 @@
 import React, { useState, useMemo } from 'react';
 import { Plus, Edit, Trash2, X, Layers } from 'lucide-react';
-import { API_BASE_URL } from '../../api';
+import { API_BASE_URL } from '../apiConfig';
 
 export default function ClassesTab({ data, fetchData, user }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editing, setEditing]         = useState(null);
-  const emptyForm = { className: '', section: '', hasSections: false };
+
+  // -------- Form state --------
+  // CREATE mode → uses className + sections[] (chip array) + hasSections
+  // EDIT mode   → uses className + section (single string)
+  const emptyForm = {
+    className: '',
+    hasSections: false,
+    sections: [],         // chip list used only in Create mode
+    sectionInput: '',     // typing buffer for the chip input
+    section: ''           // single section used only in Edit mode
+  };
   const [form, setForm] = useState(emptyForm);
 
   // Group rows by className so multiple sections of the same class appear together.
@@ -27,32 +37,98 @@ export default function ClassesTab({ data, fetchData, user }) {
   const openEdit = (c) => {
     setEditing(c);
     setForm({
+      ...emptyForm,
       className: c.className || '',
-      section: c.section || '',
-      hasSections: !!c.section
+      hasSections: !!c.section,
+      section: c.section || ''
     });
     setIsModalOpen(true);
   };
 
+  // -------- Chip helpers (Create mode) --------
+  const addSectionChip = (raw) => {
+    const value = (raw ?? form.sectionInput).trim().toUpperCase();
+    if (!value) return;
+    // Allow comma- or space-separated bulk paste: "A, B, C" or "A B C"
+    const parts = value.split(/[\s,]+/).filter(Boolean);
+    setForm(prev => {
+      const merged = Array.from(new Set([...prev.sections, ...parts]));
+      return { ...prev, sections: merged, sectionInput: '' };
+    });
+  };
+
+  const removeSectionChip = (s) => {
+    setForm(prev => ({ ...prev, sections: prev.sections.filter(x => x !== s) }));
+  };
+
+  const handleSectionKeyDown = (e) => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      addSectionChip();
+    } else if (e.key === 'Backspace' && !form.sectionInput && form.sections.length > 0) {
+      // Backspace on empty input removes the last chip
+      setForm(prev => ({ ...prev, sections: prev.sections.slice(0, -1) }));
+    }
+  };
+
+  // -------- Submit --------
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const url = editing
-      ? `${API_BASE_URL}/admin/classes/${editing.id}`
-      : `${API_BASE_URL}/admin/classes`;
+
+    // ===== EDIT MODE =====
+    if (editing) {
+      const body = {
+        className: form.className,
+        section: form.hasSections ? (form.section || null) : null,
+        institutionId: user.institutionId
+      };
+      const res = await fetch(`${API_BASE_URL}/admin/classes/${editing.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      if (res.ok) {
+        setIsModalOpen(false);
+        fetchData();
+      } else {
+        alert('Failed to save class.');
+      }
+      return;
+    }
+
+    // ===== CREATE MODE =====
+    // Flush any pending text in the chip input into the array
+    let sections = form.sections;
+    if (form.sectionInput.trim()) {
+      const flushed = form.sectionInput.trim().toUpperCase().split(/[\s,]+/).filter(Boolean);
+      sections = Array.from(new Set([...sections, ...flushed]));
+    }
+
+    if (form.hasSections && sections.length === 0) {
+      return alert('Please add at least one section, or uncheck "This class has sections".');
+    }
+
     const body = {
       className: form.className,
-      section: form.hasSections ? form.section : null,
+      sections: form.hasSections ? sections : [null],   // [null] = a single row with no section
       institutionId: user.institutionId
     };
-    const res = await fetch(url, {
-      method: editing ? 'PUT' : 'POST',
+
+    const res = await fetch(`${API_BASE_URL}/admin/classes/bulk`, {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
     if (res.ok) {
+      const json = await res.json().catch(() => ({}));
+      if (json.skipped && json.skipped.length > 0) {
+        alert(`Created ${json.created} section(s). Skipped duplicates: ${json.skipped.join(', ')}`);
+      }
       setIsModalOpen(false);
       fetchData();
-    } else alert('Failed to save class.');
+    } else {
+      alert('Failed to save class.');
+    }
   };
 
   const handleDelete = async (c) => {
@@ -72,7 +148,7 @@ export default function ClassesTab({ data, fetchData, user }) {
           <h3 className="text-xl font-bold text-slate-800">Class Settings</h3>
           <p className="text-slate-400 text-sm font-medium mt-1">
             Create the classes that exist in your institution. Toggle "Has Sections"
-            to add Section A, B, C and so on. Classes with no sections are stored as a single row.
+            and add as many sections as you need in one go — A, B, C, D…
           </p>
         </div>
         <button onClick={openAdd} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-blue-100">
@@ -133,7 +209,7 @@ export default function ClassesTab({ data, fetchData, user }) {
 
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-[2.5rem] w-full max-w-lg p-10 shadow-2xl relative">
+          <div className="bg-white rounded-[2.5rem] w-full max-w-lg p-10 shadow-2xl relative max-h-[92vh] overflow-y-auto">
             <button onClick={() => setIsModalOpen(false)} className="absolute top-8 right-8 text-slate-400 hover:text-slate-600">
               <X size={24} />
             </button>
@@ -141,8 +217,11 @@ export default function ClassesTab({ data, fetchData, user }) {
               {editing ? 'Edit Class' : 'Create Class'}
             </h2>
             <p className="text-sm text-slate-400 font-medium mb-8">
-              To create multiple sections (A, B, C), save the class once per section.
+              {editing
+                ? 'Editing a single row. To add more sections, close this and click "Add Class" again.'
+                : 'Tick "Has Sections" and type each section. Press Enter or comma to add it as a chip.'}
             </p>
+
             <form onSubmit={handleSubmit} className="space-y-5">
               <div className="flex flex-col gap-2">
                 <label className="text-xs font-bold text-slate-500 uppercase">Class Name</label>
@@ -154,21 +233,66 @@ export default function ClassesTab({ data, fetchData, user }) {
               <label className="flex items-center gap-3 bg-slate-50 rounded-2xl p-4 cursor-pointer">
                 <input type="checkbox" className="w-5 h-5 accent-blue-600 cursor-pointer"
                   checked={form.hasSections}
-                  onChange={e => setForm({ ...form, hasSections: e.target.checked, section: e.target.checked ? form.section : '' })} />
+                  onChange={e => setForm({ ...form, hasSections: e.target.checked })} />
                 <span className="text-sm font-bold text-slate-700">This class has sections</span>
               </label>
 
-              {form.hasSections && (
+              {/* CREATE MODE: chip input for multiple sections */}
+              {form.hasSections && !editing && (
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Sections</label>
+
+                  <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 focus-within:ring-2 focus-within:ring-blue-500/10 min-h-[52px] flex flex-wrap items-center gap-2">
+                    {form.sections.map(s => (
+                      <span key={s} className="inline-flex items-center gap-1 bg-blue-600 text-white text-xs font-black uppercase tracking-wider px-3 py-1.5 rounded-full">
+                        {s}
+                        <button
+                          type="button"
+                          onClick={() => removeSectionChip(s)}
+                          className="hover:bg-white/20 rounded-full p-0.5 -mr-1">
+                          <X size={12} />
+                        </button>
+                      </span>
+                    ))}
+                    <input
+                      autoFocus={form.sections.length === 0}
+                      placeholder={form.sections.length ? 'Add another…' : 'Type A, then press Enter…'}
+                      className="flex-1 min-w-[120px] bg-transparent outline-none text-sm py-1"
+                      value={form.sectionInput}
+                      onChange={e => setForm({ ...form, sectionInput: e.target.value })}
+                      onKeyDown={handleSectionKeyDown}
+                      onBlur={() => form.sectionInput.trim() && addSectionChip()}
+                    />
+                  </div>
+
+                  <div className="flex justify-between items-center text-[11px]">
+                    <span className="text-slate-400 font-medium">
+                      Press <kbd className="px-1.5 py-0.5 bg-slate-100 rounded font-mono">Enter</kbd> or <kbd className="px-1.5 py-0.5 bg-slate-100 rounded font-mono">,</kbd> after each section. You can also paste "A, B, C, D".
+                    </span>
+                    <span className="text-slate-500 font-bold">
+                      {form.sections.length} section{form.sections.length === 1 ? '' : 's'}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* EDIT MODE: single section input */}
+              {form.hasSections && editing && (
                 <div className="flex flex-col gap-2">
                   <label className="text-xs font-bold text-slate-500 uppercase">Section</label>
                   <input required placeholder="e.g. A"
-                    className="bg-slate-50 border border-slate-100 rounded-xl p-3 focus:ring-2 focus:ring-blue-500/10 outline-none"
-                    value={form.section} onChange={e => setForm({ ...form, section: e.target.value })} />
+                    className="bg-slate-50 border border-slate-100 rounded-xl p-3 focus:ring-2 focus:ring-blue-500/10 outline-none uppercase"
+                    value={form.section}
+                    onChange={e => setForm({ ...form, section: e.target.value.toUpperCase() })} />
                 </div>
               )}
 
               <button type="submit" className="w-full bg-slate-900 hover:bg-blue-600 text-white py-4 rounded-2xl font-black uppercase tracking-widest mt-4 transition-all shadow-xl">
-                {editing ? 'Save Changes' : 'Create Class'}
+                {editing
+                  ? 'Save Changes'
+                  : form.hasSections
+                    ? `Create ${form.sections.length || '…'} Section${form.sections.length === 1 ? '' : 's'}`
+                    : 'Create Class'}
               </button>
             </form>
           </div>

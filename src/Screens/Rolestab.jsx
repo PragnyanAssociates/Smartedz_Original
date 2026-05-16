@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Plus, Edit, Trash2, X, ShieldCheck, Lock } from 'lucide-react';
-import { API_BASE_URL } from '../../api';
+import { API_BASE_URL } from '../apiConfig';
 
 export default function RolesTab({ data, fetchData, user }) {
   const [isModalOpen, setIsModalOpen] = useState(false);

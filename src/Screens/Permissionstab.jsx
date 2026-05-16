@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Save, Eye, EyeOff, Edit, Trash2, ShieldCheck } from 'lucide-react';
-import { API_BASE_URL } from '../../api';
+import { API_BASE_URL } from '../apiConfig';
 
 export default function PermissionsTab({ data }) {
   const [selectedRoleId, setSelectedRoleId] = useState('');
