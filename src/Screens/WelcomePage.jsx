@@ -2,7 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 
 // Assets
-import vspngoLogo from "../assets/vpsnewlogo.png";
+import smartedzlogo from "../assets/smartedzlogo.png";
 import schoolImage from "../assets/schoolcover.jpg";
 
 export default function WelcomePage() {
@@ -29,23 +29,28 @@ export default function WelcomePage() {
         {/* Top Spacer / Main Content Container */}
         <div className="flex-1 flex flex-col justify-center max-w-lg w-full">
           
-          {/* School Logo */}
-          <div className="mb-0 sm:mb-2 animate-fade-in-up opacity-0">
+          {/* Logo Section (Icon + Text side-by-side like the 2nd image) */}
+          <div className="mb-4 flex items-center gap-3 animate-fade-in-up opacity-0">
             <img
-              src={vspngoLogo || "/placeholder.svg"}
-              alt="Vivekananda Public School Logo"
-              className="h-20 w-auto xs:h-24 sm:h-28 md:h-36 lg:h-40 object-contain"
+              src={smartedzlogo || "/placeholder.svg"}
+              alt="SmartEdz Logo"
+              className="h-16 w-auto xs:h-20 sm:h-24 object-contain"
             />
+            <div className="text-4xl sm:text-5xl font-bold tracking-tight">
+              <span className="text-[#3284c7]">Smart</span>
+              <span className="text-[#f29132]">Edz</span>
+            </div>
           </div>
 
           {/* Text Content */}
           <div className="space-y-4 sm:space-y-6">
-            <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight text-gray-900 animate-fade-in-up-delay-1 opacity-0 leading-tight">
-              Welcome to the Future of School Management
+            {/* Reduced Heading Size */}
+            <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight text-gray-900 animate-fade-in-up-delay-1 opacity-0 leading-tight">
+              Complete ERP Solution for Educational Institutions
             </h1>
 
             <p className="text-base sm:text-lg text-gray-600 animate-fade-in-up-delay-2 opacity-0 leading-relaxed max-w-md">
-              The unified platform to manage your institution's resources, students, and operations seamlessly.
+              The unified platform to manage your entire institution seamlessly.
             </p>
 
             {/* CTA Button */}
