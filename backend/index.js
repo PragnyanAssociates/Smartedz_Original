@@ -6,7 +6,7 @@
 //   3. SUPER ADMIN — School Aggregate Data
 //   4. USERS — Full CRUD
 //   5. ROLES — Full CRUD
-//   6. PERMISSIONS
+//   6. PERMISSIONS (role-level + per-user lookup)
 //   7. ACADEMIC YEARS — Full CRUD
 //   8. CLASSES — Full CRUD (single + bulk-create)
 //   9. STUDENT PROMOTION
@@ -35,12 +35,24 @@ const db = mysql.createPool({
 
 const JWT_SECRET = process.env.JWT_SECRET || 'unified_erp_key_2025';
 
-// Modules available in the Permissions matrix.
-// Add new ERP modules here and they appear automatically.
+// =====================================================================
+//  MODULE REGISTRY
+//  MUST stay in sync with frontend/src/modules.js (MODULE_NAMES).
+//  These are the names that appear in the Permissions matrix and that
+//  the Sidebar filters by. Add a new screen to BOTH places.
+// =====================================================================
 const DEFAULT_MODULES = [
-    'Dashboard', 'Users', 'Roles', 'Permissions', 'Classes',
-    'Academic Years', 'Attendance', 'Timetable', 'Fees',
-    'Examinations', 'Library', 'Transport', 'Reports', 'Communication'
+    'Overview',
+    'Manage Logins',
+    'Payments & Receipts',
+    'Timetable',
+    'My Attendance',
+    'Syllabus',
+    'Lesson Plan',
+    'Homework',
+    'Workshop Videos',
+    'Online Classes',
+    'Progress Reports'
 ];
 
 
@@ -295,7 +307,7 @@ app.delete('/api/admin/roles/:id', async (req, res) => {
 // === 6. PERMISSIONS ==================================================
 // =====================================================================
 
-// --- 6.1 Read permissions for one role
+// --- 6.1 Read permissions for one role (used by the Permissions tab)
 app.get('/api/admin/permissions/:roleId', async (req, res) => {
     try {
         const [rows] = await db.execute('SELECT * FROM permissions WHERE role_id = ?', [req.params.roleId]);
@@ -323,6 +335,29 @@ app.post('/api/admin/permissions', async (req, res) => {
         await conn.rollback();
         res.status(500).json({ error: err.message });
     } finally { conn.release(); }
+});
+
+// --- 6.3 Lookup the effective permissions for a single user.
+//         Joins users → roles (by role_name + institutionId) → permissions.
+//         Used by the dashboard sidebar to know what modules to show.
+app.get('/api/admin/my-permissions/:userId', async (req, res) => {
+    const { userId } = req.params;
+    try {
+        const [rows] = await db.execute(
+            `SELECT p.module_name, p.can_read, p.can_edit, p.can_delete, p.is_hidden
+               FROM users u
+               JOIN roles r
+                 ON r.role_name = u.role
+                AND r.institutionId = u.institutionId
+               JOIN permissions p
+                 ON p.role_id = r.id
+              WHERE u.id = ?`,
+            [userId]
+        );
+        res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 
@@ -405,19 +440,15 @@ app.post('/api/admin/classes/bulk', async (req, res) => {
     if (!className || !institutionId || !Array.isArray(sections) || sections.length === 0) {
         return res.status(400).json({ error: 'className, institutionId and a non-empty sections array are required.' });
     }
-
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
         const created = [];
         const skipped = [];
-
         for (const rawSection of sections) {
-            // Normalize: trim non-null strings, keep null as null
             const section = (rawSection === null || rawSection === undefined || rawSection === '')
                 ? null
                 : String(rawSection).trim();
-
             try {
                 await conn.execute(
                     'INSERT INTO classes (className, section, institutionId) VALUES (?, ?, ?)',
@@ -425,15 +456,13 @@ app.post('/api/admin/classes/bulk', async (req, res) => {
                 );
                 created.push(section ?? '(no section)');
             } catch (err) {
-                // ER_DUP_ENTRY = 1062 — class+section already exists for this institution
                 if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
                     skipped.push(section ?? '(no section)');
                 } else {
-                    throw err;   // anything else is a real error → rollback
+                    throw err;
                 }
             }
         }
-
         await conn.commit();
         res.json({ success: true, created: created.length, createdSections: created, skipped });
     } catch (err) {

@@ -1,27 +1,25 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import {
-  LayoutDashboard, Wallet, Calendar, Users, BookOpen,
-  FileText, ClipboardList, Video, MonitorPlay,
-  BarChart3, Search, LogOut, ShieldCheck
-} from 'lucide-react';
+import { PermissionsProvider, usePermissions } from './PermissionsContext';
+import { TAB_TO_MODULE, MODULES } from './Modules';
+import { Search, LogOut } from 'lucide-react';
 
 export default function Sidebar({ activeTab, setActiveTab }) {
   const { user, logout } = useAuth();
+  const { isVisible, loading } = usePermissions();
+  const [query, setQuery] = useState('');
 
-  const menuItems = [
-    { id: 'overview',       icon: LayoutDashboard, label: 'Overview' },
-    { id: 'manage-login',   icon: ShieldCheck,     label: 'Manage Logins' },
-    { id: 'payments',       icon: Wallet,          label: 'Payments & Receipts' },
-    { id: 'timetable',      icon: Calendar,        label: 'Timetable' },
-    { id: 'attendance',     icon: Users,           label: 'My Attendance' },
-    { id: 'syllabus',       icon: BookOpen,        label: 'Syllabus' },
-    { id: 'lesson-plan',    icon: FileText,        label: 'Lesson Plan' },
-    { id: 'homework',       icon: ClipboardList,   label: 'Homework' },
-    { id: 'workshop',       icon: Video,           label: 'Workshop Videos' },
-    { id: 'online-classes', icon: MonitorPlay,     label: 'Online Classes' },
-    { id: 'progress',       icon: BarChart3,       label: 'Progress Reports' },
-  ];
+  // Filter modules by:
+  //   (1) permissions (alwaysVisible items skip the check, e.g. Overview)
+  //   (2) search box
+  const visibleItems = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return MODULES.filter(m => {
+      if (!m.alwaysVisible && !isVisible(m.module_name)) return false;
+      if (q && !m.label.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [query, isVisible]);
 
   return (
     <aside className="w-72 bg-white border-r border-slate-200 flex flex-col h-[calc(100vh-120px)] sticky top-[120px] overflow-hidden shrink-0">
@@ -29,13 +27,21 @@ export default function Sidebar({ activeTab, setActiveTab }) {
         <h2 className="text-xl font-black text-slate-800 tracking-tight leading-none">
           {user?.role || 'Dashboard'}
         </h2>
-        <p className="text-[9px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-2">Administrative Control</p>
+        <p className="text-[9px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-2">
+          Administrative Control
+        </p>
       </div>
 
       <div className="px-5 mb-6">
         <div className="relative group">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
-          <input type="text" placeholder="Search Modules..." className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-xs font-medium focus:outline-none" />
+          <input
+            type="text"
+            placeholder="Search Modules..."
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-xs font-medium focus:outline-none"
+          />
         </div>
       </div>
 
@@ -44,7 +50,13 @@ export default function Sidebar({ activeTab, setActiveTab }) {
           <span className="text-[9px] font-black text-slate-300 uppercase tracking-[0.3em]">Main Menu</span>
         </div>
 
-        {menuItems.map((item) => (
+        {loading ? (
+          <div className="px-4 py-3 text-xs text-slate-400 italic">Loading menu…</div>
+        ) : visibleItems.length === 0 ? (
+          <div className="px-4 py-6 text-xs text-slate-400 italic text-center">
+            No modules available for your role. Ask an admin to grant access.
+          </div>
+        ) : visibleItems.map((item) => (
           <button
             key={item.id}
             onClick={() => setActiveTab(item.id)}
@@ -66,7 +78,9 @@ export default function Sidebar({ activeTab, setActiveTab }) {
             <p className="text-xs font-black text-slate-800 truncate">{user?.name}</p>
             <p className="text-[9px] font-black text-blue-500 uppercase">{user?.role}</p>
           </div>
-          <button onClick={logout} className="p-2 text-slate-300 hover:text-red-500 transition-all"><LogOut size={18} /></button>
+          <button onClick={logout} className="p-2 text-slate-300 hover:text-red-500 transition-all">
+            <LogOut size={18} />
+          </button>
         </div>
       </div>
     </aside>
