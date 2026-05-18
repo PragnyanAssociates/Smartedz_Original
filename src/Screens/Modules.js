@@ -37,8 +37,8 @@ export const MODULES = [
   },
 
   { 
-    id: 'Calendar',   
-    module_name: 'Academic Calendar',       
+    id: 'AcademicCalendar',   // Matched with Dashboard Switch
+    module_name: 'AcademicCalendar', // Matched with Backend DEFAULT_MODULES       
     label: 'Academic Calendar',       
     title: "Academic Calendar",
     imageSource: "https://cdn-icons-png.flaticon.com/128/668/668278.png",

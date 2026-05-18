@@ -701,24 +701,24 @@ app.get('/api/admin/calendar/:instId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Create event
+// Create event - Uses DATE(?) to ensure timezone neutrality in SQL
 app.post('/api/admin/calendar', async (req, res) => {
     const { institutionId, name, event_date, time, description, type, adminId } = req.body;
     try {
         await db.execute(
-            'INSERT INTO calendar_events (institutionId, name, event_date, time, description, type, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO calendar_events (institutionId, name, event_date, time, description, type, created_by) VALUES (?, ?, DATE(?), ?, ?, ?, ?)',
             [institutionId, name, event_date, time || null, description || null, type, adminId]
         );
         res.json({ success: true, message: 'Event created successfully' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Update event
+// Update event - Uses DATE(?) to ensure timezone neutrality in SQL
 app.put('/api/admin/calendar/:id', async (req, res) => {
     const { name, event_date, time, description, type } = req.body;
     try {
         await db.execute(
-            'UPDATE calendar_events SET name=?, event_date=?, time=?, description=?, type=? WHERE id=?',
+            'UPDATE calendar_events SET name=?, event_date=DATE(?), time=?, description=?, type=? WHERE id=?',
             [name, event_date, time || null, description || null, type, req.params.id]
         );
         res.json({ success: true, message: 'Event updated successfully' });

@@ -30,6 +30,14 @@ export default function AcademicCalendar() {
     const [editingEvent, setEditingEvent] = useState(null);
     const [form, setForm] = useState({ name: '', time: '', description: '', type: 'Meeting' });
 
+    // HELPER: Prevents timezone shifts by treating date as local string
+    const getSafeDate = (dateInput) => {
+        if (!dateInput) return new Date();
+        const datePart = typeof dateInput === 'string' ? dateInput.split('T')[0] : dateInput.toISOString().split('T')[0];
+        const [year, month, day] = datePart.split('-');
+        return new Date(year, month - 1, day);
+    };
+
     const fetchEvents = async () => {
         try {
             const res = await fetch(`${API_BASE_URL}/admin/calendar/${user.institutionId}`);
@@ -96,9 +104,9 @@ export default function AcademicCalendar() {
         setIsModalOpen(true);
     };
 
-    // Filter events for sidebar list
+    // Filter events for sidebar list using safe date parsing
     const monthEvents = events.filter(e => {
-        const d = new Date(e.event_date);
+        const d = getSafeDate(e.event_date);
         return d.getMonth() === month && d.getFullYear() === year;
     }).sort((a,b) => new Date(a.event_date) - new Date(b.event_date));
 
@@ -119,24 +127,27 @@ export default function AcademicCalendar() {
                             <h2 className="font-black text-slate-700">Events for {monthNames[month]}</h2>
                         </div>
                         <div className="divide-y divide-slate-50 max-h-[500px] overflow-y-auto">
-                            {monthEvents.length > 0 ? monthEvents.map(e => (
-                                <div key={e.id} className="p-4 flex gap-3 group">
-                                    <div className="text-center shrink-0 w-10">
-                                        <div className="text-[10px] font-black text-slate-400 uppercase">{dayNames[new Date(e.event_date).getDay()]}</div>
-                                        <div className="text-lg font-black text-slate-700">{new Date(e.event_date).getDate()}</div>
+                            {monthEvents.length > 0 ? monthEvents.map(e => {
+                                const safeDate = getSafeDate(e.event_date);
+                                return (
+                                    <div key={e.id} className="p-4 flex gap-3 group">
+                                        <div className="text-center shrink-0 w-10">
+                                            <div className="text-[10px] font-black text-slate-400 uppercase">{dayNames[safeDate.getDay()]}</div>
+                                            <div className="text-lg font-black text-slate-700">{safeDate.getDate()}</div>
+                                        </div>
+                                        <div className="flex-1 border-l-4 rounded-r pl-3" style={{ borderColor: eventTypesConfig[e.type].color }}>
+                                            <p className="text-sm font-bold text-slate-800 leading-tight">{e.name}</p>
+                                            <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase">{e.time || e.type}</p>
+                                            {isAdmin && (
+                                                <div className="flex gap-2 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                    <button onClick={() => openEdit(e)} className="text-blue-500 hover:underline text-[10px] font-bold">Edit</button>
+                                                    <button onClick={() => handleDelete(e.id)} className="text-red-500 hover:underline text-[10px] font-bold">Delete</button>
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
-                                    <div className="flex-1 border-l-4 rounded-r pl-3" style={{ borderColor: eventTypesConfig[e.type].color }}>
-                                        <p className="text-sm font-bold text-slate-800 leading-tight">{e.name}</p>
-                                        <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase">{e.time || e.type}</p>
-                                        {isAdmin && (
-                                            <div className="flex gap-2 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                <button onClick={() => openEdit(e)} className="text-blue-500 hover:underline text-[10px] font-bold">Edit</button>
-                                                <button onClick={() => handleDelete(e.id)} className="text-red-500 hover:underline text-[10px] font-bold">Delete</button>
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-                            )) : <div className="p-10 text-center text-slate-400 text-xs italic">No events this month.</div>}
+                                );
+                            }) : <div className="p-10 text-center text-slate-400 text-xs italic">No events this month.</div>}
                         </div>
                     </div>
 
