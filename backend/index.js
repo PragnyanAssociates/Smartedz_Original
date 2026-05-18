@@ -17,39 +17,29 @@ const db = mysql.createPool({
     waitForConnections: true,
     connectionLimit: 10,
     enableKeepAlive: true,
-    dateStrings: true // CRITICAL: This prevents the 1-day-off timezone bug
+    dateStrings: true
 });
 
 const JWT_SECRET = process.env.JWT_SECRET || 'unified_erp_key_2025';
 
 // =====================================================================
-//  MODULE REGISTRY (mirror in frontend/src/modules.js)
+//  MODULE REGISTRY (mirror in frontend/src/Screens/Modules.js)
 // =====================================================================
 const DEFAULT_MODULES = [
     'Overview',
     'Manage Logins',
     'Timetable',
-    'AcademicCalendar',
+    'Academic Calendar'
 ];
 
-// =====================================================================
-//  PLAN / SUBSCRIPTION HELPERS
-// =====================================================================
 const PLAN_DAYS = {
-    '7 days':   7,
-    '30 days':  30,
-    '90 days':  90,
-    '180 days': 180,
-    '1 year':   365,
-    '3 years':  365 * 3,
-    'Full Time': null
+    '7 days': 7, '30 days': 30, '90 days': 90, '180 days': 180,
+    '1 year': 365, '3 years': 365 * 3, 'Full Time': null
 };
 
 function computePlanStatus(plan, startDateStr) {
     const days = PLAN_DAYS[plan];
-    if (days === null || days === undefined) {
-        return { planEndDate: null, daysLeft: null, expired: false };
-    }
+    if (days === null || days === undefined) return { planEndDate: null, daysLeft: null, expired: false };
     const start = new Date(startDateStr);
     if (isNaN(start.getTime())) return { planEndDate: null, daysLeft: null, expired: false };
     const end = new Date(start);
@@ -60,36 +50,30 @@ function computePlanStatus(plan, startDateStr) {
     return { planEndDate: end.toISOString().slice(0, 10), daysLeft, expired: daysLeft < 0 };
 }
 
-// Helper: does a role name look like a teacher role?
 const isTeacherRoleName = (role) => role && role.toLowerCase().includes('teacher');
 
-// Helper: sync teacher_subjects join table for one user (inside a connection)
 async function syncTeacherSubjects(conn, userId, role, subjectIds) {
-    // Always wipe the user's mapping first
     await conn.execute('DELETE FROM teacher_subjects WHERE teacher_id = ?', [userId]);
-    // Only insert if user is a teacher AND we got an array
     if (!isTeacherRoleName(role) || !Array.isArray(subjectIds)) return;
     for (const sid of subjectIds) {
         if (!sid) continue;
-        await conn.execute(
-            'INSERT INTO teacher_subjects (teacher_id, subject_id) VALUES (?, ?)',
-            [userId, parseInt(sid, 10)]
-        );
+        await conn.execute('INSERT INTO teacher_subjects (teacher_id, subject_id) VALUES (?, ?)', [userId, parseInt(sid, 10)]);
     }
 }
 
 
 // =====================================================================
-// === 1. AUTHENTICATION ===============================================
+// === 1. AUTHENTICATION (accepts email OR username) ===================
 // =====================================================================
 app.post('/api/login', async (req, res) => {
-    const { email, password } = req.body;
+    const identifier = req.body.identifier || req.body.email;
+    const { password } = req.body;
     try {
         const [rows] = await db.execute(
-            'SELECT * FROM users WHERE email = ? AND password = ?',
-            [email, password]
+            'SELECT * FROM users WHERE (email = ? OR username = ?) AND password = ?',
+            [identifier, identifier, password]
         );
-        if (rows.length === 0) return res.status(401).json({ success: false, message: 'Invalid email or password' });
+        if (rows.length === 0) return res.status(401).json({ success: false, message: 'Invalid credentials' });
         const user = rows[0];
         if (user.status === 'inactive') return res.status(403).json({ success: false, message: 'Your account has been deactivated. Contact your administrator.' });
 
@@ -97,14 +81,14 @@ app.post('/api/login', async (req, res) => {
             const [instRows] = await db.execute('SELECT usage_plan, plan_start_date FROM institutions WHERE id = ?', [user.institutionId]);
             if (instRows.length > 0) {
                 const status = computePlanStatus(instRows[0].usage_plan, instRows[0].plan_start_date);
-                if (status.expired) return res.status(403).json({ success: false, message: 'Your institution\'s plan has expired. Please contact SmartEdz to renew.' });
+                if (status.expired) return res.status(403).json({ success: false, message: "Your institution's plan has expired. Please contact SmartEdz to renew." });
             }
         }
 
         const token = jwt.sign({ id: user.id, role: user.role, instId: user.institutionId }, JWT_SECRET, { expiresIn: '24h' });
         res.json({
             success: true, token,
-            user: { id: user.id, name: user.name, email: user.email, role: user.role, institutionId: user.institutionId }
+            user: { id: user.id, name: user.name, email: user.email, username: user.username, role: user.role, institutionId: user.institutionId }
         });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -116,7 +100,7 @@ app.post('/api/login', async (req, res) => {
 app.get('/api/developer/data', async (req, res) => {
     try {
         const [insts] = await db.execute('SELECT * FROM institutions ORDER BY created_at DESC');
-        const [users] = await db.execute('SELECT id, name, email, role, institutionId, password FROM users');
+        const [users] = await db.execute('SELECT id, name, email, username, role, institutionId, password FROM users');
         const decorated = insts.map(inst => ({ ...inst, ...computePlanStatus(inst.usage_plan, inst.plan_start_date) }));
         res.json({ institutions: decorated, users });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -184,7 +168,6 @@ app.delete('/api/developer/institution/:id', async (req, res) => {
 // =====================================================================
 // === 3. SUPER ADMIN — School Aggregate Data ==========================
 // =====================================================================
-// Now also returns subjects + teacherSubjects mapping for the User form.
 app.get('/api/admin/data/:instId', async (req, res) => {
     const { instId } = req.params;
     try {
@@ -194,91 +177,86 @@ app.get('/api/admin/data/:instId', async (req, res) => {
         const [roles]    = await db.execute('SELECT * FROM roles WHERE institutionId = ? ORDER BY role_name', [instId]);
         const [inst]     = await db.execute('SELECT * FROM institutions WHERE id = ?', [instId]);
         const [subjects] = await db.execute('SELECT * FROM subjects WHERE institutionId = ? ORDER BY name', [instId]);
-
-        // teacher_id → [subject_id, subject_id, ...]
         const [tsRows] = await db.execute(
-            `SELECT ts.teacher_id, ts.subject_id
-               FROM teacher_subjects ts
-               JOIN users u ON u.id = ts.teacher_id
-              WHERE u.institutionId = ?`,
-            [instId]
-        );
+            `SELECT ts.teacher_id, ts.subject_id FROM teacher_subjects ts
+               JOIN users u ON u.id = ts.teacher_id WHERE u.institutionId = ?`, [instId]);
         const teacherSubjects = {};
         tsRows.forEach(r => {
             if (!teacherSubjects[r.teacher_id]) teacherSubjects[r.teacher_id] = [];
             teacherSubjects[r.teacher_id].push(r.subject_id);
         });
-
         const institution = inst[0] ? { ...inst[0], ...computePlanStatus(inst[0].usage_plan, inst[0].plan_start_date) } : null;
-        res.json({
-            users, classes, academicYears: years, roles, subjects,
-            teacherSubjects,
-            modules: DEFAULT_MODULES,
-            institution
-        });
+        res.json({ users, classes, academicYears: years, roles, subjects, teacherSubjects, modules: DEFAULT_MODULES, institution });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 
 // =====================================================================
-// === 4. USERS — Full CRUD (with teacher_subjects sync) ===============
+// === 4. USERS — Full CRUD (now with username + profile fields) =======
 // =====================================================================
-
-// --- 4.1 Create
 app.post('/api/admin/users', async (req, res) => {
-    const { name, email, password, role, institutionId, modules,
+    const { name, email, username, password, role, institutionId, modules,
             phone_no, roll_no, admission_no, class_id, section, status,
-            subject_ids } = req.body;
-
+            dob, gender, address, profile_pic, subject_ids } = req.body;
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
         const [result] = await conn.execute(
-            `INSERT INTO users (name, email, password, role, institutionId, modules, phone_no, roll_no, admission_no, class_id, section, status)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [name, email, password, role, institutionId, modules || null,
+            `INSERT INTO users
+              (name, email, username, password, role, institutionId, modules,
+               phone_no, roll_no, admission_no, class_id, section, status,
+               dob, gender, address, profile_pic)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [name, email, username || null, password, role, institutionId, modules || null,
              phone_no || null, roll_no || null, admission_no || null,
-             class_id || null, section || null, status || 'active']
+             class_id || null, section || null, status || 'active',
+             dob || null, gender || null, address || null, profile_pic || null]
         );
         await syncTeacherSubjects(conn, result.insertId, role, subject_ids);
         await conn.commit();
         res.json({ success: true });
     } catch (err) {
         await conn.rollback();
+        if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
+            return res.status(400).json({ error: 'Email or username already exists in this school.' });
+        }
         res.status(500).json({ error: err.message });
     } finally { conn.release(); }
 });
 
-// --- 4.2 Update
 app.put('/api/admin/users/:id', async (req, res) => {
     const { id } = req.params;
-    const { name, email, password, role, modules,
+    const { name, email, username, password, role, modules,
             phone_no, roll_no, admission_no, class_id, section, status,
-            subject_ids } = req.body;
-
+            dob, gender, address, profile_pic, subject_ids } = req.body;
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
         await conn.execute(
-            `UPDATE users SET name=?, email=?, password=?, role=?, modules=?,
-                    phone_no=?, roll_no=?, admission_no=?, class_id=?, section=?, status=? WHERE id=?`,
-            [name, email, password, role, modules || null,
+            `UPDATE users SET
+                name=?, email=?, username=?, password=?, role=?, modules=?,
+                phone_no=?, roll_no=?, admission_no=?, class_id=?, section=?, status=?,
+                dob=?, gender=?, address=?, profile_pic=?
+              WHERE id=?`,
+            [name, email, username || null, password, role, modules || null,
              phone_no || null, roll_no || null, admission_no || null,
-             class_id || null, section || null, status || 'active', id]
+             class_id || null, section || null, status || 'active',
+             dob || null, gender || null, address || null, profile_pic || null, id]
         );
         await syncTeacherSubjects(conn, parseInt(id, 10), role, subject_ids);
         await conn.commit();
         res.json({ success: true });
     } catch (err) {
         await conn.rollback();
+        if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
+            return res.status(400).json({ error: 'Email or username already exists in this school.' });
+        }
         res.status(500).json({ error: err.message });
     } finally { conn.release(); }
 });
 
-// --- 4.3 Delete
 app.delete('/api/admin/users/:id', async (req, res) => {
     try {
-        // teacher_subjects rows cascade-delete via FK
         await db.execute('DELETE FROM users WHERE id = ?', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -286,7 +264,7 @@ app.delete('/api/admin/users/:id', async (req, res) => {
 
 
 // =====================================================================
-// === 5. ROLES — Full CRUD ============================================
+// === 5. ROLES ========================================================
 // =====================================================================
 app.post('/api/admin/roles', async (req, res) => {
     const { role_name, institutionId } = req.body;
@@ -377,15 +355,13 @@ app.get('/api/admin/my-permissions/:userId', async (req, res) => {
 
 
 // =====================================================================
-// === 7. ACADEMIC YEARS — Full CRUD ===================================
+// === 7. ACADEMIC YEARS ===============================================
 // =====================================================================
 app.post('/api/admin/academics', async (req, res) => {
     const { name, startDate, endDate, institutionId } = req.body;
     try {
-        await db.execute(
-            'INSERT INTO academic_years (name, startDate, endDate, isActive, institutionId) VALUES (?, ?, ?, 0, ?)',
-            [name, startDate, endDate, institutionId]
-        );
+        await db.execute('INSERT INTO academic_years (name, startDate, endDate, isActive, institutionId) VALUES (?, ?, ?, 0, ?)',
+            [name, startDate, endDate, institutionId]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -424,7 +400,7 @@ app.delete('/api/admin/academics/:id', async (req, res) => {
 
 
 // =====================================================================
-// === 8. CLASSES — Full CRUD ==========================================
+// === 8. CLASSES ======================================================
 // =====================================================================
 app.post('/api/admin/classes', async (req, res) => {
     const { className, section, institutionId } = req.body;
@@ -486,10 +462,7 @@ app.post('/api/admin/promote', async (req, res) => {
     if (!Array.isArray(studentIds) || studentIds.length === 0) return res.status(400).json({ error: 'No students supplied' });
     try {
         const placeholders = studentIds.map(() => '?').join(',');
-        await db.execute(
-            `UPDATE users SET class_id = ?, section = ? WHERE id IN (${placeholders})`,
-            [targetClassId, targetSection || null, ...studentIds]
-        );
+        await db.execute(`UPDATE users SET class_id = ?, section = ? WHERE id IN (${placeholders})`, [targetClassId, targetSection || null, ...studentIds]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -506,14 +479,10 @@ app.get('/', (req, res) => res.json({ status: 'ok', service: 'SmartEdz ERP', tim
 // =====================================================================
 async function resolveYearId(instId, requestedYearId) {
     if (requestedYearId) return parseInt(requestedYearId, 10);
-    const [rows] = await db.execute(
-        'SELECT id FROM academic_years WHERE institutionId = ? AND isActive = 1 LIMIT 1',
-        [instId]
-    );
+    const [rows] = await db.execute('SELECT id FROM academic_years WHERE institutionId = ? AND isActive = 1 LIMIT 1', [instId]);
     return rows[0]?.id || null;
 }
 
-// --- 11.1 Read everything timetable-related, including teacher→subject map
 app.get('/api/admin/timetable/:instId', async (req, res) => {
     const { instId } = req.params;
     try {
@@ -531,27 +500,18 @@ app.get('/api/admin/timetable/:instId', async (req, res) => {
         const [classes]  = await db.execute('SELECT * FROM classes WHERE institutionId = ? ORDER BY className, section', [instId]);
         const [teachers] = await db.execute("SELECT id, name, email FROM users WHERE institutionId = ? AND LOWER(role) LIKE '%teacher%'", [instId]);
         const [subjects] = await db.execute('SELECT * FROM subjects WHERE institutionId = ? ORDER BY name', [instId]);
-
-        // Build teacher_id → [subject_id, ...] map so the cell dropdown can
-        // filter to "teachers who teach this subject".
         const [tsRows] = await db.execute(
-            `SELECT ts.teacher_id, ts.subject_id
-               FROM teacher_subjects ts
-               JOIN users u ON u.id = ts.teacher_id
-              WHERE u.institutionId = ?`,
-            [instId]
-        );
+            `SELECT ts.teacher_id, ts.subject_id FROM teacher_subjects ts
+               JOIN users u ON u.id = ts.teacher_id WHERE u.institutionId = ?`, [instId]);
         const teacherSubjects = {};
         tsRows.forEach(r => {
             if (!teacherSubjects[r.teacher_id]) teacherSubjects[r.teacher_id] = [];
             teacherSubjects[r.teacher_id].push(r.subject_id);
         });
-
         res.json({ academic_year_id: yearId, days, periods, entries, classes, teachers, subjects, teacherSubjects });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 11.2 Bulk-replace working days
 app.post('/api/admin/timetable/days', async (req, res) => {
     const { institutionId, days } = req.body;
     const conn = await db.getConnection();
@@ -561,10 +521,8 @@ app.post('/api/admin/timetable/days', async (req, res) => {
         await conn.beginTransaction();
         await conn.execute('DELETE FROM timetable_days WHERE institutionId = ? AND academic_year_id = ?', [institutionId, yearId]);
         for (const d of days) {
-            await conn.execute(
-                'INSERT INTO timetable_days (institutionId, academic_year_id, day_index, day_name, is_working) VALUES (?, ?, ?, ?, ?)',
-                [institutionId, yearId, d.day_index, d.day_name, d.is_working ? 1 : 0]
-            );
+            await conn.execute('INSERT INTO timetable_days (institutionId, academic_year_id, day_index, day_name, is_working) VALUES (?, ?, ?, ?, ?)',
+                [institutionId, yearId, d.day_index, d.day_name, d.is_working ? 1 : 0]);
         }
         await conn.commit();
         res.json({ success: true });
@@ -574,7 +532,6 @@ app.post('/api/admin/timetable/days', async (req, res) => {
     } finally { conn.release(); }
 });
 
-// --- 11.3 Bulk-replace periods (cascade-clears entries too)
 app.post('/api/admin/timetable/periods', async (req, res) => {
     const { institutionId, periods } = req.body;
     const conn = await db.getConnection();
@@ -584,10 +541,8 @@ app.post('/api/admin/timetable/periods', async (req, res) => {
         await conn.beginTransaction();
         await conn.execute('DELETE FROM timetable_periods WHERE institutionId = ? AND academic_year_id = ?', [institutionId, yearId]);
         for (const p of periods) {
-            await conn.execute(
-                'INSERT INTO timetable_periods (institutionId, academic_year_id, period_index, name, start_time, end_time, is_break) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                [institutionId, yearId, p.period_index, p.name, p.start_time, p.end_time, p.is_break ? 1 : 0]
-            );
+            await conn.execute('INSERT INTO timetable_periods (institutionId, academic_year_id, period_index, name, start_time, end_time, is_break) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                [institutionId, yearId, p.period_index, p.name, p.start_time, p.end_time, p.is_break ? 1 : 0]);
         }
         await conn.commit();
         res.json({ success: true });
@@ -597,35 +552,24 @@ app.post('/api/admin/timetable/periods', async (req, res) => {
     } finally { conn.release(); }
 });
 
-// --- 11.4 Upsert a single cell
 app.post('/api/admin/timetable/entry', async (req, res) => {
     const { institutionId, class_id, day_id, period_id, subject_id, teacher_id, room_no } = req.body;
     try {
         const yearId = await resolveYearId(institutionId, req.body.academic_year_id);
         if (!yearId) return res.status(400).json({ error: 'No academic year. Create one first.' });
-
         if (!subject_id && !teacher_id && !room_no) {
-            await db.execute(
-                'DELETE FROM timetable_entries WHERE class_id = ? AND day_id = ? AND period_id = ?',
-                [class_id, day_id, period_id]
-            );
+            await db.execute('DELETE FROM timetable_entries WHERE class_id = ? AND day_id = ? AND period_id = ?', [class_id, day_id, period_id]);
             return res.json({ success: true, cleared: true });
         }
         await db.execute(
-            `INSERT INTO timetable_entries
-                (institutionId, academic_year_id, class_id, day_id, period_id, subject_id, teacher_id, room_no)
+            `INSERT INTO timetable_entries (institutionId, academic_year_id, class_id, day_id, period_id, subject_id, teacher_id, room_no)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-             ON DUPLICATE KEY UPDATE
-                subject_id = VALUES(subject_id),
-                teacher_id = VALUES(teacher_id),
-                room_no    = VALUES(room_no)`,
-            [institutionId, yearId, class_id, day_id, period_id, subject_id || null, teacher_id || null, room_no || null]
-        );
+             ON DUPLICATE KEY UPDATE subject_id = VALUES(subject_id), teacher_id = VALUES(teacher_id), room_no = VALUES(room_no)`,
+            [institutionId, yearId, class_id, day_id, period_id, subject_id || null, teacher_id || null, room_no || null]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 11.5 Bulk save all cells for one class
 app.post('/api/admin/timetable/entries/bulk', async (req, res) => {
     const { institutionId, class_id, entries } = req.body;
     const conn = await db.getConnection();
@@ -637,12 +581,9 @@ app.post('/api/admin/timetable/entries/bulk', async (req, res) => {
         for (const e of entries) {
             if (!e.subject_id && !e.teacher_id && !e.room_no) continue;
             await conn.execute(
-                `INSERT INTO timetable_entries
-                    (institutionId, academic_year_id, class_id, day_id, period_id, subject_id, teacher_id, room_no)
+                `INSERT INTO timetable_entries (institutionId, academic_year_id, class_id, day_id, period_id, subject_id, teacher_id, room_no)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-                [institutionId, yearId, class_id, e.day_id, e.period_id,
-                 e.subject_id || null, e.teacher_id || null, e.room_no || null]
-            );
+                [institutionId, yearId, class_id, e.day_id, e.period_id, e.subject_id || null, e.teacher_id || null, e.room_no || null]);
         }
         await conn.commit();
         res.json({ success: true });
@@ -654,7 +595,7 @@ app.post('/api/admin/timetable/entries/bulk', async (req, res) => {
 
 
 // =====================================================================
-// === 12. SUBJECTS — Full CRUD ========================================
+// === 12. SUBJECTS ====================================================
 // =====================================================================
 app.post('/api/admin/subjects', async (req, res) => {
     const { name, institutionId } = req.body;
@@ -662,18 +603,14 @@ app.post('/api/admin/subjects', async (req, res) => {
         await db.execute('INSERT INTO subjects (name, institutionId) VALUES (?, ?)', [name, institutionId]);
         res.json({ success: true });
     } catch (err) {
-        if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
-            return res.status(400).json({ error: 'A subject with this name already exists.' });
-        }
+        if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) return res.status(400).json({ error: 'A subject with this name already exists.' });
         res.status(500).json({ error: err.message });
     }
 });
 
 app.put('/api/admin/subjects/:id', async (req, res) => {
-    const { id } = req.params;
-    const { name } = req.body;
     try {
-        await db.execute('UPDATE subjects SET name = ? WHERE id = ?', [name, id]);
+        await db.execute('UPDATE subjects SET name = ? WHERE id = ?', [req.body.name, req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -686,16 +623,12 @@ app.delete('/api/admin/subjects/:id', async (req, res) => {
 });
 
 
-
 // =====================================================================
 // === 13. ACADEMIC CALENDAR ===========================================
 // =====================================================================
 app.get('/api/admin/calendar/:instId', async (req, res) => {
     try {
-        const [rows] = await db.execute(
-            'SELECT * FROM calendar_events WHERE institutionId = ? ORDER BY event_date ASC',
-            [req.params.instId]
-        );
+        const [rows] = await db.execute('SELECT * FROM calendar_events WHERE institutionId = ? ORDER BY event_date ASC', [req.params.instId]);
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -703,36 +636,72 @@ app.get('/api/admin/calendar/:instId', async (req, res) => {
 app.post('/api/admin/calendar', async (req, res) => {
     const { institutionId, name, event_date, time, description, type, adminId } = req.body;
     try {
-        await db.execute(
-            'INSERT INTO calendar_events (institutionId, name, event_date, time, description, type, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [institutionId, name, event_date, time || null, description || null, type, adminId]
-        );
-        res.json({ success: true, message: 'Event created successfully' });
+        await db.execute('INSERT INTO calendar_events (institutionId, name, event_date, time, description, type, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [institutionId, name, event_date, time || null, description || null, type, adminId]);
+        res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.put('/api/admin/calendar/:id', async (req, res) => {
     const { name, event_date, time, description, type } = req.body;
     try {
-        await db.execute(
-            'UPDATE calendar_events SET name=?, event_date=?, time=?, description=?, type=? WHERE id=?',
-            [name, event_date, time || null, description || null, type, req.params.id]
-        );
-        res.json({ success: true, message: 'Event updated successfully' });
+        await db.execute('UPDATE calendar_events SET name=?, event_date=?, time=?, description=?, type=? WHERE id=?',
+            [name, event_date, time || null, description || null, type, req.params.id]);
+        res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.delete('/api/admin/calendar/:id', async (req, res) => {
     try {
         await db.execute('DELETE FROM calendar_events WHERE id = ?', [req.params.id]);
-        res.json({ success: true, message: 'Event deleted' });
+        res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 
-
 // =====================================================================
-// === SERVER BOOT =====================================================
+// === 14. PROFILE — self-edit (locks password + role) =================
+// =====================================================================
+app.get('/api/profile/:id', async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            `SELECT id, name, email, username, role, institutionId, phone_no, roll_no, admission_no,
+                    class_id, section, status, dob, gender, address, profile_pic
+               FROM users WHERE id = ?`,
+            [req.params.id]
+        );
+        if (rows.length === 0) return res.status(404).json({ error: 'User not found' });
+        res.json(rows[0]);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/profile/:id', async (req, res) => {
+    const { id } = req.params;
+    // Whitelist: only these fields can be self-edited.
+    // password, role, status, institutionId, class_id, section are NOT here.
+    const { name, email, username, phone_no, dob, gender, address, profile_pic } = req.body;
+    try {
+        await db.execute(
+            `UPDATE users SET
+                name = ?, email = ?, username = ?, phone_no = ?,
+                dob = ?, gender = ?, address = ?, profile_pic = ?
+              WHERE id = ?`,
+            [name || null, email || null, username || null, phone_no || null,
+             dob || null, gender || null, address || null, profile_pic || null, id]
+        );
+        const [rows] = await db.execute(
+            `SELECT id, name, email, username, role, institutionId, phone_no, dob, gender, address, profile_pic
+               FROM users WHERE id = ?`, [id]);
+        res.json({ success: true, user: rows[0] });
+    } catch (err) {
+        if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
+            return res.status(400).json({ error: 'Email or username is already taken.' });
+        }
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
 // =====================================================================
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`🚀 SmartEdz Backend Active on Port ${PORT}`));

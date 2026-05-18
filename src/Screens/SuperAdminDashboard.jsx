@@ -5,41 +5,33 @@ import Overview from './Overview';
 import ManageLogin from './ManageLogin';
 import Timetable from '../components/Timetable/Timetable';
 import AcademicCalendar from '../components/Calendar/AcademicCalendar';
+import Profile from './Profile';
 import { PermissionsProvider, usePermissions } from './PermissionsContext';
 import { TAB_TO_MODULE, MODULES } from './Modules';
 import { ShieldOff } from 'lucide-react';
 
-// ---- Inner component (after PermissionsProvider is mounted) ---------
 function DashboardShell() {
   const { isVisible, can, loading } = usePermissions();
 
-  // The first tab the user is allowed to see. Defaults to 'overview' since
-  // Overview is alwaysVisible, but if you mark Overview as gated later this
-  // will fall back to the first permitted item.
   const firstAllowedTab = useMemo(() => {
-    const first = MODULES.find(m => m.alwaysVisible || isVisible(m.module_name));
+    const first = MODULES.find(m => !m.hideFromSidebar && (m.alwaysVisible || isVisible(m.module_name)));
     return first?.id || 'overview';
   }, [isVisible]);
 
   const [activeTab, setActiveTab] = useState(firstAllowedTab);
 
-  // If the user lands on a tab they shouldn't see (stale state, deep link,
-  // or admin just revoked access) bounce them to a permitted tab.
   useEffect(() => {
     if (loading) return;
     const moduleName = TAB_TO_MODULE[activeTab];
     const currentMod = MODULES.find(m => m.id === activeTab);
-    if (currentMod?.alwaysVisible) return;             // e.g. Overview
-    if (moduleName && !isVisible(moduleName)) {
-      setActiveTab(firstAllowedTab);
-    }
+    if (currentMod?.alwaysVisible) return;
+    if (moduleName && !isVisible(moduleName)) setActiveTab(firstAllowedTab);
   }, [activeTab, isVisible, loading, firstAllowedTab]);
 
   const renderContent = () => {
     const moduleName = TAB_TO_MODULE[activeTab];
     const currentMod = MODULES.find(m => m.id === activeTab);
 
-    // Permission gate. Overview is always allowed.
     if (moduleName && !currentMod?.alwaysVisible && !can(moduleName, 'view')) {
       return (
         <div className="h-full flex items-center justify-center">
@@ -58,15 +50,11 @@ function DashboardShell() {
     }
 
     switch (activeTab) {
-      case 'overview':
-        return <Overview />;
-      case 'manage-login':
-        return <ManageLogin />;
-        case 'Timetable':
-        return <Timetable />;
-        case 'AcademicCalendar':
-        return <AcademicCalendar />;
-         
+      case 'overview':          return <Overview />;
+      case 'manage-login':      return <ManageLogin />;
+      case 'timetable':         return <Timetable />;
+      case 'academic-calendar': return <AcademicCalendar />;
+      case 'profile':           return <Profile />;
       default:
         return (
           <div className="h-full flex items-center justify-center flex-col text-center opacity-40">
@@ -90,7 +78,6 @@ function DashboardShell() {
   );
 }
 
-// ---- Outer wrapper that provides the PermissionsContext --------------
 export default function SuperAdminDashboard() {
   return (
     <PermissionsProvider>
