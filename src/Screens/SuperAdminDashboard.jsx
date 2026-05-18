@@ -4,6 +4,7 @@ import DashboardHeader from './DashboardHeader';
 import Overview from './Overview';
 import ManageLogin from './ManageLogin';
 import Timetable from '../components/Timetable/Timetable';
+import AcademicCalendar from '../components/Calendar/AcademicCalendar';
 import { PermissionsProvider, usePermissions } from './PermissionsContext';
 import { TAB_TO_MODULE, MODULES } from './Modules';
 import { ShieldOff } from 'lucide-react';
@@ -63,6 +64,8 @@ function DashboardShell() {
         return <ManageLogin />;
         case 'Timetable':
         return <Timetable />;
+         case 'AcademicCalendar':
+        return <AcademicCalendar />;
       default:
         return (
           <div className="h-full flex items-center justify-center flex-col text-center opacity-40">

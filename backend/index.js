@@ -1,18 +1,5 @@
 // =====================================================================
 //  SmartEdz ERP - Unified Backend (single file)
-//  Sections:
-//   1. AUTHENTICATION (with plan-expiry enforcement)
-//   2. DEVELOPER ENDPOINTS
-//   3. SUPER ADMIN — School Aggregate Data
-//   4. USERS — Full CRUD (with teacher-subjects sync)
-//   5. ROLES — Full CRUD
-//   6. PERMISSIONS (role-level + per-user lookup)
-//   7. ACADEMIC YEARS — Full CRUD
-//   8. CLASSES — Full CRUD (single + bulk-create)
-//   9. STUDENT PROMOTION
-//  10. HEALTH CHECK
-//  11. TIMETABLE — Days / Periods / Entries
-//  12. SUBJECTS — Full CRUD
 // =====================================================================
 
 require('dotenv').config();
@@ -40,7 +27,8 @@ const JWT_SECRET = process.env.JWT_SECRET || 'unified_erp_key_2025';
 const DEFAULT_MODULES = [
     'Overview',
     'Manage Logins',
-    'Timetable'
+    'Timetable',
+    'AcademicCalendar'
 ];
 
 // =====================================================================
@@ -695,6 +683,56 @@ app.delete('/api/admin/subjects/:id', async (req, res) => {
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+
+
+// =====================================================================
+// === 13. ACADEMIC CALENDAR ===========================================
+// =====================================================================
+
+// Get all events for an institution
+app.get('/api/admin/calendar/:instId', async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            'SELECT * FROM calendar_events WHERE institutionId = ? ORDER BY event_date ASC',
+            [req.params.instId]
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Create event
+app.post('/api/admin/calendar', async (req, res) => {
+    const { institutionId, name, event_date, time, description, type, adminId } = req.body;
+    try {
+        await db.execute(
+            'INSERT INTO calendar_events (institutionId, name, event_date, time, description, type, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [institutionId, name, event_date, time || null, description || null, type, adminId]
+        );
+        res.json({ success: true, message: 'Event created successfully' });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Update event
+app.put('/api/admin/calendar/:id', async (req, res) => {
+    const { name, event_date, time, description, type } = req.body;
+    try {
+        await db.execute(
+            'UPDATE calendar_events SET name=?, event_date=?, time=?, description=?, type=? WHERE id=?',
+            [name, event_date, time || null, description || null, type, req.params.id]
+        );
+        res.json({ success: true, message: 'Event updated successfully' });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Delete event
+app.delete('/api/admin/calendar/:id', async (req, res) => {
+    try {
+        await db.execute('DELETE FROM calendar_events WHERE id = ?', [req.params.id]);
+        res.json({ success: true, message: 'Event deleted' });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 
 
 // =====================================================================

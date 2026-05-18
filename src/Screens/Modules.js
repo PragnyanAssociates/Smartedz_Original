@@ -35,6 +35,15 @@ export const MODULES = [
     imageSource: "https://cdn-icons-png.flaticon.com/128/8576/8576510.png",
     navigateTo: "/Timetable"
   },
+
+  { 
+    id: 'Calendar',   
+    module_name: 'Academic Calendar',       
+    label: 'Academic Calendar',       
+    title: "Academic Calendar",
+    imageSource: "https://cdn-icons-png.flaticon.com/128/668/668278.png",
+    navigateTo: "/AcademicCalendar"
+  },
   
 ];
 
