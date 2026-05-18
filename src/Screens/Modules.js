@@ -39,7 +39,7 @@ export const MODULES = [
   { 
     id: 'Calendar',   
     module_name: 'Academic Calendar',       
-    label: 'Academic Calendar',       
+    label: 'Calendar',       
     title: "Academic Calendar",
     imageSource: "https://cdn-icons-png.flaticon.com/128/668/668278.png",
     navigateTo: "/AcademicCalendar"
