@@ -152,7 +152,7 @@ export default function LoginScreen() {
       <div className="flex items-center justify-center pb-8 pt-4">
         <button onClick={() => setRole(role === 'Developer' ? 'Super Admin' : 'Developer')}
           className="text-[9px] text-slate-300 hover:text-indigo-400 transition-all flex items-center gap-2 uppercase tracking-[0.4em] font-light py-2 px-4 rounded-lg hover:bg-white/50 backdrop-blur-sm shadow-sm border border-transparent hover:border-slate-100">
-          <Code size={10} /> Developer Access
+          <Code size={10} /> Developer Access1
         </button>
       </div>
     </div>
