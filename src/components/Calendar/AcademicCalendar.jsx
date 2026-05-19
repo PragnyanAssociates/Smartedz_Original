@@ -8,8 +8,7 @@ const eventTypesConfig = {
     Meeting: { color: '#3b82f6', displayName: 'Meeting' },
     Event: { color: '#f59e0b', displayName: 'Event' },
     Festival: { color: '#ef4444', displayName: 'Festival' },
-    'Holiday (General)': { color: '#10b981', displayName: 'Holiday (General)' },
-    'Holiday (Optional)': { color: '#14b8a6', displayName: 'Holiday (Optional)' },
+    Holiday : { color: '#10b981', displayName: 'Holiday' },
     Exam: { color: '#8b5cf6', displayName: 'Exam' },
     Other: { color: '#ec4899', displayName: 'Other' },
 };
