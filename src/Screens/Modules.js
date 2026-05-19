@@ -57,7 +57,7 @@ export const MODULES = [
     module_name: 'Exams',
     label: 'Exams',
     title: 'Exams',
-    imageSource: 'https://cdn-icons-png.flaticon.com/128/3273/3273259.png',
+    imageSource: 'https://cdn-icons-png.flaticon.com/128/207/207190.png',
     navigateTo: '/Exams'
   },
   { 
