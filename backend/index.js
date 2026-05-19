@@ -788,36 +788,83 @@ app.get('/api/admin/attendance/roster/:instId', async (req, res) => {
     const { instId } = req.params;
     const { category = 'students', date, class_id } = req.query;
     const targetDate = date || new Date().toISOString().slice(0, 10);
-
+ 
     try {
+        // ---- Build the WHERE clause for users ------------------------
         let where = 'u.institutionId = ?';
-        const params = [instId];
-
+        const params = [parseInt(instId, 10)];
+ 
         if (category === 'students') {
-            where += " AND LOWER(u.role) = 'student'";
-            if (class_id) { where += ' AND u.class_id = ?'; params.push(class_id); }
+            // Match 'Student', 'student', ' Student ' — trim + lower for safety
+            where += " AND LOWER(TRIM(u.role)) = 'student'";
+            if (class_id) {
+                where += ' AND u.class_id = ?';
+                params.push(parseInt(class_id, 10));
+            }
         } else if (category === 'teachers') {
-            where += " AND LOWER(u.role) LIKE '%teacher%'";
+            where += " AND LOWER(TRIM(u.role)) LIKE '%teacher%'";
         } else if (category === 'other') {
-            // Everyone who is NOT student/teacher/super admin/developer
-            where += " AND LOWER(u.role) NOT LIKE '%teacher%' AND LOWER(u.role) NOT IN ('student','super admin','developer')";
+            where += " AND LOWER(TRIM(u.role)) NOT LIKE '%teacher%' "
+                  +  " AND LOWER(TRIM(u.role)) NOT IN ('student','super admin','developer')";
         }
-
-        const sql = `
-            SELECT u.id, u.name, u.username, u.role, u.profile_pic, u.roll_no, u.class_id, u.section,
-                   a.status, a.marked_by, a.marked_at, a.updated_by, a.updated_at,
-                   mb.name AS marked_by_name, mb.role AS marked_by_role,
-                   ub.name AS updated_by_name, ub.role AS updated_by_role
+        // Status filter — accept active and also rows where status is NULL
+        // (legacy users created before status column was non-null)
+        where += " AND (u.status IS NULL OR LOWER(TRIM(u.status)) = 'active')";
+ 
+        // ---- Query 1: Users ------------------------------------------
+        const userSql = `
+            SELECT u.id, u.name, u.username, u.role, u.profile_pic,
+                   u.roll_no, u.class_id, u.section, u.status
               FROM users u
-              LEFT JOIN attendance a ON a.user_id = u.id AND a.attendance_date = ?
-              LEFT JOIN users mb ON mb.id = a.marked_by
-              LEFT JOIN users ub ON ub.id = a.updated_by
-             WHERE ${where} AND u.status = 'active'
+             WHERE ${where}
              ORDER BY u.name`;
-        const [rows] = await db.execute(sql, [targetDate, ...params]);
-        res.json({ date: targetDate, users: rows });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+ 
+        const [users] = await db.execute(userSql, params);
+ 
+        // ---- Query 2: Attendance for those users on the given date ---
+        // If this fails (e.g. table missing), we keep going.
+        const attMap = {};
+        let attendanceWarning = null;
+        if (users.length > 0) {
+            try {
+                const ids = users.map(u => u.id);
+                const placeholders = ids.map(() => '?').join(',');
+                const attSql = `
+                    SELECT a.user_id, a.status, a.marked_by, a.marked_at,
+                           a.updated_by, a.updated_at,
+                           mb.name AS marked_by_name, mb.role AS marked_by_role,
+                           ub.name AS updated_by_name, ub.role AS updated_by_role
+                      FROM attendance a
+                      LEFT JOIN users mb ON mb.id = a.marked_by
+                      LEFT JOIN users ub ON ub.id = a.updated_by
+                     WHERE a.user_id IN (${placeholders}) AND a.attendance_date = ?`;
+                const [att] = await db.execute(attSql, [...ids, targetDate]);
+                att.forEach(r => { attMap[r.user_id] = r; });
+            } catch (attErr) {
+                console.warn('[attendance roster] attendance lookup failed:', attErr.message);
+                attendanceWarning = attErr.message;
+            }
+        }
+ 
+        // ---- Merge user + attendance --------------------------------
+        const merged = users.map(u => ({ ...u, ...(attMap[u.id] || {}) }));
+ 
+        // Diagnostic log so backend console tells us what happened
+        console.log(`[attendance roster] inst=${instId} category=${category} class_id=${class_id || '—'} date=${targetDate} → ${merged.length} users`);
+ 
+        res.json({
+            date: targetDate,
+            users: merged,
+            count: merged.length,
+            warning: attendanceWarning
+        });
+    } catch (err) {
+        // Real DB error — surface it instead of hiding behind an empty list
+        console.error('[attendance roster] FATAL:', err);
+        res.status(500).json({ error: err.message, users: [] });
+    }
 });
+
 
 
 // --- 15.2 Bulk mark / update attendance ----------------------------

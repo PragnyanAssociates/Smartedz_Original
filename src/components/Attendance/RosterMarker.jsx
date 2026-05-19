@@ -2,15 +2,10 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import { API_BASE_URL } from '../../apiConfig';
-import { Calendar, Search, Loader2, CheckCheck, Save, Info } from 'lucide-react';
+import { Calendar, Search, Loader2, CheckCheck, Save, Info, AlertTriangle } from 'lucide-react';
 
 // =====================================================================
-//  RosterMarker
-//  Loads the user list for the chosen category and date, lets the
-//  marker click P/A/L for each row, then bulk-submits.
-//
-//  When a row already has attendance, the previously-marked status is
-//  pre-selected and shows "Marked by …" / "Updated by …" inline.
+//  RosterMarker — bulk attendance marker
 // =====================================================================
 
 const STATUS_OPTIONS = [
@@ -35,33 +30,34 @@ export default function RosterMarker({ category }) {
   const today = new Date().toISOString().slice(0, 10);
   const [date, setDate] = useState(today);
   const [roster, setRoster] = useState([]);
-  const [edits, setEdits] = useState({});       // { user_id: 'P'|'A'|'L' }
+  const [edits, setEdits] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
 
-  // Class filter for students — teachers see only their classes
-  const [classes, setClasses] = useState([]);   // [{id, className, section}]
+  // Error/warning surface
+  const [error, setError] = useState(null);
+  const [warning, setWarning] = useState(null);
+
+  // Class filter for students
+  const [classes, setClasses] = useState([]);
   const [classId, setClassId] = useState('');
 
-  // Restriction: teacher viewing teachers tab → not allowed to mark
   const teacherCantMark = isTeacher && !isAllAccess && category === 'teachers';
 
   // -----------------------------------------------------------------
-  // Load classes (for the class filter on Students tab)
+  // Load classes
   // -----------------------------------------------------------------
   useEffect(() => {
     if (category !== 'students') { setClasses([]); setClassId(''); return; }
     (async () => {
       try {
         if (isTeacher && !isAllAccess) {
-          // Teachers see only the classes they are timetabled into
           const res = await fetch(`${API_BASE_URL}/admin/attendance/teacher-classes/${user.id}`);
           const data = await res.json();
           setClasses(data || []);
           if (data?.[0]) setClassId(String(data[0].id));
         } else {
-          // Super Admin sees all school classes
           const res = await fetch(`${API_BASE_URL}/admin/data/${user.institutionId}`);
           const data = await res.json();
           setClasses(data.classes || []);
@@ -76,27 +72,41 @@ export default function RosterMarker({ category }) {
   const loadRoster = useCallback(async () => {
     if (teacherCantMark) { setLoading(false); return; }
     setLoading(true);
+    setError(null);
+    setWarning(null);
     try {
       let url = `${API_BASE_URL}/admin/attendance/roster/${user.institutionId}?category=${category}&date=${date}`;
       if (category === 'students' && classId) url += `&class_id=${classId}`;
+
       const res = await fetch(url);
       const data = await res.json();
+
+      // Surface backend errors and warnings
+      if (!res.ok || data.error) {
+        setError(data.error || `Server returned ${res.status}`);
+        setRoster([]);
+        setEdits({});
+        return;
+      }
+      if (data.warning) setWarning(data.warning);
+
       setRoster(data.users || []);
-      // Seed edits map with existing statuses
       const initial = {};
       (data.users || []).forEach(u => { if (u.status) initial[u.id] = u.status; });
       setEdits(initial);
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      setError(e.message || 'Network error');
+    }
     setLoading(false);
   }, [user, category, date, classId, teacherCantMark]);
 
   useEffect(() => { loadRoster(); }, [loadRoster]);
 
   // -----------------------------------------------------------------
-  // Status setting
+  // Status setting & submit
   // -----------------------------------------------------------------
-  const setStatus = (uid, code) =>
-    setEdits(prev => ({ ...prev, [uid]: code }));
+  const setStatus = (uid, code) => setEdits(prev => ({ ...prev, [uid]: code }));
 
   const markAllPresent = () => {
     const next = {};
@@ -104,9 +114,6 @@ export default function RosterMarker({ category }) {
     setEdits(prev => ({ ...prev, ...next }));
   };
 
-  // -----------------------------------------------------------------
-  // Submit
-  // -----------------------------------------------------------------
   const handleSubmit = async () => {
     const entries = Object.entries(edits)
       .filter(([_, code]) => ['P', 'A', 'L'].includes(code))
@@ -130,7 +137,7 @@ export default function RosterMarker({ category }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Submit failed');
       alert('Attendance saved.');
-      loadRoster();   // reload to pull updated marked_by / updated_by
+      loadRoster();
     } catch (e) { alert(e.message); }
     setSaving(false);
   };
@@ -167,17 +174,44 @@ export default function RosterMarker({ category }) {
 
   return (
     <div className="space-y-5">
+      {/* Error banner */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-2xl p-4 flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <div className="font-bold text-red-800 text-sm">Server error</div>
+            <div className="text-xs text-red-700 mt-0.5 font-mono break-all">{error}</div>
+            <div className="text-xs text-red-600 mt-2">
+              Most common cause: the <code className="bg-red-100 px-1 rounded">attendance</code> table doesn't exist.
+              Run the SQL migration in Railway MySQL.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Warning banner */}
+      {warning && !error && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <div className="font-bold text-amber-800 text-sm">Attendance lookup unavailable</div>
+            <div className="text-xs text-amber-700 mt-0.5 font-mono break-all">{warning}</div>
+            <div className="text-xs text-amber-600 mt-2">
+              You can still mark today's attendance. Run the SQL migration to enable history.
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Filter bar */}
       <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-sm">
         <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-end">
-          {/* Date */}
           <Field label="Date" icon={Calendar}>
             <input type="date" value={date} max={today}
               onChange={e => setDate(e.target.value)}
               className="bg-slate-50 border border-slate-100 rounded-xl px-3 py-2.5 text-sm w-full outline-none focus:ring-2 focus:ring-blue-500/10" />
           </Field>
 
-          {/* Class filter (Students tab only) */}
           {category === 'students' && (
             <Field label="Class">
               <select value={classId} onChange={e => setClassId(e.target.value)}
@@ -192,7 +226,6 @@ export default function RosterMarker({ category }) {
             </Field>
           )}
 
-          {/* Search */}
           <Field label="Search">
             <div className="relative">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -202,19 +235,19 @@ export default function RosterMarker({ category }) {
             </div>
           </Field>
 
-          {/* Mark all present */}
           <button onClick={markAllPresent}
-            className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 shrink-0">
+            disabled={filtered.length === 0}
+            className="bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40 text-emerald-700 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 shrink-0">
             <CheckCheck size={14} /> All Present
           </button>
         </div>
 
-        {/* Quick stats */}
         <div className="mt-4 flex flex-wrap gap-3 text-xs font-bold">
-          <Stat color="emerald" label="Present" value={presentCount} />
-          <Stat color="red"     label="Absent"  value={absentCount} />
-          <Stat color="amber"   label="Late"    value={lateCount} />
+          <Stat color="emerald" label="Present"  value={presentCount} />
+          <Stat color="red"     label="Absent"   value={absentCount} />
+          <Stat color="amber"   label="Late"     value={lateCount} />
           <Stat color="slate"   label="Unmarked" value={filtered.length - presentCount - absentCount - lateCount} />
+          <Stat color="slate"   label="Total"    value={roster.length} />
         </div>
       </div>
 
@@ -224,8 +257,15 @@ export default function RosterMarker({ category }) {
           <Loader2 className="animate-spin w-8 h-8 text-blue-600 mx-auto" />
         </div>
       ) : filtered.length === 0 ? (
-        <div className="bg-white p-16 rounded-3xl border border-dashed border-slate-200 text-center">
+        <div className="bg-white p-16 rounded-3xl border border-dashed border-slate-200 text-center space-y-2">
           <p className="text-slate-400 font-medium">No users to mark.</p>
+          {roster.length === 0 && !error && (
+            <p className="text-xs text-slate-400">
+              {category === 'students' && classId
+                ? 'No students assigned to this class.'
+                : `No ${category} in this institution. Add some in Manage Logins → Users.`}
+            </p>
+          )}
         </div>
       ) : (
         <div className="bg-white rounded-3xl border border-slate-100 overflow-hidden shadow-sm">
@@ -302,7 +342,6 @@ export default function RosterMarker({ category }) {
         </div>
       )}
 
-      {/* Submit */}
       {filtered.length > 0 && (
         <div className="flex justify-center pt-2">
           <button onClick={handleSubmit} disabled={saving}
