@@ -8,7 +8,7 @@ const eventTypesConfig = {
     Meeting: { color: '#3b82f6', displayName: 'Meeting' },
     Event: { color: '#f59e0b', displayName: 'Event' },
     Festival: { color: '#ef4444', displayName: 'Festival' },
-    Holiday : { color: '#10b981', displayName: 'Holiday' },
+    Holiday: { color: '#10b981', displayName: 'Holiday' },
     Exam: { color: '#8b5cf6', displayName: 'Exam' },
     Other: { color: '#ec4899', displayName: 'Other' },
 };
@@ -38,7 +38,11 @@ export default function AcademicCalendar() {
         setLoading(false);
     };
 
-    useEffect(() => { fetchEvents(); }, []);
+    useEffect(() => { 
+        if (user?.institutionId) {
+            fetchEvents(); 
+        }
+    }, [user?.institutionId]);
 
     const month = currentDate.getMonth();
     const year = currentDate.getFullYear();
@@ -126,13 +130,15 @@ export default function AcademicCalendar() {
                         <div className="divide-y divide-slate-50 max-h-[500px] overflow-y-auto">
                             {monthEvents.length > 0 ? monthEvents.map(e => {
                                 const dt = parseDBDate(e.event_date);
+                                // Fallback added here to prevent crash if type is not found
+                                const config = eventTypesConfig[e.type] || eventTypesConfig.Other;
                                 return (
                                     <div key={e.id} className="p-4 flex gap-3 group">
                                         <div className="text-center shrink-0 w-10">
                                             <div className="text-[10px] font-black text-slate-400 uppercase">{dayNames[dt.getDay()]}</div>
                                             <div className="text-lg font-black text-slate-700">{dt.getDate()}</div>
                                         </div>
-                                        <div className="flex-1 border-l-4 rounded-r pl-3" style={{ borderColor: eventTypesConfig[e.type].color }}>
+                                        <div className="flex-1 border-l-4 rounded-r pl-3" style={{ borderColor: config.color }}>
                                             <p className="text-sm font-bold text-slate-800 leading-tight">{e.name}</p>
                                             <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase">{e.time || e.type}</p>
                                             {isAdmin && (
@@ -177,7 +183,6 @@ export default function AcademicCalendar() {
                             if (!day) return <div key={`empty-${idx}`} className="bg-slate-50/30 border-r border-b border-slate-100 h-32" />;
                             
                             const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                            // Direct string comparison - no timezone mess
                             const dayEvents = events.filter(e => e.event_date.split('T')[0] === dateStr);
                             const isToday = new Date().toDateString() === new Date(year, month, day).toDateString();
 
@@ -191,7 +196,11 @@ export default function AcademicCalendar() {
                                     
                                     <div className="mt-1 space-y-1 overflow-y-auto max-h-20 custom-scrollbar">
                                         {dayEvents.map(e => (
-                                            <div key={e.id} className="px-1.5 py-0.5 rounded text-[9px] font-bold truncate text-white" style={{ backgroundColor: eventTypesConfig[e.type].color }}>
+                                            <div 
+                                                key={e.id} 
+                                                className="px-1.5 py-0.5 rounded text-[9px] font-bold truncate text-white" 
+                                                style={{ backgroundColor: (eventTypesConfig[e.type] || eventTypesConfig.Other).color }}
+                                            >
                                                 {e.name}
                                             </div>
                                         ))}

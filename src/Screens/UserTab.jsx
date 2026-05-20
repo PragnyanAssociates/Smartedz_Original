@@ -1,9 +1,10 @@
 import React, { useState, useMemo } from 'react';
-import { Plus, Edit, Trash2, X, Search, UserCircle2, BookOpen, Camera, AtSign } from 'lucide-react';
+import { Plus, Edit, Trash2, X, Search, UserCircle2, BookOpen, Camera, AtSign, GraduationCap } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
 
 export default function UserTab({ data, fetchData, user }) {
   const [activeRoleTab, setActiveRoleTab] = useState('all');
+  const [activeClass, setActiveClass]     = useState('all');   // 'all' | class id
   const [isModalOpen, setIsModalOpen]     = useState(false);
   const [editingUser, setEditingUser]     = useState(null);
   const [search, setSearch]               = useState('');
@@ -25,9 +26,37 @@ export default function UserTab({ data, fetchData, user }) {
     return merged.map(r => ({ name: r, count: counts[r] || 0 }));
   }, [data.users, data.roles]);
 
+  // ------------------------------------------------------------------
+  // Class filter: count students per class. Only meaningful when the
+  // current role view is 'all' or a student-ish role, but we always
+  // compute it from class_id so it stays accurate.
+  // ------------------------------------------------------------------
+  const classFilters = useMemo(() => {
+    const counts = {};
+    data.users.forEach(u => {
+      if (u.class_id) counts[u.class_id] = (counts[u.class_id] || 0) + 1;
+    });
+    return (data.classes || []).map(c => ({
+      id: c.id,
+      label: `${c.className}${c.section ? ` - ${c.section}` : ''}`,
+      count: counts[c.id] || 0
+    }));
+  }, [data.users, data.classes]);
+
+  // Show the class filter only when it makes sense — i.e. the current
+  // role view actually contains class-assigned users (students).
+  const showClassFilter = useMemo(() => {
+    if (classFilters.length === 0) return false;
+    if (activeRoleTab === 'all') return true;
+    return activeRoleTab.toLowerCase().includes('student');
+  }, [classFilters, activeRoleTab]);
+
   const filteredUsers = useMemo(() => {
     let list = data.users;
     if (activeRoleTab !== 'all') list = list.filter(u => u.role === activeRoleTab);
+    if (activeClass !== 'all') {
+      list = list.filter(u => String(u.class_id) === String(activeClass));
+    }
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter(u =>
@@ -36,7 +65,7 @@ export default function UserTab({ data, fetchData, user }) {
         (u.username || '').toLowerCase().includes(q));
     }
     return list;
-  }, [data.users, activeRoleTab, search]);
+  }, [data.users, activeRoleTab, activeClass, search]);
 
   const isoDate = (v) => {
     if (!v) return '';
@@ -125,6 +154,17 @@ export default function UserTab({ data, fetchData, user }) {
     return ids.map(sid => data.subjects?.find(s => s.id === sid)?.name).filter(Boolean).join(', ');
   };
 
+  // When switching to a non-student role view, clear any class filter
+  const handleRoleTab = (roleName) => {
+    setActiveRoleTab(roleName);
+    if (roleName !== 'all' && !roleName.toLowerCase().includes('student')) {
+      setActiveClass('all');
+    }
+  };
+
+  // Render pills when few classes, dropdown when many
+  const useDropdown = classFilters.length > 6;
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col lg:flex-row justify-between gap-4 lg:items-center">
@@ -145,15 +185,16 @@ export default function UserTab({ data, fetchData, user }) {
         </div>
       </div>
 
+      {/* Role tabs */}
       <div className="flex flex-wrap gap-2">
-        <button onClick={() => setActiveRoleTab('all')}
+        <button onClick={() => handleRoleTab('all')}
           className={`px-4 py-2 rounded-full text-xs font-black uppercase tracking-wider transition-all ${
             activeRoleTab === 'all' ? 'bg-slate-900 text-white' : 'bg-white text-slate-500 border border-slate-100 hover:border-slate-300'
           }`}>
           All <span className="ml-2 opacity-60">{data.users.length}</span>
         </button>
         {roleTabs.map(t => (
-          <button key={t.name} onClick={() => setActiveRoleTab(t.name)}
+          <button key={t.name} onClick={() => handleRoleTab(t.name)}
             className={`px-4 py-2 rounded-full text-xs font-black uppercase tracking-wider transition-all ${
               activeRoleTab === t.name ? 'bg-slate-900 text-white' : 'bg-white text-slate-500 border border-slate-100 hover:border-slate-300'
             }`}>
@@ -161,6 +202,52 @@ export default function UserTab({ data, fetchData, user }) {
           </button>
         ))}
       </div>
+
+      {/* Class filter — adaptive: pills for few classes, dropdown for many */}
+      {showClassFilter && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="inline-flex items-center gap-1.5 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+            <GraduationCap size={13} /> Class
+          </span>
+
+          {useDropdown ? (
+            <select
+              value={activeClass}
+              onChange={e => setActiveClass(e.target.value)}
+              className="bg-white border border-slate-100 rounded-xl px-3 py-2 text-xs font-bold text-slate-600 outline-none focus:ring-2 focus:ring-blue-500/10 cursor-pointer">
+              <option value="all">
+                All Classes ({classFilters.reduce((s, c) => s + c.count, 0)})
+              </option>
+              {classFilters.map(c => (
+                <option key={c.id} value={c.id}>{c.label} ({c.count})</option>
+              ))}
+            </select>
+          ) : (
+            <>
+              <button onClick={() => setActiveClass('all')}
+                className={`px-3.5 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider transition-all ${
+                  activeClass === 'all'
+                    ? 'bg-blue-600 text-white shadow shadow-blue-200'
+                    : 'bg-white text-slate-500 border border-slate-100 hover:border-blue-300'
+                }`}>
+                All <span className="ml-1.5 opacity-60">
+                  {classFilters.reduce((s, c) => s + c.count, 0)}
+                </span>
+              </button>
+              {classFilters.map(c => (
+                <button key={c.id} onClick={() => setActiveClass(String(c.id))}
+                  className={`px-3.5 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider transition-all ${
+                    String(activeClass) === String(c.id)
+                      ? 'bg-blue-600 text-white shadow shadow-blue-200'
+                      : 'bg-white text-slate-500 border border-slate-100 hover:border-blue-300'
+                  }`}>
+                  {c.label} <span className="ml-1.5 opacity-60">{c.count}</span>
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+      )}
 
       <div className="bg-white rounded-3xl border border-slate-100 overflow-hidden shadow-sm">
         <table className="w-full text-left">
