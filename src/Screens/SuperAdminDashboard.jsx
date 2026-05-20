@@ -7,6 +7,7 @@ import Timetable from '../components/Timetable/Timetable';
 import AcademicCalendar from '../components/Calendar/AcademicCalendar';
 import Attendance from '../components/Attendance/Attendance';
 import Exams from '../components/Exams/Exams';
+import Reports from '../components/Reports/Reports';
 import Profile from './Profile';
 import { PermissionsProvider, usePermissions } from './PermissionsContext';
 import { TAB_TO_MODULE, MODULES } from './Modules';
@@ -55,6 +56,7 @@ function DashboardShell() {
       case 'academic-calendar': return <AcademicCalendar />;
       case 'attendance':        return <Attendance />;
       case 'Exams':             return <Exams />;
+      case 'reports':           return <Reports />;
       case 'profile':           return <Profile />;
       default:
         return (

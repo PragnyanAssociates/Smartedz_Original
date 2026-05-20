@@ -31,7 +31,8 @@ const DEFAULT_MODULES = [
     'Timetable',
     'Academic Calendar',
     'Attendance',
-    'Exams'
+    'Exams',
+    'Reports'
 ];
 
 // =====================================================================
@@ -1494,6 +1495,529 @@ app.post('/api/admin/attempts/:attemptId/grade', async (req, res) => {
         await conn.rollback();
         res.status(500).json({ error: err.message });
     } finally { conn.release(); }
+});
+
+
+
+// =====================================================================
+// === 17. REPORTS — Offline Exams, Marks Entry & Report Cards =========
+//
+//   Distinct from Section 16 (online quizzes). This covers the
+//   traditional paper-exam workflow:
+//     • exam_types          — admin defines AT1, UT1, SA1...
+//     • exam_max_marks      — per exam-type + class max marks
+//     • subject_teacher_map — who enters marks for a class+subject
+//     • student_marks       — the actual entered marks
+//   Report-card attendance is auto-computed from the daily `attendance`
+//   table built in Section 15 — no separate W/P entry.
+// =====================================================================
+
+// --- Month boundaries helper for attendance roll-up ----------------
+//   Given an academic year row {startDate,endDate}, returns an ordered
+//   list of { key:'2025-06', label:'June', from, to } month buckets.
+function buildMonthBuckets(startDateStr, endDateStr) {
+    const buckets = [];
+    if (!startDateStr || !endDateStr) return buckets;
+    const start = new Date(startDateStr);
+    const end = new Date(endDateStr);
+    if (isNaN(start) || isNaN(end)) return buckets;
+    const cur = new Date(start.getFullYear(), start.getMonth(), 1);
+    const monthNames = ['January','February','March','April','May','June',
+                        'July','August','September','October','November','December'];
+    while (cur <= end) {
+        const y = cur.getFullYear();
+        const m = cur.getMonth();
+        const first = new Date(y, m, 1);
+        const last  = new Date(y, m + 1, 0);
+        buckets.push({
+            key:   `${y}-${String(m + 1).padStart(2, '0')}`,
+            label: monthNames[m],
+            from:  `${y}-${String(m + 1).padStart(2, '0')}-01`,
+            to:    `${y}-${String(m + 1).padStart(2, '0')}-${String(last.getDate()).padStart(2, '0')}`
+        });
+        cur.setMonth(cur.getMonth() + 1);
+    }
+    return buckets;
+}
+
+
+// =====================================================================
+// === 17.A EXAM TYPES =================================================
+// =====================================================================
+
+// --- 17.A.1 List exam types for a school --------------------------
+app.get('/api/admin/exam-types/:instId', async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            'SELECT * FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id',
+            [req.params.instId]
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 17.A.2 Create exam type --------------------------------------
+app.post('/api/admin/exam-types', async (req, res) => {
+    const { institutionId, name, exam_order } = req.body;
+    if (!institutionId || !name) return res.status(400).json({ error: 'institutionId and name required.' });
+    try {
+        const [result] = await db.execute(
+            'INSERT INTO exam_types (institutionId, name, exam_order) VALUES (?, ?, ?)',
+            [institutionId, name.trim(), parseInt(exam_order, 10) || 0]
+        );
+        res.json({ success: true, id: result.insertId });
+    } catch (err) {
+        if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
+            return res.status(400).json({ error: 'An exam type with that name already exists.' });
+        }
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// --- 17.A.3 Update exam type --------------------------------------
+app.put('/api/admin/exam-types/:id', async (req, res) => {
+    const { name, exam_order } = req.body;
+    try {
+        await db.execute(
+            'UPDATE exam_types SET name = ?, exam_order = ? WHERE id = ?',
+            [name.trim(), parseInt(exam_order, 10) || 0, req.params.id]
+        );
+        res.json({ success: true });
+    } catch (err) {
+        if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
+            return res.status(400).json({ error: 'An exam type with that name already exists.' });
+        }
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// --- 17.A.4 Delete exam type --------------------------------------
+app.delete('/api/admin/exam-types/:id', async (req, res) => {
+    try {
+        await db.execute('DELETE FROM exam_types WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// =====================================================================
+// === 17.B MAX MARKS (per exam-type + class) ==========================
+// =====================================================================
+
+// --- 17.B.1 Get the full max-marks matrix for a school ------------
+//   Returns one row per (exam_type, class) that HAS a configured max.
+app.get('/api/admin/exam-max-marks/:instId', async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            `SELECT m.id, m.exam_type_id, m.class_id, m.max_marks,
+                    t.name AS exam_type_name, c.className, c.section
+               FROM exam_max_marks m
+               JOIN exam_types t ON t.id = m.exam_type_id
+               JOIN classes c    ON c.id = m.class_id
+              WHERE t.institutionId = ?`,
+            [req.params.instId]
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 17.B.2 Bulk upsert max marks ---------------------------------
+//   Body: { entries: [{ exam_type_id, class_id, max_marks }] }
+//   max_marks = null/'' removes the row (class won't show that exam).
+app.post('/api/admin/exam-max-marks', async (req, res) => {
+    const { entries = [] } = req.body;
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        for (const e of entries) {
+            if (!e.exam_type_id || !e.class_id) continue;
+            const max = (e.max_marks === '' || e.max_marks === null || e.max_marks === undefined)
+                ? null : parseInt(e.max_marks, 10);
+            if (max === null) {
+                await conn.execute(
+                    'DELETE FROM exam_max_marks WHERE exam_type_id = ? AND class_id = ?',
+                    [e.exam_type_id, e.class_id]
+                );
+            } else {
+                await conn.execute(
+                    `INSERT INTO exam_max_marks (exam_type_id, class_id, max_marks)
+                     VALUES (?, ?, ?)
+                     ON DUPLICATE KEY UPDATE max_marks = VALUES(max_marks)`,
+                    [e.exam_type_id, e.class_id, max]
+                );
+            }
+        }
+        await conn.commit();
+        res.json({ success: true });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally { conn.release(); }
+});
+
+
+// =====================================================================
+// === 17.C SUBJECT-TEACHER MAP ========================================
+// =====================================================================
+
+// --- 17.C.1 Get all assignments for a class -----------------------
+app.get('/api/admin/subject-teachers/:classId', async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            `SELECT stm.id, stm.class_id, stm.subject_id, stm.teacher_id,
+                    sub.name AS subject_name, u.name AS teacher_name
+               FROM subject_teacher_map stm
+               JOIN subjects sub ON sub.id = stm.subject_id
+               JOIN users u      ON u.id = stm.teacher_id
+              WHERE stm.class_id = ?`,
+            [req.params.classId]
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 17.C.2 Assign (or reassign) a teacher to class+subject -------
+app.post('/api/admin/subject-teachers', async (req, res) => {
+    const { institutionId, class_id, subject_id, teacher_id } = req.body;
+    if (!institutionId || !class_id || !subject_id || !teacher_id) {
+        return res.status(400).json({ error: 'institutionId, class_id, subject_id, teacher_id required.' });
+    }
+    try {
+        await db.execute(
+            `INSERT INTO subject_teacher_map (institutionId, class_id, subject_id, teacher_id)
+             VALUES (?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE teacher_id = VALUES(teacher_id)`,
+            [institutionId, class_id, subject_id, teacher_id]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 17.C.3 Remove an assignment ----------------------------------
+app.delete('/api/admin/subject-teachers/:id', async (req, res) => {
+    try {
+        await db.execute('DELETE FROM subject_teacher_map WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// =====================================================================
+// === 17.D MARKS ENTRY ================================================
+// =====================================================================
+
+// --- 17.D.1 Class data bundle for the marks grid ------------------
+//   GET /api/admin/reports/class-data/:classId
+//   Returns everything the grid needs: students, subjects (with the
+//   assigned teacher), exam types (with this class's max marks), and
+//   every existing mark.
+app.get('/api/admin/reports/class-data/:classId', async (req, res) => {
+    const { classId } = req.params;
+    try {
+        const [cls] = await db.execute('SELECT * FROM classes WHERE id = ?', [classId]);
+        if (cls.length === 0) return res.status(404).json({ error: 'Class not found' });
+        const instId = cls[0].institutionId;
+
+        // Students in this class
+        const [students] = await db.execute(
+            `SELECT id, name, roll_no, section
+               FROM users
+              WHERE class_id = ? AND LOWER(TRIM(role)) = 'student'
+                AND (status IS NULL OR LOWER(TRIM(status)) = 'active')
+              ORDER BY roll_no, name`,
+            [classId]
+        );
+
+        // All subjects in the school
+        const [subjects] = await db.execute(
+            'SELECT id, name FROM subjects WHERE institutionId = ? ORDER BY name',
+            [instId]
+        );
+
+        // Teacher assignment for this class
+        const [assignments] = await db.execute(
+            `SELECT stm.subject_id, stm.teacher_id, u.name AS teacher_name
+               FROM subject_teacher_map stm
+               JOIN users u ON u.id = stm.teacher_id
+              WHERE stm.class_id = ?`,
+            [classId]
+        );
+        const assignMap = {};
+        assignments.forEach(a => { assignMap[a.subject_id] = a; });
+
+        // Exam types + this class's max marks
+        const [examTypes] = await db.execute(
+            'SELECT * FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id',
+            [instId]
+        );
+        const [maxRows] = await db.execute(
+            `SELECT m.exam_type_id, m.max_marks
+               FROM exam_max_marks m
+              WHERE m.class_id = ?`,
+            [classId]
+        );
+        const maxMap = {};
+        maxRows.forEach(r => { maxMap[r.exam_type_id] = r.max_marks; });
+
+        // Only exam types that have a max configured for THIS class
+        const examTypesForClass = examTypes
+            .filter(t => maxMap[t.id] !== undefined)
+            .map(t => ({ ...t, max_marks: maxMap[t.id] }));
+
+        // Subjects decorated with assigned teacher
+        const subjectsForClass = subjects.map(s => ({
+            ...s,
+            teacher_id:   assignMap[s.id]?.teacher_id || null,
+            teacher_name: assignMap[s.id]?.teacher_name || null
+        }));
+
+        // Existing marks
+        const [marks] = await db.execute(
+            `SELECT student_id, subject_id, exam_type_id, marks_obtained
+               FROM student_marks
+              WHERE class_id = ?`,
+            [classId]
+        );
+
+        res.json({
+            class: cls[0],
+            students,
+            subjects: subjectsForClass,
+            examTypes: examTypesForClass,
+            marks
+        });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 17.D.2 Bulk save marks ---------------------------------------
+//   Body: { institutionId, class_id, actor_id, entries: [
+//             { student_id, subject_id, exam_type_id, marks_obtained } ] }
+app.post('/api/admin/reports/marks/bulk', async (req, res) => {
+    const { institutionId, class_id, actor_id, entries = [] } = req.body;
+    if (!institutionId || !class_id || !Array.isArray(entries)) {
+        return res.status(400).json({ error: 'institutionId, class_id and entries[] required.' });
+    }
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        for (const e of entries) {
+            if (!e.student_id || !e.subject_id || !e.exam_type_id) continue;
+            const val = (e.marks_obtained === '' || e.marks_obtained === null || e.marks_obtained === undefined)
+                ? null : parseFloat(e.marks_obtained);
+            await conn.execute(
+                `INSERT INTO student_marks
+                   (institutionId, student_id, class_id, subject_id, exam_type_id, marks_obtained, entered_by)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE marks_obtained = VALUES(marks_obtained),
+                                         entered_by = VALUES(entered_by)`,
+                [institutionId, e.student_id, class_id, e.subject_id, e.exam_type_id,
+                 val, actor_id || null]
+            );
+        }
+        await conn.commit();
+        res.json({ success: true, count: entries.length });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally { conn.release(); }
+});
+
+
+// =====================================================================
+// === 17.E CLASS LIST + SUMMARIES =====================================
+// =====================================================================
+
+// --- 17.E.1 Class summaries (overview table) ----------------------
+//   For each class: total marks entered, top student, top subject.
+app.get('/api/admin/reports/class-summaries/:instId', async (req, res) => {
+    const { instId } = req.params;
+    try {
+        const [classes] = await db.execute(
+            'SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section',
+            [instId]
+        );
+
+        const summaries = [];
+        for (const c of classes) {
+            // Total marks across the class
+            const [totalRow] = await db.execute(
+                'SELECT COALESCE(SUM(marks_obtained), 0) AS total FROM student_marks WHERE class_id = ?',
+                [c.id]
+            );
+
+            // Top student by summed marks
+            const [topStudent] = await db.execute(
+                `SELECT u.name, COALESCE(SUM(sm.marks_obtained), 0) AS marks
+                   FROM users u
+                   LEFT JOIN student_marks sm ON sm.student_id = u.id
+                  WHERE u.class_id = ? AND LOWER(TRIM(u.role)) = 'student'
+                  GROUP BY u.id, u.name
+                  ORDER BY marks DESC
+                  LIMIT 1`,
+                [c.id]
+            );
+
+            // Top subject by summed marks
+            const [topSubject] = await db.execute(
+                `SELECT sub.name, COALESCE(SUM(sm.marks_obtained), 0) AS marks
+                   FROM student_marks sm
+                   JOIN subjects sub ON sub.id = sm.subject_id
+                  WHERE sm.class_id = ?
+                  GROUP BY sub.id, sub.name
+                  ORDER BY marks DESC
+                  LIMIT 1`,
+                [c.id]
+            );
+
+            summaries.push({
+                class_id: c.id,
+                class_group: `${c.className}${c.section ? ' - ' + c.section : ''}`,
+                className: c.className,
+                section: c.section,
+                totalClassMarks: Number(totalRow[0].total) || 0,
+                topStudent: topStudent[0]
+                    ? { name: topStudent[0].name, marks: Number(topStudent[0].marks) || 0 }
+                    : { name: '—', marks: 0 },
+                topSubject: topSubject[0]
+                    ? { name: topSubject[0].name, marks: Number(topSubject[0].marks) || 0 }
+                    : { name: '—', marks: 0 }
+            });
+        }
+        res.json(summaries);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// =====================================================================
+// === 17.F REPORT CARDS ===============================================
+// =====================================================================
+
+// --- Shared builder: assembles one student's full report card ------
+async function buildReportCard(studentId) {
+    const [sRows] = await db.execute(
+        `SELECT u.id, u.name, u.roll_no, u.admission_no, u.class_id, u.section,
+                u.institutionId, c.className
+           FROM users u
+           LEFT JOIN classes c ON c.id = u.class_id
+          WHERE u.id = ?`,
+        [studentId]
+    );
+    if (sRows.length === 0) return null;
+    const student = sRows[0];
+
+    // School header info
+    const [instRows] = await db.execute(
+        'SELECT id, name, logo, school_email, phone, type FROM institutions WHERE id = ?',
+        [student.institutionId]
+    );
+    const institution = instRows[0] || null;
+
+    // Active academic year (for month buckets + year label)
+    const [yearRows] = await db.execute(
+        `SELECT * FROM academic_years
+          WHERE institutionId = ? AND isActive = 1 LIMIT 1`,
+        [student.institutionId]
+    );
+    const academicYear = yearRows[0] || null;
+
+    // Subjects + exam types + max marks for this class
+    const [subjects] = await db.execute(
+        'SELECT id, name FROM subjects WHERE institutionId = ? ORDER BY name',
+        [student.institutionId]
+    );
+    const [examTypes] = await db.execute(
+        'SELECT * FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id',
+        [student.institutionId]
+    );
+    const [maxRows] = await db.execute(
+        'SELECT exam_type_id, max_marks FROM exam_max_marks WHERE class_id = ?',
+        [student.class_id]
+    );
+    const maxMap = {};
+    maxRows.forEach(r => { maxMap[r.exam_type_id] = r.max_marks; });
+    const examTypesForClass = examTypes
+        .filter(t => maxMap[t.id] !== undefined)
+        .map(t => ({ ...t, max_marks: maxMap[t.id] }));
+
+    // This student's marks
+    const [marks] = await db.execute(
+        `SELECT subject_id, exam_type_id, marks_obtained
+           FROM student_marks
+          WHERE student_id = ?`,
+        [studentId]
+    );
+
+    // ---- Attendance: auto-compute monthly W/P from daily rows -----
+    let attendance = [];
+    if (academicYear) {
+        const buckets = buildMonthBuckets(academicYear.startDate, academicYear.endDate);
+        for (const b of buckets) {
+            try {
+                const [aRows] = await db.execute(
+                    `SELECT status, COUNT(*) AS cnt
+                       FROM attendance
+                      WHERE user_id = ? AND attendance_date BETWEEN ? AND ?
+                      GROUP BY status`,
+                    [studentId, b.from, b.to]
+                );
+                let present = 0, working = 0;
+                aRows.forEach(r => {
+                    working += r.cnt;
+                    if (r.status === 'P' || r.status === 'L') present += r.cnt;
+                });
+                attendance.push({ month: b.label, working_days: working, present_days: present });
+            } catch {
+                attendance.push({ month: b.label, working_days: 0, present_days: 0 });
+            }
+        }
+    }
+
+    return {
+        student,
+        institution,
+        academicYear: academicYear ? academicYear.name : '',
+        subjects,
+        examTypes: examTypesForClass,
+        marks,
+        attendance
+    };
+}
+
+// --- 17.F.1 One student's report card (admin/teacher) -------------
+app.get('/api/admin/reports/student/:studentId', async (req, res) => {
+    try {
+        const card = await buildReportCard(req.params.studentId);
+        if (!card) return res.status(404).json({ error: 'Student not found' });
+        res.json(card);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 17.F.2 Logged-in student's own report card -------------------
+app.get('/api/reports/my-report-card/:studentId', async (req, res) => {
+    try {
+        const card = await buildReportCard(req.params.studentId);
+        if (!card) return res.status(404).json({ error: 'Student not found' });
+        res.json(card);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 17.F.3 All report cards for a class (bulk print) -------------
+app.get('/api/admin/reports/class-cards/:classId', async (req, res) => {
+    try {
+        const [students] = await db.execute(
+            `SELECT id FROM users
+              WHERE class_id = ? AND LOWER(TRIM(role)) = 'student'
+                AND (status IS NULL OR LOWER(TRIM(status)) = 'active')
+              ORDER BY roll_no, name`,
+            [req.params.classId]
+        );
+        const cards = [];
+        for (const s of students) {
+            const card = await buildReportCard(s.id);
+            if (card) cards.push(card);
+        }
+        res.json(cards);
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 
