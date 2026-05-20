@@ -1,10 +1,10 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
-  CalendarDays, Clock, BookOpen, LayoutGrid, Plus, Trash2, Save,
-  Edit, X, Coffee, AlertCircle
+  CalendarDays, Clock, LayoutGrid, Plus, Trash2, Save,
+  Coffee, AlertCircle
 } from 'lucide-react';
 
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -68,9 +68,8 @@ export default function Timetable() {
   }
 
   const tabs = [
-    { id: 'setup',    label: 'Days & Periods', icon: Clock },
-    { id: 'subjects', label: 'Subjects',       icon: BookOpen },
-    { id: 'grid',     label: 'Class Timetable', icon: LayoutGrid }
+    { id: 'setup', label: 'Days & Periods',  icon: Clock },
+    { id: 'grid',  label: 'Class Timetable', icon: LayoutGrid }
   ];
 
   const tabProps = { data, fetchData, user, canEdit };
@@ -98,9 +97,8 @@ export default function Timetable() {
       </div>
 
       <div className="min-h-[500px]">
-        {activeTab === 'setup'    && <SetupTab    {...tabProps} />}
-        {activeTab === 'subjects' && <SubjectsTab {...tabProps} />}
-        {activeTab === 'grid'     && <GridTab     {...tabProps} />}
+        {activeTab === 'setup' && <SetupTab {...tabProps} />}
+        {activeTab === 'grid'  && <GridTab  {...tabProps} />}
       </div>
     </div>
   );
@@ -307,112 +305,7 @@ function SetupTab({ data, fetchData, user, canEdit }) {
 
 
 // =====================================================================
-//  SUB-COMPONENT 2: SubjectsTab
-// =====================================================================
-function SubjectsTab({ data, fetchData, user, canEdit }) {
-  const [newName, setNewName] = useState('');
-  const [editingId, setEditingId] = useState(null);
-  const [editName, setEditName] = useState('');
-
-  const handleAdd = async (e) => {
-    e.preventDefault();
-    if (!newName.trim()) return;
-    const res = await fetch(`${API_BASE_URL}/admin/subjects`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: newName.trim(), institutionId: user.institutionId })
-    });
-    if (res.ok) { setNewName(''); fetchData(); }
-    else {
-      const err = await res.json().catch(() => ({}));
-      alert(err.error || 'Failed to add subject.');
-    }
-  };
-
-  const handleUpdate = async (id) => {
-    if (!editName.trim()) return;
-    const res = await fetch(`${API_BASE_URL}/admin/subjects/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: editName.trim() })
-    });
-    if (res.ok) { setEditingId(null); fetchData(); }
-  };
-
-  const handleDelete = async (s) => {
-    if (!window.confirm(`Delete "${s.name}"? Timetable cells using this subject will be cleared.`)) return;
-    await fetch(`${API_BASE_URL}/admin/subjects/${s.id}`, { method: 'DELETE' });
-    fetchData();
-  };
-
-  return (
-    <div className="max-w-3xl">
-      <div className="bg-white rounded-3xl border border-slate-100 p-8 shadow-sm">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-12 h-12 bg-purple-50 rounded-2xl flex items-center justify-center text-purple-600">
-            <BookOpen size={22} />
-          </div>
-          <div>
-            <h3 className="text-lg font-black text-slate-800">Subjects</h3>
-            <p className="text-xs text-slate-400 font-medium">These appear as options in every timetable cell and in the Teacher edit form.</p>
-          </div>
-        </div>
-
-        {canEdit && (
-          <form onSubmit={handleAdd} className="flex gap-2 mb-6">
-            <input
-              placeholder="e.g. Mathematics"
-              value={newName}
-              onChange={e => setNewName(e.target.value)}
-              className="flex-1 bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500/10" />
-            <button type="submit"
-              className="bg-blue-600 hover:bg-blue-700 text-white px-5 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-blue-100">
-              <Plus size={16} /> Add
-            </button>
-          </form>
-        )}
-
-        <div className="space-y-2">
-          {data.subjects.length === 0 ? (
-            <p className="text-slate-400 italic text-sm text-center py-8">No subjects yet.</p>
-          ) : data.subjects.map(s => (
-            <div key={s.id} className="flex items-center justify-between bg-slate-50 rounded-2xl px-4 py-3">
-              {editingId === s.id ? (
-                <>
-                  <input value={editName}
-                    onChange={e => setEditName(e.target.value)}
-                    className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-1.5 mr-3 outline-none" />
-                  <button onClick={() => handleUpdate(s.id)} className="text-blue-600 font-bold text-xs uppercase tracking-wider mr-2">Save</button>
-                  <button onClick={() => setEditingId(null)} className="text-slate-400 hover:text-slate-600"><X size={16} /></button>
-                </>
-              ) : (
-                <>
-                  <span className="font-bold text-slate-700">{s.name}</span>
-                  {canEdit && (
-                    <div className="flex gap-1">
-                      <button onClick={() => { setEditingId(s.id); setEditName(s.name); }}
-                        className="p-2 text-slate-300 hover:text-blue-500 hover:bg-white rounded-lg transition-all">
-                        <Edit size={14} />
-                      </button>
-                      <button onClick={() => handleDelete(s)}
-                        className="p-2 text-slate-300 hover:text-red-500 hover:bg-white rounded-lg transition-all">
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-
-// =====================================================================
-//  SUB-COMPONENT 3: GridTab — teacher dropdown filtered by subject
+//  SUB-COMPONENT 2: GridTab — teacher dropdown filtered by subject
 // =====================================================================
 function GridTab({ data, fetchData, user, canEdit }) {
   const workingDays = useMemo(
@@ -446,7 +339,6 @@ function GridTab({ data, fetchData, user, canEdit }) {
   const [saving, setSaving] = useState(false);
 
   // Filter teachers by the subject chosen in the cell.
-  // If no subject yet → show everyone. If subject chosen → only teachers who teach it.
   const teachersForSubject = useCallback((subjectId) => {
     if (!subjectId) return data.teachers;
     const sid = parseInt(subjectId, 10);
@@ -462,7 +354,6 @@ function GridTab({ data, fetchData, user, canEdit }) {
     setCells(prev => {
       const current = prev[k] || { subject_id: '', teacher_id: '', room_no: '' };
       const next = { ...current, [key]: val };
-      // If subject changed and the assigned teacher no longer teaches the new subject, clear teacher
       if (key === 'subject_id' && next.teacher_id) {
         const sid = parseInt(val, 10);
         const subs = data.teacherSubjects?.[parseInt(next.teacher_id, 10)] || [];
@@ -624,7 +515,7 @@ function GridTab({ data, fetchData, user, canEdit }) {
 
       <p className="text-xs text-slate-400 font-medium">
         Tip: pick a subject first — the teacher dropdown will show only teachers who teach that subject.
-        If no teacher fits, open <strong>Manage Logins → Users</strong> and assign the subject to the right teacher.
+        Manage subjects in <strong>Manage Logins → Subjects</strong>.
       </p>
     </div>
   );

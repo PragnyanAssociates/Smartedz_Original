@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Users, ShieldCheck, Calendar, Layers, CircleArrowUp, CircleCheck } from 'lucide-react';
+import { Users, ShieldCheck, Calendar, Layers, CircleArrowUp, CircleCheck, BookOpen } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
 
 import UserTab        from './UserTab';
@@ -9,12 +9,14 @@ import Permissionstab from './Permissionstab';
 import Academicstab   from './Academicstab';
 import Classestab     from './Classestab';
 import Promotiontab   from './Promotiontab';
+import SubjectsTab    from './SubjectsTab';
 
 export default function ManageLogin() {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState('users');
   const [data, setData] = useState({
-    users: [], roles: [], classes: [], academicYears: [], modules: [], institution: null
+    users: [], roles: [], classes: [], academicYears: [], subjects: [],
+    teacherSubjects: {}, subjectClasses: {}, modules: [], institution: null
   });
   const [loading, setLoading] = useState(true);
 
@@ -39,6 +41,7 @@ export default function ManageLogin() {
     { id: 'permissions', label: 'Permissions', icon: CircleCheck },
     { id: 'academics',   label: 'Academics',   icon: Calendar },
     { id: 'classes',     label: 'Classes',     icon: Layers },
+    { id: 'subjects',    label: 'Subjects',    icon: BookOpen },
     { id: 'promotion',   label: 'Promotion',   icon: CircleArrowUp },
   ];
 
@@ -75,6 +78,7 @@ export default function ManageLogin() {
             {activeTab === 'permissions' && <Permissionstab {...tabProps} />}
             {activeTab === 'academics'   && <Academicstab {...tabProps} />}
             {activeTab === 'classes'     && <Classestab {...tabProps} />}
+            {activeTab === 'subjects'    && <SubjectsTab {...tabProps} />}
             {activeTab === 'promotion'   && <Promotiontab {...tabProps} />}
           </>
         )}

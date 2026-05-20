@@ -230,10 +230,21 @@ app.get('/api/admin/data/:instId', async (req, res) => {
             if (!teacherSubjects[r.teacher_id]) teacherSubjects[r.teacher_id] = [];
             teacherSubjects[r.teacher_id].push(r.subject_id);
         });
+ 
+        // NEW — subject → [classIds] map
+        const [scRows] = await db.execute(
+            `SELECT sc.subject_id, sc.class_id FROM subject_classes sc
+               JOIN subjects s ON s.id = sc.subject_id WHERE s.institutionId = ?`, [instId]);
+        const subjectClasses = {};
+        scRows.forEach(r => {
+            if (!subjectClasses[r.subject_id]) subjectClasses[r.subject_id] = [];
+            subjectClasses[r.subject_id].push(r.class_id);
+        });
+ 
         const institution = inst[0] ? { ...inst[0], ...computePlanStatus(inst[0].usage_plan, inst[0].plan_start_date) } : null;
         res.json({
             users, classes, academicYears: years, roles, subjects,
-            teacherSubjects, modules: DEFAULT_MODULES, institution,
+            teacherSubjects, subjectClasses, modules: DEFAULT_MODULES, institution,
             systemRoles: SYSTEM_ROLES
         });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -672,25 +683,68 @@ app.post('/api/admin/timetable/entries/bulk', async (req, res) => {
 // === 12. SUBJECTS ====================================================
 // =====================================================================
 app.post('/api/admin/subjects', async (req, res) => {
-    const { name, institutionId } = req.body;
+    const { name, institutionId, class_ids } = req.body;
+    const conn = await db.getConnection();
     try {
-        await db.execute('INSERT INTO subjects (name, institutionId) VALUES (?, ?)', [name, institutionId]);
-        res.json({ success: true });
+        await conn.beginTransaction();
+        const [result] = await conn.execute(
+            'INSERT INTO subjects (name, institutionId) VALUES (?, ?)',
+            [name, institutionId]
+        );
+        const subjectId = result.insertId;
+        if (Array.isArray(class_ids)) {
+            for (const cid of class_ids) {
+                if (!cid) continue;
+                await conn.execute(
+                    'INSERT IGNORE INTO subject_classes (subject_id, class_id) VALUES (?, ?)',
+                    [subjectId, parseInt(cid, 10)]
+                );
+            }
+        }
+        await conn.commit();
+        res.json({ success: true, id: subjectId });
     } catch (err) {
-        if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) return res.status(400).json({ error: 'A subject with this name already exists.' });
+        await conn.rollback();
+        if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
+            return res.status(400).json({ error: 'A subject with this name already exists.' });
+        }
         res.status(500).json({ error: err.message });
-    }
+    } finally { conn.release(); }
 });
 
 app.put('/api/admin/subjects/:id', async (req, res) => {
+    const { name, class_ids } = req.body;
+    const subjectId = parseInt(req.params.id, 10);
+    const conn = await db.getConnection();
     try {
-        await db.execute('UPDATE subjects SET name = ? WHERE id = ?', [req.body.name, req.params.id]);
+        await conn.beginTransaction();
+        await conn.execute('UPDATE subjects SET name = ? WHERE id = ?', [name, subjectId]);
+        // Re-sync class links wholesale when class_ids is supplied
+        if (Array.isArray(class_ids)) {
+            await conn.execute('DELETE FROM subject_classes WHERE subject_id = ?', [subjectId]);
+            for (const cid of class_ids) {
+                if (!cid) continue;
+                await conn.execute(
+                    'INSERT IGNORE INTO subject_classes (subject_id, class_id) VALUES (?, ?)',
+                    [subjectId, parseInt(cid, 10)]
+                );
+            }
+        }
+        await conn.commit();
         res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) {
+        await conn.rollback();
+        if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
+            return res.status(400).json({ error: 'A subject with this name already exists.' });
+        }
+        res.status(500).json({ error: err.message });
+    } finally { conn.release(); }
 });
+
 
 app.delete('/api/admin/subjects/:id', async (req, res) => {
     try {
+        // subject_classes rows cascade-delete via FK
         await db.execute('DELETE FROM subjects WHERE id = ?', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -1717,7 +1771,7 @@ app.get('/api/admin/reports/class-data/:classId', async (req, res) => {
         const [cls] = await db.execute('SELECT * FROM classes WHERE id = ?', [classId]);
         if (cls.length === 0) return res.status(404).json({ error: 'Class not found' });
         const instId = cls[0].institutionId;
-
+ 
         // Students in this class
         const [students] = await db.execute(
             `SELECT id, name, roll_no, section
@@ -1727,13 +1781,31 @@ app.get('/api/admin/reports/class-data/:classId', async (req, res) => {
               ORDER BY roll_no, name`,
             [classId]
         );
-
+ 
         // All subjects in the school
-        const [subjects] = await db.execute(
+        const [allSubjects] = await db.execute(
             'SELECT id, name FROM subjects WHERE institutionId = ? ORDER BY name',
             [instId]
         );
-
+ 
+        // Subject → class links
+        const [scRows] = await db.execute(
+            `SELECT sc.subject_id, sc.class_id FROM subject_classes sc
+               JOIN subjects s ON s.id = sc.subject_id WHERE s.institutionId = ?`, [instId]);
+        const linkMap = {};   // subjectId → Set(classIds)
+        scRows.forEach(r => {
+            if (!linkMap[r.subject_id]) linkMap[r.subject_id] = new Set();
+            linkMap[r.subject_id].add(r.class_id);
+        });
+ 
+        // Keep only subjects linked to THIS class.
+        // A subject with no links at all → shown everywhere (legacy safety).
+        const subjects = allSubjects.filter(s => {
+            const links = linkMap[s.id];
+            if (!links || links.size === 0) return true;
+            return links.has(parseInt(classId, 10));
+        });
+ 
         // Teacher assignment for this class
         const [assignments] = await db.execute(
             `SELECT stm.subject_id, stm.teacher_id, u.name AS teacher_name
@@ -1744,7 +1816,7 @@ app.get('/api/admin/reports/class-data/:classId', async (req, res) => {
         );
         const assignMap = {};
         assignments.forEach(a => { assignMap[a.subject_id] = a; });
-
+ 
         // Exam types + this class's max marks
         const [examTypes] = await db.execute(
             'SELECT * FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id',
@@ -1758,27 +1830,24 @@ app.get('/api/admin/reports/class-data/:classId', async (req, res) => {
         );
         const maxMap = {};
         maxRows.forEach(r => { maxMap[r.exam_type_id] = r.max_marks; });
-
-        // Only exam types that have a max configured for THIS class
+ 
         const examTypesForClass = examTypes
             .filter(t => maxMap[t.id] !== undefined)
             .map(t => ({ ...t, max_marks: maxMap[t.id] }));
-
-        // Subjects decorated with assigned teacher
+ 
         const subjectsForClass = subjects.map(s => ({
             ...s,
             teacher_id:   assignMap[s.id]?.teacher_id || null,
             teacher_name: assignMap[s.id]?.teacher_name || null
         }));
-
-        // Existing marks
+ 
         const [marks] = await db.execute(
             `SELECT student_id, subject_id, exam_type_id, marks_obtained
                FROM student_marks
               WHERE class_id = ?`,
             [classId]
         );
-
+ 
         res.json({
             class: cls[0],
             students,
@@ -1920,11 +1989,27 @@ async function buildReportCard(studentId) {
     );
     const academicYear = yearRows[0] || null;
 
-    // Subjects + exam types + max marks for this class
-    const [subjects] = await db.execute(
-        'SELECT id, name FROM subjects WHERE institutionId = ? ORDER BY name',
-        [student.institutionId]
-    );
+     // Subjects — filtered to this student's class
+        const [allSubjectsRC] = await db.execute(
+            'SELECT id, name FROM subjects WHERE institutionId = ? ORDER BY name',
+            [student.institutionId]
+        );
+        const [scRowsRC] = await db.execute(
+            `SELECT sc.subject_id, sc.class_id FROM subject_classes sc
+               JOIN subjects s ON s.id = sc.subject_id WHERE s.institutionId = ?`,
+            [student.institutionId]
+        );
+        const linkMapRC = {};
+        scRowsRC.forEach(r => {
+            if (!linkMapRC[r.subject_id]) linkMapRC[r.subject_id] = new Set();
+            linkMapRC[r.subject_id].add(r.class_id);
+        });
+        const subjects = allSubjectsRC.filter(s => {
+            const links = linkMapRC[s.id];
+            if (!links || links.size === 0) return true;
+            return links.has(student.class_id);
+        });
+        
     const [examTypes] = await db.execute(
         'SELECT * FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id',
         [student.institutionId]
