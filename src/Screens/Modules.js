@@ -83,6 +83,23 @@ export const MODULES = [
     alwaysVisible: true,     // Everyone can access
     hideFromSidebar: true    // Hidden from the main list
   },
+  {
+  id: 'Directory',
+  module_name: 'Directory',
+  label: 'Directory',
+  title: 'Directory',
+  imageSource: 'https://cdn-icons-png.flaticon.com/128/2245/2245320.png',
+  navigateTo: '/Directory'
+},
+{
+    id: 'Gallery',
+    module_name: 'Gallery', // Must match backend exactly
+    label: 'Gallery',
+    title: 'School Gallery',
+    imageSource: 'https://cdn-icons-png.flaticon.com/128/8418/8418513.png',
+    navigateTo: '/Gallery'
+},
+
 ];
 
 export const MODULE_NAMES = MODULES.map(m => m.module_name);

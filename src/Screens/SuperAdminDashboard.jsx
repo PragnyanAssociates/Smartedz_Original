@@ -9,6 +9,8 @@ import Attendance from '../components/Attendance/Attendance';
 import Exams from '../components/Exams/Exams';
 import Reports from '../components/Reports/Reports';
 import Performance from '../components/Performance/Performance';
+import Directory from '../components/UsersView/Directory';
+import Gallery from '../components/Gallery/Gallery';
 import Profile from './Profile';
 import { PermissionsProvider, usePermissions } from './PermissionsContext';
 import { TAB_TO_MODULE, MODULES } from './Modules';
@@ -60,7 +62,9 @@ function DashboardShell() {
       case 'Exams':             return <Exams />;
       case 'reports':           return <Reports />;
       case 'Performance':       return <Performance />;
+      case 'Directory':         return <Directory />;
       case 'profile':           return <Profile />;
+      case 'Gallery':           return <Gallery />;
       default:
         return (
           <div className="h-full flex items-center justify-center flex-col text-center opacity-40">

@@ -7,6 +7,9 @@ const express = require('express');
 const mysql = require('mysql2/promise');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 
 const app = express();
 app.use(cors());
@@ -33,7 +36,9 @@ const DEFAULT_MODULES = [
     'Attendance',
     'Exams',
     'Reports',
-    'Performance'
+    'Performance',
+    'Directory',
+    'Gallery'
 ];
 
 // =====================================================================
@@ -2454,6 +2459,95 @@ app.get('/api/admin/performance/teacher/:teacherId', async (req, res) => {
                 ? (overallObtained / overallPossible) * 100 : null,
             detail
         });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+
+// =====================================================================
+// === 19. GALLERY =====================================================
+// =====================================================================
+
+// Ensure upload directory exists
+const uploadDir = 'public/uploads/gallery';
+if (!fs.existsSync(uploadDir)) { fs.mkdirSync(uploadDir, { recursive: true }); }
+
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, uploadDir),
+    filename: (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname))
+});
+const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } }); // 50MB limit
+
+// Serve static files so frontend can see images
+app.use('/public', express.static('public'));
+
+// --- 19.1 Get all albums (grouped by title) ---
+app.get('/api/admin/gallery/:instId', async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            `SELECT title, event_date, COUNT(*) as item_count, 
+             MAX(file_path) as cover_image -- Simple logic for cover
+             FROM gallery 
+             WHERE institutionId = ? 
+             GROUP BY title, event_date 
+             ORDER BY event_date DESC`,
+            [req.params.instId]
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 19.2 Get items in a specific album ---
+app.get('/api/admin/gallery/album/:instId/:title', async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            'SELECT * FROM gallery WHERE institutionId = ? AND title = ? ORDER BY created_at DESC',
+            [req.params.instId, req.params.title]
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 19.3 Upload Media ---
+app.post('/api/admin/gallery/upload', upload.single('media'), async (req, res) => {
+    const { title, event_date, institutionId, adminId } = req.body;
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    const file_type = req.file.mimetype.startsWith('image') ? 'photo' : 'video';
+    const file_path = `/public/uploads/gallery/${req.file.filename}`;
+
+    try {
+        const [result] = await db.execute(
+            `INSERT INTO gallery (institutionId, title, file_path, file_type, event_date, created_by) 
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [institutionId, title, file_path, file_type, event_date, adminId]
+        );
+        res.json({ success: true, insertId: result.insertId, filePath: file_path });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 19.4 Delete Single Item ---
+app.delete('/api/admin/gallery/:id', async (req, res) => {
+    try {
+        // In production, also delete the physical file using fs.unlink
+        await db.execute('DELETE FROM gallery WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Example check for the Delete Album endpoint
+app.delete('/api/admin/gallery/album/:instId/:title', async (req, res) => {
+    const { role } = req.body; // Pass role from frontend
+    
+    // Simple safeguard: only Super Admin can delete whole albums
+    if (role !== 'Super Admin') {
+        return res.status(403).json({ error: "You don't have permission to delete albums." });
+    }
+
+    try {
+        await db.execute('DELETE FROM gallery WHERE institutionId = ? AND title = ?', 
+            [req.params.instId, req.params.title]);
+        res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
