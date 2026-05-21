@@ -8,7 +8,7 @@ import TeacherPerformance from './TeacherPerformance';
 import MyPerformance      from './MyPerformance';
 import { classGroupOf }   from './PerfUtils';
 
-// =====================================================================
+// ===================================================================
 //  Performance — offline-exam analytics module.
 //
 //  Tabs shown depend on role:
@@ -16,7 +16,7 @@ import { classGroupOf }   from './PerfUtils';
 //   • Teacher                               → My Performance + Students
 //   • Student                               → My Performance only
 //  All data comes from the Reports module's student_marks table.
-// =====================================================================
+// ====================================================================
 
 export default function Performance() {
   const { user } = useAuth();
