@@ -107,6 +107,14 @@ export const MODULES = [
     imageSource: 'https://cdn-icons-png.flaticon.com/128/5027/5027360.png',
     navigateTo: '/Homework'
 },
+{
+    id: 'Meals',
+    module_name: 'Meals', // Must match backend exactly
+    label: 'Meals',
+    title: 'Meals',
+    imageSource: 'https://cdn-icons-png.flaticon.com/128/2515/2515189.png',
+    navigateTo: '/Meals'
+},
 
 ];
 

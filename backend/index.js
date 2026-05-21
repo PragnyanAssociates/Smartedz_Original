@@ -39,7 +39,8 @@ const DEFAULT_MODULES = [
     'Performance',
     'Directory',
     'Gallery',
-    'Homework'
+    'Homework',
+    'Meals'
 ];
 
 // =====================================================================
@@ -2821,6 +2822,140 @@ app.put('/api/admin/homework/grade/:submissionId', async (req, res) => {
         );
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+
+// =====================================================================
+//  BACKEND — Section 20: MEALS
+//
+//  Append this whole block to backend/index.js, just BEFORE the final
+//  `const PORT = ...` line.
+//
+//  ALSO add 'Meals' to DEFAULT_MODULES at the top of index.js:
+//    const DEFAULT_MODULES = [
+//        'Overview','Manage Logins','Timetable','Academic Calendar',
+//        'Attendance','Exams','Reports','Performance','Homework','Meals'
+//    ];
+//
+//  Weekly repeating menu — day_index 0=Mon ... 6=Sun.
+// =====================================================================
+
+
+// --- 20.1 Full meals data for a school ------------------------------
+//   GET /api/admin/meals/:instId
+//   Returns the school's slots + every menu cell. The frontend builds
+//   the weekly grid from this single bundle.
+app.get('/api/admin/meals/:instId', async (req, res) => {
+    const { instId } = req.params;
+    try {
+        const [slots] = await db.execute(
+            'SELECT * FROM meal_slots WHERE institutionId = ? ORDER BY slot_order, id',
+            [instId]
+        );
+        const [menu] = await db.execute(
+            `SELECT m.id, m.slot_id, m.day_index, m.items
+               FROM meal_menu m
+              WHERE m.institutionId = ?`,
+            [instId]
+        );
+        res.json({ slots, menu });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 20.2 Save the school's meal slots ------------------------------
+//   POST /api/admin/meals/slots
+//   Body: { institutionId, slots: [{ id?, name, start_time, end_time }] }
+//   Replaces the whole slot set. Slots no longer present are deleted
+//   (their menu cells cascade-delete). Existing slots keep their id so
+//   their menu cells survive.
+app.post('/api/admin/meals/slots', async (req, res) => {
+    const { institutionId, slots } = req.body;
+    if (!institutionId || !Array.isArray(slots)) {
+        return res.status(400).json({ error: 'institutionId and slots[] required.' });
+    }
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+
+        // Which existing slot ids should survive?
+        const keepIds = slots.filter(s => s.id).map(s => parseInt(s.id, 10));
+        const [existing] = await conn.execute(
+            'SELECT id FROM meal_slots WHERE institutionId = ?', [institutionId]);
+
+        // Delete slots that were removed in the UI
+        for (const row of existing) {
+            if (!keepIds.includes(row.id)) {
+                await conn.execute('DELETE FROM meal_slots WHERE id = ?', [row.id]);
+            }
+        }
+
+        // Upsert each slot in order
+        for (let i = 0; i < slots.length; i++) {
+            const s = slots[i];
+            const name = (s.name || '').trim();
+            if (!name) continue;
+            if (s.id) {
+                await conn.execute(
+                    `UPDATE meal_slots
+                        SET name = ?, start_time = ?, end_time = ?, slot_order = ?
+                      WHERE id = ? AND institutionId = ?`,
+                    [name, s.start_time || null, s.end_time || null, i, s.id, institutionId]
+                );
+            } else {
+                await conn.execute(
+                    `INSERT INTO meal_slots (institutionId, name, start_time, end_time, slot_order)
+                     VALUES (?, ?, ?, ?, ?)`,
+                    [institutionId, name, s.start_time || null, s.end_time || null, i]
+                );
+            }
+        }
+        await conn.commit();
+        res.json({ success: true });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally { conn.release(); }
+});
+
+
+// --- 20.3 Save the weekly menu --------------------------------------
+//   POST /api/admin/meals/menu
+//   Body: { institutionId, entries: [{ slot_id, day_index, items }] }
+//   Upserts each cell. An empty `items` clears that cell.
+app.post('/api/admin/meals/menu', async (req, res) => {
+    const { institutionId, entries } = req.body;
+    if (!institutionId || !Array.isArray(entries)) {
+        return res.status(400).json({ error: 'institutionId and entries[] required.' });
+    }
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        for (const e of entries) {
+            if (!e.slot_id || e.day_index === undefined || e.day_index === null) continue;
+            const items = (e.items || '').trim();
+            if (items === '') {
+                // Empty cell — remove any existing row
+                await conn.execute(
+                    'DELETE FROM meal_menu WHERE slot_id = ? AND day_index = ?',
+                    [e.slot_id, e.day_index]
+                );
+            } else {
+                await conn.execute(
+                    `INSERT INTO meal_menu (institutionId, slot_id, day_index, items)
+                     VALUES (?, ?, ?, ?)
+                     ON DUPLICATE KEY UPDATE items = VALUES(items)`,
+                    [institutionId, e.slot_id, e.day_index, items]
+                );
+            }
+        }
+        await conn.commit();
+        res.json({ success: true });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally { conn.release(); }
 });
 
 
