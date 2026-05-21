@@ -5,7 +5,7 @@ import {
   RefreshCw, Loader2, ChevronDown, ChevronUp, BarChart3,
   Trophy, GraduationCap, Search, Filter
 } from 'lucide-react';
-import { roundPct, band, buildStudentTotals, studentExamBreakdown } from './Perfutils';
+import { roundPct, band, buildStudentTotals, studentExamBreakdown } from './PerfUtils';
 
 // =====================================================================
 //  StudentPerformance — ranked class list driven by student_marks.

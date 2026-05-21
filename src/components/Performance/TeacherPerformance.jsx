@@ -5,7 +5,7 @@ import {
   RefreshCw, Loader2, ChevronDown, ChevronUp, BarChart3,
   Search, Users
 } from 'lucide-react';
-import { roundPct, band } from './Perfutils';
+import { roundPct, band } from './PerfUtils';
 
 // =====================================================================
 //  TeacherPerformance — ranks teachers by their students' results.

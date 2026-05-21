@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import { RefreshCw, Loader2, BarChart3, Trophy, User } from 'lucide-react';
-import { roundPct, band, buildStudentTotals } from './Perfutils';
+import { roundPct, band, buildStudentTotals } from './PerfUtils';
 
 // =====================================================================
 //  MyPerformance — a student's own view: Topper vs You bar comparison,
