@@ -99,6 +99,14 @@ export const MODULES = [
     imageSource: 'https://cdn-icons-png.flaticon.com/128/8418/8418513.png',
     navigateTo: '/Gallery'
 },
+{
+    id: 'Homework',
+    module_name: 'Homework', // Must match backend exactly
+    label: 'Homework',
+    title: 'Homework',
+    imageSource: 'https://cdn-icons-png.flaticon.com/128/5027/5027360.png',
+    navigateTo: '/Homework'
+},
 
 ];
 

@@ -2,17 +2,17 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
-  RefreshCw, Loader2, ChevronDown, ChevronUp, BarChart3,
-  Search, Users
+  RefreshCw, Loader2, ChevronDown, ChevronUp, BarChart3, Search
 } from 'lucide-react';
 import { roundPct, band } from './PerfUtils';
+import { PerfBar, BarRow, ChartModal } from './PerfBar';
 
 // =====================================================================
-//  TeacherPerformance — ranks teachers by their students' results.
+//  TeacherPerformance — ranks teachers by their students' results,
+//  plus a graphical Analysis comparison.
 //
 //  A teacher's % = sum(marks obtained by students in the classes+
 //  subjects they're assigned via subject_teacher_map) / sum(possible).
-//  Expand a row → per class+subject breakdown.
 // =====================================================================
 
 export default function TeacherPerformance() {
@@ -23,6 +23,10 @@ export default function TeacherPerformance() {
   const [tab, setTab]           = useState('all');
   const [query, setQuery]       = useState('');
   const [expanded, setExpanded] = useState(null);
+
+  // Chart modals
+  const [showAnalysis, setShowAnalysis] = useState(false);
+  const [graphTeacher, setGraphTeacher] = useState(null);
 
   const load = useCallback(async () => {
     if (!user?.institutionId) return;
@@ -39,7 +43,7 @@ export default function TeacherPerformance() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Rank teachers — only those with measurable data (possible > 0).
+  // Rank teachers — only those with measurable data.
   const ranked = useMemo(() => {
     const measurable = teachers
       .filter(t => t.overall_possible > 0)
@@ -80,19 +84,23 @@ export default function TeacherPerformance() {
         <span className="text-[10px] font-black text-amber-700 uppercase tracking-widest">
           A teacher's score is the average result of their students
         </span>
-        <Legend color="bg-emerald-500" text="≥ 85%" />
-        <Legend color="bg-blue-500" text="50–85%" />
-        <Legend color="bg-red-500" text="< 50%" />
+        <Legend color="bg-emerald-500" text="85%+" />
+        <Legend color="bg-blue-500" text="50-85%" />
+        <Legend color="bg-red-500" text="Below 50%" />
       </div>
 
       <div className="flex items-center gap-3">
         <div className="relative flex-1 max-w-xs">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input value={query} onChange={e => setQuery(e.target.value)}
-            placeholder="Search teacher…"
+            placeholder="Search teacher..."
             className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500/10" />
         </div>
         <div className="flex-1" />
+        <button onClick={() => setShowAnalysis(true)} disabled={ranked.length === 0}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-teal-200 bg-teal-50 hover:bg-teal-100 disabled:opacity-50 text-sm font-bold text-teal-800 transition-all">
+          <BarChart3 size={16} /> Analysis
+        </button>
         <button onClick={load}
           className="p-2.5 bg-white border border-slate-200 rounded-xl text-slate-500 hover:text-blue-600" title="Refresh">
           <RefreshCw size={15} />
@@ -104,7 +112,7 @@ export default function TeacherPerformance() {
           <BarChart3 className="w-12 h-12 text-slate-300 mx-auto mb-3" />
           <p className="text-slate-500 font-medium">No teacher performance data yet.</p>
           <p className="text-slate-400 text-sm mt-1">
-            Assign teachers to class+subject in <strong>Reports → Exam Setup</strong> and enter marks first.
+            Assign teachers to class+subject in <strong>Reports -&gt; Exam Setup</strong> and enter marks first.
           </p>
         </div>
       ) : (
@@ -173,9 +181,15 @@ export default function TeacherPerformance() {
                       {isOpen && (
                         <tr className="bg-slate-50/60">
                           <td colSpan={6} className="p-5">
-                            <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">
-                              Class &amp; Subject Breakdown
-                            </h4>
+                            <div className="flex items-center justify-between mb-3">
+                              <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                                Class &amp; Subject Breakdown
+                              </h4>
+                              <button onClick={(e) => { e.stopPropagation(); setGraphTeacher(t); }}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-orange-100 text-orange-600 hover:bg-orange-600 hover:text-white text-xs font-bold transition-all">
+                                <BarChart3 size={13} /> Graph
+                              </button>
+                            </div>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                               {t.detail.map((d, i) => {
                                 const hasData = d.total_possible > 0;
@@ -215,6 +229,45 @@ export default function TeacherPerformance() {
             </table>
           </div>
         </>
+      )}
+
+      {/* ---- ANALYSIS MODAL: teacher comparison bar chart ---- */}
+      {showAnalysis && (
+        <ChartModal
+          title="Teacher Analysis"
+          subtitle="All teachers ranked by their students' average performance"
+          onClose={() => setShowAnalysis(false)}>
+          <BarRow empty="No teacher data to chart.">
+            {ranked.map(t => (
+              <PerfBar key={t.teacher_id}
+                percentage={t.pct}
+                label={t.teacher_name}
+                subLabel={`${t.detail.length} class${t.detail.length !== 1 ? 'es' : ''}`}
+                marks={`${Math.round(t.overall_obtained)}/${Math.round(t.overall_possible)}`}
+                highlight={t.rank === 1} />
+            ))}
+          </BarRow>
+        </ChartModal>
+      )}
+
+      {/* ---- GRAPH MODAL: one teacher's class+subject breakdown ---- */}
+      {graphTeacher && (
+        <ChartModal
+          title={`Breakdown - ${graphTeacher.teacher_name}`}
+          subtitle="Performance per assigned class and subject"
+          onClose={() => setGraphTeacher(null)}>
+          <BarRow empty="No marks recorded for this teacher's classes.">
+            {graphTeacher.detail
+              .filter(d => d.total_possible > 0)
+              .map((d, i) => (
+                <PerfBar key={i}
+                  percentage={roundPct(d.percentage)}
+                  label={d.subject_name}
+                  subLabel={d.class_group}
+                  marks={`${Math.round(d.total_obtained)}/${Math.round(d.total_possible)}`} />
+              ))}
+          </BarRow>
+        </ChartModal>
       )}
     </div>
   );

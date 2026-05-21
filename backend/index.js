@@ -38,7 +38,8 @@ const DEFAULT_MODULES = [
     'Reports',
     'Performance',
     'Directory',
-    'Gallery'
+    'Gallery',
+    'Homework'
 ];
 
 // =====================================================================
@@ -2547,6 +2548,277 @@ app.delete('/api/admin/gallery/album/:instId/:title', async (req, res) => {
     try {
         await db.execute('DELETE FROM gallery WHERE institutionId = ? AND title = ?', 
             [req.params.instId, req.params.title]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+
+// =====================================================================
+//  BACKEND — Section 19: HOMEWORK
+//
+//  Append this whole block to backend/index.js, just BEFORE the final
+//  `const PORT = ...` line.
+//
+//  ALSO add 'Homework' to DEFAULT_MODULES at the top of index.js:
+//    const DEFAULT_MODULES = [
+//        'Overview','Manage Logins','Timetable','Academic Calendar',
+//        'Attendance','Exams','Reports','Performance','Homework'
+//    ];
+//
+//  Files are stored as base64 JSON in the rows — no filesystem needed.
+//  Reuses parseJsonSafe() and nowSQL() defined in Section 16.
+// =====================================================================
+
+
+// --- 19.1 List homework for a teacher/admin -------------------------
+//   GET /api/admin/homework/teacher/:userId
+//   Super Admin / Developer  → ALL homework in the school
+//   Teacher (or other role)  → only homework they created
+app.get('/api/admin/homework/teacher/:userId', async (req, res) => {
+    const { userId } = req.params;
+    try {
+        const [users] = await db.execute(
+            'SELECT id, role, institutionId FROM users WHERE id = ?', [userId]);
+        if (users.length === 0) return res.status(404).json({ error: 'User not found' });
+        const me = users[0];
+        const isAdmin = me.role === 'Super Admin' || me.role === 'Developer';
+
+        const baseSelect = `
+            SELECT h.id, h.title, h.description, h.homework_type,
+                   h.class_id, h.subject_id, h.due_date, h.questions,
+                   h.created_by, h.created_at,
+                   c.className, c.section,
+                   sub.name AS subject_name,
+                   u.name AS created_by_name,
+                   (SELECT COUNT(*) FROM homework_submissions s WHERE s.homework_id = h.id) AS submission_count
+              FROM homework h
+              LEFT JOIN classes  c   ON c.id = h.class_id
+              LEFT JOIN subjects sub ON sub.id = h.subject_id
+              LEFT JOIN users    u   ON u.id = h.created_by`;
+
+        let rows;
+        if (isAdmin) {
+            [rows] = await db.execute(
+                `${baseSelect} WHERE h.institutionId = ? ORDER BY h.created_at DESC`,
+                [me.institutionId]);
+        } else {
+            [rows] = await db.execute(
+                `${baseSelect} WHERE h.created_by = ? ORDER BY h.created_at DESC`,
+                [userId]);
+        }
+        const decorated = rows.map(r => ({
+            ...r,
+            questions: parseJsonSafe(r.questions, []),
+            class_group: `${r.className || ''}${r.section ? ' - ' + r.section : ''}`
+        }));
+        res.json(decorated);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 19.2 List homework for a student -------------------------------
+//   GET /api/admin/homework/student/:studentId
+//   Returns homework for the student's class, each with that student's
+//   submission status merged in.
+app.get('/api/admin/homework/student/:studentId', async (req, res) => {
+    const { studentId } = req.params;
+    try {
+        const [u] = await db.execute(
+            'SELECT institutionId, class_id FROM users WHERE id = ?', [studentId]);
+        if (u.length === 0) return res.status(404).json({ error: 'Student not found' });
+        if (!u[0].class_id) return res.json([]);
+
+        const [rows] = await db.execute(
+            `SELECT h.id, h.title, h.description, h.homework_type,
+                    h.class_id, h.subject_id, h.due_date, h.questions, h.attachments,
+                    c.className, c.section, sub.name AS subject_name,
+                    s.id AS submission_id, s.written_answer, s.files AS submission_files,
+                    s.submitted_at, s.grade, s.remarks
+               FROM homework h
+               LEFT JOIN classes  c   ON c.id = h.class_id
+               LEFT JOIN subjects sub ON sub.id = h.subject_id
+               LEFT JOIN homework_submissions s
+                      ON s.homework_id = h.id AND s.student_id = ?
+              WHERE h.class_id = ?
+              ORDER BY h.due_date DESC`,
+            [studentId, u[0].class_id]
+        );
+        const decorated = rows.map(r => ({
+            ...r,
+            questions:        parseJsonSafe(r.questions, []),
+            attachments:      parseJsonSafe(r.attachments, []),
+            submission_files: parseJsonSafe(r.submission_files, []),
+            class_group: `${r.className || ''}${r.section ? ' - ' + r.section : ''}`,
+            status: r.submission_id ? (r.grade ? 'Graded' : 'Submitted') : 'Pending'
+        }));
+        res.json(decorated);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 19.3 Single homework (with attachments) ------------------------
+app.get('/api/admin/homework/:id', async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            `SELECT h.*, c.className, c.section, sub.name AS subject_name
+               FROM homework h
+               LEFT JOIN classes  c   ON c.id = h.class_id
+               LEFT JOIN subjects sub ON sub.id = h.subject_id
+              WHERE h.id = ?`,
+            [req.params.id]
+        );
+        if (rows.length === 0) return res.status(404).json({ error: 'Homework not found' });
+        const r = rows[0];
+        res.json({
+            ...r,
+            questions:   parseJsonSafe(r.questions, []),
+            attachments: parseJsonSafe(r.attachments, []),
+            class_group: `${r.className || ''}${r.section ? ' - ' + r.section : ''}`
+        });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 19.4 Create homework -------------------------------------------
+//   Body: { institutionId, title, description, homework_type, class_id,
+//           subject_id, due_date, questions[], attachments[], created_by }
+app.post('/api/admin/homework', async (req, res) => {
+    const {
+        institutionId, title, description, homework_type,
+        class_id, subject_id, due_date, questions, attachments, created_by
+    } = req.body;
+    if (!institutionId || !title || !class_id || !due_date) {
+        return res.status(400).json({ error: 'institutionId, title, class_id and due_date are required.' });
+    }
+    try {
+        const [result] = await db.execute(
+            `INSERT INTO homework
+               (institutionId, title, description, homework_type, class_id,
+                subject_id, due_date, questions, attachments, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [institutionId, title, description || null, homework_type || 'PDF',
+             class_id, subject_id || null, due_date,
+             JSON.stringify(questions || []), JSON.stringify(attachments || []),
+             created_by || null]
+        );
+        res.json({ success: true, id: result.insertId });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 19.5 Update homework -------------------------------------------
+app.put('/api/admin/homework/:id', async (req, res) => {
+    const {
+        title, description, homework_type,
+        class_id, subject_id, due_date, questions, attachments
+    } = req.body;
+    try {
+        await db.execute(
+            `UPDATE homework
+                SET title = ?, description = ?, homework_type = ?, class_id = ?,
+                    subject_id = ?, due_date = ?, questions = ?, attachments = ?
+              WHERE id = ?`,
+            [title, description || null, homework_type || 'PDF', class_id,
+             subject_id || null, due_date,
+             JSON.stringify(questions || []), JSON.stringify(attachments || []),
+             req.params.id]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 19.6 Delete homework -------------------------------------------
+app.delete('/api/admin/homework/:id', async (req, res) => {
+    try {
+        // submissions cascade-delete via FK
+        await db.execute('DELETE FROM homework WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 19.7 Roster of submissions for one homework (teacher view) -----
+//   GET /api/admin/homework/:id/submissions
+//   Returns EVERY student in the class, with their submission (or null).
+app.get('/api/admin/homework/:id/submissions', async (req, res) => {
+    try {
+        const [hw] = await db.execute(
+            'SELECT class_id FROM homework WHERE id = ?', [req.params.id]);
+        if (hw.length === 0) return res.status(404).json({ error: 'Homework not found' });
+
+        const [rows] = await db.execute(
+            `SELECT u.id AS student_id, u.name AS student_name, u.roll_no,
+                    s.id AS submission_id, s.written_answer, s.files,
+                    s.submitted_at, s.grade, s.remarks
+               FROM users u
+               LEFT JOIN homework_submissions s
+                      ON s.student_id = u.id AND s.homework_id = ?
+              WHERE u.class_id = ? AND LOWER(TRIM(u.role)) = 'student'
+                AND (u.status IS NULL OR LOWER(TRIM(u.status)) = 'active')
+              ORDER BY u.roll_no, u.name`,
+            [req.params.id, hw[0].class_id]
+        );
+        const decorated = rows.map(r => ({
+            ...r,
+            files: parseJsonSafe(r.files, [])
+        }));
+        res.json(decorated);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 19.8 Student submits (or resubmits) homework -------------------
+//   Body: { student_id, written_answer, files[] }
+app.post('/api/admin/homework/:id/submit', async (req, res) => {
+    const { id } = req.params;
+    const { student_id, written_answer, files } = req.body;
+    if (!student_id) return res.status(400).json({ error: 'student_id required.' });
+    try {
+        await db.execute(
+            `INSERT INTO homework_submissions
+               (homework_id, student_id, written_answer, files, submitted_at)
+             VALUES (?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+               written_answer = VALUES(written_answer),
+               files          = VALUES(files),
+               submitted_at   = VALUES(submitted_at),
+               grade          = NULL,
+               remarks        = NULL,
+               graded_by      = NULL,
+               graded_at      = NULL`,
+            [id, student_id, written_answer || null,
+             JSON.stringify(files || []), nowSQL()]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 19.9 Student deletes their own submission ----------------------
+app.delete('/api/admin/homework/submission/:submissionId', async (req, res) => {
+    try {
+        await db.execute(
+            'DELETE FROM homework_submissions WHERE id = ?',
+            [req.params.submissionId]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 19.10 Teacher grades a submission ------------------------------
+//   Body: { grade, remarks, graded_by }
+app.put('/api/admin/homework/grade/:submissionId', async (req, res) => {
+    const { grade, remarks, graded_by } = req.body;
+    try {
+        await db.execute(
+            `UPDATE homework_submissions
+                SET grade = ?, remarks = ?, graded_by = ?, graded_at = ?
+              WHERE id = ?`,
+            [grade || null, remarks || null, graded_by || null, nowSQL(),
+             req.params.submissionId]
+        );
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });

@@ -3,14 +3,17 @@ import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   RefreshCw, Loader2, ChevronDown, ChevronUp, BarChart3,
-  Trophy, GraduationCap, Search, Filter
+  Trophy, GraduationCap, Search
 } from 'lucide-react';
 import { roundPct, band, buildStudentTotals, studentExamBreakdown } from './PerfUtils';
+import { PerfBar, BarRow, ChartModal } from './PerfBar';
 
 // =====================================================================
-//  StudentPerformance — ranked class list driven by student_marks.
-//  Class + Exam + Subject filters all read from the dynamic dataset.
-//  Expand a row → that student's exam-by-exam breakdown.
+//  StudentPerformance — ranked class list + graphical Analysis.
+//   - Table view: rank, %, marks, expand for exam breakdown.
+//   - Analysis button -> bar-chart comparison of the whole class.
+//   - Each expanded row -> "Graph" button for that student's exams.
+//  All driven by the dynamic Reports tables - no hardcoded subjects.
 // =====================================================================
 
 export default function StudentPerformance() {
@@ -24,9 +27,13 @@ export default function StudentPerformance() {
 
   const [examTypeId, setExamTypeId] = useState('overall');
   const [subjectId, setSubjectId]   = useState('all');
-  const [tab, setTab]               = useState('all');   // all | top | avg | low
+  const [tab, setTab]               = useState('all');
   const [query, setQuery]           = useState('');
   const [expanded, setExpanded]     = useState(null);
+
+  // Chart modals
+  const [showAnalysis, setShowAnalysis] = useState(false);
+  const [graphStudent, setGraphStudent] = useState(null);
 
   // --- Load class list -------------------------------------------
   useEffect(() => {
@@ -61,7 +68,7 @@ export default function StudentPerformance() {
 
   useEffect(() => { loadClass(); }, [loadClass]);
 
-  // --- Compute ranked rows ---------------------------------------
+  // --- Computed ---------------------------------------------------
   const ranked = useMemo(
     () => buildStudentTotals(dataset, { examTypeId, subjectId }),
     [dataset, examTypeId, subjectId]
@@ -93,6 +100,13 @@ export default function StudentPerformance() {
   }, [ranked, tab, query]);
 
   const topper = ranked[0] || null;
+  const classLabel = classes.find(c => String(c.id) === String(classId))?.class_group || '';
+  const examLabel = examTypeId === 'overall'
+    ? 'Overall'
+    : (dataset?.examTypes || []).find(t => String(t.id) === examTypeId)?.name || '';
+  const subjectLabel = subjectId === 'all'
+    ? 'All Subjects'
+    : (dataset?.subjects || []).find(s => String(s.id) === subjectId)?.name || '';
 
   // ---------------------------------------------------------------
   if (loadingClasses) {
@@ -127,21 +141,25 @@ export default function StudentPerformance() {
         <div className="relative">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input value={query} onChange={e => setQuery(e.target.value)}
-            placeholder="Search student…"
-            className="bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500/10 w-48" />
+            placeholder="Search student..."
+            className="bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500/10 w-44" />
         </div>
+        <button onClick={() => setShowAnalysis(true)} disabled={ranked.length === 0}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-teal-200 bg-teal-50 hover:bg-teal-100 disabled:opacity-50 text-sm font-bold text-teal-800 transition-all">
+          <BarChart3 size={16} /> Analysis
+        </button>
         <button onClick={loadClass}
           className="p-2.5 bg-white border border-slate-200 rounded-xl text-slate-500 hover:text-blue-600" title="Refresh">
           <RefreshCw size={15} />
         </button>
       </div>
 
-      {/* Performance band legend */}
+      {/* Legend */}
       <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex flex-wrap gap-5 items-center">
         <span className="text-[10px] font-black text-amber-700 uppercase tracking-widest">Performance Index</span>
-        <Legend color="bg-emerald-500" text="≥ 85% Excellent" />
-        <Legend color="bg-blue-500" text="50–85% Average" />
-        <Legend color="bg-red-500" text="< 50% Needs Work" />
+        <Legend color="bg-emerald-500" text="85%+ Excellent" />
+        <Legend color="bg-blue-500" text="50-85% Average" />
+        <Legend color="bg-red-500" text="Below 50% Needs Work" />
       </div>
 
       {loading ? (
@@ -221,7 +239,7 @@ export default function StudentPerformance() {
                           </span>
                         </td>
                         <td className="p-4 font-bold text-slate-700">{r.name}</td>
-                        <td className="p-4 text-sm font-medium text-slate-500">{r.roll_no || '—'}</td>
+                        <td className="p-4 text-sm font-medium text-slate-500">{r.roll_no || '-'}</td>
                         <td className="p-4">
                           <div className="flex items-center justify-between mb-1">
                             <span className={`text-xs font-black ${b.text}`}>{r.percentage}%</span>
@@ -239,6 +257,13 @@ export default function StudentPerformance() {
                       {isOpen && (
                         <tr className="bg-slate-50/60">
                           <td colSpan={6} className="p-5">
+                            <div className="flex items-center justify-between mb-3">
+                              <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Exam Breakdown</h4>
+                              <button onClick={(e) => { e.stopPropagation(); setGraphStudent(r); }}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-orange-100 text-orange-600 hover:bg-orange-600 hover:text-white text-xs font-bold transition-all">
+                                <BarChart3 size={13} /> Graph
+                              </button>
+                            </div>
                             <ExamBreakdown dataset={dataset} studentId={r.id} />
                           </td>
                         </tr>
@@ -251,35 +276,68 @@ export default function StudentPerformance() {
           </div>
         </>
       )}
+
+      {/* ---- ANALYSIS MODAL: class comparison bar chart ---- */}
+      {showAnalysis && (
+        <ChartModal
+          title={`Class Analysis - ${classLabel}`}
+          subtitle={`${examLabel} / ${subjectLabel} / ranked by performance`}
+          onClose={() => setShowAnalysis(false)}>
+          <BarRow empty="No marks to chart for this selection.">
+            {ranked.map(r => (
+              <PerfBar key={r.id}
+                percentage={r.percentage}
+                label={r.name}
+                subLabel={`Roll ${r.roll_no || '-'}`}
+                marks={`${Math.round(r.obtained)}/${Math.round(r.possible)}`}
+                highlight={r.rank === 1} />
+            ))}
+          </BarRow>
+        </ChartModal>
+      )}
+
+      {/* ---- EXAM GRAPH MODAL: one student's exams ---- */}
+      {graphStudent && (
+        <ChartModal
+          title={`Exam Analysis - ${graphStudent.name}`}
+          subtitle={`${classLabel} / exam-by-exam performance`}
+          onClose={() => setGraphStudent(null)}>
+          <BarRow empty="No exam-wise marks recorded.">
+            {studentExamBreakdown(dataset, graphStudent.id).map(ex => (
+              <PerfBar key={ex.exam_type_id}
+                percentage={ex.percentage}
+                label={ex.name}
+                marks={`${Math.round(ex.obtained)}/${Math.round(ex.possible)}`} />
+            ))}
+          </BarRow>
+        </ChartModal>
+      )}
     </div>
   );
 }
 
-// --- Sub: a single student's exam-by-exam breakdown ----------------
+// --- Sub: a single student's exam-by-exam breakdown (cards) --------
 function ExamBreakdown({ dataset, studentId }) {
   const rows = useMemo(() => studentExamBreakdown(dataset, studentId), [dataset, studentId]);
   if (rows.length === 0) {
     return <p className="text-sm text-slate-400 italic">No exam-wise marks recorded.</p>;
   }
   return (
-    <div>
-      <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">Exam Breakdown</h4>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-        {rows.map(ex => {
-          const b = band(ex.percentage);
-          return (
-            <div key={ex.exam_type_id} className="bg-white border border-slate-200 rounded-xl p-3 flex justify-between items-center">
-              <span className="text-xs font-bold text-slate-600">{ex.name}</span>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-400">{Math.round(ex.obtained)}/{Math.round(ex.possible)}</span>
-                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${b.bg} ${b.text}`}>
-                  {ex.percentage}%
-                </span>
-              </div>
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+      {rows.map(ex => {
+        const b = band(ex.percentage);
+        return (
+          <div key={ex.exam_type_id} className="bg-white border border-slate-200 rounded-xl p-3 flex justify-between items-center">
+            <span className="text-xs font-bold text-slate-600">{ex.name}</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400">{Math.round(ex.obtained)}/{Math.round(ex.possible)}</span>
+              <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${b.bg} ${b.text}`}>
+                {ex.percentage}%
+              </span>
             </div>
-          );
-        })}
-      </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

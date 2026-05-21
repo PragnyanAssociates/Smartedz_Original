@@ -2,20 +2,24 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import { RefreshCw, Loader2, BarChart3, Trophy, User } from 'lucide-react';
-import { roundPct, band, buildStudentTotals } from './PerfUtils';
+import { roundPct, band, buildStudentTotals, studentExamBreakdown } from './PerfUtils';
+import { PerfBar, BarRow, ChartModal } from './PerfBar';
 
-// ===================================================================
-//  MyPerformance — a student's own view: Topper vs You bar comparison,
-//  filtered by exam + subject. Driven by the dynamic class dataset.
-// ===================================================================
+// =====================================================================
+//  MyPerformance — a student's own view.
+//   - Topper vs You bar comparison, filtered by exam + subject.
+//   - Analysis button -> bar chart of the student's own exams.
+//  Driven entirely by the dynamic class dataset.
+// =====================================================================
 
 export default function MyPerformance() {
   const { user } = useAuth();
 
-  const [data, setData]         = useState(null);   // { me, class, students, subjects, examTypes, marks }
+  const [data, setData]         = useState(null);
   const [loading, setLoading]   = useState(true);
   const [examTypeId, setExam]   = useState('overall');
   const [subjectId, setSubject] = useState('all');
+  const [showAnalysis, setShowAnalysis] = useState(false);
 
   const load = useCallback(async () => {
     if (!user?.id) return;
@@ -38,6 +42,13 @@ export default function MyPerformance() {
 
   const topper = ranked[0] || null;
   const me = ranked.find(r => r.id === user?.id) || null;
+
+  const examLabel = examTypeId === 'overall'
+    ? 'Overall'
+    : (data?.examTypes || []).find(t => String(t.id) === examTypeId)?.name || '';
+  const subjectLabel = subjectId === 'all'
+    ? 'All Subjects'
+    : (data?.subjects || []).find(s => String(s.id) === subjectId)?.name || '';
 
   if (loading) {
     return <div className="py-20 text-center"><Loader2 className="animate-spin w-8 h-8 text-blue-600 mx-auto" /></div>;
@@ -66,6 +77,10 @@ export default function MyPerformance() {
             ...((data.subjects || []).map(s => ({ value: String(s.id), label: s.name })))
           ]} />
         <div className="flex-1" />
+        <button onClick={() => setShowAnalysis(true)} disabled={!me}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-teal-200 bg-teal-50 hover:bg-teal-100 disabled:opacity-50 text-sm font-bold text-teal-800 transition-all">
+          <BarChart3 size={16} /> Analysis
+        </button>
         <button onClick={load}
           className="p-2.5 bg-white border border-slate-200 rounded-xl text-slate-500 hover:text-blue-600" title="Refresh">
           <RefreshCw size={15} />
@@ -74,9 +89,9 @@ export default function MyPerformance() {
 
       <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex flex-wrap gap-5 items-center">
         <span className="text-[10px] font-black text-amber-700 uppercase tracking-widest">Performance Index</span>
-        <Legend color="bg-emerald-500" text="≥ 85%" />
-        <Legend color="bg-blue-500" text="50–85%" />
-        <Legend color="bg-red-500" text="< 50%" />
+        <Legend color="bg-emerald-500" text="85%+" />
+        <Legend color="bg-blue-500" text="50-85%" />
+        <Legend color="bg-red-500" text="Below 50%" />
       </div>
 
       {(data.examTypes || []).length === 0 || !me ? (
@@ -87,8 +102,8 @@ export default function MyPerformance() {
       ) : (
         <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-8">
           <div className="flex items-end justify-center gap-16 sm:gap-28 h-[360px]">
-            {topper && <Bar row={topper} label="Topper" icon={<Trophy size={16} />} />}
-            <Bar row={me} label="You" highlight icon={<User size={16} />} />
+            {topper && <BigBar row={topper} label="Topper" icon={<Trophy size={16} />} />}
+            <BigBar row={me} label="You" highlight icon={<User size={16} />} />
           </div>
           <div className="mt-6 pt-5 border-t border-slate-100 grid grid-cols-3 gap-4 text-center">
             <Stat label="Your Rank" value={`#${me.rank}`} />
@@ -97,12 +112,29 @@ export default function MyPerformance() {
           </div>
         </div>
       )}
+
+      {/* ---- ANALYSIS MODAL: my exam-by-exam chart ---- */}
+      {showAnalysis && me && (
+        <ChartModal
+          title="My Exam Analysis"
+          subtitle={`${examLabel} / ${subjectLabel} / exam-by-exam`}
+          onClose={() => setShowAnalysis(false)}>
+          <BarRow empty="No exam-wise marks recorded yet.">
+            {studentExamBreakdown(data, me.id).map(ex => (
+              <PerfBar key={ex.exam_type_id}
+                percentage={ex.percentage}
+                label={ex.name}
+                marks={`${Math.round(ex.obtained)}/${Math.round(ex.possible)}`} />
+            ))}
+          </BarRow>
+        </ChartModal>
+      )}
     </div>
   );
 }
 
-// --- A single vertical performance bar -----------------------------
-function Bar({ row, label, highlight, icon }) {
+// --- Big vertical bar (Topper vs You) ------------------------------
+function BigBar({ row, label, highlight, icon }) {
   const [fill, setFill] = useState(0);
   const b = band(row.percentage);
   useEffect(() => {

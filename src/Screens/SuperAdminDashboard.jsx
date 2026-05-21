@@ -11,6 +11,7 @@ import Reports from '../components/Reports/Reports';
 import Performance from '../components/Performance/Performance';
 import Directory from '../components/UsersView/Directory';
 import Gallery from '../components/Gallery/Gallery';
+import Homework from '../components/Homework/Homework';
 import Profile from './Profile';
 import { PermissionsProvider, usePermissions } from './PermissionsContext';
 import { TAB_TO_MODULE, MODULES } from './Modules';
@@ -65,6 +66,7 @@ function DashboardShell() {
       case 'Directory':         return <Directory />;
       case 'profile':           return <Profile />;
       case 'Gallery':           return <Gallery />;
+      case 'Homework':           return <Homework />;
       default:
         return (
           <div className="h-full flex items-center justify-center flex-col text-center opacity-40">
