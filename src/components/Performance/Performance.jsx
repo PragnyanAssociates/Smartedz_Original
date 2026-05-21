@@ -6,6 +6,7 @@ import { TrendingUp, Users, GraduationCap, User } from 'lucide-react';
 import StudentPerformance from './StudentPerformance';
 import TeacherPerformance from './TeacherPerformance';
 import MyPerformance      from './MyPerformance';
+import { classGroupOf }   from './PerfUtils';
 
 // =====================================================================
 //  Performance — offline-exam analytics module.
