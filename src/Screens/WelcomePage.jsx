@@ -38,7 +38,7 @@ export default function WelcomePage() {
             />
             <div className="text-4xl sm:text-5xl font-bold tracking-tight">
               <span className="text-[#3284c7]">Smart</span>
-              <span className="text-[#f29132]">Edz</span>
+              <span className="text-[#f29132]">Ed</span>
             </div>
           </div>
 
