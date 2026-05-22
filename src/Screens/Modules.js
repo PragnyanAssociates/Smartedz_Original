@@ -115,6 +115,14 @@ export const MODULES = [
     imageSource: 'https://cdn-icons-png.flaticon.com/128/2515/2515189.png',
     navigateTo: '/Meals'
 },
+{
+    id: 'ptm',
+    module_name: 'PTM', // Must match the string in DEFAULT_MODULES
+    label: 'PTM Schedule',
+    title: 'PTM Schedule',
+    imageSource: 'https://cdn-icons-png.flaticon.com/128/1184/1184462.png', // Or whichever icon you prefer
+    navigateTo: '/PTM'
+},
 
 ];
 

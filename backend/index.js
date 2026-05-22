@@ -2957,7 +2957,99 @@ app.post('/api/admin/meals/menu', async (req, res) => {
         res.status(500).json({ error: err.message });
     } finally { conn.release(); }
 });
+// --- 21.1 List PTMs for a School (Admin/Teacher view) ---
+app.get('/api/admin/ptm/:instId', async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            `SELECT p.*, c.className, t.name AS teacher_name
+               FROM ptm_meetings p
+               LEFT JOIN classes c ON c.id = p.class_id
+               LEFT JOIN users t ON t.id = p.teacher_id
+              WHERE p.institutionId = ?
+              ORDER BY p.meeting_datetime DESC`,
+            [req.params.instId]
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
+// --- 21.2 List PTMs for a Student ---
+app.get('/api/admin/ptm/student/:studentId', async (req, res) => {
+    try {
+        const [u] = await db.execute('SELECT institutionId, class_id, section FROM users WHERE id = ?', [req.params.studentId]);
+        if (u.length === 0) return res.status(404).json({ error: 'Student not found' });
+        const { institutionId, class_id, section } = u[0];
+
+        const [rows] = await db.execute(
+            `SELECT p.*, c.className, t.name AS teacher_name
+               FROM ptm_meetings p
+               LEFT JOIN classes c ON c.id = p.class_id
+               LEFT JOIN users t ON t.id = p.teacher_id
+              WHERE p.institutionId = ?
+                AND (p.class_id IS NULL OR p.class_id = ?)
+                AND (p.section IS NULL OR p.section = ?)
+              ORDER BY p.meeting_datetime DESC`,
+            [institutionId, class_id || 0, section || '']
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 21.3 Create PTM ---
+app.post('/api/admin/ptm', async (req, res) => {
+    const {
+        institutionId, meeting_datetime, teacher_id, class_id,
+        section, subject_focus, notes, meeting_link, status, created_by
+    } = req.body;
+    
+    if (!institutionId || !meeting_datetime || !teacher_id || !subject_focus) {
+        return res.status(400).json({ error: 'Missing required fields.' });
+    }
+
+    try {
+        const [result] = await db.execute(
+            `INSERT INTO ptm_meetings 
+               (institutionId, meeting_datetime, teacher_id, class_id, section, subject_focus, notes, meeting_link, status, created_by) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                institutionId, meeting_datetime, teacher_id, class_id || null, 
+                section || null, subject_focus, notes || null, meeting_link || null, 
+                status || 'Scheduled', created_by || null
+            ]
+        );
+        res.json({ success: true, id: result.insertId });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 21.4 Update PTM ---
+app.put('/api/admin/ptm/:id', async (req, res) => {
+    const {
+        meeting_datetime, teacher_id, class_id, section,
+        subject_focus, notes, meeting_link, status
+    } = req.body;
+    try {
+        await db.execute(
+            `UPDATE ptm_meetings 
+                SET meeting_datetime = ?, teacher_id = ?, class_id = ?, section = ?, 
+                    subject_focus = ?, notes = ?, meeting_link = ?, status = ?
+              WHERE id = ?`,
+            [
+                meeting_datetime, teacher_id, class_id || null, section || null,
+                subject_focus, notes || null, meeting_link || null, status || 'Scheduled',
+                req.params.id
+            ]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 21.5 Delete PTM ---
+app.delete('/api/admin/ptm/:id', async (req, res) => {
+    try {
+        await db.execute('DELETE FROM ptm_meetings WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
 // =====================================================================
 const PORT = process.env.PORT || 3001;

@@ -13,6 +13,7 @@ import Directory from '../components/UsersView/Directory';
 import Gallery from '../components/Gallery/Gallery';
 import Homework from '../components/Homework/Homework';
 import Meals from '../components/Meals/Meals';
+import PTM from '../components/PTM/PTM'
 import Profile from './Profile';
 import { PermissionsProvider, usePermissions } from './PermissionsContext';
 import { TAB_TO_MODULE, MODULES } from './Modules';
@@ -69,7 +70,7 @@ function DashboardShell() {
       case 'Gallery':           return <Gallery />;
       case 'Homework':          return <Homework />;
       case 'Meals':             return <Meals />;
-      default:
+      case 'PTM':               return <PTM />;
         return (
           <div className="h-full flex items-center justify-center flex-col text-center opacity-40">
             <h2 className="text-3xl font-black text-slate-900">Module Under Development</h2>
