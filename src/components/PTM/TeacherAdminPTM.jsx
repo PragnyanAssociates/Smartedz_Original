@@ -33,7 +33,7 @@ export default function TeacherAdminPTM({ canManage = true }) {
     if (!user?.institutionId) return;
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/ptm/${user.institutionId}`);
+      const res = await fetch(`${API_BASE_URL}/admin/ptm/${user.institutionId}?userId=${user.id}`)
       const d = await res.json();
       setMeetings(Array.isArray(d) ? d : []);
     } catch (e) { console.error(e); }

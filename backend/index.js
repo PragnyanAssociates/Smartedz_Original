@@ -2961,18 +2961,73 @@ app.post('/api/admin/meals/menu', async (req, res) => {
 });
 // --- 21.1 List PTMs for a School (Admin/Teacher view) ---
 app.get('/api/admin/ptm/:instId', async (req, res) => {
+    const { userId } = req.query;
+
+    if (!userId) {
+        return res.status(400).json({ error: 'userId is required' });
+    }
+
     try {
-        const [rows] = await db.execute(
-            `SELECT p.*, c.className, t.name AS teacher_name
-               FROM ptm_meetings p
-               LEFT JOIN classes c ON c.id = p.class_id
-               LEFT JOIN users t ON t.id = p.teacher_id
-              WHERE p.institutionId = ?
-              ORDER BY p.meeting_datetime DESC`,
-            [req.params.instId]
+        const [users] = await db.execute(
+            'SELECT id, role, institutionId FROM users WHERE id = ?',
+            [userId]
         );
+
+        if (users.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const me = users[0];
+
+        const isAdmin =
+            me.role === 'Super Admin' ||
+            me.role === 'Developer';
+
+        let sql = '';
+        let params = [];
+
+        // ===============================
+        // ADMIN
+        // ===============================
+        if (isAdmin) {
+
+            sql = `
+                SELECT p.*, c.className, t.name AS teacher_name
+                  FROM ptm_meetings p
+                  LEFT JOIN classes c ON c.id = p.class_id
+                  LEFT JOIN users t ON t.id = p.teacher_id
+                 WHERE p.institutionId = ?
+                 ORDER BY p.meeting_datetime DESC
+            `;
+
+            params = [req.params.instId];
+        }
+
+        // ===============================
+        // OTHER ROLES
+        // ===============================
+        else {
+
+            sql = `
+                SELECT p.*, c.className, t.name AS teacher_name
+                  FROM ptm_meetings p
+                  LEFT JOIN classes c ON c.id = p.class_id
+                  LEFT JOIN users t ON t.id = p.teacher_id
+                 WHERE p.institutionId = ?
+                   AND p.teacher_id = ?
+                 ORDER BY p.meeting_datetime DESC
+            `;
+
+            params = [req.params.instId, userId];
+        }
+
+        const [rows] = await db.execute(sql, params);
+
         res.json(rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
+
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // --- 21.2 List PTMs for a Student ---
