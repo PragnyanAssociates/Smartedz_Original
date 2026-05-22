@@ -41,7 +41,7 @@ const DEFAULT_MODULES = [
     'Gallery',
     'Homework',
     'Meals',
-    'PTM Schedule'
+    'PTM'
 ];
 
 // =====================================================================

@@ -116,7 +116,7 @@ export const MODULES = [
     navigateTo: '/Meals'
 },
 {
-    id: 'ptm',
+    id: 'PTM',
     module_name: 'PTM', // Must match the string in DEFAULT_MODULES
     label: 'PTM Schedule',
     title: 'PTM Schedule',

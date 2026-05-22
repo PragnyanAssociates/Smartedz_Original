@@ -70,7 +70,7 @@ function DashboardShell() {
       case 'Gallery':           return <Gallery />;
       case 'Homework':          return <Homework />;
       case 'Meals':             return <Meals />;
-      case 'ptm':               return <PTM />;
+      case 'PTM':               return <PTM />;
         return (
           <div className="h-full flex items-center justify-center flex-col text-center opacity-40">
             <h2 className="text-3xl font-black text-slate-900">Module Under Development</h2>
