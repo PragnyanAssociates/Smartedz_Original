@@ -35,7 +35,7 @@ export default function TeacherOnlineClasses({ canManage = true }) {
     setLoading(true);
     try {
       const [clsRes, dbRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/admin/online-classes/${user.institutionId}`),
+        fetch(`${API_BASE_URL}/admin/online-classes/${user.institutionId}?userId=${user.id}`),
         fetch(`${API_BASE_URL}/admin/data/${user.institutionId}`)
       ]);
       const clsData = await clsRes.json();
