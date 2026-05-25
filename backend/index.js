@@ -3731,9 +3731,11 @@ app.get('/api/admin/study-materials/:instId/teacher/:userId', async (req, res) =
 });
 
 // --- 24.2 GET materials (Student View) ---
-app.get('/api/admin/study-materials/:instId/student/:classGroup', async (req, res) => {
-    const { instId, classGroup } = req.params;
+app.get('/api/admin/study-materials/:instId/student/:studentId/:classGroup', async (req, res) => {
+    const { instId, studentId, classGroup } = req.params;
     try {
+        // Optional: Add a check here to ensure studentId actually belongs to classGroup
+        // This prevents students from guessing other classGroup names
         const query = `SELECT * FROM study_materials WHERE institutionId = ? AND class_group = ? ORDER BY created_at DESC`;
         const [materials] = await db.execute(query, [instId, classGroup]);
         res.json(materials);

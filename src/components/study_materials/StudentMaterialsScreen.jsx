@@ -33,15 +33,21 @@ export default function StudentMaterialsScreen() {
   const [query, setQuery] = useState("");
 
   const fetchMaterials = useCallback(async () => {
-    if (!user?.class_group || !user?.institutionId) return;
-    setIsLoading(true);
-    try {
-      const res = await fetch(`${API_BASE_URL}/admin/study-materials/${user.institutionId}/student/${user.class_group}`);
-      const data = await res.json();
-      setMaterials(Array.isArray(data) ? data : []);
-    } catch (error) { console.error(error); }
-    finally { setIsLoading(false); }
-  }, [user]);
+  // Ensure user and necessary data exist
+  if (!user?.class_group || !user?.institutionId || !user?.id) return;
+  
+  setIsLoading(true);
+  try {
+    // Call the updated route: .../student/:studentId/:classGroup
+    const res = await fetch(`${API_BASE_URL}/admin/study-materials/${user.institutionId}/student/${user.id}/${user.class_group}`);
+    const data = await res.json();
+    setMaterials(Array.isArray(data) ? data : []);
+  } catch (error) { 
+    console.error("Fetch error:", error);
+  } finally { 
+    setIsLoading(false); 
+  }
+}, [user]);
 
   useEffect(() => { fetchMaterials(); }, [fetchMaterials]);
 

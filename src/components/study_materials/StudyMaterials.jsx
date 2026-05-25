@@ -14,7 +14,7 @@ const StudyMaterials = ({ navigation }) => {
     );
   }
 
-  if (user.role === "student") {
+  if (user.role === "Student") {
     return <StudentMaterialsScreen navigation={navigation} />;
   } else if (user.role === "Teacher" || user.role === "Super Admin" || user.role === "Developer") {
     return <TeacherAdminMaterialsScreen navigation={navigation} />;

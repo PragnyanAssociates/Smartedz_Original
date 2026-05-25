@@ -3,7 +3,7 @@ import { API_BASE_URL, SERVER_URL } from "../../apiConfig";
 import { useAuth } from "../../context/AuthContext";
 import { 
   Folder, Edit, Trash2, Download, ExternalLink, Plus, 
-  Upload, Link, Search, X, FileText, Video, MonitorPlay, FileSpreadsheet
+  Search, X, FileText, Video, MonitorPlay, FileSpreadsheet, Link
 } from 'lucide-react';
 
 const getContainerClasses = () => "w-full max-w-7xl mx-auto px-4 lg:px-8";
@@ -25,15 +25,26 @@ export default function TeacherAdminMaterialsScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [editingMaterial, setEditingMaterial] = useState(null);
-  const [readingMaterial, setReadingMaterial] = useState(null);
+  
+  // State for Dropdowns
+  const [dbClasses, setDbClasses] = useState([]);
+  const [dbSubjects, setDbSubjects] = useState([]);
 
-  const fetchMaterials = useCallback(async () => {
+  const fetchMaterialsAndData = useCallback(async () => {
     if (!user?.id || !user?.institutionId) return;
     setIsLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/study-materials/${user.institutionId}/teacher/${user.id}`);
-      const data = await res.json();
-      setMaterials(Array.isArray(data) ? data : []);
+      // 1. Fetch Materials
+      const matRes = await fetch(`${API_BASE_URL}/admin/study-materials/${user.institutionId}/teacher/${user.id}`);
+      const matData = await matRes.json();
+      setMaterials(Array.isArray(matData) ? matData : []);
+
+      // 2. Fetch Classes and Subjects for the Dropdowns
+      const dbRes = await fetch(`${API_BASE_URL}/admin/data/${user.institutionId}`);
+      const dbData = await dbRes.json();
+      setDbClasses(dbData.classes || []);
+      setDbSubjects(dbData.subjects || []);
+      
     } catch (error) {
       console.error(error);
     } finally { 
@@ -41,7 +52,7 @@ export default function TeacherAdminMaterialsScreen() {
     }
   }, [user]);
 
-  useEffect(() => { fetchMaterials(); }, [fetchMaterials]);
+  useEffect(() => { fetchMaterialsAndData(); }, [fetchMaterialsAndData]);
 
   const openModal = (material = null) => {
     setEditingMaterial(material);
@@ -129,13 +140,21 @@ export default function TeacherAdminMaterialsScreen() {
           )}
         </div>
 
-        {isModalVisible && <MaterialFormModal material={editingMaterial} onClose={() => setIsModalVisible(false)} onSave={fetchMaterials} />}
+        {isModalVisible && (
+          <MaterialFormModal 
+            material={editingMaterial} 
+            onClose={() => setIsModalVisible(false)} 
+            onSave={fetchMaterialsAndData} 
+            dbClasses={dbClasses} 
+            dbSubjects={dbSubjects} 
+          />
+        )}
       </main>
     </div>
   );
 }
 
-const MaterialFormModal = ({ material, onClose, onSave }) => {
+const MaterialFormModal = ({ material, onClose, onSave, dbClasses, dbSubjects }) => {
   const { user } = useAuth();
   const isEditMode = !!material;
 
@@ -150,6 +169,8 @@ const MaterialFormModal = ({ material, onClose, onSave }) => {
   const [file, setFile] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
 
+  const classLabel = (c) => `${c.className}${c.section ? ` - ${c.section}` : ''}`;
+
   const handleSave = async (e) => {
     e.preventDefault();
     if (!formData.title || !formData.class_group) return alert("Title and Class are required.");
@@ -159,14 +180,18 @@ const MaterialFormModal = ({ material, onClose, onSave }) => {
     body.append("institutionId", user.institutionId);
     body.append("uploaded_by", user.id);
     Object.keys(formData).forEach(key => body.append(key, formData[key]));
+    
     if (file) body.append("materialFile", file);
     else if (isEditMode && material.file_path) body.append("existing_file_path", material.file_path);
 
     try {
       const url = isEditMode ? `${API_BASE_URL}/admin/study-materials/${material.id}` : `${API_BASE_URL}/admin/study-materials`;
       await fetch(url, { method: isEditMode ? 'PUT' : 'POST', body });
-      onSave(); onClose();
-    } catch (error) { alert("Save failed."); }
+      onSave(); 
+      onClose();
+    } catch (error) { 
+      alert("Save failed."); 
+    }
     setIsSaving(false);
   };
 
@@ -178,16 +203,53 @@ const MaterialFormModal = ({ material, onClose, onSave }) => {
 
         <form onSubmit={handleSave} className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="md:col-span-2"><Field label="Title *" value={formData.title} onChange={v => setFormData({...formData, title: v})} /></div>
-            <Field label="Class Group *" value={formData.class_group} onChange={v => setFormData({...formData, class_group: v})} />
-            <Field label="Subject" value={formData.subject} onChange={v => setFormData({...formData, subject: v})} />
+            <div className="md:col-span-2">
+              <Field label="Title *" value={formData.title} onChange={v => setFormData({...formData, title: v})} />
+            </div>
+            
+            {/* Populated Class Dropdown */}
+            <div className="space-y-1">
+              <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Class Group *</label>
+              <select 
+                value={formData.class_group} 
+                onChange={e => setFormData({...formData, class_group: e.target.value})} 
+                className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500/10 cursor-pointer"
+                required
+              >
+                <option value="" disabled>Select Class</option>
+                <option value="All Classes">All Classes</option>
+                {dbClasses.map(c => (
+                  <option key={c.id} value={classLabel(c)}>{classLabel(c)}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Populated Subject Dropdown */}
+            <div className="space-y-1">
+              <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Subject</label>
+              <select 
+                value={formData.subject} 
+                onChange={e => setFormData({...formData, subject: e.target.value})} 
+                className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500/10 cursor-pointer"
+              >
+                <option value="">General / No Subject</option>
+                {dbSubjects.map(s => (
+                  <option key={s.id} value={s.name}>{s.name}</option>
+                ))}
+              </select>
+            </div>
             
             <div className="space-y-1">
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Type *</label>
-              <select value={formData.material_type} onChange={e => setFormData({...formData, material_type: e.target.value})} className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 text-sm font-medium outline-none">
+              <select 
+                value={formData.material_type} 
+                onChange={e => setFormData({...formData, material_type: e.target.value})} 
+                className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500/10 cursor-pointer"
+              >
                 {["Notes", "Presentation", "Video Lecture", "Worksheet", "Link", "Other"].map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
+
             <Field label="External Link" type="url" value={formData.external_link} onChange={v => setFormData({...formData, external_link: v})} />
             
             <div className="md:col-span-2 space-y-1">
@@ -195,10 +257,12 @@ const MaterialFormModal = ({ material, onClose, onSave }) => {
               <input type="file" onChange={e => setFile(e.target.files[0])} className="w-full text-sm text-slate-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer border border-slate-100 rounded-xl bg-slate-50" />
             </div>
             
-            <div className="md:col-span-2"><Field type="textarea" label="Description" value={formData.description} onChange={v => setFormData({...formData, description: v})} /></div>
+            <div className="md:col-span-2">
+              <Field type="textarea" label="Description" value={formData.description} onChange={v => setFormData({...formData, description: v})} />
+            </div>
           </div>
 
-          <button type="submit" disabled={isSaving} className="w-full bg-slate-900 hover:bg-blue-600 text-white py-4 rounded-2xl font-black uppercase tracking-widest mt-4 transition-all shadow-xl">
+          <button type="submit" disabled={isSaving} className="w-full bg-slate-900 hover:bg-blue-600 disabled:bg-slate-300 text-white py-4 rounded-2xl font-black uppercase tracking-widest mt-4 transition-all shadow-xl flex justify-center gap-2">
             {isSaving ? "Saving..." : "Save Material"}
           </button>
         </form>
@@ -207,12 +271,12 @@ const MaterialFormModal = ({ material, onClose, onSave }) => {
   );
 }
 
-function Field({ label, value, onChange, type = 'text' }) {
+function Field({ label, value, onChange, type = 'text', required }) {
   const base = "w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500/10 text-sm font-medium";
   return (
     <div className="space-y-1">
       <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider">{label}</label>
-      {type === 'textarea' ? <textarea value={value} onChange={e => onChange(e.target.value)} rows={3} className={base + ' resize-none'} /> : <input type={type} value={value} onChange={e => onChange(e.target.value)} className={base} />}
+      {type === 'textarea' ? <textarea value={value} onChange={e => onChange(e.target.value)} rows={3} className={base + ' resize-none'} required={required} /> : <input type={type} value={value} onChange={e => onChange(e.target.value)} className={base} required={required} />}
     </div>
   );
 }
