@@ -162,7 +162,7 @@ const MaterialFormModal = ({ material, onClose, onSave, dbClasses, dbSubjects })
     title: isEditMode ? material.title : "",
     description: isEditMode ? material.description : "",
     subject: isEditMode ? material.subject : "",
-    class_group: isEditMode ? material.class_group : "",
+   class_id: isEditMode ? String(material.class_id || '') : "",  // ← ID not string
     material_type: isEditMode ? material.material_type : "Notes",
     external_link: isEditMode ? material.external_link || "" : ""
   });
@@ -173,7 +173,7 @@ const MaterialFormModal = ({ material, onClose, onSave, dbClasses, dbSubjects })
 
   const handleSave = async (e) => {
     e.preventDefault();
-    if (!formData.title || !formData.class_group) return alert("Title and Class are required.");
+if (!formData.title || !formData.class_id) return alert("Title and Class are required.");
     setIsSaving(true);
 
     const body = new FormData();
@@ -210,18 +210,19 @@ const MaterialFormModal = ({ material, onClose, onSave, dbClasses, dbSubjects })
             {/* Populated Class Dropdown */}
             <div className="space-y-1">
               <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Class Group *</label>
-              <select 
-                value={formData.class_group} 
-                onChange={e => setFormData({...formData, class_group: e.target.value})} 
-                className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500/10 cursor-pointer"
-                required
-              >
-                <option value="" disabled>Select Class</option>
-                <option value="All Classes">All Classes</option>
-                {dbClasses.map(c => (
-                  <option key={c.id} value={classLabel(c)}>{classLabel(c)}</option>
-                ))}
-              </select>
+            <select
+    value={formData.class_id}
+    onChange={e => setFormData({...formData, class_id: e.target.value})}
+    className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500/10 cursor-pointer"
+    required
+>
+    <option value="">All Classes</option>
+    {dbClasses.map(c => (
+        <option key={c.id} value={String(c.id)}>
+            {`${c.className}${c.section ? ` - ${c.section}` : ''}`}
+        </option>
+    ))}
+</select>
             </div>
 
             {/* Populated Subject Dropdown */}

@@ -31,15 +31,16 @@ export default function StudentMaterialsScreen() {
   const [materials, setMaterials] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [query, setQuery] = useState("");
-
-  const fetchMaterials = useCallback(async () => {
-  // Ensure user and necessary data exist
+const fetchMaterials = useCallback(async () => {
   if (!user?.class_group || !user?.institutionId || !user?.id) return;
   
   setIsLoading(true);
   try {
-    // Call the updated route: .../student/:studentId/:classGroup
-    const res = await fetch(`${API_BASE_URL}/admin/study-materials/${user.institutionId}/student/${user.id}/${user.class_group}`);
+    // Wrap the class group in encodeURIComponent
+    const encodedClass = encodeURIComponent(user.class_group);
+    
+    const res = await fetch(`${API_BASE_URL}/admin/study-materials/${user.institutionId}/student/${user.id}/${encodedClass}`);
+    
     const data = await res.json();
     setMaterials(Array.isArray(data) ? data : []);
   } catch (error) { 

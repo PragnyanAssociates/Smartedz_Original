@@ -3711,17 +3711,19 @@ app.get('/api/admin/study-materials/:instId/teacher/:userId', async (req, res) =
     const { instId, userId } = req.params;
     try {
         const [users] = await db.execute('SELECT role FROM users WHERE id = ?', [userId]);
-        if (users.length === 0) return res.status(404).json({ error: 'User not found' });
-        
         const isAdmin = users[0].role === 'Super Admin' || users[0].role === 'Developer';
-        let query = `SELECT * FROM study_materials WHERE institutionId = ?`;
+        
+        let query = `SELECT sm.*, cg.className, cg.section 
+                     FROM study_materials sm
+                     LEFT JOIN classes cg ON sm.class_id = cg.id  -- your classes table name
+                     WHERE sm.institutionId = ?`;
         let params = [instId];
         
         if (!isAdmin) {
-            query += ` AND uploaded_by = ?`;
+            query += ` AND sm.uploaded_by = ?`;
             params.push(userId);
         }
-        query += ` ORDER BY created_at DESC`;
+        query += ` ORDER BY sm.created_at DESC`;
         
         const [materials] = await db.execute(query, params);
         res.json(materials);
@@ -3731,13 +3733,21 @@ app.get('/api/admin/study-materials/:instId/teacher/:userId', async (req, res) =
 });
 
 // --- 24.2 GET materials (Student View) ---
-app.get('/api/admin/study-materials/:instId/student/:studentId/:classGroup', async (req, res) => {
-    const { instId, studentId, classGroup } = req.params;
+app.get('/api/admin/study-materials/:instId/student/:studentId', async (req, res) => {
+    const { instId, studentId } = req.params;
     try {
-        // Optional: Add a check here to ensure studentId actually belongs to classGroup
-        // This prevents students from guessing other classGroup names
-        const query = `SELECT * FROM study_materials WHERE institutionId = ? AND class_group = ? ORDER BY created_at DESC`;
-        const [materials] = await db.execute(query, [instId, classGroup]);
+        // Get student's class_id from users table
+        const [[student]] = await db.execute(
+            'SELECT class_id FROM users WHERE id = ?', [studentId]
+        );
+
+        // Fetch materials for their class OR materials for ALL classes (class_id IS NULL)
+        const query = `SELECT * FROM study_materials 
+                       WHERE institutionId = ? 
+                       AND (class_id = ? OR class_id IS NULL)
+                       ORDER BY created_at DESC`;
+
+        const [materials] = await db.execute(query, [instId, student.class_id]);
         res.json(materials);
     } catch (error) {
         res.status(500).json({ message: "Failed to fetch student materials." });
@@ -3746,30 +3756,13 @@ app.get('/api/admin/study-materials/:instId/student/:studentId/:classGroup', asy
 
 // --- 24.3 POST new material ---
 app.post('/api/admin/study-materials', studyMaterialUpload.single('materialFile'), async (req, res) => {
-    const { institutionId, title, description, class_group, subject, material_type, external_link, uploaded_by } = req.body;
-    const file_path = req.file ? `/public/uploads/study_materials/${req.file.filename}` : null;
-
-    if (!institutionId || !title || !class_group || !material_type || !uploaded_by) {
-        return res.status(400).json({ message: "Missing required fields." });
-    }
-
-    const conn = await db.getConnection();
-    try {
-        await conn.beginTransaction();
-        const query = `INSERT INTO study_materials (institutionId, title, description, class_group, subject, material_type, file_path, external_link, uploaded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-        await conn.execute(query, [institutionId, title, description || null, class_group, subject || null, material_type, file_path, external_link || null, uploaded_by]);
-        
-        // Notification logic could trigger here (omitted for brevity, keeping DB safe)
-        await conn.commit();
-        res.status(201).json({ message: 'Study material uploaded successfully.' });
-    } catch (error) {
-        await conn.rollback();
-        res.status(500).json({ message: 'Failed to upload study material.' });
-    } finally {
-        conn.release();
-    }
+    const { institutionId, title, description, class_id, subject, material_type, external_link, uploaded_by } = req.body;
+    
+    const query = `INSERT INTO study_materials 
+                   (institutionId, title, description, class_id, subject, material_type, file_path, external_link, uploaded_by) 
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+    await conn.execute(query, [institutionId, title, description || null, class_id || null, subject || null, material_type, file_path, external_link || null, uploaded_by]);
 });
-
 // --- 24.4 PUT update material ---
 app.put('/api/admin/study-materials/:materialId', studyMaterialUpload.single('materialFile'), async (req, res) => {
     const { materialId } = req.params;
