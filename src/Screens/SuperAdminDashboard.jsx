@@ -16,6 +16,7 @@ import DigitalLabs from '../components/Labs/DigitalLabs';
 import Meals from '../components/Meals/Meals';
 import PTM from '../components/PTM/PTM'
 import PreAdmissionsScreen from '../components/preadmissions/PreAdmissionsScreen';
+import StudyMaterialsScreen from '../components/study_materials/StudyMaterialsScreen';
 
 import Profile from './Profile';
 import { PermissionsProvider, usePermissions } from './PermissionsContext';
@@ -78,6 +79,7 @@ function DashboardShell() {
       case 'OnlineClasses':     return <OnlineClasses/>;
       case 'DigitalLabs':       return <DigitalLabs/>;
       case 'PreAdmissionsScreen': return <PreAdmissionsScreen/>;
+      case 'StudyMaterialsScreen': return <StudyMaterialsScreen/>;
         return (
           <div className="h-full flex items-center justify-center flex-col text-center opacity-40">
             <h2 className="text-3xl font-black text-slate-900">Module Under Development</h2>

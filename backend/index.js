@@ -48,6 +48,7 @@ const DEFAULT_MODULES = [
     'OnlineClasses',
     'DigitalLabs',
     'Pre Admissions',
+    'Study Materials'
 ];
 
 // =====================================================================
@@ -3687,6 +3688,121 @@ app.delete('/api/admin/preadmissions/:id', async (req, res) => {
         res.status(200).json({ message: "Deleted successfully." });
     } catch (error) {
         res.status(500).json({ message: "Failed to delete record." });
+    }
+}); 
+// --- Multer config for Study Materials ---
+const STUDY_MAT_DIR = 'public/uploads/study_materials';
+if (!fs.existsSync(STUDY_MAT_DIR)) { fs.mkdirSync(STUDY_MAT_DIR, { recursive: true }); }
+const studyMaterialStorage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, STUDY_MAT_DIR),
+    filename: (req, file, cb) => {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, `material-${uniqueSuffix}${path.extname(file.originalname)}`);
+    }
+});
+const studyMaterialUpload = multer({ storage: studyMaterialStorage });
+
+// =====================================================================
+// === 24. STUDY MATERIALS (OPEN ROUTES) ===============================
+// =====================================================================
+
+// --- 24.1 GET materials (Teacher/Admin View) ---
+app.get('/api/admin/study-materials/:instId/teacher/:userId', async (req, res) => {
+    const { instId, userId } = req.params;
+    try {
+        const [users] = await db.execute('SELECT role FROM users WHERE id = ?', [userId]);
+        if (users.length === 0) return res.status(404).json({ error: 'User not found' });
+        
+        const isAdmin = users[0].role === 'Super Admin' || users[0].role === 'Developer';
+        let query = `SELECT * FROM study_materials WHERE institutionId = ?`;
+        let params = [instId];
+        
+        if (!isAdmin) {
+            query += ` AND uploaded_by = ?`;
+            params.push(userId);
+        }
+        query += ` ORDER BY created_at DESC`;
+        
+        const [materials] = await db.execute(query, params);
+        res.json(materials);
+    } catch (error) {
+        res.status(500).json({ message: "Failed to fetch study materials." });
+    }
+});
+
+// --- 24.2 GET materials (Student View) ---
+app.get('/api/admin/study-materials/:instId/student/:classGroup', async (req, res) => {
+    const { instId, classGroup } = req.params;
+    try {
+        const query = `SELECT * FROM study_materials WHERE institutionId = ? AND class_group = ? ORDER BY created_at DESC`;
+        const [materials] = await db.execute(query, [instId, classGroup]);
+        res.json(materials);
+    } catch (error) {
+        res.status(500).json({ message: "Failed to fetch student materials." });
+    }
+});
+
+// --- 24.3 POST new material ---
+app.post('/api/admin/study-materials', studyMaterialUpload.single('materialFile'), async (req, res) => {
+    const { institutionId, title, description, class_group, subject, material_type, external_link, uploaded_by } = req.body;
+    const file_path = req.file ? `/public/uploads/study_materials/${req.file.filename}` : null;
+
+    if (!institutionId || !title || !class_group || !material_type || !uploaded_by) {
+        return res.status(400).json({ message: "Missing required fields." });
+    }
+
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        const query = `INSERT INTO study_materials (institutionId, title, description, class_group, subject, material_type, file_path, external_link, uploaded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+        await conn.execute(query, [institutionId, title, description || null, class_group, subject || null, material_type, file_path, external_link || null, uploaded_by]);
+        
+        // Notification logic could trigger here (omitted for brevity, keeping DB safe)
+        await conn.commit();
+        res.status(201).json({ message: 'Study material uploaded successfully.' });
+    } catch (error) {
+        await conn.rollback();
+        res.status(500).json({ message: 'Failed to upload study material.' });
+    } finally {
+        conn.release();
+    }
+});
+
+// --- 24.4 PUT update material ---
+app.put('/api/admin/study-materials/:materialId', studyMaterialUpload.single('materialFile'), async (req, res) => {
+    const { materialId } = req.params;
+    const { title, description, class_group, subject, material_type, external_link, existing_file_path } = req.body;
+    
+    let file_path = existing_file_path || null;
+    if (req.file) {
+        file_path = `/public/uploads/study_materials/${req.file.filename}`;
+        if (existing_file_path) {
+            const oldPath = path.join(__dirname, '..', existing_file_path);
+            if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+        }
+    }
+
+    try {
+        const query = `UPDATE study_materials SET title=?, description=?, class_group=?, subject=?, material_type=?, file_path=?, external_link=? WHERE id=?`;
+        await db.execute(query, [title, description || null, class_group, subject || null, material_type, file_path, external_link || null, materialId]);
+        res.status(200).json({ message: 'Study material updated successfully.' });
+    } catch (error) {
+        res.status(500).json({ message: 'Failed to update study material.' });
+    }
+});
+
+// --- 24.5 DELETE material ---
+app.delete('/api/admin/study-materials/:materialId', async (req, res) => {
+    try {
+        const [[material]] = await db.execute('SELECT file_path FROM study_materials WHERE id = ?', [req.params.materialId]);
+        if (material && material.file_path) {
+            const oldPath = path.join(__dirname, '..', material.file_path);
+            if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+        }
+        await db.execute('DELETE FROM study_materials WHERE id = ?', [req.params.materialId]);
+        res.status(200).json({ message: 'Deleted successfully.' });
+    } catch (error) {
+        res.status(500).json({ message: 'Failed to delete material.' });
     }
 });
 // =====================================================================
