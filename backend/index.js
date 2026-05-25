@@ -59,7 +59,8 @@ const DEFAULT_MODULES = [
     'Meals',
     'PTM',
     'OnlineClasses',
-    'DigitalLabs'
+    'DigitalLabs',
+    'Pre Admissions',
 ];
 
 // =====================================================================
