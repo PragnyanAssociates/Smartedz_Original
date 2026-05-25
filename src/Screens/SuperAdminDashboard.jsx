@@ -15,6 +15,7 @@ import Homework from '../components/Homework/Homework';
 import DigitalLabs from '../components/Labs/DigitalLabs';
 import Meals from '../components/Meals/Meals';
 import PTM from '../components/PTM/PTM'
+import PreAdmissionsScreen from '../components/preadmissions/PreAdmissionsScreen';
 
 import Profile from './Profile';
 import { PermissionsProvider, usePermissions } from './PermissionsContext';
@@ -76,6 +77,7 @@ function DashboardShell() {
       case 'PTM':               return <PTM />;
       case 'OnlineClasses':     return <OnlineClasses/>;
       case 'DigitalLabs':       return <DigitalLabs/>;
+      case 'PreAdmissionsScreen': return <PreAdmissionsScreen/>;
         return (
           <div className="h-full flex items-center justify-center flex-col text-center opacity-40">
             <h2 className="text-3xl font-black text-slate-900">Module Under Development</h2>

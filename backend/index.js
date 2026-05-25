@@ -3542,6 +3542,150 @@ app.delete('/api/admin/labs/:id', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// --- Multer config for Pre-Admissions ---
+const PRE_ADMISSIONS_DIR = 'public/uploads/preadmissions';
+if (!fs.existsSync(PRE_ADMISSIONS_DIR)) { fs.mkdirSync(PRE_ADMISSIONS_DIR, { recursive: true }); }
+const preAdmissionsStorage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, PRE_ADMISSIONS_DIR),
+    filename: (req, file, cb) => {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, `preadmission-${uniqueSuffix}${path.extname(file.originalname)}`);
+    }
+});
+const preAdmissionsUpload = multer({ storage: preAdmissionsStorage });
+
+// =====================================================================
+// === 23. ADMISSIONS / DIRECTORY ======================================
+// =====================================================================
+
+// --- 23.1 GET all records (Filtered by Institution) ---
+app.get('/api/admin/preadmissions/:instId', verifyToken, async (req, res) => {
+    try {
+        const { instId } = req.params;
+        const { search, year } = req.query; 
+        
+        let whereClauses = ["institutionId = ?"];
+        const queryParams = [instId];
+
+        if (year && !isNaN(parseInt(year))) {
+            whereClauses.push("YEAR(submission_date) = ?");
+            queryParams.push(parseInt(year));
+        }
+
+        if (search) {
+            whereClauses.push("(student_name LIKE ? OR admission_no LIKE ? OR previous_institute LIKE ?)");
+            const searchTerm = `%${search}%`;
+            queryParams.push(searchTerm, searchTerm, searchTerm);
+        }
+
+        const whereClause = `WHERE ${whereClauses.join(' AND ')}`;
+        const query = `SELECT * FROM pre_admissions ${whereClause} ORDER BY submission_date DESC LIMIT 1000`;
+        
+        const [records] = await db.query(query, queryParams);
+        res.status(200).json(records);
+    } catch (error) {
+        res.status(500).json({ message: "Failed to fetch admission records." });
+    }
+});
+
+// --- 23.2 POST new record ---
+app.post('/api/admin/preadmissions', verifyToken, preAdmissionsUpload.single('photo'), async (req, res) => {
+    const fields = req.body;
+    const photo_url = req.file ? `/public/uploads/preadmissions/${req.file.filename}` : null; 
+
+    if (!fields.institutionId || !fields.admission_no || !fields.student_name || !fields.joining_grade) {
+        return res.status(400).json({ message: "Institution ID, Admission No, Name, and Grade are required." });
+    }
+
+    const query = `
+        INSERT INTO pre_admissions (
+            institutionId, admission_no, student_name, photo_url, dob, pen_no, phone_no, aadhar_no, 
+            parent_name, parent_phone, previous_institute, previous_grade, joining_grade, 
+            school_joined_date, school_joined_grade, school_outgoing_date, school_outgoing_grade, 
+            tc_issued_date, tc_number, address, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+    
+    const v = (val) => (val === '' || val === 'null' || val === undefined ? null : val);
+
+    const params = [
+        fields.institutionId, fields.admission_no, fields.student_name, photo_url, v(fields.dob), v(fields.pen_no), 
+        v(fields.phone_no), v(fields.aadhar_no), v(fields.parent_name), v(fields.parent_phone), 
+        v(fields.previous_institute), v(fields.previous_grade), fields.joining_grade,
+        v(fields.school_joined_date), v(fields.school_joined_grade), v(fields.school_outgoing_date), 
+        v(fields.school_outgoing_grade), v(fields.tc_issued_date), v(fields.tc_number),
+        v(fields.address), fields.status || 'Pending'
+    ];
+
+    try {
+        await db.query(query, params);
+        res.status(201).json({ message: "Admission record created successfully." });
+    } catch (error) {
+        if (error.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({ message: `Admission No '${fields.admission_no}' already exists for this school.` });
+        }
+        res.status(500).json({ message: "Failed to create record." });
+    }
+});
+
+// --- 23.3 PUT update record ---
+app.put('/api/admin/preadmissions/:id', verifyToken, preAdmissionsUpload.single('photo'), async (req, res) => {
+    const { id } = req.params;
+    const fields = req.body;
+    let setClauses = [];
+    let params = [];
+    
+    const updatableFields = [
+        'admission_no', 'student_name', 'dob', 'pen_no', 'phone_no', 'aadhar_no', 
+        'parent_name', 'parent_phone', 'previous_institute', 'previous_grade', 
+        'joining_grade', 'school_joined_date', 'school_joined_grade', 
+        'school_outgoing_date', 'school_outgoing_grade', 'tc_issued_date', 'tc_number',
+        'address', 'status'
+    ];
+
+    updatableFields.forEach(field => {
+        if (fields[field] !== undefined) {
+            setClauses.push(`${field} = ?`);
+            params.push(fields[field] === '' || fields[field] === 'null' ? null : fields[field]);
+        }
+    });
+
+    if (req.file) {
+        setClauses.push('photo_url = ?');
+        params.push(`/public/uploads/preadmissions/${req.file.filename}`);
+    }
+
+    if (setClauses.length === 0) return res.status(400).json({ message: "No fields to update." });
+
+    const query = `UPDATE pre_admissions SET ${setClauses.join(', ')} WHERE id = ?`;
+    params.push(id);
+    
+    try {
+        const [result] = await db.query(query, params);
+        if (result.affectedRows === 0) return res.status(404).json({ message: "Record not found." });
+        res.status(200).json({ message: "Updated successfully." });
+    } catch (error) {
+        res.status(500).json({ message: "Failed to update record." });
+    }
+});
+
+// --- 23.4 DELETE record ---
+app.delete('/api/admin/preadmissions/:id', verifyToken, async (req, res) => {
+    try {
+        const [[record]] = await db.query("SELECT photo_url FROM pre_admissions WHERE id = ?", [req.params.id]);
+        const [result] = await db.query("DELETE FROM pre_admissions WHERE id = ?", [req.params.id]);
+        
+        if (result.affectedRows === 0) return res.status(404).json({ message: "Record not found." });
+
+        if (record && record.photo_url) {
+            const oldPath = path.join(__dirname, '..', record.photo_url);
+            if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+        }
+        res.status(200).json({ message: "Deleted successfully." });
+    } catch (error) {
+        res.status(500).json({ message: "Failed to delete record." });
+    }
+});
 
 // =====================================================================
 const PORT = process.env.PORT || 3001;

@@ -139,6 +139,15 @@ export const MODULES = [
     imageSource: 'https://cdn-icons-png.flaticon.com/128/19011/19011142.png', // Or whichever icon you prefer
     navigateTo: '/DigitalLabs'
 },
+{
+  id:'PreAdmissionsScreen',
+  module_name:'PreAdmissionsScreen',
+  label: 'Pre Admissions',
+  title:'Pre Admissions',
+  imageSource:'https://cdn-icons-png.flaticon.com/128/10220/10220958.png',
+  navigateTo:'/PreAdmissionsScreen'
+}
+
 
 ];
 
