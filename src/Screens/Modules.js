@@ -147,14 +147,7 @@ export const MODULES = [
   imageSource:'https://cdn-icons-png.flaticon.com/128/10220/10220958.png',
   navigateTo:'/PreAdmissionsScreen'
 },
-{
-  id:'StudyMaterials',
-  module_name:'StudyMaterials',
-  label:'Study Materials',
-  title:'Study Materials',
-  imageSource:'https://cdn-icons-png.flaticon.com/128/3273/3273259.png',
-  navigateTo:'/StudyMaterialsScreen'
-}
+
 
 
 ];
