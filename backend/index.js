@@ -3515,11 +3515,36 @@ const preAdmissionsUpload = multer({ storage: preAdmissionsStorage });
 // =====================================================================
 
 // --- 23.1 GET all records ---
+// --- 23.1 GET all records (Secured) ---
 app.get('/api/admin/preadmissions/:instId', async (req, res) => {
+    const { instId } = req.params;
+    const { search, year, userId } = req.query; 
+
+    if (!userId) return res.status(400).json({ error: 'userId required' });
+
     try {
-        const { instId } = req.params;
-        const { search, year } = req.query; 
+        // 1. Get user role
+        const [users] = await db.execute('SELECT role FROM users WHERE id = ?', [userId]);
+        if (users.length === 0) return res.status(404).json({ error: 'User not found' });
         
+        const roleName = users[0].role;
+        const isSystemAdmin = (roleName === 'Super Admin' || roleName === 'Developer');
+
+        // 2. Check Permission Matrix for 'PreAdmissions'
+        const [perms] = await db.execute(`
+            SELECT p.can_read 
+              FROM permissions p
+              JOIN roles r ON r.id = p.role_id
+             WHERE r.role_name = ? AND r.institutionId = ? AND p.module_name = 'PreAdmissions'
+        `, [roleName, instId]);
+
+        const hasAccess = isSystemAdmin || (perms.length > 0 && perms[0].can_read);
+
+        if (!hasAccess) {
+            return res.status(403).json({ message: "You do not have permission to view admissions." });
+        }
+
+        // 3. Build Query
         let whereClauses = ["institutionId = ?"];
         const queryParams = [instId];
 
@@ -3534,16 +3559,14 @@ app.get('/api/admin/preadmissions/:instId', async (req, res) => {
             queryParams.push(searchTerm, searchTerm, searchTerm);
         }
 
-        const whereClause = `WHERE ${whereClauses.join(' AND ')}`;
-        const query = `SELECT * FROM pre_admissions ${whereClause} ORDER BY submission_date DESC LIMIT 1000`;
-        
+        const query = `SELECT * FROM pre_admissions WHERE ${whereClauses.join(' AND ')} ORDER BY submission_date DESC LIMIT 1000`;
         const [records] = await db.query(query, queryParams);
+        
         res.status(200).json(records);
     } catch (error) {
         res.status(500).json({ message: "Failed to fetch admission records." });
     }
 });
-
 // --- 23.2 POST new record ---
 app.post('/api/admin/preadmissions', preAdmissionsUpload.single('photo'), async (req, res) => {
     const fields = req.body;

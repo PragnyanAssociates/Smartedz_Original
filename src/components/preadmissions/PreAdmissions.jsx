@@ -6,6 +6,7 @@ import {
   MapPin, Edit, Trash2, GraduationCap, X, Check, School, 
   Search, Loader2, ChevronDown
 } from 'lucide-react';
+import { usePermissions } from '../../Screens/PermissionsContext';
 
 // --- Formatters ---
 const formatDate = (dateString, includeTime = false) => {
@@ -43,7 +44,11 @@ export default function PreAdmissionsScreen() {
   const { user } = useAuth();
 
   // Admin Check
-  const isAdmin = user?.role === 'Super Admin' || user?.role === 'Developer';
+const { can, isAllAccess } = usePermissions();
+const canRead = can('PreAdmissions', 'read');
+const canEdit = can('PreAdmissions', 'edit');
+const canDelete = can('PreAdmissions', 'delete');
+const isAdmin = isAllAccess;
 
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -66,6 +71,7 @@ export default function PreAdmissionsScreen() {
     try {
       const url = new URL(`${API_BASE_URL}/admin/preadmissions/${user.institutionId}`);
       url.searchParams.append('year', filterYear);
+      url.searchParams.append('userId', user.id);
       if (searchText) url.searchParams.append('search', searchText);
 
       const res = await fetch(url);
@@ -81,15 +87,15 @@ export default function PreAdmissionsScreen() {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   // If not admin, completely block the screen
-  if (!isAdmin) {
-    return (
-      <div className="py-20 text-center text-slate-500">
-        <IdCard className="w-12 h-12 mx-auto text-slate-300 mb-4" />
-        <h2 className="text-xl font-bold text-slate-700">Access Denied</h2>
-        <p>You do not have permission to view the admissions directory.</p>
-      </div>
-    );
-  }
+  if (!canRead && !isAdmin) {
+  return (
+    <div className="py-20 text-center text-slate-500">
+      <IdCard className="w-12 h-12 mx-auto text-slate-300 mb-4" />
+      <h2 className="text-xl font-bold text-slate-700">Access Denied</h2>
+      <p>You do not have permission to view the admissions directory.</p>
+    </div>
+  );
+}
 
   const handleOpenModal = (item = null) => {
     setSelectedImage(null);
@@ -235,9 +241,12 @@ export default function PreAdmissionsScreen() {
           <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden flex flex-col h-[70vh]">
             <div className="p-4 border-b border-slate-50 flex justify-between items-center bg-slate-50/50">
               <h2 className="font-black text-slate-700">Applications ({data.length})</h2>
-              <button onClick={() => handleOpenModal()} className="bg-blue-600 hover:bg-blue-700 text-white p-2 rounded-xl transition-all shadow-sm">
-                <Plus size={16} />
-              </button>
+             {(canEdit || isAdmin) && (
+  <button onClick={() => handleOpenModal()} className="bg-blue-600 ...">
+    <Plus size={16} />
+  </button>
+)}
+
             </div>
             
             <div className="overflow-y-auto flex-1 divide-y divide-slate-50">
@@ -274,10 +283,18 @@ export default function PreAdmissionsScreen() {
                   <h3 className="text-xl font-black text-slate-800">{selectedItem.student_name}</h3>
                   <p className="text-sm font-bold text-slate-500">Grade: {selectedItem.joining_grade} • ID: {selectedItem.admission_no}</p>
                 </div>
-                <div className="flex gap-2">
-                  <button onClick={() => handleOpenModal(selectedItem)} className="p-2.5 bg-amber-50 text-amber-600 hover:bg-amber-100 rounded-xl transition-colors"><Edit size={16} /></button>
-                  <button onClick={() => handleDelete(selectedItem.id)} className="p-2.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-xl transition-colors"><Trash2 size={16} /></button>
-                </div>
+               <div className="flex gap-2">
+  {(canEdit || isAdmin) && (
+    <button onClick={() => handleOpenModal(selectedItem)} className="...">
+      <Edit size={16} />
+    </button>
+  )}
+  {(canDelete || isAdmin) && (
+    <button onClick={() => handleDelete(selectedItem.id)} className="...">
+      <Trash2 size={16} />
+    </button>
+  )}
+</div>
               </div>
 
               <div className="p-6 overflow-y-auto space-y-6">
