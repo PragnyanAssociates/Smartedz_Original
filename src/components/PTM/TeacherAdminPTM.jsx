@@ -6,7 +6,7 @@ import {
   Video, Edit, Trash2, Search, X, Link as LinkIcon, Plus, Loader2
 } from 'lucide-react';
 
-export default function TeacherAdminPTM({ canManage = true }) {
+export default function TeacherAdminPTM({ canEdit = false, canDelete = false }) {
   const { user } = useAuth();
   
   const [meetings, setMeetings] = useState([]);
@@ -166,7 +166,9 @@ export default function TeacherAdminPTM({ canManage = true }) {
             placeholder="Search meetings…"
             className="bg-white border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500/10 w-full sm:w-72 shadow-sm" />
         </div>
-        {canManage && (
+        
+        {/* DYNAMIC PERMISSION CHECK: Hide button if they lack Edit rights */}
+        {canEdit && (
           <button onClick={openCreate}
             className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-blue-100 transition-all">
             <Plus size={18} /> Schedule Meeting
@@ -209,15 +211,17 @@ export default function TeacherAdminPTM({ canManage = true }) {
                         <Video size={14} /> <span className="hidden sm:inline">Join</span>
                       </button>
                     )}
-                    {canManage && (
-                      <>
-                        <button onClick={() => openEdit(item)} className="p-2 text-slate-300 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-all">
-                          <Edit size={16} />
-                        </button>
-                        <button onClick={() => handleDelete(item)} className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all">
-                          <Trash2 size={16} />
-                        </button>
-                      </>
+                    
+                    {/* DYNAMIC PERMISSION CHECK: Action Buttons */}
+                    {canEdit && (
+                      <button onClick={() => openEdit(item)} className="p-2 text-slate-300 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-all">
+                        <Edit size={16} />
+                      </button>
+                    )}
+                    {canDelete && (
+                      <button onClick={() => handleDelete(item)} className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all">
+                        <Trash2 size={16} />
+                      </button>
                     )}
                   </div>
                 </div>

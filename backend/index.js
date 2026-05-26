@@ -2967,6 +2967,10 @@ app.post('/api/admin/meals/menu', async (req, res) => {
         res.status(500).json({ error: err.message });
     } finally { conn.release(); }
 });
+// =====================================================================
+// === 21. PARENT TEACHER MEETINGS (PTM) ===============================
+// =====================================================================
+
 // --- 21.1 List PTMs for a School (Admin/Teacher view) ---
 app.get('/api/admin/ptm/:instId', async (req, res) => {
     const { userId } = req.query;
@@ -2981,24 +2985,36 @@ app.get('/api/admin/ptm/:instId', async (req, res) => {
             [userId]
         );
 
-        if (users.length === 0) {
-            return res.status(404).json({ error: 'User not found' });
-        }
+        if (users.length === 0) return res.status(404).json({ error: 'User not found' });
 
         const me = users[0];
+        const roleName = me.role;
+        const isStudent = roleName && roleName.toLowerCase() === 'student';
 
-        const isAdmin =
-            me.role === 'Super Admin' ||
-            me.role === 'Developer';
+        // 1. Check native system admin
+        let hasGlobalAccess = (roleName === 'Super Admin' || roleName === 'Developer');
+
+        // 2. THE FIX: Check permissions matrix for 'PTM' module read access
+        if (!hasGlobalAccess && !isStudent) {
+            const [perms] = await db.execute(`
+                SELECT p.can_read 
+                  FROM permissions p
+                  JOIN roles r ON r.id = p.role_id
+                 WHERE r.role_name = ? AND r.institutionId = ? AND p.module_name = 'PTM'
+            `, [roleName, req.params.instId]);
+            
+            if (perms.length > 0 && perms[0].can_read) {
+                hasGlobalAccess = true; 
+            }
+        }
 
         let sql = '';
         let params = [];
 
         // ===============================
-        // ADMIN
+        // GLOBAL VIEW (Super Admin / Permitted Custom Role)
         // ===============================
-        if (isAdmin) {
-
+        if (hasGlobalAccess) {
             sql = `
                 SELECT p.*, c.className, t.name AS teacher_name
                   FROM ptm_meetings p
@@ -3007,15 +3023,12 @@ app.get('/api/admin/ptm/:instId', async (req, res) => {
                  WHERE p.institutionId = ?
                  ORDER BY p.meeting_datetime DESC
             `;
-
             params = [req.params.instId];
         }
-
         // ===============================
-        // OTHER ROLES
+        // RESTRICTED VIEW (Teacher / Custom Role without Global Read)
         // ===============================
         else {
-
             sql = `
                 SELECT p.*, c.className, t.name AS teacher_name
                   FROM ptm_meetings p
@@ -3025,12 +3038,10 @@ app.get('/api/admin/ptm/:instId', async (req, res) => {
                    AND p.teacher_id = ?
                  ORDER BY p.meeting_datetime DESC
             `;
-
             params = [req.params.instId, userId];
         }
 
         const [rows] = await db.execute(sql, params);
-
         res.json(rows);
 
     } catch (err) {
@@ -3114,7 +3125,7 @@ app.delete('/api/admin/ptm/:id', async (req, res) => {
         await db.execute('DELETE FROM ptm_meetings WHERE id = ?', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
-}); 
+});
 // --- Multer config for Online Classes ---
 const videoUploadDir = 'public/uploads/online_classes';
 if (!fs.existsSync(videoUploadDir)) { fs.mkdirSync(videoUploadDir, { recursive: true }); }
