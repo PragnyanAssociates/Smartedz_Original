@@ -3686,11 +3686,28 @@ app.get('/api/admin/study-materials/:instId', async (req, res) => {
     if (!userId) return res.status(400).json({ error: 'userId is required' });
 
     try {
+        // 1. Get user role
         const [users] = await db.execute('SELECT role, institutionId FROM users WHERE id = ?', [userId]);
         if (users.length === 0) return res.status(404).json({ error: 'User not found' });
         
-        const isAdmin = users[0].role === 'Super Admin' || users[0].role === 'Developer';
+        const roleName = users[0].role;
+        const isSystemAdmin = (roleName === 'Super Admin' || roleName === 'Developer');
 
+        // 2. Check Permission Matrix
+        const [perms] = await db.execute(`
+            SELECT p.can_read 
+              FROM permissions p
+              JOIN roles r ON r.id = p.role_id
+             WHERE r.role_name = ? AND r.institutionId = ? AND p.module_name = 'StudyMaterials'
+        `, [roleName, instId]);
+
+        const hasAccess = isSystemAdmin || (perms.length > 0 && perms[0].can_read);
+
+        if (!hasAccess) {
+            return res.status(403).json({ message: "You do not have permission to view study materials." });
+        }
+
+        // 3. Build Query
         let query = `
             SELECT m.*, c.className, c.section, s.name AS subject_name, u.name AS uploaded_by_name
               FROM study_materials m
@@ -3701,7 +3718,8 @@ app.get('/api/admin/study-materials/:instId', async (req, res) => {
         `;
         let params = [instId];
 
-        if (!isAdmin) {
+        // 4. Data Isolation (Teachers only see their own uploads)
+        if (!isSystemAdmin) {
             query += ` AND m.uploaded_by = ?`;
             params.push(userId);
         }
@@ -3709,9 +3727,10 @@ app.get('/api/admin/study-materials/:instId', async (req, res) => {
 
         const [rows] = await db.execute(query, params);
         res.json(rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { 
+        res.status(500).json({ error: err.message }); 
+    }
 });
-
 // --- 24.2 List Materials (Student) ---
 app.get('/api/admin/study-materials/student/:studentId', async (req, res) => {
     try {

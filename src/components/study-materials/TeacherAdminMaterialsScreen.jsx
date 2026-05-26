@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { API_BASE_URL, SERVER_URL } from "../../apiConfig";
 import { useAuth } from "../../context/AuthContext";
+import { usePermissions } from "../../Screens/PermissionsContext"; // Added Permissions Import
 import { 
   Folder, Edit, Trash2, Download, ExternalLink, Plus, 
   Search, X, FileText, Video, MonitorPlay, FileSpreadsheet, Link
@@ -20,6 +21,13 @@ const getCardAesthetics = (type) => {
 
 export default function TeacherAdminMaterialsScreen() {
   const { user } = useAuth();
+  
+  // Permissions Check
+  const { can, isAllAccess } = usePermissions();
+  const canEdit = can('StudyMaterials', 'edit');
+  const canDelete = can('StudyMaterials', 'delete');
+  const isAdmin = isAllAccess;
+
   const [query, setQuery] = useState("");
   const [materials, setMaterials] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -88,9 +96,12 @@ export default function TeacherAdminMaterialsScreen() {
             <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search materials..."
               className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500/20 shadow-sm" />
           </div>
-          <button onClick={() => openModal()} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 shadow-lg w-full sm:w-auto">
-            <Plus size={18} /> Add Material
-          </button>
+          {/* Permissions Wrapper for Add Button */}
+          {(canEdit || isAdmin) && (
+            <button onClick={() => openModal()} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 shadow-lg w-full sm:w-auto">
+              <Plus size={18} /> Add Material
+            </button>
+          )}
         </div>
 
         <div className="flex-1">
@@ -110,8 +121,13 @@ export default function TeacherAdminMaterialsScreen() {
                       {aesthetics.icon}
                       <span className="absolute bottom-3 left-3 bg-white/90 text-slate-700 text-[10px] uppercase font-black px-2.5 py-1 rounded-md">{item.material_type}</span>
                       <div className="absolute top-3 right-3 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button onClick={() => openModal(item)} className="p-2 bg-white/90 text-slate-600 rounded-lg hover:text-blue-600"><Edit size={14}/></button>
-                        <button onClick={() => handleDelete(item.id)} className="p-2 bg-white/90 text-slate-600 rounded-lg hover:text-red-600"><Trash2 size={14}/></button>
+                        {/* Permissions Wrapper for Edit and Delete Buttons */}
+                        {(canEdit || isAdmin) && (
+                          <button onClick={() => openModal(item)} className="p-2 bg-white/90 text-slate-600 rounded-lg hover:text-blue-600"><Edit size={14}/></button>
+                        )}
+                        {(canDelete || isAdmin) && (
+                          <button onClick={() => handleDelete(item.id)} className="p-2 bg-white/90 text-slate-600 rounded-lg hover:text-red-600"><Trash2 size={14}/></button>
+                        )}
                       </div>
                     </div>
                     <div className="p-5 flex flex-col flex-grow">
