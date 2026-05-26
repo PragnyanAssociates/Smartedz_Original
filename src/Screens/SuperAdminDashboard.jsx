@@ -17,6 +17,7 @@ import Meals from '../components/Meals/Meals';
 import PTM from '../components/PTM/PTM'
 import PreAdmissions from '../components/preadmissions/PreAdmissions';
 import StudyMaterialsScreen from '../components/study-materials/StudyMaterialsScreen';
+import Syllabus from '../components/Syllabus/Syllabus';
 
 
 import Profile from './Profile';
@@ -79,8 +80,9 @@ function DashboardShell() {
       case 'PTM':               return <PTM />;
       case 'OnlineClasses':     return <OnlineClasses/>;
       case 'DigitalLabs':       return <DigitalLabs/>;
-      case 'PreAdmissions': return <PreAdmissions/>;
-      case 'StudyMaterials': return <StudyMaterialsScreen/>;
+      case 'PreAdmissions':     return <PreAdmissions/>;
+      case 'StudyMaterials':   return <StudyMaterialsScreen/>;
+      case 'Syllabus':     return <Syllabus/>;
     
         return (
           <div className="h-full flex items-center justify-center flex-col text-center opacity-40">

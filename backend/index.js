@@ -48,7 +48,8 @@ const DEFAULT_MODULES = [
     'OnlineClasses',
     'DigitalLabs',
     'PreAdmissions',
-    'StudyMaterials'
+    'StudyMaterials',
+    'Syllabus'
     
 ];
 
@@ -3811,6 +3812,284 @@ app.delete('/api/admin/study-materials/:id', async (req, res) => {
             if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
         }
         await db.execute('DELETE FROM study_materials WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+
+// =====================================================================
+//  BACKEND — Section 22: SYLLABUS  (v2 — matches the real screens)
+//
+//  Append this whole block to backend/index.js, just BEFORE the final
+//  `const PORT = ...` line.
+//
+//  ALSO add 'Syllabus' to DEFAULT_MODULES at the top of index.js:
+//    const DEFAULT_MODULES = [
+//        'Overview','Manage Logins','Timetable','Academic Calendar',
+//        'Attendance','Exams','Reports','Performance','Homework',
+//        'Meals','Digital Labs','Syllabus'
+//    ];
+//
+//  Layers:
+//    syllabus           -> the "Syllabus Management" list (per class+subject)
+//    syllabus_chapters  -> chapters/lessons (Subject Index + Lesson Periods)
+//    syllabus_keywords  -> vocabulary words per chapter
+//
+//  Reuses nowSQL() from Section 16.
+// =====================================================================
+
+
+// --- 22.1 Syllabus Management list ----------------------------------
+//   GET /api/admin/syllabus/list/:instId?classId=optional
+//   One row per syllabus: subject, class, teacher, lesson count, updated.
+app.get('/api/admin/syllabus/list/:instId', async (req, res) => {
+    const { instId } = req.params;
+    const { classId } = req.query;
+    try {
+        let sql = `
+            SELECT s.id, s.class_id, s.subject_id, s.teacher_id, s.updated_at,
+                   c.className, c.section,
+                   sub.name AS subject_name,
+                   t.name AS teacher_name,
+                   (SELECT COUNT(*) FROM syllabus_chapters ch WHERE ch.syllabus_id = s.id) AS lesson_count
+              FROM syllabus s
+              LEFT JOIN classes  c   ON c.id = s.class_id
+              LEFT JOIN subjects sub ON sub.id = s.subject_id
+              LEFT JOIN users    t   ON t.id = s.teacher_id
+             WHERE s.institutionId = ?`;
+        const params = [instId];
+        if (classId) { sql += ' AND s.class_id = ?'; params.push(classId); }
+        sql += ' ORDER BY sub.name';
+
+        const [rows] = await db.execute(sql, params);
+        const decorated = rows.map(r => ({
+            ...r,
+            class_group: `${r.className || ''}${r.section ? ' - ' + r.section : ''}`
+        }));
+        res.json(decorated);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 22.2 Create a syllabus -----------------------------------------
+//   Body: { institutionId, academic_year_id, class_id, subject_id, teacher_id, created_by }
+app.post('/api/admin/syllabus', async (req, res) => {
+    const {
+        institutionId, academic_year_id, class_id, subject_id, teacher_id, created_by
+    } = req.body;
+    if (!institutionId || !class_id || !subject_id) {
+        return res.status(400).json({ error: 'institutionId, class_id and subject_id are required.' });
+    }
+    try {
+        const [result] = await db.execute(
+            `INSERT INTO syllabus
+               (institutionId, academic_year_id, class_id, subject_id, teacher_id, created_by)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [institutionId, academic_year_id || null, class_id, subject_id,
+             teacher_id || null, created_by || null]
+        );
+        res.json({ success: true, id: result.insertId });
+    } catch (err) {
+        if (err.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({ error: 'A syllabus for this class and subject already exists.' });
+        }
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
+// --- 22.3 Update a syllabus (teacher / subject) ---------------------
+app.put('/api/admin/syllabus/:id', async (req, res) => {
+    const { class_id, subject_id, teacher_id } = req.body;
+    try {
+        await db.execute(
+            `UPDATE syllabus
+                SET class_id = ?, subject_id = ?, teacher_id = ?
+              WHERE id = ?`,
+            [class_id, subject_id, teacher_id || null, req.params.id]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 22.4 Delete a syllabus (chapters + keywords cascade) -----------
+app.delete('/api/admin/syllabus/:id', async (req, res) => {
+    try {
+        await db.execute('DELETE FROM syllabus WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 22.5 Resolve a syllabus by class + subject ---------------------
+//   GET /api/admin/syllabus/resolve/:instId/:classId/:subjectId
+//   The Subject Index & Lesson Periods screens pick class+subject;
+//   this finds the matching syllabus id (or null if none yet).
+app.get('/api/admin/syllabus/resolve/:instId/:classId/:subjectId', async (req, res) => {
+    const { instId, classId, subjectId } = req.params;
+    try {
+        const [rows] = await db.execute(
+            `SELECT s.id, s.teacher_id, t.name AS teacher_name
+               FROM syllabus s
+               LEFT JOIN users t ON t.id = s.teacher_id
+              WHERE s.institutionId = ? AND s.class_id = ? AND s.subject_id = ?`,
+            [instId, classId, subjectId]
+        );
+        res.json(rows.length > 0 ? rows[0] : { id: null });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 22.6 Chapters of a syllabus ------------------------------------
+//   GET /api/admin/syllabus/:syllabusId/chapters
+//   Light payload — excludes the heavy base64 doc_data.
+app.get('/api/admin/syllabus/:syllabusId/chapters', async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            `SELECT c.id, c.syllabus_id, c.chapter_order, c.title,
+                    c.page_from, c.page_to, c.doc_name, c.doc_pages,
+                    c.periods, c.start_date, c.end_date,
+                    (c.doc_data IS NOT NULL) AS has_doc,
+                    (SELECT COUNT(*) FROM syllabus_keywords k WHERE k.chapter_id = c.id) AS keyword_count
+               FROM syllabus_chapters c
+              WHERE c.syllabus_id = ?
+              ORDER BY c.chapter_order, c.id`,
+            [req.params.syllabusId]
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 22.7 Single chapter's PDF document -----------------------------
+app.get('/api/admin/syllabus/chapter/:id/doc', async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            'SELECT doc_name, doc_data, doc_pages FROM syllabus_chapters WHERE id = ?',
+            [req.params.id]
+        );
+        if (rows.length === 0) return res.status(404).json({ error: 'Chapter not found' });
+        res.json(rows[0]);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 22.8 Create a chapter ------------------------------------------
+//   Body: { syllabus_id, title, page_from, page_to }
+app.post('/api/admin/syllabus/chapters', async (req, res) => {
+    const { syllabus_id, title, page_from, page_to } = req.body;
+    if (!syllabus_id || !title) {
+        return res.status(400).json({ error: 'syllabus_id and title are required.' });
+    }
+    try {
+        const [[{ maxOrder }]] = await db.execute(
+            `SELECT COALESCE(MAX(chapter_order), -1) + 1 AS maxOrder
+               FROM syllabus_chapters WHERE syllabus_id = ?`,
+            [syllabus_id]
+        );
+        const [result] = await db.execute(
+            `INSERT INTO syllabus_chapters
+               (syllabus_id, chapter_order, title, page_from, page_to)
+             VALUES (?, ?, ?, ?, ?)`,
+            [syllabus_id, maxOrder, title, page_from || null, page_to || null]
+        );
+        // bump the syllabus updated_at
+        await db.execute('UPDATE syllabus SET updated_at = ? WHERE id = ?',
+            [nowSQL(), syllabus_id]);
+        res.json({ success: true, id: result.insertId });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 22.9 Update a chapter's core fields ----------------------------
+//   Body: { title, page_from, page_to }
+app.put('/api/admin/syllabus/chapters/:id', async (req, res) => {
+    const { title, page_from, page_to } = req.body;
+    try {
+        await db.execute(
+            `UPDATE syllabus_chapters
+                SET title = ?, page_from = ?, page_to = ?
+              WHERE id = ?`,
+            [title, page_from || null, page_to || null, req.params.id]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 22.10 Delete a chapter -----------------------------------------
+app.delete('/api/admin/syllabus/chapters/:id', async (req, res) => {
+    try {
+        await db.execute('DELETE FROM syllabus_chapters WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 22.11 Upload / replace a chapter's PDF -------------------------
+//   Body: { doc_name, doc_data(base64), doc_pages }
+app.put('/api/admin/syllabus/chapter/:id/doc', async (req, res) => {
+    const { doc_name, doc_data, doc_pages } = req.body;
+    try {
+        await db.execute(
+            `UPDATE syllabus_chapters
+                SET doc_name = ?, doc_data = ?, doc_pages = ?
+              WHERE id = ?`,
+            [doc_name || null, doc_data || null, doc_pages || null, req.params.id]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 22.12 Update a chapter's lesson-period schedule ----------------
+//   Body: { periods, start_date, end_date }   (Lesson Periods screen)
+app.put('/api/admin/syllabus/chapter/:id/periods', async (req, res) => {
+    const { periods, start_date, end_date } = req.body;
+    try {
+        await db.execute(
+            `UPDATE syllabus_chapters
+                SET periods = ?, start_date = ?, end_date = ?
+              WHERE id = ?`,
+            [periods || 0, start_date || null, end_date || null, req.params.id]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 22.13 Keywords for a chapter -----------------------------------
+app.get('/api/admin/syllabus/chapter/:id/keywords', async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            'SELECT * FROM syllabus_keywords WHERE chapter_id = ? ORDER BY term',
+            [req.params.id]
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 22.14 Add a keyword --------------------------------------------
+app.post('/api/admin/syllabus/chapter/:id/keywords', async (req, res) => {
+    const { term, definition } = req.body;
+    if (!term || !term.trim()) return res.status(400).json({ error: 'term is required.' });
+    try {
+        const [result] = await db.execute(
+            'INSERT INTO syllabus_keywords (chapter_id, term, definition) VALUES (?, ?, ?)',
+            [req.params.id, term.trim(), definition || null]
+        );
+        res.json({ success: true, id: result.insertId });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 22.15 Delete a keyword -----------------------------------------
+app.delete('/api/admin/syllabus/keywords/:keywordId', async (req, res) => {
+    try {
+        await db.execute('DELETE FROM syllabus_keywords WHERE id = ?', [req.params.keywordId]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });

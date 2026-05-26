@@ -155,6 +155,14 @@ export const MODULES = [
   imageSource:'https://cdn-icons-png.flaticon.com/128/3273/3273259.png',
   navigateTo:'/StudyMaterialsScreen'
 },
+{
+  id:'Syllabus',
+  module_name:'Syllabus',
+  label: 'Syllabus',
+  title:'Syllabus',
+  imageSource:'https://cdn-icons-png.flaticon.com/128/1584/1584937.png',
+  navigateTo:'/Syllabus'
+},
 
 
 
