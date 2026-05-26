@@ -3129,6 +3129,7 @@ const videoUpload = multer({ storage: videoStorage, limits: { fileSize: 500 * 10
 // =====================================================================
 
 // --- 22.1 List Classes for Admin/Teacher ---
+// --- 22.1 List Classes for Admin/Teacher ---
 app.get('/api/admin/online-classes/:instId', async (req, res) => {
     const { instId } = req.params;
     const { userId } = req.query;
@@ -3140,33 +3141,59 @@ app.get('/api/admin/online-classes/:instId', async (req, res) => {
     try {
         // Get logged-in user info
         const [users] = await db.execute(
-            `SELECT id, role, class_id, section, institutionId
-               FROM users
-              WHERE id = ?`,
+            `SELECT id, role, class_id, section, institutionId FROM users WHERE id = ?`,
             [userId]
         );
 
-        if (users.length === 0) {
-            return res.status(404).json({ error: 'User not found' });
-        }
+        if (users.length === 0) return res.status(404).json({ error: 'User not found' });
 
         const user = users[0];
+        const roleName = user.role;
+        const isStudent = roleName && roleName.toLowerCase() === 'student';
+
+        // 1. Is it a native Super Admin / Developer?
+        let hasGlobalAccess = (roleName === 'Super Admin' || roleName === 'Developer');
+
+        // 2. THE FIX: If not, check the permissions matrix for 'OnlineClasses'
+        if (!hasGlobalAccess && !isStudent) {
+            const [perms] = await db.execute(`
+                SELECT p.can_read 
+                  FROM permissions p
+                  JOIN roles r ON r.id = p.role_id
+                 WHERE r.role_name = ? AND r.institutionId = ? AND p.module_name = 'OnlineClasses'
+            `, [roleName, instId]);
+            
+            // If the matrix says they can read, give them global view!
+            if (perms.length > 0 && perms[0].can_read) {
+                hasGlobalAccess = true; 
+            }
+        }
 
         let query = '';
         let params = [];
 
         // ===============================
-        // SUPER ADMIN / DEVELOPER
+        // STUDENT VIEW
         // ===============================
-        if (
-            user.role === 'Super Admin' ||
-            user.role === 'Developer'
-        ) {
-
+        if (isStudent) {
             query = `
-                SELECT o.*, c.className, c.section,
-                       s.name AS subject_name,
-                       t.name AS teacher_name
+                SELECT o.*, c.className, c.section, s.name AS subject_name, t.name AS teacher_name
+                  FROM online_classes o
+                  LEFT JOIN classes c ON c.id = o.class_id
+                  LEFT JOIN subjects s ON s.id = o.subject_id
+                  LEFT JOIN users t ON t.id = o.teacher_id
+                 WHERE o.institutionId = ? AND o.class_id = ?
+                   AND (c.section IS NULL OR c.section = ?)
+                 ORDER BY o.class_datetime DESC
+            `;
+            params = [instId, user.class_id || 0, user.section || ''];
+        } 
+        // ===============================
+        // GLOBAL VIEW (Super Admin or Permitted Role)
+        // ===============================
+        else if (hasGlobalAccess) {
+            query = `
+                SELECT o.*, c.className, c.section, s.name AS subject_name, t.name AS teacher_name
                   FROM online_classes o
                   LEFT JOIN classes c ON c.id = o.class_id
                   LEFT JOIN subjects s ON s.id = o.subject_id
@@ -3174,72 +3201,31 @@ app.get('/api/admin/online-classes/:instId', async (req, res) => {
                  WHERE o.institutionId = ?
                  ORDER BY o.class_datetime DESC
             `;
-
             params = [instId];
-        }
-
+        } 
         // ===============================
-        // STUDENT
-        // ===============================
-        else if (
-            user.role &&
-            user.role.toLowerCase() === 'student'
-        ) {
-
-            query = `
-                SELECT o.*, c.className, c.section,
-                       s.name AS subject_name,
-                       t.name AS teacher_name
-                  FROM online_classes o
-                  LEFT JOIN classes c ON c.id = o.class_id
-                  LEFT JOIN subjects s ON s.id = o.subject_id
-                  LEFT JOIN users t ON t.id = o.teacher_id
-                 WHERE o.institutionId = ?
-                   AND o.class_id = ?
-                   AND (
-                        c.section IS NULL
-                        OR c.section = ?
-                   )
-                 ORDER BY o.class_datetime DESC
-            `;
-
-            params = [
-                instId,
-                user.class_id || 0,
-                user.section || ''
-            ];
-        }
-
-        // ===============================
-        // TEACHERS / LECTURERS / STAFF
+        // RESTRICTED VIEW (Standard Teacher - Only sees what they created)
         // ===============================
         else {
-
             query = `
-                SELECT o.*, c.className, c.section,
-                       s.name AS subject_name,
-                       t.name AS teacher_name
+                SELECT o.*, c.className, c.section, s.name AS subject_name, t.name AS teacher_name
                   FROM online_classes o
                   LEFT JOIN classes c ON c.id = o.class_id
                   LEFT JOIN subjects s ON s.id = o.subject_id
                   LEFT JOIN users t ON t.id = o.teacher_id
-                 WHERE o.institutionId = ?
-                   AND o.created_by = ?
+                 WHERE o.institutionId = ? AND o.created_by = ?
                  ORDER BY o.class_datetime DESC
             `;
-
             params = [instId, user.id];
         }
 
         const [rows] = await db.execute(query, params);
-
         res.json(rows);
 
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
-
 // --- 22.2 List Classes for Student ---
 app.get('/api/admin/online-classes/student/:studentId', async (req, res) => {
     try {

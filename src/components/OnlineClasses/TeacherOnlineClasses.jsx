@@ -5,7 +5,7 @@ import {
   Video, PlayCircle, Plus, Edit, Trash2, X, Search, Loader2, Calendar as CalIcon, Clock, FileVideo
 } from 'lucide-react';
 
-export default function TeacherOnlineClasses({ canManage = true }) {
+export default function TeacherOnlineClasses({ canEdit = false, canDelete = false }) {
   const { user } = useAuth();
   
   const [classesList, setClassesList] = useState([]);
@@ -188,7 +188,9 @@ export default function TeacherOnlineClasses({ canManage = true }) {
             placeholder="Search classes…"
             className="bg-white border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500/10 w-full sm:w-72 shadow-sm" />
         </div>
-        {canManage && (
+        
+        {/* DYNAMIC PERMISSION CHECK: Hide button if they lack Edit rights */}
+        {canEdit && (
           <button onClick={openCreate} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-blue-100">
             <Plus size={18} /> Schedule Class
           </button>
@@ -230,12 +232,19 @@ export default function TeacherOnlineClasses({ canManage = true }) {
                     {c.class_type === 'live' ? <><Video size={14}/> Join</> : <><PlayCircle size={14}/> Watch</>}
                   </button>
 
-                  {canManage && (
-                    <div className="flex gap-1">
-                      <button onClick={() => openEdit(c)} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"><Edit size={16} /></button>
-                      <button onClick={() => handleDelete(c.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"><Trash2 size={16} /></button>
-                    </div>
-                  )}
+                  {/* DYNAMIC PERMISSION CHECK: Action Buttons */}
+                  <div className="flex gap-1">
+                    {canEdit && (
+                      <button onClick={() => openEdit(c)} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
+                        <Edit size={16} />
+                      </button>
+                    )}
+                    {canDelete && (
+                      <button onClick={() => handleDelete(c.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+                        <Trash2 size={16} />
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             )
