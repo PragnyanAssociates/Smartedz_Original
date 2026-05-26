@@ -3130,6 +3130,7 @@ const videoUpload = multer({ storage: videoStorage, limits: { fileSize: 500 * 10
 
 // --- 22.1 List Classes for Admin/Teacher ---
 // --- 22.1 List Classes for Admin/Teacher ---
+// --- 22.1 List Classes for Admin/Teacher ---
 app.get('/api/admin/online-classes/:instId', async (req, res) => {
     const { instId } = req.params;
     const { userId } = req.query;
@@ -3151,31 +3152,31 @@ app.get('/api/admin/online-classes/:instId', async (req, res) => {
         const roleName = user.role;
         const isStudent = roleName && roleName.toLowerCase() === 'student';
 
-        // 1. Is it a native Super Admin / Developer?
-        let hasGlobalAccess = (roleName === 'Super Admin' || roleName === 'Developer');
-
-        // 2. THE FIX: If not, check the permissions matrix for 'OnlineClasses'
-        if (!hasGlobalAccess && !isStudent) {
-            const [perms] = await db.execute(`
-                SELECT p.can_read 
-                  FROM permissions p
-                  JOIN roles r ON r.id = p.role_id
-                 WHERE r.role_name = ? AND r.institutionId = ? AND p.module_name = 'OnlineClasses'
-            `, [roleName, instId]);
-            
-            // If the matrix says they can read, give them global view!
-            if (perms.length > 0 && perms[0].can_read) {
-                hasGlobalAccess = true; 
-            }
-        }
+        // 1. Only TRUE system admins get the Global View of all data
+        const isSystemAdmin = (roleName === 'Super Admin' || roleName === 'Developer');
 
         let query = '';
         let params = [];
 
         // ===============================
+        // GLOBAL VIEW (Strictly Super Admin / Developer)
+        // ===============================
+        if (isSystemAdmin) {
+            query = `
+                SELECT o.*, c.className, c.section, s.name AS subject_name, t.name AS teacher_name
+                  FROM online_classes o
+                  LEFT JOIN classes c ON c.id = o.class_id
+                  LEFT JOIN subjects s ON s.id = o.subject_id
+                  LEFT JOIN users t ON t.id = o.teacher_id
+                 WHERE o.institutionId = ?
+                 ORDER BY o.class_datetime DESC
+            `;
+            params = [instId];
+        } 
+        // ===============================
         // STUDENT VIEW
         // ===============================
-        if (isStudent) {
+        else if (isStudent) {
             query = `
                 SELECT o.*, c.className, c.section, s.name AS subject_name, t.name AS teacher_name
                   FROM online_classes o
@@ -3189,24 +3190,10 @@ app.get('/api/admin/online-classes/:instId', async (req, res) => {
             params = [instId, user.class_id || 0, user.section || ''];
         } 
         // ===============================
-        // GLOBAL VIEW (Super Admin or Permitted Role)
-        // ===============================
-        else if (hasGlobalAccess) {
-            query = `
-                SELECT o.*, c.className, c.section, s.name AS subject_name, t.name AS teacher_name
-                  FROM online_classes o
-                  LEFT JOIN classes c ON c.id = o.class_id
-                  LEFT JOIN subjects s ON s.id = o.subject_id
-                  LEFT JOIN users t ON t.id = o.teacher_id
-                 WHERE o.institutionId = ?
-                 ORDER BY o.class_datetime DESC
-            `;
-            params = [instId];
-        } 
-        // ===============================
-        // RESTRICTED VIEW (Standard Teacher - Only sees what they created)
+        // RESTRICTED VIEW (Teachers, Guest Lecturers, Custom Roles)
         // ===============================
         else {
+            // Even if they have matrix permissions, they ONLY see their own data
             query = `
                 SELECT o.*, c.className, c.section, s.name AS subject_name, t.name AS teacher_name
                   FROM online_classes o
