@@ -10,8 +10,19 @@ const cors = require('cors');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
+const { Server } = require('socket.io');
 
 const app = express();
+
+const server = http.createServer(app);
+
+const io = new Server(server, {
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST"]
+    }
+});
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
@@ -4454,7 +4465,10 @@ io.on('connection', (socket) => {
                 WHERE m.id = ?`, [newMessageId]);
             await connection.commit();
             
-            const finalMessage = { ...broadcastMessage, clientMessageId: clientMessageId || null };
+const finalMessage = {
+    ...broadcastMessage,
+    clientMessageId: clientMessageId || null
+};
 
             io.to(roomName).emit('newMessage', finalMessage);
             io.emit('updateGroupList', { groupId: groupId });
@@ -4542,4 +4556,6 @@ io.on('connection', (socket) => {
 
 // =====================================================================
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`🚀 SmartEdz Backend Active on Port ${PORT}`));   
+server.listen(PORT, () => {
+    console.log(`🚀 SmartEdz Backend Active on Port ${PORT}`);
+});
