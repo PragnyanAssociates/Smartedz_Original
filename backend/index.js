@@ -4171,45 +4171,42 @@ app.get('/api/groups/options', async (req, res) => {
         const userId = req.user.id;
         const [[user]] = await db.query('SELECT institutionId FROM users WHERE id = ?', [userId]);
 
-        // 1. Fetch Roles directly from the users table (safest method)
-        const [rolesResult] = await db.query(`
-            SELECT DISTINCT role 
-            FROM users 
-            WHERE institutionId = ? 
-            AND LOWER(role) != 'student' 
-            AND role IS NOT NULL 
-            AND role != ''
-        `, [user.institutionId]);
-
-        // 2. Fetch Classes directly from active students
-        // IMPORTANT: If your database column is named 'class' or 'class_name' 
-        // instead of 'class_group', you MUST change 'class_group' below to match your database.
-        const [classesResult] = await db.query(`
+        // 1. Fetch exact classes assigned to active students
+        // Using LOWER() handles your database storing 'STUDENT' in uppercase
+        const classQuery = `
             SELECT DISTINCT class_group 
             FROM users 
             WHERE institutionId = ? 
-            AND LOWER(role) = 'student' 
-            AND class_group IS NOT NULL 
-            AND class_group != ''
-        `, [user.institutionId]);
+              AND LOWER(role) = 'student' 
+              AND class_group IS NOT NULL 
+              AND class_group != '' 
+            ORDER BY class_group ASC;
+        `;
+        const [classes] = await db.query(classQuery, [user.institutionId]);
 
-        const roleList = rolesResult.map(r => r.role);
-        const classList = classesResult.map(c => c.class_group);
+        // 2. Fetch exact staff roles directly from the users table
+        const roleQuery = `
+            SELECT DISTINCT role 
+            FROM users 
+            WHERE institutionId = ? 
+              AND LOWER(role) != 'student' 
+              AND role IS NOT NULL 
+              AND role != ''
+            ORDER BY role ASC;
+        `;
+        const [roles] = await db.query(roleQuery, [user.institutionId]);
 
-        res.json({ 
-            classes: classList, 
-            roles: roleList.length > 0 ? roleList : ['Super Admin', 'Teacher'] 
-        });
+        // Map the results to flat arrays
+        const classList = classes.map(c => c.class_group);
+        const roleList = roles.map(r => r.role);
+
+        // Send the clean arrays. No fake fallback data.
+        res.json({ classes: classList, roles: roleList });
 
     } catch (error) {
-        // If it crashes again, this will print the EXACT SQL error in your terminal
-        console.error("CRASH in /api/groups/options:", error.message);
-        
-        // Provide a fallback so the UI doesn't completely break
-        res.json({ 
-            classes: [], 
-            roles: ['Super Admin', 'Teacher', 'Student'] 
-        });
+        console.error("Backend Crash on /api/groups/options:", error);
+        // If it fails, send empty arrays so the UI hides the sections cleanly instead of showing wrong data
+        res.json({ classes: [], roles: [] });
     }
 });
 
