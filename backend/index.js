@@ -4171,20 +4171,7 @@ app.get('/api/groups/options', async (req, res) => {
         const userId = req.user.id;
         const [[user]] = await db.query('SELECT institutionId FROM users WHERE id = ?', [userId]);
 
-        // 1. Fetch exact classes assigned to active students
-        // Using LOWER() handles your database storing 'STUDENT' in uppercase
-        const classQuery = `
-            SELECT DISTINCT class_group 
-            FROM users 
-            WHERE institutionId = ? 
-              AND LOWER(role) = 'student' 
-              AND class_group IS NOT NULL 
-              AND class_group != '' 
-            ORDER BY class_group ASC;
-        `;
-        const [classes] = await db.query(classQuery, [user.institutionId]);
-
-        // 2. Fetch exact staff roles directly from the users table
+        // 1. Fetch staff roles natively
         const roleQuery = `
             SELECT DISTINCT role 
             FROM users 
@@ -4196,20 +4183,32 @@ app.get('/api/groups/options', async (req, res) => {
         `;
         const [roles] = await db.query(roleQuery, [user.institutionId]);
 
-        // Map the results to flat arrays
-        const classList = classes.map(c => c.class_group);
-        const roleList = roles.map(r => r.role);
+        // 2. Fetch classes by joining the classes table
+        const classQuery = `
+            SELECT DISTINCT c.class_name, u.section 
+            FROM users u
+            JOIN classes c ON u.class_id = c.id
+            WHERE u.institutionId = ? 
+              AND LOWER(u.role) = 'student'
+            ORDER BY c.class_name ASC, u.section ASC;
+        `;
+        const [classes] = await db.query(classQuery, [user.institutionId]);
 
-        // Send the clean arrays. No fake fallback data.
+        // Map data cleanly for the frontend
+        const roleList = roles.map(r => r.role);
+        
+        // This formats it perfectly as "Class 10 - A" or just "Class 10" if no section
+        const classList = classes.map(c => {
+            return c.section ? `${c.class_name} - ${c.section}` : c.class_name;
+        });
+
         res.json({ classes: classList, roles: roleList });
 
     } catch (error) {
-        console.error("Backend Crash on /api/groups/options:", error);
-        // If it fails, send empty arrays so the UI hides the sections cleanly instead of showing wrong data
+        console.error("CRITICAL SQL CRASH in /api/groups/options:", error.message);
         res.json({ classes: [], roles: [] });
     }
 });
-
 app.post('/api/groups', checkGroupPermission('edit'), async (req, res) => {
     try {
         const { name, description, selectedCategories, backgroundColor, isReadOnly } = req.body;
@@ -4236,21 +4235,31 @@ app.post('/api/groups', checkGroupPermission('edit'), async (req, res) => {
         
         finalCategories.forEach(category => {
             if (category === 'All' && req.isAdminEquivalent) { 
-                whereClauses.push("institutionId = ?"); 
+                whereClauses.push("u.institutionId = ?"); 
                 queryParams.push(instId); 
             }
-            else if (category === 'Super Admin' || category === 'Developer' || category === 'Teacher') { 
-                whereClauses.push("(role = ? AND institutionId = ?)"); 
-                queryParams.push(category, instId); 
-            }
             else { 
-                whereClauses.push("(class_group = ? AND institutionId = ?)"); 
-                queryParams.push(category, instId); 
+                // This checks if the category matches the role OR the concatenated Class - Section
+                whereClauses.push(`(
+                    u.role = ? 
+                    OR CONCAT_WS(' - ', c.class_name, u.section) = ? 
+                    OR c.class_name = ?
+                ) AND u.institutionId = ?`);
+                
+                queryParams.push(category, category, category, instId); 
             }
         });
 
-        const finalWhereClause = whereClauses.includes("institutionId = ?") ? "institutionId = ?" : whereClauses.join(' OR ');
-        const getUsersQuery = `SELECT id FROM users WHERE ${finalWhereClause}`;
+        const finalWhereClause = whereClauses.includes("u.institutionId = ?") ? "u.institutionId = ?" : whereClauses.join(' OR ');
+        
+        // We JOIN classes here so we can find the users based on the string "Class 10 - A"
+        const getUsersQuery = `
+            SELECT u.id 
+            FROM users u
+            LEFT JOIN classes c ON u.class_id = c.id
+            WHERE ${finalWhereClause}
+        `;
+        
         const [usersToAdd] = await db.query(getUsersQuery, queryParams);
         let memberIds = usersToAdd.map(u => u.id);
 
@@ -4284,7 +4293,6 @@ app.post('/api/groups', checkGroupPermission('edit'), async (req, res) => {
         res.status(500).json({ message: "Server error while creating group." });
     }
 });
-
 app.get('/api/groups', async (req, res) => {
     try {
         const userId = req.user.id;
