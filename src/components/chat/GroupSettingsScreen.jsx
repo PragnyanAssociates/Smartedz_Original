@@ -47,8 +47,9 @@ const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDele
     }
 
     setIsSaving(true);
-    const formData = new FormData();
-    formData.append('group_dp', file);
+ const formData = new FormData();
+ formData.append('group_dp', file);
+formData.append('userId', user.id); 
 
     try {
       const res = await apiClient.post(`/groups/${group.id}/dp`, formData, {
@@ -73,6 +74,7 @@ const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDele
     setIsSaving(true);
     try {
       await apiClient.put(`/groups/${group.id}`, {
+           userId: user.id,   
         name: groupName.trim(),
         backgroundColor: group.background_color,
         isReadOnly: isReadOnly
@@ -104,7 +106,10 @@ const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDele
 
   const performDeleteGroup = async () => {
     try {
-      await apiClient.delete(`/groups/${group.id}`);
+      await apiClient.delete(`/groups/${group.id}`, {
+        data: { userId: user.id }
+      });
+      
       alert('Success: Group has been deleted.');
       
       if (isEmbedded && onGroupDeleted) {
@@ -117,8 +122,7 @@ const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDele
     } catch (error) {
       alert('Deletion Failed: ' + (error.response?.data?.message || 'An error occurred.'));
     }
-  };
-
+};
   const handleKeyPress = (e) => {
     if (e.key === 'Enter' && !isSaving && hasEditRights) {
       handleSaveChanges();

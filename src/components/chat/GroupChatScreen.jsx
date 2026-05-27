@@ -105,20 +105,27 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
         initialLoadDone.current = false;
     }
   }, [providedGroup]);
-
-  const markAsSeen = useCallback(async () => { if (!group?.id) return; try { await apiClient.post(`/groups/${group.id}/seen`); } catch (error) {} }, [group.id]);
+const markAsSeen = useCallback(async () => {
+    if (!group?.id || !user?.id) return;
+    try {
+        await apiClient.post(`/groups/${group.id}/seen`, { userId: user.id });
+    } catch (error) {}
+}, [group.id, user?.id]);
 
   useEffect(() => {
     if (!group?.id) return;
-    const fetchGroupDetails = async () => { 
-        try { 
-            const response = await apiClient.get(`/groups/${group.id}/details`); 
-            if (response.data) {
-                const fetchedDetails = response.data.group || response.data;
-                setGroup(prev => ({ ...prev, ...fetchedDetails }));
-            }
-        } catch (error) {} 
-    };
+   const fetchGroupDetails = async () => {
+    if (!user?.id) return;
+    try {
+        const response = await apiClient.get(`/groups/${group.id}/details`, {
+            params: { userId: user.id }
+        });
+        if (response.data) {
+            const fetchedDetails = response.data.group || response.data;
+            setGroup(prev => ({ ...prev, ...fetchedDetails }));
+        }
+    } catch (error) {}
+};
     fetchGroupDetails();
   }, [group.id]);
 
@@ -127,10 +134,9 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
     else setIsFetchingMore(true);
 
     try {
-      const response = await apiClient.get(`/groups/${group.id}/history`, {
-        params: { page: pageNum, limit: MESSAGES_PER_PAGE }
-      });
-      
+     const response = await apiClient.get(`/groups/${group.id}/history`, {
+    params: { page: pageNum, limit: MESSAGES_PER_PAGE, userId: user.id }
+});
       const fetchedMessages = response.data.messages || response.data || [];
       const fetchedLastSeen = response.data.lastSeen || null;
 
@@ -247,8 +253,9 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
     if (!user || !canSendMessages) return;
     const clientMessageId = uuidv4();
     setMessages(prev => [...prev, { id: clientMessageId, clientMessageId: clientMessageId, user_id: user.id, full_name: user.fullName, profile_image_url: user.profileImageUrl, group_id: group.id, message_type: type, file_url: null, localUri: URL.createObjectURL(file), file_name: file.name, file_size: file.size, message_text: null, timestamp: getLocalISOString(), status: 'uploading', progress: 0 }]);
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    const formData = new FormData(); formData.append('media', file);
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });const formData = new FormData();
+formData.append('media', file);
+formData.append('userId', user.id); 
     try {
       const res = await apiClient.post('/groups/media', formData, { headers: { 'Content-Type': 'multipart/form-data' }, onUploadProgress: (pe) => { if (pe.total) setMessages(prev => prev.map(msg => msg.clientMessageId === clientMessageId ? { ...msg, progress: Math.round((pe.loaded * 100) / pe.total) } : msg)); } });
       sendMessage(type, null, res.data.fileUrl, clientMessageId, file.name, res.data.fileSize, res.data.fileMimeType);

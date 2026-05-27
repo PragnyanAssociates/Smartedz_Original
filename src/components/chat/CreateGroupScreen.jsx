@@ -12,8 +12,7 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
     const { user } = useAuth();
     const navigate = useNavigate();
     const { can, isAllAccess } = usePermissions();
-    
-    // In the unified matrix, creating a group requires global 'edit' rights
+
     const canEdit = can('GroupChat', 'edit');
     const hasCreateRights = isAllAccess || canEdit;
 
@@ -21,15 +20,18 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
     const [description, setDescription] = useState('');
     const [isReadOnly, setIsReadOnly] = useState(false);
     const [selectedCategories, setSelectedCategories] = useState([]);
-    
+
     const [options, setOptions] = useState({ classes: [], roles: [] });
     const [isLoadingOptions, setIsLoadingOptions] = useState(true);
     const [isCreating, setIsCreating] = useState(false);
 
     useEffect(() => {
         const fetchOptions = async () => {
+            if (!user?.id || !user?.institutionId) return;
             try {
-                const res = await apiClient.get('/groups/options');
+                const res = await apiClient.get('/groups/options', {
+                    params: { userId: user.id, instId: user.institutionId }
+                });
                 setOptions(res.data);
             } catch (error) {
                 console.error("Failed to fetch group options");
@@ -38,11 +40,11 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
             }
         };
         fetchOptions();
-    }, []);
+    }, [user?.id, user?.institutionId]);
 
     const toggleCategory = (category) => {
-        setSelectedCategories(prev => 
-            prev.includes(category) 
+        setSelectedCategories(prev =>
+            prev.includes(category)
                 ? prev.filter(c => c !== category)
                 : [...prev, category]
         );
@@ -55,12 +57,14 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
         setIsCreating(true);
         try {
             const res = await apiClient.post('/groups', {
+                userId: user.id,
+                institutionId: user.institutionId,
                 name: groupName.trim(),
                 description: description.trim(),
                 selectedCategories,
                 isReadOnly
             });
-            
+
             alert("Success: Group created");
             if (isEmbedded && onGroupCreated) {
                 onGroupCreated(res.data.groupId);
@@ -87,7 +91,6 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
 
     return (
         <div className="flex flex-col h-full bg-white max-w-2xl mx-auto w-full border-x border-slate-200 shadow-sm">
-            {/* Header */}
             <div className="flex items-center px-4 py-3 border-b border-slate-200 bg-slate-50">
                 <button onClick={onBack} className="p-2 mr-2 hover:bg-slate-200 rounded-full text-slate-600 transition-colors">
                     <MdArrowBack className="w-6 h-6" />
@@ -96,24 +99,23 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
             </div>
 
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                
-                {/* Basic Info */}
+
                 <div className="space-y-4">
                     <div>
                         <label className="block text-sm font-medium text-slate-700 mb-1">Group Name</label>
-                        <input 
-                            type="text" 
-                            value={groupName} 
-                            onChange={(e) => setGroupName(e.target.value)} 
+                        <input
+                            type="text"
+                            value={groupName}
+                            onChange={(e) => setGroupName(e.target.value)}
                             className="w-full border border-slate-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all"
                             placeholder="Enter group name"
                         />
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-slate-700 mb-1">Description (Optional)</label>
-                        <textarea 
-                            value={description} 
-                            onChange={(e) => setDescription(e.target.value)} 
+                        <textarea
+                            value={description}
+                            onChange={(e) => setDescription(e.target.value)}
                             className="w-full border border-slate-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all resize-none"
                             placeholder="What is this group for?"
                             rows={2}
@@ -121,15 +123,14 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
                     </div>
                 </div>
 
-                {/* Announcement Mode Toggle */}
                 <div className="bg-slate-50 rounded-lg p-4 border border-slate-200 flex items-start justify-between">
                     <div className="flex flex-col">
                         <span className="text-sm font-medium text-slate-900 flex items-center gap-2">
-                           <Megaphone className="w-4 h-4 text-blue-600" />
-                           Announcement Mode
+                            <Megaphone className="w-4 h-4 text-blue-600" />
+                            Announcement Mode
                         </span>
                         <span className="text-xs text-slate-500 mt-1 max-w-sm">
-                          Only Admins and authorized roles can send messages.
+                            Only Admins and authorized roles can send messages.
                         </span>
                     </div>
                     <label className="relative inline-flex items-center cursor-pointer mt-1">
@@ -138,7 +139,6 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
                     </label>
                 </div>
 
-                {/* Member Selection */}
                 <div>
                     <label className="block text-sm font-medium text-slate-700 mb-3">Add Members</label>
                     {isLoadingOptions ? (
@@ -148,8 +148,8 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
                             {isAllAccess && (
                                 <div className="space-y-2">
                                     <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Institution Wide</h3>
-                                    <button 
-                                        onClick={() => toggleCategory('All')} 
+                                    <button
+                                        onClick={() => toggleCategory('All')}
                                         className={`px-4 py-2 rounded-full text-sm font-medium border transition-colors ${selectedCategories.includes('All') ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'}`}
                                     >
                                         Entire Institution
@@ -162,8 +162,8 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
                                     <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Staff Roles</h3>
                                     <div className="flex flex-wrap gap-2">
                                         {options.roles.map(role => (
-                                            <button 
-                                                key={`role-${role}`} 
+                                            <button
+                                                key={`role-${role}`}
                                                 onClick={() => toggleCategory(role)}
                                                 className={`px-4 py-2 rounded-full text-sm font-medium border transition-colors flex items-center gap-1 ${selectedCategories.includes(role) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'}`}
                                             >
@@ -179,8 +179,8 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
                                     <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Classes (Students)</h3>
                                     <div className="flex flex-wrap gap-2">
                                         {options.classes.map(cls => (
-                                            <button 
-                                                key={`class-${cls}`} 
+                                            <button
+                                                key={`class-${cls}`}
                                                 onClick={() => toggleCategory(cls)}
                                                 className={`px-4 py-2 rounded-full text-sm font-medium border transition-colors flex items-center gap-1 ${selectedCategories.includes(cls) ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'}`}
                                             >
@@ -195,10 +195,9 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
                 </div>
             </div>
 
-            {/* Footer */}
             <div className="p-4 border-t border-slate-200 bg-slate-50">
-                <button 
-                    onClick={handleCreateGroup} 
+                <button
+                    onClick={handleCreateGroup}
                     disabled={isCreating || !groupName.trim() || selectedCategories.length === 0}
                     className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
