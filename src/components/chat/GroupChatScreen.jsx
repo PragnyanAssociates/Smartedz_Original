@@ -105,6 +105,7 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
         initialLoadDone.current = false;
     }
   }, [providedGroup]);
+
 const markAsSeen = useCallback(async () => {
     if (!group?.id || !user?.id) return;
     try {
@@ -319,7 +320,6 @@ formData.append('userId', user.id);
     const messageTime = new Date(item.timestamp).toLocaleTimeString('en-US', { hour: "numeric", minute: "2-digit", hour12: true });
 
     const renderContent = () => {
-      // Unified Moderation Tombstone
       if (item.is_deleted) {
           const removedByMe = item.deleted_by === user?.id;
           return (
@@ -366,11 +366,13 @@ formData.append('userId', user.id);
         {!isMyMessage && <img src={getProfileImageSource(item.profile_image_url)} alt="User" className="w-8 h-8 rounded-full mr-2 mt-1 bg-gray-200 flex-shrink-0" />}
         <div className={`relative max-w-[85%] sm:max-w-[65%] cursor-pointer shadow-sm ${isMyMessage ? (isImageOrVideo ? "rounded-lg" : `${THEME.myMessageBg} rounded-lg rounded-tr-none p-2 px-3`) : (isImageOrVideo ? "rounded-lg" : `${THEME.otherMessageBg} rounded-lg rounded-tl-none p-2 px-3`)} ${item.is_deleted ? 'bg-slate-50 border border-slate-200 shadow-none' : ''}`} onContextMenu={(e) => { e.preventDefault(); onLongPressMessage(item); }} onClick={() => onLongPressMessage(item)}>
           
-          {item.is_pinned && !item.is_deleted && <div className="absolute -top-2 -right-2 bg-yellow-100 text-yellow-600 rounded-full p-1 shadow-sm border border-yellow-200"><Pin className="w-3 h-3" /></div>}
+          {/* THE FIX: Added !! below to prevent "0" from rendering */}
+          {!!item.is_pinned && !item.is_deleted && <div className="absolute -top-2 -right-2 bg-yellow-100 text-yellow-600 rounded-full p-1 shadow-sm border border-yellow-200"><Pin className="w-3 h-3" /></div>}
           
           {!isMyMessage && !isImageOrVideo && !isFile && !item.is_deleted && <div className="text-xs font-bold text-[#54656f] mb-1">{item.full_name}</div>}
           
-          {item.reply_to_message_id && !isImageOrVideo && !item.is_deleted && <div className={`mb-2 p-2 rounded-md border-l-4 bg-black/5 border-[#00a884]`}><div className="text-xs font-bold text-[#00a884]">{item.reply_sender_name}</div><div className="text-xs text-gray-600 truncate">{item.reply_type === 'text' ? item.reply_text : 'Media'}</div></div>}
+          {/* THE FIX: Added !! below to prevent "0" from rendering */}
+          {!!item.reply_to_message_id && !isImageOrVideo && !item.is_deleted && <div className={`mb-2 p-2 rounded-md border-l-4 bg-black/5 border-[#00a884]`}><div className="text-xs font-bold text-[#00a884]">{item.reply_sender_name}</div><div className="text-xs text-gray-600 truncate">{item.reply_type === 'text' ? item.reply_text : 'Media'}</div></div>}
           
           {renderContent()}
           
@@ -426,24 +428,16 @@ formData.append('userId', user.id);
           </div>
         </div>
       )}
-
-      {/* Header Menu */}
-      {isGroupMenuVisible && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-2 w-64 max-w-[90%] shadow-xl">
-            <button className="w-full flex items-center gap-3 p-3 hover:bg-slate-100 rounded-md" onClick={() => { setGroupMenuVisible(false); if (isEmbedded && onOpenSettings) { onOpenSettings(); } else { navigate(`/GroupSettingsScreen`, { state: { group } }); } }}>
-              <Settings className="w-5 h-5 text-slate-600" />
-              <span className="text-slate-700">Settings</span>
-            </button>
-            <button className="w-full flex items-center gap-3 p-3 hover:bg-slate-100 rounded-md" onClick={() => setGroupMenuVisible(false)}><X className="w-5 h-5 text-slate-600" /><span className="text-slate-700">Close</span></button>
-          </div>
-        </div>
-      )}
       
       {/* Header */}
-      <div className="h-16 bg-[#f0f2f5] border-b border-slate-200 px-4 flex items-center justify-between flex-shrink-0 z-10">
+      <div className="h-16 bg-[#f0f2f5] border-b border-slate-200 px-4 flex items-center justify-between flex-shrink-0 z-50">
         {isEmbedded && onBack && <button onClick={onBack} className="md:hidden mr-3 p-1 rounded-full hover:bg-slate-200 text-slate-600"><MdArrowBack className="w-6 h-6" /></button>}
-        <div className="flex items-center flex-1 cursor-pointer" onClick={() => setGroupMenuVisible(true)}>
+        
+        {/* Clickable Group Profile Area */}
+        <div className="flex items-center flex-1 cursor-pointer" onClick={() => {
+             if (isEmbedded && onOpenSettings) { onOpenSettings(); } 
+             else { navigate(`/GroupSettingsScreen`, { state: { group } }); }
+        }}>
           <img src={getProfileImageSource(group.group_dp_url)} alt="Group" className="w-10 h-10 rounded-full mr-3 bg-slate-200 object-cover" />
           <div className="flex flex-col">
               <span className="font-semibold text-slate-800 text-base leading-tight flex items-center gap-2">
@@ -452,7 +446,35 @@ formData.append('userId', user.id);
               <span className="text-xs text-slate-500">Tap for group info</span>
           </div>
         </div>
-        <button onClick={() => setGroupMenuVisible(true)} className="p-2 hover:bg-slate-200 rounded-full"><MoreVertical className="w-5 h-5 text-[#54656f]" /></button>
+        
+        {/* Three Dots & Dropdown Menu Container */}
+        <div className="relative">
+          <button onClick={() => setGroupMenuVisible(!isGroupMenuVisible)} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
+              <MoreVertical className="w-5 h-5 text-[#54656f]" />
+          </button>
+          
+          {isGroupMenuVisible && (
+              <>
+                  {/* Invisible overlay to close the dropdown when clicking outside */}
+                  <div className="fixed inset-0 z-40" onClick={() => setGroupMenuVisible(false)}></div>
+                  
+                  {/* The actual dropdown menu */}
+                  <div className="absolute right-0 top-full mt-2 bg-white rounded-md shadow-xl border border-slate-200 py-1 w-48 z-50">
+                      <button 
+                          className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-100 transition-colors text-left"
+                          onClick={() => { 
+                              setGroupMenuVisible(false); 
+                              if (isEmbedded && onOpenSettings) { onOpenSettings(); } 
+                              else { navigate(`/GroupSettingsScreen`, { state: { group } }); } 
+                          }}
+                      >
+                          <Settings className="w-4 h-4 text-slate-600" />
+                          <span className="text-slate-700 font-medium text-sm">Group Settings</span>
+                      </button>
+                  </div>
+              </>
+          )}
+        </div>
       </div>
 
       {/* Message List */}

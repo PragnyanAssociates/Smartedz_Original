@@ -6,7 +6,7 @@ import { useAuth } from "../../context/AuthContext.jsx";
 import { usePermissions } from "../../Screens/PermissionsContext"; 
 import { MdArrowBack } from 'react-icons/md';
 import apiClient from '../../api/client';
-import { Camera, Save, Trash2, Eye, EyeOff, Megaphone } from 'lucide-react';
+import { Camera, Save, Trash2, Eye, EyeOff, Megaphone, Loader2 } from 'lucide-react';
 import { getProfileImageSource } from '../../utils/imageHelpers';
 
 const getContainerClasses = () => {

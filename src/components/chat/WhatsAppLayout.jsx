@@ -5,6 +5,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import GroupListScreen from './GroupListScreen';
 import GroupChatScreen from './GroupChatScreen';
 import CreateGroupScreen from './CreateGroupScreen';
+import GroupSettingsScreen from './GroupSettingsScreen'; // <-- Added Import
 import apiClient from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
@@ -22,10 +23,15 @@ const WhatsAppLayout = () => {
     const [groups, setGroups] = useState([]);
     const [selectedGroup, setSelectedGroup] = useState(location.state?.selectedGroup || null);
     const [isCreatingGroup, setIsCreatingGroup] = useState(false);
+    
+    // <-- NEW STATE: Tracks if the settings panel is open
+    const [isViewingSettings, setIsViewingSettings] = useState(false); 
+    
     const [loading, setLoading] = useState(true);
 
     const socketRef = useRef(null);
 
+    // Your fetchGroups and user.id logic left completely untouched
     const fetchGroups = useCallback(async () => {
         if (!hasReadAccess || !user?.id || !user?.institutionId) return;
         try {
@@ -66,11 +72,13 @@ const WhatsAppLayout = () => {
     const handleSelectGroup = (group) => {
         setSelectedGroup(group);
         setIsCreatingGroup(false);
+        setIsViewingSettings(false); // <-- Close settings if picking a new group
     };
 
     const handleBackToList = () => {
         setSelectedGroup(null);
         setIsCreatingGroup(false);
+        setIsViewingSettings(false); // <-- Reset settings state
         window.history.replaceState({}, document.title);
         fetchGroups();
     };
@@ -98,7 +106,11 @@ const WhatsAppLayout = () => {
                         groups={groups}
                         onSelectGroup={handleSelectGroup}
                         selectedGroup={selectedGroup}
-                        onCreateGroup={() => setIsCreatingGroup(true)}
+                        onCreateGroup={() => {
+                            setIsCreatingGroup(true);
+                            setSelectedGroup(null);
+                            setIsViewingSettings(false);
+                        }}
                         loading={loading}
                     />
                 </div>
@@ -115,11 +127,24 @@ const WhatsAppLayout = () => {
                                 fetchGroups();
                             }}
                         />
+                    ) : isViewingSettings && selectedGroup ? (
+                        // <-- Renders Settings seamlessly in the right panel
+                        <GroupSettingsScreen 
+                            group={selectedGroup}
+                            isEmbedded={true}
+                            onBack={() => setIsViewingSettings(false)}
+                            onGroupDeleted={() => {
+                                setIsViewingSettings(false);
+                                setSelectedGroup(null);
+                                fetchGroups();
+                            }}
+                        />
                     ) : selectedGroup ? (
                         <GroupChatScreen
                             providedGroup={selectedGroup}
                             onBack={handleBackToList}
                             isEmbedded={true}
+                            onOpenSettings={() => setIsViewingSettings(true)} // <-- THIS STOPS THE URL REDIRECT
                         />
                     ) : (
                         <div className="hidden md:flex flex-col items-center justify-center h-full bg-[#f0f2f5] border-b-[6px] border-[#00a884]">
