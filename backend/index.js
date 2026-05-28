@@ -4986,10 +4986,11 @@ app.post('/api/admin/alumni/promote', async (req, res) => {
                     name, email, phone, gender, dob, address, profile_pic,
                     roll_no, admission_no, created_by)
                  VALUES (?,?,?,?,?, ?,?,?,?,?,?,?, ?,?, ?)`,
-                [institutionId, sid, academic_year_id || null, passout_year || null,
-                 final_class || null,
-                 s.name, s.email, s.phone, s.gender, s.dob, s.address, s.profile_pic,
-                 s.roll_no, s.admission_no, created_by || null]
+                [institutionId, sid, academic_year_id ?? null, passout_year ?? null,
+                 final_class ?? null,
+                 s.name ?? null, s.email ?? null, s.phone ?? null, s.gender ?? null,
+                 s.dob ?? null, s.address ?? null, s.profile_pic ?? null,
+                 s.roll_no ?? null, s.admission_no ?? null, created_by ?? null]
             );
             // deactivate the original account
             await conn.execute(
@@ -5056,6 +5057,7 @@ app.get('/api/admin/alumni/candidates/:instId/:classId', async (req, res) => {
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
 
 
 
