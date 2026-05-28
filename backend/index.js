@@ -61,7 +61,8 @@ const DEFAULT_MODULES = [
     'PreAdmissions',
     'StudyMaterials',
     'Syllabus',
-    'GroupChat'
+    'GroupChat',
+    'Alumni'
     
 ];
 
@@ -4823,6 +4824,240 @@ io.on('connection', (socket) => {
         console.log(`User disconnected: ${socket.id}`);
     });
 });
+
+
+
+// =====================================================================
+//  BACKEND — Section 23: ALUMNI
+//
+//  Append this whole block to backend/index.js, just BEFORE the final
+//  `const PORT = ...` line.
+//
+//  ALSO add 'Alumni' to DEFAULT_MODULES at the top of index.js:
+//    const DEFAULT_MODULES = [
+//        'Overview','Manage Logins','Timetable','Academic Calendar',
+//        'Attendance','Exams','Reports','Performance','Homework',
+//        'Meals','Digital Labs','Syllabus','Alumni'
+//    ];
+//
+//  Reuses nowSQL() from Section 16.
+//
+//  NOTE: 23.5 (promoteToAlumni) is the function the PROMOTION TAB calls
+//  when its destination is "Alumni (Passout)". See the wiring file for
+//  how to hook it into your existing promotion route.
+// =====================================================================
+
+
+// --- 23.1 Distinct passout years for the filter ---------------------
+//   GET /api/admin/alumni/years/:instId
+app.get('/api/admin/alumni/years/:instId', async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            `SELECT DISTINCT a.academic_year_id, a.passout_year,
+                    y.year_name
+               FROM alumni a
+               LEFT JOIN academic_years y ON y.id = a.academic_year_id
+              WHERE a.institutionId = ?
+              ORDER BY a.passout_year DESC`,
+            [req.params.instId]
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 23.2 Alumni list (card data) -----------------------------------
+//   GET /api/admin/alumni/:instId?yearId=optional&q=optional
+//   Light payload for the cards — excludes the heavy profile_pic/notes.
+app.get('/api/admin/alumni/:instId', async (req, res) => {
+    const { instId } = req.params;
+    const { yearId, q } = req.query;
+    try {
+        let sql = `
+            SELECT id, user_id, academic_year_id, passout_year, final_class,
+                   name, email, phone, current_status, roll_no,
+                   (profile_pic IS NOT NULL) AS has_pic
+              FROM alumni
+             WHERE institutionId = ?`;
+        const params = [instId];
+        if (yearId) { sql += ' AND academic_year_id = ?'; params.push(yearId); }
+        if (q && q.trim()) {
+            sql += ` AND (name LIKE ? OR email LIKE ? OR phone LIKE ?
+                          OR roll_no LIKE ? OR current_status LIKE ?)`;
+            const like = `%${q.trim()}%`;
+            params.push(like, like, like, like, like);
+        }
+        sql += ' ORDER BY name';
+        const [rows] = await db.execute(sql, params);
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 23.3 Single alumni (full detail incl. picture) -----------------
+app.get('/api/admin/alumni/detail/:id', async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            'SELECT * FROM alumni WHERE id = ?', [req.params.id]);
+        if (rows.length === 0) return res.status(404).json({ error: 'Alumni not found' });
+        res.json(rows[0]);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 23.4 Manually add an alumni ------------------------------------
+//   Body: either { user_id, academic_year_id, passout_year } to snapshot
+//   an existing student, OR a full manual record with name/email/etc.
+app.post('/api/admin/alumni', async (req, res) => {
+    const b = req.body;
+    if (!b.institutionId) return res.status(400).json({ error: 'institutionId required.' });
+    try {
+        // If a user_id is supplied, snapshot from their profile first.
+        let snap = {};
+        if (b.user_id) {
+            const [u] = await db.execute('SELECT * FROM users WHERE id = ?', [b.user_id]);
+            if (u.length) {
+                const s = u[0];
+                snap = {
+                    name: s.name, email: s.email, phone: s.phone,
+                    gender: s.gender, dob: s.dob, address: s.address,
+                    profile_pic: s.profile_pic, roll_no: s.roll_no,
+                    admission_no: s.admission_no
+                };
+            }
+        }
+        const merged = { ...snap, ...b };   // explicit body fields win
+        const [result] = await db.execute(
+            `INSERT INTO alumni
+               (institutionId, user_id, academic_year_id, passout_year, final_class,
+                name, email, phone, gender, dob, address, profile_pic,
+                roll_no, admission_no,
+                current_status, occupation, organization, higher_education,
+                location, linkedin, notes, created_by)
+             VALUES (?,?,?,?,?, ?,?,?,?,?,?,?, ?,?, ?,?,?,?,?,?,?, ?)`,
+            [merged.institutionId, merged.user_id || null,
+             merged.academic_year_id || null, merged.passout_year || null,
+             merged.final_class || null,
+             merged.name || null, merged.email || null, merged.phone || null,
+             merged.gender || null, merged.dob || null, merged.address || null,
+             merged.profile_pic || null, merged.roll_no || null, merged.admission_no || null,
+             merged.current_status || null, merged.occupation || null,
+             merged.organization || null, merged.higher_education || null,
+             merged.location || null, merged.linkedin || null, merged.notes || null,
+             merged.created_by || null]
+        );
+        res.json({ success: true, id: result.insertId });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 23.5 Promote a batch of students to Alumni ---------------------
+//   Called by the PROMOTION TAB when destination = "Alumni (Passout)".
+//   Body: { institutionId, student_ids: [..], academic_year_id,
+//           passout_year, final_class, created_by }
+//   Snapshots each student into `alumni` and sets users.status='alumni'.
+app.post('/api/admin/alumni/promote', async (req, res) => {
+    const {
+        institutionId, student_ids, academic_year_id,
+        passout_year, final_class, created_by
+    } = req.body;
+    if (!institutionId || !Array.isArray(student_ids) || student_ids.length === 0) {
+        return res.status(400).json({ error: 'institutionId and student_ids[] required.' });
+    }
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        let added = 0;
+        for (const sid of student_ids) {
+            const [u] = await conn.execute('SELECT * FROM users WHERE id = ?', [sid]);
+            if (!u.length) continue;
+            const s = u[0];
+
+            // skip if already an alumni record for this user + year
+            const [exists] = await conn.execute(
+                'SELECT id FROM alumni WHERE user_id = ? AND academic_year_id = ?',
+                [sid, academic_year_id || null]
+            );
+            if (exists.length) continue;
+
+            await conn.execute(
+                `INSERT INTO alumni
+                   (institutionId, user_id, academic_year_id, passout_year, final_class,
+                    name, email, phone, gender, dob, address, profile_pic,
+                    roll_no, admission_no, created_by)
+                 VALUES (?,?,?,?,?, ?,?,?,?,?,?,?, ?,?, ?)`,
+                [institutionId, sid, academic_year_id || null, passout_year || null,
+                 final_class || null,
+                 s.name, s.email, s.phone, s.gender, s.dob, s.address, s.profile_pic,
+                 s.roll_no, s.admission_no, created_by || null]
+            );
+            // deactivate the original account
+            await conn.execute(
+                "UPDATE users SET status = 'alumni' WHERE id = ?", [sid]);
+            added++;
+        }
+        await conn.commit();
+        res.json({ success: true, added });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally { conn.release(); }
+});
+
+
+// --- 23.6 Update the editable / extra fields ------------------------
+//   Body: any of current_status, occupation, organization,
+//   higher_education, location, linkedin, notes, name, email, phone.
+app.put('/api/admin/alumni/:id', async (req, res) => {
+    const b = req.body;
+    const fields = [
+        'name','email','phone','gender','dob','address',
+        'current_status','occupation','organization','higher_education',
+        'location','linkedin','notes','passout_year','final_class'
+    ];
+    const sets = [];
+    const params = [];
+    fields.forEach(f => {
+        if (b[f] !== undefined) { sets.push(`${f} = ?`); params.push(b[f] || null); }
+    });
+    if (sets.length === 0) return res.json({ success: true });   // nothing to change
+    params.push(req.params.id);
+    try {
+        await db.execute(`UPDATE alumni SET ${sets.join(', ')} WHERE id = ?`, params);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 23.7 Delete an alumni record -----------------------------------
+app.delete('/api/admin/alumni/:id', async (req, res) => {
+    try {
+        await db.execute('DELETE FROM alumni WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 23.8 Candidates for manual add ---------------------------------
+//   GET /api/admin/alumni/candidates/:instId/:classId
+//   Active students of a class — for the manual "Add to Alumni" picker.
+app.get('/api/admin/alumni/candidates/:instId/:classId', async (req, res) => {
+    const { instId, classId } = req.params;
+    try {
+        const [rows] = await db.execute(
+            `SELECT id, name, roll_no, email, phone
+               FROM users
+              WHERE institutionId = ? AND class_id = ?
+                AND LOWER(TRIM(role)) = 'student'
+                AND (status IS NULL OR LOWER(TRIM(status)) <> 'alumni')
+              ORDER BY roll_no, name`,
+            [instId, classId]
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
 
 // =====================================================================
 const PORT = process.env.PORT || 3001;

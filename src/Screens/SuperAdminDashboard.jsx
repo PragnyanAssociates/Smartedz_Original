@@ -19,6 +19,7 @@ import PreAdmissions from '../components/preadmissions/PreAdmissions';
 import StudyMaterialsScreen from '../components/study-materials/StudyMaterialsScreen';
 import Syllabus from '../components/Syllabus/Syllabus';
 import WhatsAppLayout from '../components/chat/WhatsAppLayout';
+import Alumni from '../components/Alumni/Alumni';
 
 
 import Profile from './Profile';
@@ -82,9 +83,10 @@ function DashboardShell() {
       case 'OnlineClasses':     return <OnlineClasses/>;
       case 'DigitalLabs':       return <DigitalLabs/>;
       case 'PreAdmissions':     return <PreAdmissions/>;
-      case 'StudyMaterials':   return <StudyMaterialsScreen/>;
-      case 'Syllabus':     return <Syllabus/>;
-      case 'GroupChat':   return <WhatsAppLayout/>;
+      case 'StudyMaterials':    return <StudyMaterialsScreen/>;
+      case 'Syllabus':          return <Syllabus/>;
+      case 'GroupChat':         return <WhatsAppLayout/>;
+      case 'Alumni':            return <Alumni/>;
     
         return (
           <div className="h-full flex items-center justify-center flex-col text-center opacity-40">
