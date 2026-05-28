@@ -4327,7 +4327,7 @@ app.post('/api/groups', checkGroupPermission('edit'), async (req, res) => {
 
 // --- 5. List Groups for a User ---
 // GET /api/groups?userId=xxx&instId=xxx
-aapp.get('/api/groups', async (req, res) => {
+app.get('/api/groups', async (req, res) => {
     const { userId, instId } = req.query;
     if (!userId || !instId) return res.status(400).json({ error: 'userId and instId are required' });
 
