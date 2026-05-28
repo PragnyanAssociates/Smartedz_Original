@@ -5065,22 +5065,25 @@ app.get('/api/admin/alumni/candidates/:instId/:classId', async (req, res) => {
 // === 14. LESSON PLAN MODULE ==========================================
 // =====================================================================
 
+// Get the single latest Guideline image for the school
 app.get('/api/admin/lesson-plans/:instId', async (req, res) => {
     try {
         const [rows] = await db.execute(
-            'SELECT id, title, image_data, created_at FROM lesson_plans WHERE institutionId = ? ORDER BY created_at DESC',
+            'SELECT id, image_data FROM lesson_plans WHERE institutionId = ? ORDER BY created_at DESC LIMIT 1',
             [req.params.instId]
         );
-        res.json(rows);
+        res.json(rows[0] || null);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Update/Upload the Guideline image
 app.post('/api/admin/lesson-plans', async (req, res) => {
-    const { institutionId, image_data, title } = req.body;
+    const { institutionId, image_data } = req.body;
     try {
+        // We simply insert a new one, and the GET request always picks the latest
         await db.execute(
             'INSERT INTO lesson_plans (institutionId, image_data, title) VALUES (?, ?, ?)',
-            [institutionId, image_data, title || 'Untitled Plan']
+            [institutionId, image_data, 'Active Guideline']
         );
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
