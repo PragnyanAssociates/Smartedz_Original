@@ -3842,7 +3842,7 @@ app.delete('/api/admin/study-materials/:id', async (req, res) => {
 //
 //  Reuses nowSQL() from Section 16.
 // =====================================================================
-const { detectChapters, slicePdf } = require('./syllabusDetect');
+
 
 // --- 22.1 Syllabus Management list  (unchanged) ---------------------
 app.get('/api/admin/syllabus/list/:instId', async (req, res) => {
