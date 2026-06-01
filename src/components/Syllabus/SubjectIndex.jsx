@@ -285,7 +285,7 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
                   <p className={`font-semibold text-sm leading-tight transition-colors truncate ${
                     selectedId === ch.id ? 'text-primary' : 'text-zinc-900 group-hover:text-primary'
                   }`}>
-                    {idx ? ch.title : `${i}. ${ch.title}`}
+                    {ch.title}
                   </p>
                   {pageLabel(ch.page_from, ch.page_to) && (
                     <span className="inline-block text-[10px] font-semibold text-zinc-500 bg-zinc-100 px-1.5 py-0.5 rounded mt-1.5">
