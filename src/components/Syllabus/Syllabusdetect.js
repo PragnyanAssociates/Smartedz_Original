@@ -2,25 +2,28 @@
 //  syllabusDetect.js  — textbook → chapters detection + page slicing
 //
 //  Put this file in your backend/ folder (next to index.js) and require
-//  it from Section 22:
+//  it from index.js (near the top, with the other requires):
 //      const { detectChapters, slicePdf } = require('./syllabusDetect');
 //
-//  Dependencies (install once in backend/):
-//      npm install pdfjs-dist@3.11.174 pdf-lib
+//  Dependencies (install once in backend/, and commit package.json):
+//      npm install pdfjs-dist@3.11.174 pdf-lib --save
 //
 //  detectChapters(buffer) -> { total, chapters:[{title,page_from,page_to}] }
 //      1) Uses the PDF's built-in outline / bookmarks   (most reliable)
 //      2) Falls back to parsing the Contents/Index page text
 //      3) Final fallback: a single "Full Document" chapter
-//      A synthetic "Index" entry is prepended for the front matter.
+//
+//  The assembler is robust to broken bookmarks: it keeps the outline's
+//  reading order, drops any destination that points to the wrong place
+//  (e.g. page 0), and interpolates a sensible page for it. Front matter
+//  is collapsed into a single "Index" entry; chapters are titled
+//  "N. Clean Title".
 //
 //  slicePdf(buffer, from, to) -> base64 of just those pages (1-based, inclusive)
 // =====================================================================
 
 const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
 const { PDFDocument } = require('pdf-lib');
-
-const clean = (t) => (t || '').replace(/\s+/g, ' ').trim();
 
 // ---------------------------------------------------------------------
 //  Public: detect chapters
@@ -36,15 +39,10 @@ async function detectChapters(buffer) {
   const total = doc.numPages;
   let chapters = [];
 
-  // 1) built-in outline / bookmarks (top level = chapters)
   try { chapters = await fromOutline(doc, total); } catch (_) { chapters = []; }
-
-  // 2) parse the contents/index page text
   if (!chapters.length) {
     try { chapters = await fromTocText(doc, total); } catch (_) { chapters = []; }
   }
-
-  // 3) give up gracefully — one chapter for the whole book
   if (!chapters.length) {
     chapters = [{ title: 'Full Document', page_from: 1, page_to: total }];
   }
@@ -54,27 +52,19 @@ async function detectChapters(buffer) {
 }
 
 // ---------------------------------------------------------------------
-//  Strategy 1 — PDF outline
+//  Strategy 1 — PDF outline / bookmarks (kept in reading order)
 // ---------------------------------------------------------------------
 async function fromOutline(doc, total) {
   const outline = await doc.getOutline();
   if (!outline || !outline.length) return [];
 
   const items = [];
-  for (const node of outline) {               // top level only = chapters
+  for (const node of outline) {                  // top level only = chapters
     const idx = await destToPageIndex(doc, node.dest);
-    if (idx != null) items.push({ title: clean(node.title), start: idx + 1 });
+    items.push({ title: node.title || '', start: idx == null ? null : idx + 1 });
   }
-  if (!items.length) return [];
-
-  items.sort((a, b) => a.start - b.start);
-
-  // collapse duplicate start pages
-  const dedup = [];
-  for (const it of items) {
-    if (!dedup.length || dedup[dedup.length - 1].start !== it.start) dedup.push(it);
-  }
-  return buildRanges(dedup, total);
+  if (!items.some(i => i.start != null)) return [];
+  return assemble(items, total);
 }
 
 async function destToPageIndex(doc, dest) {
@@ -106,7 +96,6 @@ async function fromTocText(doc, total) {
   if (candidates.length < 2) return [];
 
   candidates.sort((a, b) => a.start - b.start);
-
   const seen = new Set();
   const items = [];
   for (const c of candidates) {
@@ -114,7 +103,7 @@ async function fromTocText(doc, total) {
     seen.add(c.start);
     items.push({ title: c.title, start: c.start });
   }
-  return buildRanges(items, total);
+  return assemble(items, total);
 }
 
 // group a page's text fragments into visual lines (by y), left-to-right
@@ -130,7 +119,7 @@ async function pageToLines(page) {
     if (!b) { b = { y, parts: [] }; buckets.push(b); }
     b.parts.push({ x, s });
   }
-  buckets.sort((a, b) => b.y - a.y); // top of page first
+  buckets.sort((a, b) => b.y - a.y);
   return buckets.map((b) =>
     b.parts.sort((p, q) => p.x - q.x).map((p) => p.s).join(' ').replace(/\s+/g, ' ').trim()
   );
@@ -141,10 +130,8 @@ function parseTocLine(line, total) {
   if (!line || line.length < 4) return null;
   const m = line.match(/^(.*?[A-Za-z].*?)[\s.·•\-_]{1,}(\d{1,4})$/);
   if (!m) return null;
-
-  const title = clean(m[1]).replace(/[\s.·•\-_]+$/, '').trim();
+  const title = (m[1] || '').replace(/\s+/g, ' ').replace(/[\s.·•\-_]+$/, '').trim();
   const pageNum = parseInt(m[2], 10);
-
   if (!title || title.length < 3) return null;
   if (!/[A-Za-z]/.test(title)) return null;
   if (!(pageNum >= 1 && pageNum <= total)) return null;
@@ -152,19 +139,83 @@ function parseTocLine(line, total) {
 }
 
 // ---------------------------------------------------------------------
-//  Shared — turn start pages into ranges + prepend "Index"
+//  Shared assembler — order-fix, interpolate, Index, clean titles
+//    `items` are in reading order: [{ title, start|null }]
 // ---------------------------------------------------------------------
-function buildRanges(items, total) {
-  const out = [];
-  for (let i = 0; i < items.length; i++) {
-    const from = items[i].start;
-    const to = i + 1 < items.length ? items[i + 1].start - 1 : total;
-    out.push({ title: items[i].title, page_from: from, page_to: Math.max(from, to) });
+function assemble(items, total) {
+  if (!items.length) return [];
+  const n = items.length;
+
+  // 1) keep only strictly-increasing, in-range page numbers; null the rest
+  const starts = items.map(it => (Number.isFinite(it.start) ? it.start : null));
+  let prev = 0;
+  for (let i = 0; i < n; i++) {
+    if (starts[i] == null || starts[i] < 1 || starts[i] > total || starts[i] <= prev) {
+      starts[i] = null;
+    } else {
+      prev = starts[i];
+    }
   }
-  if (out.length && out[0].page_from > 1) {
-    out.unshift({ title: 'Index', page_from: 1, page_to: out[0].page_from - 1 });
+
+  // 2) interpolate the nulls between their nearest known neighbours
+  for (let i = 0; i < n; i++) {
+    if (starts[i] != null) continue;
+    let l = i - 1; while (l >= 0 && starts[l] == null) l--;
+    let r = i + 1; while (r < n && starts[r] == null) r++;
+    const lv = l >= 0 ? starts[l] : 1;
+    const rv = r < n ? starts[r] : total + 1;
+    const base = l >= 0 ? l : -1;
+    const span = (r < n ? r : n) - base;
+    let v = Math.round(lv + (rv - lv) * ((i - base) / span));
+    if (v <= lv) v = lv + 1;
+    if (v > total) v = total;
+    starts[i] = v;
   }
-  return out;
+
+  // 3) clean titles
+  const cleaned = items.map((it, i) => ({ title: cleanTitle(it.title), start: starts[i] }));
+
+  // 4) front matter (titles before the first numbered chapter) -> one "Index"
+  const firstChapter = cleaned.findIndex(c => /^\d+\b/.test(c.title));
+  const result = [];
+  let startIdx = 0;
+
+  if (firstChapter > 0) {
+    result.push({ title: 'Index', page_from: 1, page_to: Math.max(1, cleaned[firstChapter].start - 1) });
+    startIdx = firstChapter;
+  } else if (cleaned[0].start > 1) {
+    result.push({ title: 'Index', page_from: 1, page_to: cleaned[0].start - 1 });
+  }
+
+  // 5) chapter ranges
+  let seq = 0;
+  for (let i = startIdx; i < n; i++) {
+    seq++;
+    const from = cleaned[i].start;
+    const to = (i + 1 < n) ? cleaned[i + 1].start - 1 : total;
+    result.push({
+      title: formatChapterTitle(cleaned[i].title, seq),
+      page_from: from,
+      page_to: Math.max(from, to),
+    });
+  }
+  return result;
+}
+
+function cleanTitle(t) {
+  return (t || '').replace(/\.pdf\s*$/i, '').replace(/\s+/g, ' ').trim();
+}
+
+function titleCase(s) {
+  return (s || '').toLowerCase().replace(/\b([a-z])/g, (m) => m.toUpperCase());
+}
+
+// "1 relief features" -> "1. Relief Features"; otherwise "<seq>. Title"
+function formatChapterTitle(clean, seq) {
+  const m = clean.match(/^(\d+)\s*[.)]?\s*(.*)$/);
+  if (m && m[2]) return `${m[1]}. ${titleCase(m[2])}`;
+  if (m) return `${m[1]}. Chapter ${m[1]}`;
+  return `${seq}. ${titleCase(clean)}`;
 }
 
 // ---------------------------------------------------------------------
