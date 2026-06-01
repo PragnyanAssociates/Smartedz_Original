@@ -3825,30 +3825,26 @@ app.delete('/api/admin/study-materials/:id', async (req, res) => {
 
 
 // =====================================================================
-//  BACKEND — Section 22: SYLLABUS  (v2 — matches the real screens)
+//  BACKEND — Section 22: SYLLABUS  (v3 — textbook-first + auto-detect)
 //
-//  Append this whole block to backend/index.js, just BEFORE the final
-//  `const PORT = ...` line.
+//  REPLACE your old "Section 22 (v2)" block with this whole block.
+//  Add this require near the TOP of index.js (with the other requires):
 //
-//  ALSO add 'Syllabus' to DEFAULT_MODULES at the top of index.js:
-//    const DEFAULT_MODULES = [
-//        'Overview','Manage Logins','Timetable','Academic Calendar',
-//        'Attendance','Exams','Reports','Performance','Homework',
-//        'Meals','Digital Labs','Syllabus'
-//    ];
+//      const { detectChapters, slicePdf } = require('./syllabusDetect');
 //
-//  Layers:
-//    syllabus           -> the "Syllabus Management" list (per class+subject)
-//    syllabus_chapters  -> chapters/lessons (Subject Index + Lesson Periods)
-//    syllabus_keywords  -> vocabulary words per chapter
+//  What changed vs v2:
+//    • The textbook PDF now lives on the `syllabus` row (one book per
+//      subject), not per chapter.  See the migration .sql file.
+//    • Uploading the book auto-detects chapters from its index.
+//    • A chapter's "document" is sliced from the book on the fly, so the
+//      viewer only ever shows that chapter's pages.
+//    • Removed the old per-chapter PUT /chapter/:id/doc (no longer used).
 //
 //  Reuses nowSQL() from Section 16.
 // =====================================================================
 
 
-// --- 22.1 Syllabus Management list ----------------------------------
-//   GET /api/admin/syllabus/list/:instId?classId=optional
-//   One row per syllabus: subject, class, teacher, lesson count, updated.
+// --- 22.1 Syllabus Management list  (unchanged) ---------------------
 app.get('/api/admin/syllabus/list/:instId', async (req, res) => {
     const { instId } = req.params;
     const { classId } = req.query;
@@ -3878,8 +3874,7 @@ app.get('/api/admin/syllabus/list/:instId', async (req, res) => {
 });
 
 
-// --- 22.2 Create a syllabus -----------------------------------------
-//   Body: { institutionId, academic_year_id, class_id, subject_id, teacher_id, created_by }
+// --- 22.2 Create a syllabus  (unchanged) ----------------------------
 app.post('/api/admin/syllabus', async (req, res) => {
     const {
         institutionId, academic_year_id, class_id, subject_id, teacher_id, created_by
@@ -3905,7 +3900,7 @@ app.post('/api/admin/syllabus', async (req, res) => {
 });
 
 
-// --- 22.3 Update a syllabus (teacher / subject) ---------------------
+// --- 22.3 Update a syllabus  (unchanged) ----------------------------
 app.put('/api/admin/syllabus/:id', async (req, res) => {
     const { class_id, subject_id, teacher_id } = req.body;
     try {
@@ -3920,7 +3915,7 @@ app.put('/api/admin/syllabus/:id', async (req, res) => {
 });
 
 
-// --- 22.4 Delete a syllabus (chapters + keywords cascade) -----------
+// --- 22.4 Delete a syllabus  (unchanged) ----------------------------
 app.delete('/api/admin/syllabus/:id', async (req, res) => {
     try {
         await db.execute('DELETE FROM syllabus WHERE id = ?', [req.params.id]);
@@ -3929,10 +3924,7 @@ app.delete('/api/admin/syllabus/:id', async (req, res) => {
 });
 
 
-// --- 22.5 Resolve a syllabus by class + subject ---------------------
-//   GET /api/admin/syllabus/resolve/:instId/:classId/:subjectId
-//   The Subject Index & Lesson Periods screens pick class+subject;
-//   this finds the matching syllabus id (or null if none yet).
+// --- 22.5 Resolve a syllabus by class + subject  (unchanged) --------
 app.get('/api/admin/syllabus/resolve/:instId/:classId/:subjectId', async (req, res) => {
     const { instId, classId, subjectId } = req.params;
     try {
@@ -3948,18 +3940,17 @@ app.get('/api/admin/syllabus/resolve/:instId/:classId/:subjectId', async (req, r
 });
 
 
-// --- 22.6 Chapters of a syllabus ------------------------------------
-//   GET /api/admin/syllabus/:syllabusId/chapters
-//   Light payload — excludes the heavy base64 doc_data.
+// --- 22.6 Chapters of a syllabus  (CHANGED: has_doc comes from book) -
 app.get('/api/admin/syllabus/:syllabusId/chapters', async (req, res) => {
     try {
         const [rows] = await db.execute(
             `SELECT c.id, c.syllabus_id, c.chapter_order, c.title,
-                    c.page_from, c.page_to, c.doc_name, c.doc_pages,
+                    c.page_from, c.page_to, c.doc_pages,
                     c.periods, c.start_date, c.end_date,
-                    (c.doc_data IS NOT NULL) AS has_doc,
+                    (s.doc_data IS NOT NULL) AS has_doc,
                     (SELECT COUNT(*) FROM syllabus_keywords k WHERE k.chapter_id = c.id) AS keyword_count
                FROM syllabus_chapters c
+               JOIN syllabus s ON s.id = c.syllabus_id
               WHERE c.syllabus_id = ?
               ORDER BY c.chapter_order, c.id`,
             [req.params.syllabusId]
@@ -3969,21 +3960,109 @@ app.get('/api/admin/syllabus/:syllabusId/chapters', async (req, res) => {
 });
 
 
-// --- 22.7 Single chapter's PDF document -----------------------------
-app.get('/api/admin/syllabus/chapter/:id/doc', async (req, res) => {
+// --- 22.7 Textbook meta for a syllabus  (NEW, light — no doc_data) ---
+app.get('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
     try {
         const [rows] = await db.execute(
-            'SELECT doc_name, doc_data, doc_pages FROM syllabus_chapters WHERE id = ?',
-            [req.params.id]
+            `SELECT doc_name, doc_pages, page_offset,
+                    (doc_data IS NOT NULL) AS has_book
+               FROM syllabus WHERE id = ?`,
+            [req.params.syllabusId]
         );
-        if (rows.length === 0) return res.status(404).json({ error: 'Chapter not found' });
-        res.json(rows[0]);
+        res.json(rows[0] || { has_book: 0 });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 
-// --- 22.8 Create a chapter ------------------------------------------
-//   Body: { syllabus_id, title, page_from, page_to }
+// --- 22.8 Upload / replace the textbook + auto-detect chapters (NEW) -
+//   Body: { doc_name, doc_data(base64 data-uri), page_offset? }
+//   Stores the book on the syllabus, reads its index, and rebuilds the
+//   chapter list.  NOTE: this replaces existing chapters (and, via the
+//   FK cascade, their keywords) — the UI warns before re-running.
+app.put('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
+    const { doc_name, doc_data, page_offset } = req.body;
+    const syllabusId = req.params.syllabusId;
+    if (!doc_data) return res.status(400).json({ error: 'doc_data is required.' });
+
+    try {
+        const base64 = String(doc_data).replace(/^data:[^;]+;base64,/, '');
+        const buffer = Buffer.from(base64, 'base64');
+
+        const { total, chapters } = await detectChapters(buffer);
+
+        await db.execute(
+            `UPDATE syllabus
+                SET doc_name = ?, doc_data = ?, doc_pages = ?, page_offset = ?, updated_at = ?
+              WHERE id = ?`,
+            [doc_name || null, doc_data, total, parseInt(page_offset, 10) || 0,
+             nowSQL(), syllabusId]
+        );
+
+        // rebuild chapter list from detection
+        await db.execute('DELETE FROM syllabus_chapters WHERE syllabus_id = ?', [syllabusId]);
+        let order = 0;
+        for (const ch of chapters) {
+            await db.execute(
+                `INSERT INTO syllabus_chapters
+                   (syllabus_id, chapter_order, title, page_from, page_to)
+                 VALUES (?, ?, ?, ?, ?)`,
+                [syllabusId, order++, ch.title, ch.page_from, ch.page_to]
+            );
+        }
+
+        res.json({ success: true, total_pages: total, chapters: chapters.length });
+    } catch (err) {
+        console.error('Textbook detection failed:', err);
+        res.status(500).json({ error: 'Could not read this PDF: ' + err.message });
+    }
+});
+
+
+// --- 22.9 Adjust the printed-vs-PDF page offset  (NEW) --------------
+//   Body: { page_offset }   (e.g. if printed page 1 == PDF page 5 -> 4)
+app.put('/api/admin/syllabus/:syllabusId/book/offset', async (req, res) => {
+    try {
+        await db.execute(
+            'UPDATE syllabus SET page_offset = ? WHERE id = ?',
+            [parseInt(req.body.page_offset, 10) || 0, req.params.syllabusId]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 22.10 A chapter's pages, sliced from the book on the fly (CHANGED)
+//   Returns { doc_name, doc_data(base64 data-uri), doc_pages } for ONLY
+//   this chapter's page range.  The viewer is unchanged.
+app.get('/api/admin/syllabus/chapter/:id/doc', async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            `SELECT c.page_from, c.page_to, s.doc_data, s.page_offset, s.doc_name
+               FROM syllabus_chapters c
+               JOIN syllabus s ON s.id = c.syllabus_id
+              WHERE c.id = ?`,
+            [req.params.id]
+        );
+        if (!rows.length || !rows[0].doc_data) return res.json({});
+
+        const r = rows[0];
+        const base64 = String(r.doc_data).replace(/^data:[^;]+;base64,/, '');
+        const buffer = Buffer.from(base64, 'base64');
+        const offset = r.page_offset || 0;
+        const from = (r.page_from || 1) + offset;
+        const to   = (r.page_to || r.page_from || 1) + offset;
+
+        const sliceB64 = await slicePdf(buffer, from, to);
+        res.json({
+            doc_name: r.doc_name || null,
+            doc_data: 'data:application/pdf;base64,' + sliceB64,
+            doc_pages: Math.max(1, (r.page_to - r.page_from + 1))
+        });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 22.11 Create a chapter (manual correction)  (unchanged) --------
 app.post('/api/admin/syllabus/chapters', async (req, res) => {
     const { syllabus_id, title, page_from, page_to } = req.body;
     if (!syllabus_id || !title) {
@@ -4001,7 +4080,6 @@ app.post('/api/admin/syllabus/chapters', async (req, res) => {
              VALUES (?, ?, ?, ?, ?)`,
             [syllabus_id, maxOrder, title, page_from || null, page_to || null]
         );
-        // bump the syllabus updated_at
         await db.execute('UPDATE syllabus SET updated_at = ? WHERE id = ?',
             [nowSQL(), syllabus_id]);
         res.json({ success: true, id: result.insertId });
@@ -4009,8 +4087,7 @@ app.post('/api/admin/syllabus/chapters', async (req, res) => {
 });
 
 
-// --- 22.9 Update a chapter's core fields ----------------------------
-//   Body: { title, page_from, page_to }
+// --- 22.12 Update a chapter's core fields  (unchanged) --------------
 app.put('/api/admin/syllabus/chapters/:id', async (req, res) => {
     const { title, page_from, page_to } = req.body;
     try {
@@ -4025,7 +4102,7 @@ app.put('/api/admin/syllabus/chapters/:id', async (req, res) => {
 });
 
 
-// --- 22.10 Delete a chapter -----------------------------------------
+// --- 22.13 Delete a chapter  (unchanged) ----------------------------
 app.delete('/api/admin/syllabus/chapters/:id', async (req, res) => {
     try {
         await db.execute('DELETE FROM syllabus_chapters WHERE id = ?', [req.params.id]);
@@ -4034,24 +4111,7 @@ app.delete('/api/admin/syllabus/chapters/:id', async (req, res) => {
 });
 
 
-// --- 22.11 Upload / replace a chapter's PDF -------------------------
-//   Body: { doc_name, doc_data(base64), doc_pages }
-app.put('/api/admin/syllabus/chapter/:id/doc', async (req, res) => {
-    const { doc_name, doc_data, doc_pages } = req.body;
-    try {
-        await db.execute(
-            `UPDATE syllabus_chapters
-                SET doc_name = ?, doc_data = ?, doc_pages = ?
-              WHERE id = ?`,
-            [doc_name || null, doc_data || null, doc_pages || null, req.params.id]
-        );
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-
-// --- 22.12 Update a chapter's lesson-period schedule ----------------
-//   Body: { periods, start_date, end_date }   (Lesson Periods screen)
+// --- 22.14 Update a chapter's lesson-period schedule  (unchanged) ---
 app.put('/api/admin/syllabus/chapter/:id/periods', async (req, res) => {
     const { periods, start_date, end_date } = req.body;
     try {
@@ -4066,7 +4126,7 @@ app.put('/api/admin/syllabus/chapter/:id/periods', async (req, res) => {
 });
 
 
-// --- 22.13 Keywords for a chapter -----------------------------------
+// --- 22.15 Keywords for a chapter  (unchanged) ----------------------
 app.get('/api/admin/syllabus/chapter/:id/keywords', async (req, res) => {
     try {
         const [rows] = await db.execute(
@@ -4078,7 +4138,7 @@ app.get('/api/admin/syllabus/chapter/:id/keywords', async (req, res) => {
 });
 
 
-// --- 22.14 Add a keyword --------------------------------------------
+// --- 22.16 Add a keyword  (unchanged) -------------------------------
 app.post('/api/admin/syllabus/chapter/:id/keywords', async (req, res) => {
     const { term, definition } = req.body;
     if (!term || !term.trim()) return res.status(400).json({ error: 'term is required.' });
@@ -4092,13 +4152,16 @@ app.post('/api/admin/syllabus/chapter/:id/keywords', async (req, res) => {
 });
 
 
-// --- 22.15 Delete a keyword -----------------------------------------
+// --- 22.17 Delete a keyword  (unchanged) ----------------------------
 app.delete('/api/admin/syllabus/keywords/:keywordId', async (req, res) => {
     try {
         await db.execute('DELETE FROM syllabus_keywords WHERE id = ?', [req.params.keywordId]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+
+
 // =====================================================================
 // === GROUP CHAT MODULE (UNIFIED PERMISSIONS & MULTI-TENANT) ==========
 // =====================================================================
