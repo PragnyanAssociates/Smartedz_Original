@@ -3825,26 +3825,197 @@ app.delete('/api/admin/study-materials/:id', async (req, res) => {
 
 
 // =====================================================================
-//  BACKEND — Section 22: SYLLABUS  (v3 — textbook-first + auto-detect)
+//  BACKEND — Section 22: SYLLABUS  (v4 — SELF-CONTAINED, no extra file)
 //
-//  REPLACE your old "Section 22 (v2)" block with this whole block.
-//  Add this require near the TOP of index.js (with the other requires):
+//  HOW TO USE:
+//   1. DELETE any line that says:
+//          const { detectChapters, slicePdf } = require('./syllabusDetect');
+//   2. DELETE any earlier copy of the detection functions you may have
+//      pasted (so detectChapters / slicePdf are not declared twice).
+//   3. REPLACE your whole old Section 22 block with everything below.
+//   4. In your BACKEND folder run, then commit package.json:
+//          npm install pdfjs-dist@3.11.174 pdf-lib --save
 //
-//      const { detectChapters, slicePdf } = require('./syllabusDetect');
-//
-//  What changed vs v2:
-//    • The textbook PDF now lives on the `syllabus` row (one book per
-//      subject), not per chapter.  See the migration .sql file.
-//    • Uploading the book auto-detects chapters from its index.
-//    • A chapter's "document" is sliced from the book on the fly, so the
-//      viewer only ever shows that chapter's pages.
-//    • Removed the old per-chapter PUT /chapter/:id/doc (no longer used).
+//  Everything detectChapters / slicePdf need is defined in THIS file,
+//  in the same scope as the routes — so it can never be "not defined".
 //
 //  Reuses nowSQL() from Section 16.
 // =====================================================================
 
+const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
+const { PDFDocument } = require('pdf-lib');
 
-// --- 22.1 Syllabus Management list  (unchanged) ---------------------
+// ---------------------------------------------------------------------
+//  Detection helpers
+// ---------------------------------------------------------------------
+async function detectChapters(buffer) {
+    const data = new Uint8Array(buffer);
+    const doc = await pdfjsLib.getDocument({
+        data, useSystemFonts: true, isEvalSupported: false,
+    }).promise;
+
+    const total = doc.numPages;
+    let chapters = [];
+    try { chapters = await _fromOutline(doc, total); } catch (_) { chapters = []; }
+    if (!chapters.length) {
+        try { chapters = await _fromTocText(doc, total); } catch (_) { chapters = []; }
+    }
+    if (!chapters.length) chapters = [{ title: 'Full Document', page_from: 1, page_to: total }];
+    try { await doc.cleanup(); await doc.destroy(); } catch (_) {}
+    return { total, chapters };
+}
+
+async function _fromOutline(doc, total) {
+    const outline = await doc.getOutline();
+    if (!outline || !outline.length) return [];
+    const items = [];
+    for (const node of outline) {
+        const idx = await _destToPageIndex(doc, node.dest);
+        items.push({ title: node.title || '', start: idx == null ? null : idx + 1 });
+    }
+    if (!items.some(i => i.start != null)) return [];
+    return _assemble(items, total);
+}
+
+async function _destToPageIndex(doc, dest) {
+    try {
+        let d = dest;
+        if (typeof d === 'string') d = await doc.getDestination(d);
+        if (!Array.isArray(d) || !d.length) return null;
+        const ref = d[0];
+        if (ref == null) return null;
+        return await doc.getPageIndex(ref);
+    } catch (_) { return null; }
+}
+
+async function _fromTocText(doc, total) {
+    const scan = Math.min(total, 20);
+    const candidates = [];
+    for (let p = 1; p <= scan; p++) {
+        const page = await doc.getPage(p);
+        const lines = await _pageToLines(page);
+        for (const ln of lines) {
+            const parsed = _parseTocLine(ln, total);
+            if (parsed) candidates.push(parsed);
+        }
+    }
+    if (candidates.length < 2) return [];
+    candidates.sort((a, b) => a.start - b.start);
+    const seen = new Set(); const items = [];
+    for (const c of candidates) {
+        if (seen.has(c.start)) continue;
+        seen.add(c.start);
+        items.push({ title: c.title, start: c.start });
+    }
+    return _assemble(items, total);
+}
+
+async function _pageToLines(page) {
+    const tc = await page.getTextContent();
+    const buckets = [];
+    for (const it of tc.items) {
+        const s = it.str || '';
+        if (!s.trim()) continue;
+        const y = it.transform[5];
+        const x = it.transform[4];
+        let b = buckets.find((bk) => Math.abs(bk.y - y) <= 3);
+        if (!b) { b = { y, parts: [] }; buckets.push(b); }
+        b.parts.push({ x, s });
+    }
+    buckets.sort((a, b) => b.y - a.y);
+    return buckets.map((b) =>
+        b.parts.sort((p, q) => p.x - q.x).map((p) => p.s).join(' ').replace(/\s+/g, ' ').trim()
+    );
+}
+
+function _parseTocLine(line, total) {
+    if (!line || line.length < 4) return null;
+    const m = line.match(/^(.*?[A-Za-z].*?)[\s.·•\-_]{1,}(\d{1,4})$/);
+    if (!m) return null;
+    const title = (m[1] || '').replace(/\s+/g, ' ').replace(/[\s.·•\-_]+$/, '').trim();
+    const pageNum = parseInt(m[2], 10);
+    if (!title || title.length < 3) return null;
+    if (!/[A-Za-z]/.test(title)) return null;
+    if (!(pageNum >= 1 && pageNum <= total)) return null;
+    return { title, start: pageNum };
+}
+
+function _assemble(items, total) {
+    if (!items.length) return [];
+    const n = items.length;
+    const starts = items.map(it => (Number.isFinite(it.start) ? it.start : null));
+    let prev = 0;
+    for (let i = 0; i < n; i++) {
+        if (starts[i] == null || starts[i] < 1 || starts[i] > total || starts[i] <= prev) starts[i] = null;
+        else prev = starts[i];
+    }
+    for (let i = 0; i < n; i++) {
+        if (starts[i] != null) continue;
+        let l = i - 1; while (l >= 0 && starts[l] == null) l--;
+        let r = i + 1; while (r < n && starts[r] == null) r++;
+        const lv = l >= 0 ? starts[l] : 1;
+        const rv = r < n ? starts[r] : total + 1;
+        const base = l >= 0 ? l : -1;
+        const span = (r < n ? r : n) - base;
+        let v = Math.round(lv + (rv - lv) * ((i - base) / span));
+        if (v <= lv) v = lv + 1;
+        if (v > total) v = total;
+        starts[i] = v;
+    }
+    const cleaned = items.map((it, i) => ({ title: _cleanTitle(it.title), start: starts[i] }));
+    const firstChapter = cleaned.findIndex(c => /^\d+\b/.test(c.title));
+    const result = [];
+    let startIdx = 0;
+    if (firstChapter > 0) {
+        result.push({ title: 'Index', page_from: 1, page_to: Math.max(1, cleaned[firstChapter].start - 1) });
+        startIdx = firstChapter;
+    } else if (cleaned[0].start > 1) {
+        result.push({ title: 'Index', page_from: 1, page_to: cleaned[0].start - 1 });
+    }
+    let seq = 0;
+    for (let i = startIdx; i < n; i++) {
+        seq++;
+        const from = cleaned[i].start;
+        const to = (i + 1 < n) ? cleaned[i + 1].start - 1 : total;
+        result.push({ title: _formatChapterTitle(cleaned[i].title, seq), page_from: from, page_to: Math.max(from, to) });
+    }
+    return result;
+}
+
+function _cleanTitle(t) {
+    return (t || '').replace(/\.pdf\s*$/i, '').replace(/\s+/g, ' ').trim();
+}
+function _titleCase(s) {
+    return (s || '').toLowerCase().replace(/\b([a-z])/g, (m) => m.toUpperCase());
+}
+function _formatChapterTitle(clean, seq) {
+    const m = clean.match(/^(\d+)\s*[.)]?\s*(.*)$/);
+    if (m && m[2]) return `${m[1]}. ${_titleCase(m[2])}`;
+    if (m) return `${m[1]}. Chapter ${m[1]}`;
+    return `${seq}. ${_titleCase(clean)}`;
+}
+
+async function slicePdf(buffer, from, to) {
+    const src = await PDFDocument.load(buffer, { ignoreEncryption: true });
+    const total = src.getPageCount();
+    let start = Math.max(1, parseInt(from, 10) || 1);
+    let end = Math.min(total, parseInt(to, 10) || total);
+    if (end < start) end = start;
+    const out = await PDFDocument.create();
+    const indices = [];
+    for (let i = start - 1; i <= end - 1; i++) indices.push(i);
+    const pages = await out.copyPages(src, indices);
+    pages.forEach((p) => out.addPage(p));
+    const bytes = await out.save();
+    return Buffer.from(bytes).toString('base64');
+}
+
+
+// ---------------------------------------------------------------------
+//  ROUTES
+// ---------------------------------------------------------------------
+
+// --- 22.1 Syllabus Management list ----------------------------------
 app.get('/api/admin/syllabus/list/:instId', async (req, res) => {
     const { instId } = req.params;
     const { classId } = req.query;
@@ -3874,7 +4045,7 @@ app.get('/api/admin/syllabus/list/:instId', async (req, res) => {
 });
 
 
-// --- 22.2 Create a syllabus  (unchanged) ----------------------------
+// --- 22.2 Create a syllabus -----------------------------------------
 app.post('/api/admin/syllabus', async (req, res) => {
     const {
         institutionId, academic_year_id, class_id, subject_id, teacher_id, created_by
@@ -3900,7 +4071,7 @@ app.post('/api/admin/syllabus', async (req, res) => {
 });
 
 
-// --- 22.3 Update a syllabus  (unchanged) ----------------------------
+// --- 22.3 Update a syllabus -----------------------------------------
 app.put('/api/admin/syllabus/:id', async (req, res) => {
     const { class_id, subject_id, teacher_id } = req.body;
     try {
@@ -3915,7 +4086,7 @@ app.put('/api/admin/syllabus/:id', async (req, res) => {
 });
 
 
-// --- 22.4 Delete a syllabus  (unchanged) ----------------------------
+// --- 22.4 Delete a syllabus -----------------------------------------
 app.delete('/api/admin/syllabus/:id', async (req, res) => {
     try {
         await db.execute('DELETE FROM syllabus WHERE id = ?', [req.params.id]);
@@ -3924,7 +4095,7 @@ app.delete('/api/admin/syllabus/:id', async (req, res) => {
 });
 
 
-// --- 22.5 Resolve a syllabus by class + subject  (unchanged) --------
+// --- 22.5 Resolve a syllabus by class + subject ---------------------
 app.get('/api/admin/syllabus/resolve/:instId/:classId/:subjectId', async (req, res) => {
     const { instId, classId, subjectId } = req.params;
     try {
@@ -3940,7 +4111,7 @@ app.get('/api/admin/syllabus/resolve/:instId/:classId/:subjectId', async (req, r
 });
 
 
-// --- 22.6 Chapters of a syllabus  (CHANGED: has_doc comes from book) -
+// --- 22.6 Chapters of a syllabus (has_doc comes from the book) ------
 app.get('/api/admin/syllabus/:syllabusId/chapters', async (req, res) => {
     try {
         const [rows] = await db.execute(
@@ -3960,7 +4131,7 @@ app.get('/api/admin/syllabus/:syllabusId/chapters', async (req, res) => {
 });
 
 
-// --- 22.7 Textbook meta for a syllabus  (NEW, light — no doc_data) ---
+// --- 22.7 Textbook meta for a syllabus (light — no doc_data) --------
 app.get('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
     try {
         const [rows] = await db.execute(
@@ -3974,11 +4145,7 @@ app.get('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
 });
 
 
-// --- 22.8 Upload / replace the textbook + auto-detect chapters (NEW) -
-//   Body: { doc_name, doc_data(base64 data-uri), page_offset? }
-//   Stores the book on the syllabus, reads its index, and rebuilds the
-//   chapter list.  NOTE: this replaces existing chapters (and, via the
-//   FK cascade, their keywords) — the UI warns before re-running.
+// --- 22.8 Upload / replace the textbook + auto-detect chapters ------
 app.put('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
     const { doc_name, doc_data, page_offset } = req.body;
     const syllabusId = req.params.syllabusId;
@@ -3998,7 +4165,6 @@ app.put('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
              nowSQL(), syllabusId]
         );
 
-        // rebuild chapter list from detection
         await db.execute('DELETE FROM syllabus_chapters WHERE syllabus_id = ?', [syllabusId]);
         let order = 0;
         for (const ch of chapters) {
@@ -4018,8 +4184,7 @@ app.put('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
 });
 
 
-// --- 22.9 Adjust the printed-vs-PDF page offset  (NEW) --------------
-//   Body: { page_offset }   (e.g. if printed page 1 == PDF page 5 -> 4)
+// --- 22.9 Adjust the printed-vs-PDF page offset ---------------------
 app.put('/api/admin/syllabus/:syllabusId/book/offset', async (req, res) => {
     try {
         await db.execute(
@@ -4031,9 +4196,7 @@ app.put('/api/admin/syllabus/:syllabusId/book/offset', async (req, res) => {
 });
 
 
-// --- 22.10 A chapter's pages, sliced from the book on the fly (CHANGED)
-//   Returns { doc_name, doc_data(base64 data-uri), doc_pages } for ONLY
-//   this chapter's page range.  The viewer is unchanged.
+// --- 22.10 A chapter's pages, sliced from the book on the fly -------
 app.get('/api/admin/syllabus/chapter/:id/doc', async (req, res) => {
     try {
         const [rows] = await db.execute(
@@ -4062,7 +4225,7 @@ app.get('/api/admin/syllabus/chapter/:id/doc', async (req, res) => {
 });
 
 
-// --- 22.11 Create a chapter (manual correction)  (unchanged) --------
+// --- 22.11 Create a chapter (manual correction) ---------------------
 app.post('/api/admin/syllabus/chapters', async (req, res) => {
     const { syllabus_id, title, page_from, page_to } = req.body;
     if (!syllabus_id || !title) {
@@ -4087,7 +4250,7 @@ app.post('/api/admin/syllabus/chapters', async (req, res) => {
 });
 
 
-// --- 22.12 Update a chapter's core fields  (unchanged) --------------
+// --- 22.12 Update a chapter's core fields ---------------------------
 app.put('/api/admin/syllabus/chapters/:id', async (req, res) => {
     const { title, page_from, page_to } = req.body;
     try {
@@ -4102,7 +4265,7 @@ app.put('/api/admin/syllabus/chapters/:id', async (req, res) => {
 });
 
 
-// --- 22.13 Delete a chapter  (unchanged) ----------------------------
+// --- 22.13 Delete a chapter -----------------------------------------
 app.delete('/api/admin/syllabus/chapters/:id', async (req, res) => {
     try {
         await db.execute('DELETE FROM syllabus_chapters WHERE id = ?', [req.params.id]);
@@ -4111,7 +4274,7 @@ app.delete('/api/admin/syllabus/chapters/:id', async (req, res) => {
 });
 
 
-// --- 22.14 Update a chapter's lesson-period schedule  (unchanged) ---
+// --- 22.14 Update a chapter's lesson-period schedule ----------------
 app.put('/api/admin/syllabus/chapter/:id/periods', async (req, res) => {
     const { periods, start_date, end_date } = req.body;
     try {
@@ -4126,7 +4289,7 @@ app.put('/api/admin/syllabus/chapter/:id/periods', async (req, res) => {
 });
 
 
-// --- 22.15 Keywords for a chapter  (unchanged) ----------------------
+// --- 22.15 Keywords for a chapter -----------------------------------
 app.get('/api/admin/syllabus/chapter/:id/keywords', async (req, res) => {
     try {
         const [rows] = await db.execute(
@@ -4138,7 +4301,7 @@ app.get('/api/admin/syllabus/chapter/:id/keywords', async (req, res) => {
 });
 
 
-// --- 22.16 Add a keyword  (unchanged) -------------------------------
+// --- 22.16 Add a keyword --------------------------------------------
 app.post('/api/admin/syllabus/chapter/:id/keywords', async (req, res) => {
     const { term, definition } = req.body;
     if (!term || !term.trim()) return res.status(400).json({ error: 'term is required.' });
@@ -4152,7 +4315,7 @@ app.post('/api/admin/syllabus/chapter/:id/keywords', async (req, res) => {
 });
 
 
-// --- 22.17 Delete a keyword  (unchanged) ----------------------------
+// --- 22.17 Delete a keyword -----------------------------------------
 app.delete('/api/admin/syllabus/keywords/:keywordId', async (req, res) => {
     try {
         await db.execute('DELETE FROM syllabus_keywords WHERE id = ?', [req.params.keywordId]);
