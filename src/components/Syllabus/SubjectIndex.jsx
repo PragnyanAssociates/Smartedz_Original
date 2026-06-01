@@ -7,17 +7,9 @@ import {
 import { pageLabel, fileToBase64 } from './SyllabusUtils';
 
 // =====================================================================
-//  Subject Index — three-panel screen for ONE syllabus.
-//
-//  NEW FLOW:
-//    1. Upload ONE textbook PDF for the syllabus.
-//    2. Chapters are auto-detected from its index: an "Index" entry,
-//       then 1. Chapter, 2. Chapter ... each with a page range.
-//    3. Clicking a chapter shows ONLY that chapter's pages (the backend
-//       slices the book on the fly).  Zoom / fullscreen unchanged.
-//
-//    LEFT   - Chapters list (auto; edit/delete to correct mistakes)
-//    MIDDLE - PDF viewer showing the selected chapter's pages
+//  Subject Index — textbook-first, auto-detected chapters.
+//    LEFT   - Chapters (auto from the book's index; edit/delete to fix)
+//    MIDDLE - PDF viewer showing ONLY the selected chapter's pages
 //    RIGHT  - Keywords for the selected chapter
 // =====================================================================
 
@@ -57,7 +49,6 @@ export default function SubjectIndex({ syllabus, canEdit, activeYear, onBack, on
 
   const hasBook = !!book && (book.has_book === 1 || book.has_book === true);
 
-  // Upload / replace the textbook -> backend detects chapters
   const uploadTextbook = useCallback(() => {
     const input = document.createElement('input');
     input.type = 'file';
@@ -72,7 +63,7 @@ export default function SubjectIndex({ syllabus, canEdit, activeYear, onBack, on
 
       setUp(true);
       try {
-        const obj = await fileToBase64(file, 80); // textbooks are large
+        const obj = await fileToBase64(file, 80);
         const res = await fetch(`${API_BASE_URL}/admin/syllabus/${syllabus.id}/book`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -90,7 +81,6 @@ export default function SubjectIndex({ syllabus, canEdit, activeYear, onBack, on
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
 
-      {/* Back Button */}
       <div className="flex items-center">
         <button onClick={onBack}
           className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors w-fit">
@@ -98,7 +88,6 @@ export default function SubjectIndex({ syllabus, canEdit, activeYear, onBack, on
         </button>
       </div>
 
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-2">
         <header className="flex flex-col">
           <div className="flex flex-wrap items-center gap-3">
@@ -131,7 +120,6 @@ export default function SubjectIndex({ syllabus, canEdit, activeYear, onBack, on
           <Loader2 className="animate-spin size-8 text-primary" />
         </div>
       ) : !hasBook ? (
-        /* ---- No textbook yet: upload prompt ---- */
         <div className="bg-white rounded-lg ring-1 ring-black/5 border-dashed shadow-sm flex-1 flex items-center justify-center min-h-[440px]">
           <div className="text-center p-8 max-w-md">
             <div className="size-14 rounded-xl bg-primary/10 text-primary flex items-center justify-center mx-auto mb-4">
@@ -154,7 +142,6 @@ export default function SubjectIndex({ syllabus, canEdit, activeYear, onBack, on
           </div>
         </div>
       ) : (
-        /* ---- Textbook present: three panels ---- */
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 flex-1 items-start">
           <div className="lg:col-span-4 xl:col-span-3">
             <ChaptersPanel
@@ -176,7 +163,7 @@ export default function SubjectIndex({ syllabus, canEdit, activeYear, onBack, on
 
 
 // =====================================================================
-//  LEFT - Chapters (auto-detected; edit/delete to correct)
+//  LEFT - Chapters
 // =====================================================================
 function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllabusId, book, onReplace, uploading }) {
   const [modalOpen, setModalOpen] = useState(false);
@@ -184,8 +171,7 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
   const [form, setForm] = useState({ title: '', page_from: '', page_to: '' });
   const [saving, setSaving] = useState(false);
 
-  // page-offset control (printed page vs PDF page)
-  const [offset, setOffset]   = useState(book?.page_offset ?? 0);
+  const [offset, setOffset]    = useState(book?.page_offset ?? 0);
   const [savingOff, setSavOff] = useState(false);
   useEffect(() => { setOffset(book?.page_offset ?? 0); }, [book]);
 
@@ -252,8 +238,6 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
     } catch (e) { alert(e.message); }
   };
 
-  const isIndex = (t) => /^(index|contents|table of contents)$/i.test((t || '').trim());
-
   return (
     <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm flex flex-col overflow-hidden max-h-[800px]">
       <div className="flex items-center justify-between p-4 border-b border-zinc-100 bg-zinc-50/50 shrink-0">
@@ -269,51 +253,47 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
       <div className="overflow-y-auto custom-scrollbar flex-1 p-2 space-y-1">
         {chapters.length === 0 ? (
           <p className="p-6 text-center text-sm text-zinc-400 font-medium">No chapters detected.</p>
-        ) : chapters.map((ch, i) => {
-          const idx = isIndex(ch.title);
-          return (
-            <div key={ch.id}
-              className={`group rounded-md transition-all cursor-pointer ring-1 ring-inset ${
-                selectedId === ch.id
-                  ? 'bg-primary/5 ring-primary/20 shadow-sm'
-                  : 'bg-white ring-transparent hover:ring-black/5 hover:bg-zinc-50'
-              }`}
-              onClick={() => onSelect(ch.id)}>
-              <div className="p-3 flex items-start gap-3">
-                <BookMarked className={`size-4 mt-0.5 shrink-0 transition-colors ${selectedId === ch.id ? 'text-primary' : 'text-zinc-400'}`} />
-                <div className="min-w-0 flex-1">
-                  <p className={`font-semibold text-sm leading-tight transition-colors truncate ${
-                    selectedId === ch.id ? 'text-primary' : 'text-zinc-900 group-hover:text-primary'
-                  }`}>
-                    {ch.title}
-                  </p>
-                  {pageLabel(ch.page_from, ch.page_to) && (
-                    <span className="inline-block text-[10px] font-semibold text-zinc-500 bg-zinc-100 px-1.5 py-0.5 rounded mt-1.5">
-                      {pageLabel(ch.page_from, ch.page_to)}
-                    </span>
-                  )}
-                </div>
-                {canEdit && (
-                  <div className="flex flex-col gap-1 shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                    <button onClick={e => { e.stopPropagation(); openEdit(ch); }}
-                      className="p-1.5 text-zinc-400 hover:text-primary hover:bg-white rounded-md transition-colors shadow-sm ring-1 ring-transparent hover:ring-black/5">
-                      <Edit className="size-3.5" />
-                    </button>
-                    <button onClick={e => { e.stopPropagation(); handleDelete(ch); }}
-                      className="p-1.5 text-zinc-400 hover:text-red-600 hover:bg-white rounded-md transition-colors shadow-sm ring-1 ring-transparent hover:ring-black/5">
-                      <Trash2 className="size-3.5" />
-                    </button>
-                  </div>
+        ) : chapters.map((ch) => (
+          <div key={ch.id}
+            className={`group rounded-md transition-all cursor-pointer ring-1 ring-inset ${
+              selectedId === ch.id
+                ? 'bg-primary/5 ring-primary/20 shadow-sm'
+                : 'bg-white ring-transparent hover:ring-black/5 hover:bg-zinc-50'
+            }`}
+            onClick={() => onSelect(ch.id)}>
+            <div className="p-3 flex items-start gap-3">
+              <BookMarked className={`size-4 mt-0.5 shrink-0 transition-colors ${selectedId === ch.id ? 'text-primary' : 'text-zinc-400'}`} />
+              <div className="min-w-0 flex-1">
+                <p className={`font-semibold text-sm leading-tight transition-colors truncate ${
+                  selectedId === ch.id ? 'text-primary' : 'text-zinc-900 group-hover:text-primary'
+                }`}>
+                  {ch.title}
+                </p>
+                {pageLabel(ch.page_from, ch.page_to) && (
+                  <span className="inline-block text-[10px] font-semibold text-zinc-500 bg-zinc-100 px-1.5 py-0.5 rounded mt-1.5">
+                    {pageLabel(ch.page_from, ch.page_to)}
+                  </span>
                 )}
               </div>
+              {canEdit && (
+                <div className="flex flex-col gap-1 shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                  <button onClick={e => { e.stopPropagation(); openEdit(ch); }}
+                    className="p-1.5 text-zinc-400 hover:text-primary hover:bg-white rounded-md transition-colors shadow-sm ring-1 ring-transparent hover:ring-black/5">
+                    <Edit className="size-3.5" />
+                  </button>
+                  <button onClick={e => { e.stopPropagation(); handleDelete(ch); }}
+                    className="p-1.5 text-zinc-400 hover:text-red-600 hover:bg-white rounded-md transition-colors shadow-sm ring-1 ring-transparent hover:ring-black/5">
+                    <Trash2 className="size-3.5" />
+                  </button>
+                </div>
+              )}
             </div>
-          );
-        })}
+          </div>
+        ))}
       </div>
 
       {canEdit && (
         <div className="p-3 border-t border-zinc-100 bg-zinc-50/50 shrink-0 space-y-2">
-          {/* page offset: align printed page numbers with the PDF */}
           <div className="flex items-center gap-2">
             <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider shrink-0" title="If the book's printed page 1 is not the PDF's first page, set the difference here.">
               Page offset
@@ -400,32 +380,9 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
 
 
 // =====================================================================
-//  MIDDLE - PDF viewer (shows ONLY the selected chapter's pages)
+//  MIDDLE - PDF viewer (iframe points straight at the chapter PDF URL)
 // =====================================================================
 function DocumentPanel({ chapter }) {
-  const [doc, setDoc]         = useState(null);
-  const [loading, setLoading] = useState(false);
-
-  const loadDoc = useCallback(async () => {
-    if (!chapter) { setDoc(null); return; }
-    setLoading(true);
-    try {
-      const res = await fetch(`${API_BASE_URL}/admin/syllabus/chapter/${chapter.id}/doc`);
-      const d = await res.json();
-      setDoc(d && d.doc_data ? d : null);
-    } catch (e) { console.error(e); setDoc(null); }
-    setLoading(false);
-  }, [chapter]);
-
-  useEffect(() => { loadDoc(); }, [loadDoc]);
-
-  const openFull = () => {
-    if (!doc?.doc_data) return;
-    const w = window.open();
-    if (w) w.document.write(
-      `<iframe src="${doc.doc_data}" style="width:100%;height:100%;border:0"></iframe>`);
-  };
-
   if (!chapter) {
     return (
       <div className="bg-white rounded-lg ring-1 ring-black/5 border-dashed shadow-sm flex items-center justify-center min-h-[500px] xl:min-h-[600px] w-full flex-1">
@@ -433,6 +390,9 @@ function DocumentPanel({ chapter }) {
       </div>
     );
   }
+
+  const url = `${API_BASE_URL}/admin/syllabus/chapter/${chapter.id}/pdf`;
+  const openFull = () => window.open(url, '_blank');
 
   return (
     <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm flex flex-col min-h-[500px] xl:min-h-[600px] flex-1 overflow-hidden">
@@ -447,29 +407,16 @@ function DocumentPanel({ chapter }) {
               {pageLabel(chapter.page_from, chapter.page_to)}
             </span>
           )}
-          {doc && (
-            <button onClick={openFull} title="Open full screen"
-              className="size-8 inline-flex items-center justify-center text-zinc-500 hover:text-primary hover:bg-primary/10 rounded-md transition-colors bg-white ring-1 ring-black/5 shadow-sm">
-              <Maximize2 className="size-4" />
-            </button>
-          )}
+          <button onClick={openFull} title="Open full screen"
+            className="size-8 inline-flex items-center justify-center text-zinc-500 hover:text-primary hover:bg-primary/10 rounded-md transition-colors bg-white ring-1 ring-black/5 shadow-sm">
+            <Maximize2 className="size-4" />
+          </button>
         </div>
       </div>
 
-      <div className="bg-zinc-100/50 flex-1 flex flex-col items-center justify-center w-full">
-        {loading ? (
-          <Loader2 className="animate-spin size-8 text-primary" />
-        ) : doc?.doc_data ? (
-          <iframe src={doc.doc_data} title={chapter.title}
-            className="w-full h-full border-0 min-h-[500px]" />
-        ) : (
-          <div className="text-center p-8">
-            <FileText className="size-12 text-zinc-300 mx-auto mb-3" />
-            <p className="text-zinc-500 font-medium text-sm max-w-sm mx-auto">
-              No pages available for this chapter.
-            </p>
-          </div>
-        )}
+      <div className="bg-zinc-100/50 flex-1 flex flex-col w-full">
+        <iframe key={chapter.id} src={url} title={chapter.title}
+          className="w-full h-full border-0 min-h-[500px]" />
       </div>
     </div>
   );
@@ -477,7 +424,7 @@ function DocumentPanel({ chapter }) {
 
 
 // =====================================================================
-//  RIGHT - Keywords (unchanged)
+//  RIGHT - Keywords
 // =====================================================================
 function KeywordsPanel({ chapter, canEdit }) {
   const [keywords, setKeywords] = useState([]);

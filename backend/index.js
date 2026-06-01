@@ -3825,19 +3825,19 @@ app.delete('/api/admin/study-materials/:id', async (req, res) => {
 
 
 // =====================================================================
-//  BACKEND — Section 22: SYLLABUS  (v4 — SELF-CONTAINED, no extra file)
+//  BACKEND — Section 22: SYLLABUS  (v5 — fast viewer, self-contained)
 //
-//  HOW TO USE:
-//   1. DELETE any line that says:
-//          const { detectChapters, slicePdf } = require('./syllabusDetect');
-//   2. DELETE any earlier copy of the detection functions you may have
-//      pasted (so detectChapters / slicePdf are not declared twice).
-//   3. REPLACE your whole old Section 22 block with everything below.
-//   4. In your BACKEND folder run, then commit package.json:
-//          npm install pdfjs-dist@3.11.174 pdf-lib --save
+//  REPLACE your whole Section 22 block (v4) with this.
+//  No separate file, no require('./syllabusDetect') needed.
+//  Requires (run in backend, commit package.json):
+//      npm install pdfjs-dist@3.11.174 pdf-lib --save
 //
-//  Everything detectChapters / slicePdf need is defined in THIS file,
-//  in the same scope as the routes — so it can never be "not defined".
+//  What changed vs v4:
+//    • Chapters are sliced ONCE at upload and stored, so opening a
+//      chapter is instant (no re-slicing the whole book each click).
+//    • New endpoint  GET /chapter/:id/pdf  returns the chapter as a real
+//      application/pdf file — the iframe loads it directly (no giant
+//      base64 in the browser). This is what fixes the stuck spinner.
 //
 //  Reuses nowSQL() from Section 16.
 // =====================================================================
@@ -3995,19 +3995,54 @@ function _formatChapterTitle(clean, seq) {
     return `${seq}. ${_titleCase(clean)}`;
 }
 
-async function slicePdf(buffer, from, to) {
+// ---------------------------------------------------------------------
+//  Slicing helpers
+//  sliceAll loads the source ONCE and cuts many ranges — fast at upload.
+// ---------------------------------------------------------------------
+async function sliceAll(buffer, ranges) {
     const src = await PDFDocument.load(buffer, { ignoreEncryption: true });
     const total = src.getPageCount();
-    let start = Math.max(1, parseInt(from, 10) || 1);
-    let end = Math.min(total, parseInt(to, 10) || total);
-    if (end < start) end = start;
-    const out = await PDFDocument.create();
-    const indices = [];
-    for (let i = start - 1; i <= end - 1; i++) indices.push(i);
-    const pages = await out.copyPages(src, indices);
-    pages.forEach((p) => out.addPage(p));
-    const bytes = await out.save();
-    return Buffer.from(bytes).toString('base64');
+    const slices = [];
+    for (const [from, to] of ranges) {
+        let start = Math.max(1, parseInt(from, 10) || 1);
+        let end = Math.min(total, parseInt(to, 10) || total);
+        if (end < start) end = start;
+        const d = await PDFDocument.create();
+        const idx = [];
+        for (let i = start - 1; i <= end - 1; i++) idx.push(i);
+        const pages = await d.copyPages(src, idx);
+        pages.forEach((p) => d.addPage(p));
+        const bytes = await d.save();
+        slices.push(Buffer.from(bytes).toString('base64'));
+    }
+    return { total, slices };
+}
+
+async function slicePdf(buffer, from, to) {
+    const { slices } = await sliceAll(buffer, [[from, to]]);
+    return slices[0];
+}
+
+// Re-cut a single chapter's slice from its parent book (after edits)
+async function resliceChapter(chapterId) {
+    const [rows] = await db.execute(
+        `SELECT c.page_from, c.page_to, s.doc_data, s.page_offset
+           FROM syllabus_chapters c JOIN syllabus s ON s.id = c.syllabus_id
+          WHERE c.id = ?`, [chapterId]);
+    if (!rows.length) return;
+    const r = rows[0];
+    if (!r.doc_data || !r.page_from) {
+        await db.execute('UPDATE syllabus_chapters SET doc_data = NULL, doc_pages = NULL WHERE id = ?', [chapterId]);
+        return;
+    }
+    const base64 = String(r.doc_data).replace(/^data:[^;]+;base64,/, '');
+    const buffer = Buffer.from(base64, 'base64');
+    const offset = r.page_offset || 0;
+    const from = (r.page_from || 1) + offset;
+    const to = (r.page_to || r.page_from || 1) + offset;
+    const b64 = await slicePdf(buffer, from, to);
+    await db.execute('UPDATE syllabus_chapters SET doc_data = ?, doc_pages = ? WHERE id = ?',
+        ['data:application/pdf;base64,' + b64, Math.max(1, (r.page_to - r.page_from + 1)), chapterId]);
 }
 
 
@@ -4076,9 +4111,7 @@ app.put('/api/admin/syllabus/:id', async (req, res) => {
     const { class_id, subject_id, teacher_id } = req.body;
     try {
         await db.execute(
-            `UPDATE syllabus
-                SET class_id = ?, subject_id = ?, teacher_id = ?
-              WHERE id = ?`,
+            `UPDATE syllabus SET class_id = ?, subject_id = ?, teacher_id = ? WHERE id = ?`,
             [class_id, subject_id, teacher_id || null, req.params.id]
         );
         res.json({ success: true });
@@ -4101,8 +4134,7 @@ app.get('/api/admin/syllabus/resolve/:instId/:classId/:subjectId', async (req, r
     try {
         const [rows] = await db.execute(
             `SELECT s.id, s.teacher_id, t.name AS teacher_name
-               FROM syllabus s
-               LEFT JOIN users t ON t.id = s.teacher_id
+               FROM syllabus s LEFT JOIN users t ON t.id = s.teacher_id
               WHERE s.institutionId = ? AND s.class_id = ? AND s.subject_id = ?`,
             [instId, classId, subjectId]
         );
@@ -4111,17 +4143,16 @@ app.get('/api/admin/syllabus/resolve/:instId/:classId/:subjectId', async (req, r
 });
 
 
-// --- 22.6 Chapters of a syllabus (has_doc comes from the book) ------
+// --- 22.6 Chapters of a syllabus ------------------------------------
 app.get('/api/admin/syllabus/:syllabusId/chapters', async (req, res) => {
     try {
         const [rows] = await db.execute(
             `SELECT c.id, c.syllabus_id, c.chapter_order, c.title,
                     c.page_from, c.page_to, c.doc_pages,
                     c.periods, c.start_date, c.end_date,
-                    (s.doc_data IS NOT NULL) AS has_doc,
+                    (c.doc_data IS NOT NULL) AS has_doc,
                     (SELECT COUNT(*) FROM syllabus_keywords k WHERE k.chapter_id = c.id) AS keyword_count
                FROM syllabus_chapters c
-               JOIN syllabus s ON s.id = c.syllabus_id
               WHERE c.syllabus_id = ?
               ORDER BY c.chapter_order, c.id`,
             [req.params.syllabusId]
@@ -4131,12 +4162,11 @@ app.get('/api/admin/syllabus/:syllabusId/chapters', async (req, res) => {
 });
 
 
-// --- 22.7 Textbook meta for a syllabus (light — no doc_data) --------
+// --- 22.7 Textbook meta (light — no doc_data) -----------------------
 app.get('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
     try {
         const [rows] = await db.execute(
-            `SELECT doc_name, doc_pages, page_offset,
-                    (doc_data IS NOT NULL) AS has_book
+            `SELECT doc_name, doc_pages, page_offset, (doc_data IS NOT NULL) AS has_book
                FROM syllabus WHERE id = ?`,
             [req.params.syllabusId]
         );
@@ -4145,7 +4175,7 @@ app.get('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
 });
 
 
-// --- 22.8 Upload / replace the textbook + auto-detect chapters ------
+// --- 22.8 Upload textbook -> detect chapters -> pre-slice each ------
 app.put('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
     const { doc_name, doc_data, page_offset } = req.body;
     const syllabusId = req.params.syllabusId;
@@ -4154,6 +4184,7 @@ app.put('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
     try {
         const base64 = String(doc_data).replace(/^data:[^;]+;base64,/, '');
         const buffer = Buffer.from(base64, 'base64');
+        const offset = parseInt(page_offset, 10) || 0;
 
         const { total, chapters } = await detectChapters(buffer);
 
@@ -4161,18 +4192,24 @@ app.put('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
             `UPDATE syllabus
                 SET doc_name = ?, doc_data = ?, doc_pages = ?, page_offset = ?, updated_at = ?
               WHERE id = ?`,
-            [doc_name || null, doc_data, total, parseInt(page_offset, 10) || 0,
-             nowSQL(), syllabusId]
+            [doc_name || null, doc_data, total, offset, nowSQL(), syllabusId]
         );
 
         await db.execute('DELETE FROM syllabus_chapters WHERE syllabus_id = ?', [syllabusId]);
+
+        const ranges = chapters.map(c => [c.page_from + offset, c.page_to + offset]);
+        const { slices } = await sliceAll(buffer, ranges);
+
         let order = 0;
-        for (const ch of chapters) {
+        for (let i = 0; i < chapters.length; i++) {
+            const ch = chapters[i];
+            const dataUri = 'data:application/pdf;base64,' + slices[i];
+            const pages = ranges[i][1] - ranges[i][0] + 1;
             await db.execute(
                 `INSERT INTO syllabus_chapters
-                   (syllabus_id, chapter_order, title, page_from, page_to)
-                 VALUES (?, ?, ?, ?, ?)`,
-                [syllabusId, order++, ch.title, ch.page_from, ch.page_to]
+                   (syllabus_id, chapter_order, title, page_from, page_to, doc_name, doc_data, doc_pages)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                [syllabusId, order++, ch.title, ch.page_from, ch.page_to, doc_name || null, dataUri, pages]
             );
         }
 
@@ -4184,48 +4221,59 @@ app.put('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
 });
 
 
-// --- 22.9 Adjust the printed-vs-PDF page offset ---------------------
+// --- 22.9 Change page offset -> re-slice all chapters ---------------
 app.put('/api/admin/syllabus/:syllabusId/book/offset', async (req, res) => {
     try {
-        await db.execute(
-            'UPDATE syllabus SET page_offset = ? WHERE id = ?',
-            [parseInt(req.body.page_offset, 10) || 0, req.params.syllabusId]
-        );
+        const offset = parseInt(req.body.page_offset, 10) || 0;
+        const sid = req.params.syllabusId;
+        await db.execute('UPDATE syllabus SET page_offset = ? WHERE id = ?', [offset, sid]);
+
+        const [bookRows] = await db.execute('SELECT doc_data FROM syllabus WHERE id = ?', [sid]);
+        if (bookRows.length && bookRows[0].doc_data) {
+            const base64 = String(bookRows[0].doc_data).replace(/^data:[^;]+;base64,/, '');
+            const buffer = Buffer.from(base64, 'base64');
+            const [chs] = await db.execute(
+                'SELECT id, page_from, page_to FROM syllabus_chapters WHERE syllabus_id = ? ORDER BY chapter_order, id',
+                [sid]);
+            const ranges = chs.map(c => [(c.page_from || 1) + offset, (c.page_to || c.page_from || 1) + offset]);
+            const { slices } = await sliceAll(buffer, ranges);
+            for (let i = 0; i < chs.length; i++) {
+                await db.execute('UPDATE syllabus_chapters SET doc_data = ?, doc_pages = ? WHERE id = ?',
+                    ['data:application/pdf;base64,' + slices[i], ranges[i][1] - ranges[i][0] + 1, chs[i].id]);
+            }
+        }
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 
-// --- 22.10 A chapter's pages, sliced from the book on the fly -------
+// --- 22.10 A chapter as a real PDF file (iframe loads this) ---------
+app.get('/api/admin/syllabus/chapter/:id/pdf', async (req, res) => {
+    try {
+        const [rows] = await db.execute('SELECT doc_data FROM syllabus_chapters WHERE id = ?', [req.params.id]);
+        if (!rows.length || !rows[0].doc_data) return res.status(404).send('No document');
+        const base64 = String(rows[0].doc_data).replace(/^data:[^;]+;base64,/, '');
+        const bytes = Buffer.from(base64, 'base64');
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', 'inline; filename="chapter.pdf"');
+        res.setHeader('Cache-Control', 'private, max-age=3600');
+        res.send(bytes);
+    } catch (err) { res.status(500).send(err.message); }
+});
+
+
+// --- 22.10b A chapter's stored slice as JSON (kept for compatibility)
 app.get('/api/admin/syllabus/chapter/:id/doc', async (req, res) => {
     try {
         const [rows] = await db.execute(
-            `SELECT c.page_from, c.page_to, s.doc_data, s.page_offset, s.doc_name
-               FROM syllabus_chapters c
-               JOIN syllabus s ON s.id = c.syllabus_id
-              WHERE c.id = ?`,
-            [req.params.id]
-        );
+            'SELECT doc_name, doc_data, doc_pages FROM syllabus_chapters WHERE id = ?', [req.params.id]);
         if (!rows.length || !rows[0].doc_data) return res.json({});
-
-        const r = rows[0];
-        const base64 = String(r.doc_data).replace(/^data:[^;]+;base64,/, '');
-        const buffer = Buffer.from(base64, 'base64');
-        const offset = r.page_offset || 0;
-        const from = (r.page_from || 1) + offset;
-        const to   = (r.page_to || r.page_from || 1) + offset;
-
-        const sliceB64 = await slicePdf(buffer, from, to);
-        res.json({
-            doc_name: r.doc_name || null,
-            doc_data: 'data:application/pdf;base64,' + sliceB64,
-            doc_pages: Math.max(1, (r.page_to - r.page_from + 1))
-        });
+        res.json(rows[0]);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 
-// --- 22.11 Create a chapter (manual correction) ---------------------
+// --- 22.11 Create a chapter (manual) -> slice it --------------------
 app.post('/api/admin/syllabus/chapters', async (req, res) => {
     const { syllabus_id, title, page_from, page_to } = req.body;
     if (!syllabus_id || !title) {
@@ -4234,32 +4282,26 @@ app.post('/api/admin/syllabus/chapters', async (req, res) => {
     try {
         const [[{ maxOrder }]] = await db.execute(
             `SELECT COALESCE(MAX(chapter_order), -1) + 1 AS maxOrder
-               FROM syllabus_chapters WHERE syllabus_id = ?`,
-            [syllabus_id]
-        );
+               FROM syllabus_chapters WHERE syllabus_id = ?`, [syllabus_id]);
         const [result] = await db.execute(
-            `INSERT INTO syllabus_chapters
-               (syllabus_id, chapter_order, title, page_from, page_to)
+            `INSERT INTO syllabus_chapters (syllabus_id, chapter_order, title, page_from, page_to)
              VALUES (?, ?, ?, ?, ?)`,
-            [syllabus_id, maxOrder, title, page_from || null, page_to || null]
-        );
-        await db.execute('UPDATE syllabus SET updated_at = ? WHERE id = ?',
-            [nowSQL(), syllabus_id]);
+            [syllabus_id, maxOrder, title, page_from || null, page_to || null]);
+        await resliceChapter(result.insertId);
+        await db.execute('UPDATE syllabus SET updated_at = ? WHERE id = ?', [nowSQL(), syllabus_id]);
         res.json({ success: true, id: result.insertId });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 
-// --- 22.12 Update a chapter's core fields ---------------------------
+// --- 22.12 Update a chapter -> re-slice it --------------------------
 app.put('/api/admin/syllabus/chapters/:id', async (req, res) => {
     const { title, page_from, page_to } = req.body;
     try {
         await db.execute(
-            `UPDATE syllabus_chapters
-                SET title = ?, page_from = ?, page_to = ?
-              WHERE id = ?`,
-            [title, page_from || null, page_to || null, req.params.id]
-        );
+            `UPDATE syllabus_chapters SET title = ?, page_from = ?, page_to = ? WHERE id = ?`,
+            [title, page_from || null, page_to || null, req.params.id]);
+        await resliceChapter(req.params.id);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -4274,16 +4316,13 @@ app.delete('/api/admin/syllabus/chapters/:id', async (req, res) => {
 });
 
 
-// --- 22.14 Update a chapter's lesson-period schedule ----------------
+// --- 22.14 Update lesson-period schedule ----------------------------
 app.put('/api/admin/syllabus/chapter/:id/periods', async (req, res) => {
     const { periods, start_date, end_date } = req.body;
     try {
         await db.execute(
-            `UPDATE syllabus_chapters
-                SET periods = ?, start_date = ?, end_date = ?
-              WHERE id = ?`,
-            [periods || 0, start_date || null, end_date || null, req.params.id]
-        );
+            `UPDATE syllabus_chapters SET periods = ?, start_date = ?, end_date = ? WHERE id = ?`,
+            [periods || 0, start_date || null, end_date || null, req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -4293,9 +4332,7 @@ app.put('/api/admin/syllabus/chapter/:id/periods', async (req, res) => {
 app.get('/api/admin/syllabus/chapter/:id/keywords', async (req, res) => {
     try {
         const [rows] = await db.execute(
-            'SELECT * FROM syllabus_keywords WHERE chapter_id = ? ORDER BY term',
-            [req.params.id]
-        );
+            'SELECT * FROM syllabus_keywords WHERE chapter_id = ? ORDER BY term', [req.params.id]);
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -4308,8 +4345,7 @@ app.post('/api/admin/syllabus/chapter/:id/keywords', async (req, res) => {
     try {
         const [result] = await db.execute(
             'INSERT INTO syllabus_keywords (chapter_id, term, definition) VALUES (?, ?, ?)',
-            [req.params.id, term.trim(), definition || null]
-        );
+            [req.params.id, term.trim(), definition || null]);
         res.json({ success: true, id: result.insertId });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
