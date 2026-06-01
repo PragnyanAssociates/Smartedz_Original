@@ -29,9 +29,9 @@ const fmtDateTime = (s) => {
 };
 
 const STATUS_META = {
-  P: { label: 'Present', text: 'text-emerald-600', bg: 'bg-emerald-50', icon: CheckCircle2 },
-  A: { label: 'Absent',  text: 'text-red-600',     bg: 'bg-red-50',     icon: XCircle },
-  L: { label: 'Late',    text: 'text-amber-600',   bg: 'bg-amber-50',   icon: Clock }
+  P: { label: 'Present', text: 'text-emerald-600', bg: 'bg-emerald-50', ring: 'ring-emerald-600/20', icon: CheckCircle2 },
+  A: { label: 'Absent',  text: 'text-red-600',     bg: 'bg-red-50',     ring: 'ring-red-600/20',     icon: XCircle },
+  L: { label: 'Late',    text: 'text-amber-600',   bg: 'bg-amber-50',   ring: 'ring-amber-600/20',   icon: Clock }
 };
 
 export default function AttendanceHistory({ userId, userName, selfOnly = false }) {
@@ -88,70 +88,72 @@ export default function AttendanceHistory({ userId, userName, selfOnly = false }
   // Render
   // -----------------------------------------------------------------
   return (
-    <div className="space-y-5">
-      {selfOnly && (
-        <div className="text-center">
-          <h2 className="text-lg font-black text-slate-800">{userName || me?.name}</h2>
-          <p className="text-xs text-slate-400 font-medium">Your attendance record</p>
-        </div>
-      )}
-      {!selfOnly && userName && (
-        <div className="text-center">
-          <h2 className="text-lg font-black text-slate-800">{userName}</h2>
+    <div className="space-y-6 animate-in fade-in duration-500">
+      
+      {/* Header Info */}
+      {(selfOnly || userName) && (
+        <div className="text-center sm:text-left flex flex-col mb-2">
+          <h2 className="text-lg font-semibold text-zinc-900 tracking-tight">
+            {selfOnly ? (userName || me?.name) : userName}
+          </h2>
+          {selfOnly && <p className="text-[11px] text-zinc-500 mt-0.5">Your personal attendance record.</p>}
         </div>
       )}
 
-      {/* Mode tabs */}
-      <div className="flex justify-center">
-        <div className="inline-flex bg-slate-100 rounded-xl p-1 gap-1">
+      {/* Controls Container: Tabs and Date Pickers */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        
+        {/* Mode tabs */}
+        <div className="inline-flex bg-zinc-100/80 p-1 rounded-md overflow-x-auto custom-scrollbar shrink-0 max-w-full">
           {['daily', 'monthly', 'yearly', 'custom'].map(m => (
             <button key={m} onClick={() => setMode(m)}
-              className={`px-4 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all ${
-                mode === m ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              className={`px-3 py-1.5 rounded text-[11px] font-semibold uppercase tracking-wider transition-colors whitespace-nowrap ${
+                mode === m 
+                  ? 'bg-white text-zinc-900 shadow-sm ring-1 ring-black/5' 
+                  : 'text-zinc-500 hover:text-zinc-700'
               }`}>
               {m}
             </button>
           ))}
         </div>
-      </div>
 
-      {/* Range pickers */}
-      <div className="flex justify-center">
-        <div className="bg-white border border-slate-100 rounded-2xl shadow-sm p-3 inline-flex flex-wrap items-center gap-3">
-          <CalIcon size={14} className="text-slate-400 ml-2" />
+        {/* Range pickers */}
+        <div className="flex items-center flex-wrap sm:flex-nowrap gap-2 w-full sm:w-auto">
+          <CalIcon className="size-4 text-zinc-400 shrink-0 hidden sm:block" />
+          
           {mode === 'daily' && (
             <input type="date" value={day} onChange={e => setDay(e.target.value)}
-              className="bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500/10" />
+              className="h-9 w-full sm:w-auto rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors" />
           )}
           {mode === 'monthly' && (
             <input type="month" value={month} onChange={e => setMonth(e.target.value)}
-              className="bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500/10" />
+              className="h-9 w-full sm:w-auto rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors" />
           )}
           {mode === 'yearly' && (
             <input type="number" min="2000" max="2099" value={year}
               onChange={e => setYear(parseInt(e.target.value, 10) || year)}
-              className="bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 text-sm w-24 outline-none focus:ring-2 focus:ring-blue-500/10" />
+              className="h-9 w-full sm:w-28 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors" />
           )}
           {mode === 'custom' && (
-            <>
-              <span className="text-xs font-bold text-slate-400 uppercase">From</span>
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <span className="text-[10px] font-semibold text-zinc-400 uppercase">From</span>
               <input type="date" value={from} onChange={e => setFrom(e.target.value)}
-                className="bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500/10" />
-              <span className="text-xs font-bold text-slate-400 uppercase">To</span>
+                className="h-9 w-full sm:w-auto rounded-md border border-zinc-200 bg-white px-2 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors" />
+              <span className="text-[10px] font-semibold text-zinc-400 uppercase">To</span>
               <input type="date" value={to} onChange={e => setTo(e.target.value)}
-                className="bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500/10" />
-            </>
+                className="h-9 w-full sm:w-auto rounded-md border border-zinc-200 bg-white px-2 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors" />
+            </div>
           )}
         </div>
       </div>
 
       {/* Summary cards */}
       {summary && summary.total > 0 && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <SumCard icon={BarChart3}      label="Attendance %" value={`${summary.percentage}%`} color="blue" />
-          <SumCard icon={CalendarCheck}  label="Present"      value={summary.present} color="emerald" />
-          <SumCard icon={CalendarX}      label="Absent"       value={summary.absent}  color="red" />
-          <SumCard icon={Clock}          label="Late"         value={summary.late}    color="amber" />
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+          <SumCard icon={BarChart3}     label="Attendance %" value={`${summary.percentage}%`} color="blue" />
+          <SumCard icon={CalendarCheck} label="Present"      value={summary.present} color="emerald" />
+          <SumCard icon={CalendarX}     label="Absent"       value={summary.absent}  color="red" />
+          <SumCard icon={Clock}         label="Late"         value={summary.late}    color="amber" />
         </div>
       )}
 
@@ -163,15 +165,15 @@ export default function AttendanceHistory({ userId, userName, selfOnly = false }
       {/* List */}
       {mode !== 'daily' && (
         loading ? (
-          <div className="text-center py-16">
-            <Loader2 className="animate-spin w-8 h-8 text-blue-600 mx-auto" />
+          <div className="h-48 flex items-center justify-center">
+            <Loader2 className="animate-spin size-6 text-primary" />
           </div>
         ) : rows.length === 0 ? (
-          <div className="bg-white p-16 rounded-3xl border border-dashed border-slate-200 text-center">
-            <p className="text-slate-400 font-medium">No attendance records in this range.</p>
+          <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center">
+            <p className="text-zinc-500 text-sm font-medium">No attendance records in this range.</p>
           </div>
         ) : (
-          <div className="bg-white rounded-3xl border border-slate-100 overflow-hidden shadow-sm divide-y divide-slate-50">
+          <div className="bg-white rounded-lg ring-1 ring-black/5 overflow-hidden divide-y divide-zinc-100">
             {rows.map(r => <HistoryRow key={r.id} row={r} />)}
           </div>
         )
@@ -181,53 +183,56 @@ export default function AttendanceHistory({ userId, userName, selfOnly = false }
 }
 
 // ---------------------------------------------------------------
+//  Subcomponents
+// ---------------------------------------------------------------
+
 function SumCard({ icon: Icon, label, value, color }) {
   const map = {
-    blue:    'bg-blue-50 text-blue-600',
-    emerald: 'bg-emerald-50 text-emerald-600',
-    red:     'bg-red-50 text-red-600',
-    amber:   'bg-amber-50 text-amber-600'
+    blue:    'bg-primary/10 text-primary ring-primary/20',
+    emerald: 'bg-emerald-50 text-emerald-600 ring-emerald-600/20',
+    red:     'bg-red-50 text-red-600 ring-red-600/20',
+    amber:   'bg-amber-50 text-amber-600 ring-amber-600/20'
   };
   return (
-    <div className="bg-white border border-slate-100 rounded-2xl p-5 shadow-sm">
-      <div className={`w-11 h-11 rounded-xl ${map[color]} flex items-center justify-center mb-3`}>
-        <Icon size={20} />
+    <div className="bg-white rounded-lg ring-1 ring-black/5 p-4 sm:p-5 flex flex-col">
+      <div className={`size-8 sm:size-10 rounded-md ${map[color]} ring-1 flex items-center justify-center mb-3 sm:mb-4`}>
+        <Icon className="size-4 sm:size-5" />
       </div>
-      <div className="text-2xl font-black text-slate-800">{value}</div>
-      <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">{label}</div>
+      <div className="text-xl sm:text-2xl font-semibold text-zinc-900 leading-none tabular-nums">{value}</div>
+      <div className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mt-1.5 truncate">{label}</div>
     </div>
   );
 }
 
 function HistoryRow({ row }) {
-  const meta = STATUS_META[row.status] || { label: 'Unknown', text: 'text-slate-500', bg: 'bg-slate-50', icon: Clock };
+  const meta = STATUS_META[row.status] || { label: 'Unknown', text: 'text-zinc-500', bg: 'bg-zinc-50', ring: 'ring-black/5', icon: Clock };
   const Icon = meta.icon;
+  
   return (
-    <div className="p-5 flex flex-col sm:flex-row sm:items-center gap-3">
-      <div className="flex-1">
-        <div className="flex items-center gap-3">
-          <div className={`${meta.bg} ${meta.text} w-10 h-10 rounded-xl flex items-center justify-center`}>
-            <Icon size={18} />
-          </div>
-          <div>
-            <div className="font-black text-slate-800">{fmtDate(row.attendance_date)}</div>
-            <div className={`text-xs font-bold uppercase tracking-widest ${meta.text}`}>{meta.label}</div>
-          </div>
+    <div className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-zinc-50/50 transition-colors">
+      <div className="flex items-center gap-3">
+        <div className={`${meta.bg} ${meta.text} ${meta.ring} ring-1 size-9 rounded-md flex items-center justify-center shrink-0`}>
+          <Icon className="size-4" />
+        </div>
+        <div className="flex flex-col min-w-0">
+          <div className="font-semibold text-zinc-900 text-sm whitespace-nowrap">{fmtDate(row.attendance_date)}</div>
+          <div className={`text-[10px] font-semibold uppercase tracking-wider ${meta.text}`}>{meta.label}</div>
         </div>
       </div>
-      <div className="text-xs text-slate-500 space-y-0.5 text-left sm:text-right">
+      
+      <div className="text-[11px] text-zinc-500 flex flex-col text-left sm:text-right pl-12 sm:pl-0">
         {row.marked_by_name && (
-          <div>
-            <span className="text-slate-400">Marked by</span>{' '}
-            <span className="font-bold text-slate-700">{row.marked_by_name}</span>{' '}
-            <span className="text-slate-400">({row.marked_by_role}) · {fmtDateTime(row.marked_at)}</span>
+          <div className="truncate">
+            <span className="text-zinc-400">Marked by</span>{' '}
+            <span className="font-medium text-zinc-700">{row.marked_by_name}</span>{' '}
+            <span className="text-zinc-400 whitespace-nowrap">({row.marked_by_role}) · {fmtDateTime(row.marked_at)}</span>
           </div>
         )}
         {row.updated_by_name && (
-          <div className="text-amber-600">
-            <span className="opacity-70">Updated by</span>{' '}
-            <span className="font-bold">{row.updated_by_name}</span>{' '}
-            <span className="opacity-70">({row.updated_by_role}) · {fmtDateTime(row.updated_at)}</span>
+          <div className="text-amber-600 truncate mt-0.5">
+            <span className="opacity-80">Updated by</span>{' '}
+            <span className="font-medium">{row.updated_by_name}</span>{' '}
+            <span className="opacity-80 whitespace-nowrap">({row.updated_by_role}) · {fmtDateTime(row.updated_at)}</span>
           </div>
         )}
       </div>
@@ -238,28 +243,37 @@ function HistoryRow({ row }) {
 function DailyBigCard({ row, date }) {
   if (!row) {
     return (
-      <div className="bg-slate-50 border-2 border-dashed border-slate-200 rounded-3xl p-12 text-center max-w-md mx-auto">
-        <Clock className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-        <p className="font-bold text-slate-500">No record for {fmtDate(date)}</p>
+      <div className="bg-white border border-dashed border-zinc-200 rounded-lg p-10 text-center max-w-sm mx-auto">
+        <Clock className="size-8 text-zinc-300 mx-auto mb-3" />
+        <p className="text-sm font-medium text-zinc-500">No record for {fmtDate(date)}</p>
       </div>
     );
   }
+  
   const meta = STATUS_META[row.status];
   const Icon = meta.icon;
-  const bigBg = row.status === 'P' ? 'bg-emerald-600' : row.status === 'A' ? 'bg-red-600' : 'bg-amber-500';
+  
   return (
-    <div className={`${bigBg} rounded-3xl p-10 text-white max-w-md mx-auto text-center shadow-xl`}>
-      <Icon size={56} className="mx-auto mb-3 opacity-90" />
-      <div className="text-3xl font-black uppercase tracking-widest">{meta.label}</div>
-      <div className="text-sm opacity-90 mt-2">{fmtDate(row.attendance_date)}</div>
-      <div className="mt-5 inline-block bg-white/15 backdrop-blur-sm rounded-full px-4 py-2 text-xs font-bold">
-        Marked by {row.marked_by_name} ({row.marked_by_role})
+    <div className={`rounded-lg p-8 text-center max-w-sm mx-auto shadow-sm ring-1 flex flex-col items-center ${meta.bg} ${meta.ring}`}>
+      <div className={`size-14 rounded-full bg-white flex items-center justify-center ${meta.text} shadow-sm mb-4`}>
+        <Icon className="size-7" />
       </div>
-      {row.updated_by_name && (
-        <div className="mt-2 text-xs opacity-90">
-          Updated by {row.updated_by_name} · {fmtDateTime(row.updated_at)}
+      <div className={`text-xl font-bold uppercase tracking-widest ${meta.text}`}>{meta.label}</div>
+      <div className={`text-xs font-medium mt-1 ${meta.text} opacity-80`}>{fmtDate(row.attendance_date)}</div>
+      
+      <div className="w-full h-px bg-black/5 my-4" />
+      
+      <div className="flex flex-col gap-1.5 text-[11px] text-zinc-700 w-full">
+        <div className="bg-white/60 rounded px-3 py-2 text-center ring-1 ring-black/5">
+          <span className="text-zinc-500">Marked by</span> <span className="font-semibold">{row.marked_by_name}</span> ({row.marked_by_role})
         </div>
-      )}
+        {row.updated_by_name && (
+          <div className="bg-white/60 rounded px-3 py-2 text-center ring-1 ring-black/5 text-amber-700">
+            <span className="opacity-80">Updated by</span> <span className="font-semibold">{row.updated_by_name}</span>
+            <div className="opacity-70 mt-0.5">{fmtDateTime(row.updated_at)}</div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

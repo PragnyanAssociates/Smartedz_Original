@@ -14,24 +14,23 @@ import Gallery from '../components/Gallery/Gallery';
 import Homework from '../components/Homework/Homework';
 import DigitalLabs from '../components/Labs/DigitalLabs';
 import Meals from '../components/Meals/Meals';
-import PTM from '../components/PTM/PTM'
+import PTM from '../components/PTM/PTM';
 import PreAdmissions from '../components/preadmissions/PreAdmissions';
 import StudyMaterialsScreen from '../components/study-materials/StudyMaterialsScreen';
 import Syllabus from '../components/Syllabus/Syllabus';
 import WhatsAppLayout from '../components/chat/WhatsAppLayout';
 import Alumni from '../components/Alumni/Alumni';
 import LessonPlan from '../components/LessonPlan/LessonPlan';
-
-
 import Profile from './Profile';
-import { PermissionsProvider, usePermissions } from './PermissionsContext';
-import { TAB_TO_MODULE, MODULES } from './Modules';
-import { classGroupOf }   from '../components/Performance/PerfUtils';
-import { ShieldOff } from 'lucide-react';
 import OnlineClasses from '../components/OnlineClasses/OnlineClasses';
+
+import { PermissionsProvider, usePermissions } from './PermissionsContext';
+import { MODULES } from './Modules';
+import { ShieldOff } from 'lucide-react';
 
 function DashboardShell() {
   const { isVisible, can, loading } = usePermissions();
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const firstAllowedTab = useMemo(() => {
     const first = MODULES.find(m => !m.hideFromSidebar && (m.alwaysVisible || isVisible(m.module_name)));
@@ -54,13 +53,13 @@ function DashboardShell() {
 
     if (moduleName && !currentMod?.alwaysVisible && !can(moduleName, 'view')) {
       return (
-        <div className="h-full flex items-center justify-center">
+        <div className="h-full flex items-center justify-center p-6">
           <div className="text-center max-w-md">
-            <div className="w-20 h-20 mx-auto bg-rose-50 text-rose-500 rounded-3xl flex items-center justify-center mb-6">
-              <ShieldOff size={32} />
+            <div className="size-16 mx-auto bg-accent/10 text-accent rounded-full flex items-center justify-center mb-4 ring-1 ring-accent/20">
+              <ShieldOff className="size-8 shrink-0" />
             </div>
-            <h2 className="text-3xl font-black text-slate-900">Access Denied</h2>
-            <p className="text-slate-500 mt-2 font-medium">You don't have permission to view this module.</p>
+            <h2 className="text-xl font-semibold text-zinc-900 tracking-tight">Access Denied</h2>
+            <p className="text-sm text-zinc-500 mt-2">You do not have permission to view this module.</p>
           </div>
         </div>
       );
@@ -90,23 +89,40 @@ function DashboardShell() {
       case 'Alumni':            return <Alumni/>;
       case 'LessonPlan':        return <LessonPlan/>;
     
+      default:
         return (
-          <div className="h-full flex items-center justify-center flex-col text-center opacity-40">
-            <h2 className="text-3xl font-black text-slate-900">Module Under Development</h2>
-            <p className="text-slate-500 mt-2 font-bold uppercase tracking-widest">This section is coming soon</p>
+          <div className="h-full flex items-center justify-center flex-col text-center opacity-60 p-6">
+            <h2 className="text-xl font-semibold text-zinc-900 tracking-tight">Module Under Development</h2>
+            <p className="text-[10px] font-semibold text-zinc-500 mt-2 uppercase tracking-wider">This section is coming soon</p>
           </div>
         );
     }
   };
 
   return (
-    <div className="flex flex-col h-screen bg-[#F8FAFC]">
-      <DashboardHeader />
-      <div className="flex flex-1 overflow-hidden">
-        <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
-        <main className="flex-1 overflow-y-auto p-8 custom-scrollbar">
-          {renderContent()}
-        </main>
+    <div className="flex flex-col h-[100dvh] bg-zinc-50 overflow-hidden w-full font-sans">
+      
+      <div className="h-[2px] w-full bg-gradient-brand shrink-0 z-50" />
+      
+      <div className="flex flex-1 overflow-hidden relative">
+        
+        {/* Pass the mobile state into the Sidebar */}
+        <Sidebar 
+          activeTab={activeTab} 
+          setActiveTab={setActiveTab} 
+          isMobileOpen={isMobileMenuOpen}
+          setIsMobileOpen={setIsMobileMenuOpen}
+        />
+        
+        <div className="flex flex-col flex-1 min-w-0">
+          
+          {/* Pass the toggle function into the Header */}
+          <DashboardHeader onMenuClick={() => setIsMobileMenuOpen(true)} />
+          
+          <main className="flex-1 overflow-y-auto custom-scrollbar relative">
+            {renderContent()}
+          </main>
+        </div>
       </div>
     </div>
   );

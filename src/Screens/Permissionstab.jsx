@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Save, Eye, EyeOff, Edit, Trash2 } from 'lucide-react';
+import { Save, Eye, EyeOff, Edit, Trash2, ShieldAlert, ChevronDown } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
 
 export default function PermissionsTab({ data }) {
@@ -89,102 +89,132 @@ export default function PermissionsTab({ data }) {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+      
+      {/* Header - Fixed for Mobile */}
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-6">
         <div>
-          <h3 className="text-xl font-bold text-slate-800">Module Permissions</h3>
-          <p className="text-slate-400 text-sm font-medium mt-1">
+          <h3 className="text-lg font-semibold text-zinc-900 tracking-tight">Module Permissions</h3>
+          <p className="text-[11px] text-zinc-500 mt-1 max-w-2xl">
             Pick a role, then decide which sidebar modules they can see, read, edit or delete.
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <label className="text-xs font-bold text-slate-500 uppercase">Role</label>
-          <select
-            value={selectedRoleId}
-            onChange={e => setSelectedRoleId(e.target.value)}
-            className="bg-white border border-slate-100 rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-500/10 min-w-[200px]">
-            {data.roles.map(r => (
-              <option key={r.id} value={r.id}>{r.role_name}</option>
-            ))}
-          </select>
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 w-full sm:w-auto shrink-0">
+          <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Target Role</label>
+          <div className="relative w-full sm:w-auto">
+            <select
+              value={selectedRoleId}
+              onChange={e => setSelectedRoleId(e.target.value)}
+              className="h-9 w-full sm:w-48 rounded-md border border-zinc-200 bg-white pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none transition-colors">
+              {data.roles.map(r => (
+                <option key={r.id} value={r.id}>{r.role_name}</option>
+              ))}
+            </select>
+            <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
         </div>
       </div>
 
       {loadingPerms ? (
         <div className="h-64 flex items-center justify-center">
-          <div className="w-8 h-8 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin"></div>
+          <div className="size-8 border-4 border-zinc-200 border-t-primary rounded-full animate-spin"></div>
         </div>
       ) : (
-        <div className="bg-white rounded-3xl border border-slate-100 overflow-hidden shadow-sm">
-          <div className="px-6 py-4 bg-blue-50/50 border-b border-slate-100 flex items-center justify-between">
+        <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden flex flex-col">
+          
+          {/* Action Bar - Stacks gracefully on mobile */}
+          <div className="px-5 py-4 bg-zinc-50/50 border-b border-zinc-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <p className="text-xs text-slate-400 font-black uppercase tracking-widest">Configuring</p>
-              <p className="text-lg font-black text-slate-800">{selectedRole?.role_name}</p>
+              <p className="text-[10px] font-semibold uppercase text-zinc-500 tracking-wider">Configuring Matrix For</p>
+              <p className="text-sm font-semibold text-zinc-900 mt-0.5">{selectedRole?.role_name}</p>
             </div>
             <button
               onClick={handleSave}
               disabled={saving || isSuperAdmin}
               title={isSuperAdmin ? 'Super Admin always has full access — no need to save.' : ''}
-              className="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-blue-100">
-              <Save size={16} />
-              {saving ? 'Saving…' : 'Save Permissions'}
+              className="w-full sm:w-auto bg-primary hover:bg-primary/90 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed text-white px-4 py-2 rounded-md text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shrink-0">
+              <Save className="size-3.5 shrink-0" />
+              {saving ? 'Saving...' : 'Save Permissions'}
             </button>
           </div>
 
+          {/* Super Admin Notice */}
           {isSuperAdmin && (
-            <div className="px-6 py-3 bg-purple-50/60 border-b border-purple-100 text-xs font-bold text-purple-700">
-              The Super Admin role automatically has full access to every module. This screen is read-only for Super Admin.
+            <div className="px-5 py-3 bg-accent/5 border-b border-accent/10 flex items-start sm:items-center gap-2 text-xs font-medium text-accent">
+              <ShieldAlert className="size-4 shrink-0 mt-0.5 sm:mt-0" />
+              <span className="leading-relaxed">The Super Admin role automatically has full access to every module. This matrix is read-only.</span>
             </div>
           )}
 
-          <table className="w-full text-left">
-            <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest">
-              <tr>
-                <th className="p-5">Module</th>
-                <th className="p-5 text-center"><div className="flex flex-col items-center gap-1"><EyeOff size={14} /> Hide</div></th>
-                <th className="p-5 text-center"><div className="flex flex-col items-center gap-1"><Eye size={14} /> Read</div></th>
-                <th className="p-5 text-center"><div className="flex flex-col items-center gap-1"><Edit size={14} /> Edit</div></th>
-                <th className="p-5 text-center"><div className="flex flex-col items-center gap-1"><Trash2 size={14} /> Delete</div></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {data.modules.map(mod => {
-                // Super Admin row always renders as fully checked (read/edit/delete on, hide off)
-                const p = isSuperAdmin
-                  ? { is_hidden: false, can_read: true, can_edit: true, can_delete: true }
-                  : (matrix[mod] || {});
-                const hidden = !!p.is_hidden;
-                return (
-                  <tr key={mod} className={`transition-colors ${hidden ? 'bg-slate-50/50' : 'hover:bg-slate-50/50'}`}>
-                    <td className="p-5 font-bold text-slate-700">{mod}</td>
-                    <td className="p-5 text-center">
-                      <input type="checkbox" checked={!!p.is_hidden}
-                        disabled={isSuperAdmin}
-                        onChange={() => toggle(mod, 'is_hidden')}
-                        className="w-5 h-5 accent-rose-600 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed" />
-                    </td>
-                    <td className="p-5 text-center">
-                      <input type="checkbox" checked={!!p.can_read} disabled={hidden || isSuperAdmin}
-                        onChange={() => toggle(mod, 'can_read')}
-                        className="w-5 h-5 accent-blue-600 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed" />
-                    </td>
-                    <td className="p-5 text-center">
-                      <input type="checkbox" checked={!!p.can_edit} disabled={hidden || isSuperAdmin}
-                        onChange={() => toggle(mod, 'can_edit')}
-                        className="w-5 h-5 accent-amber-600 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed" />
-                    </td>
-                    <td className="p-5 text-center">
-                      <input type="checkbox" checked={!!p.can_delete} disabled={hidden || isSuperAdmin}
-                        onChange={() => toggle(mod, 'can_delete')}
-                        className="w-5 h-5 accent-red-600 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed" />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          {/* Data Table - Wrapped in a horizontally scrollable container */}
+          <div className="overflow-x-auto custom-scrollbar w-full">
+            <table className="w-full text-left border-collapse min-w-[600px]">
+              <thead>
+                <tr className="bg-white">
+                  <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 whitespace-nowrap">Module</th>
+                  <th className="px-5 py-3 border-b border-zinc-100 whitespace-nowrap">
+                    <div className="flex flex-col items-center gap-1 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
+                      <EyeOff className="size-3.5" /> Hide
+                    </div>
+                  </th>
+                  <th className="px-5 py-3 border-b border-zinc-100 whitespace-nowrap">
+                    <div className="flex flex-col items-center gap-1 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
+                      <Eye className="size-3.5" /> Read
+                    </div>
+                  </th>
+                  <th className="px-5 py-3 border-b border-zinc-100 whitespace-nowrap">
+                    <div className="flex flex-col items-center gap-1 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
+                      <Edit className="size-3.5" /> Edit
+                    </div>
+                  </th>
+                  <th className="px-5 py-3 border-b border-zinc-100 whitespace-nowrap">
+                    <div className="flex flex-col items-center gap-1 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
+                      <Trash2 className="size-3.5" /> Delete
+                    </div>
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100">
+                {data.modules.map(mod => {
+                  // Super Admin row always renders as fully checked (read/edit/delete on, hide off)
+                  const p = isSuperAdmin
+                    ? { is_hidden: false, can_read: true, can_edit: true, can_delete: true }
+                    : (matrix[mod] || {});
+                  const hidden = !!p.is_hidden;
+                  
+                  return (
+                    <tr key={mod} className={`transition-colors ${hidden ? 'bg-zinc-50/50' : 'hover:bg-zinc-50/30'}`}>
+                      <td className="px-5 py-3 text-xs font-semibold text-zinc-700 whitespace-nowrap">{mod}</td>
+                      <td className="px-5 py-3 text-center">
+                        <input type="checkbox" checked={!!p.is_hidden}
+                          disabled={isSuperAdmin}
+                          onChange={() => toggle(mod, 'is_hidden')}
+                          className="size-3.5 accent-primary cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed rounded border-zinc-300" />
+                      </td>
+                      <td className="px-5 py-3 text-center">
+                        <input type="checkbox" checked={!!p.can_read} disabled={hidden || isSuperAdmin}
+                          onChange={() => toggle(mod, 'can_read')}
+                          className="size-3.5 accent-primary cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed rounded border-zinc-300" />
+                      </td>
+                      <td className="px-5 py-3 text-center">
+                        <input type="checkbox" checked={!!p.can_edit} disabled={hidden || isSuperAdmin}
+                          onChange={() => toggle(mod, 'can_edit')}
+                          className="size-3.5 accent-primary cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed rounded border-zinc-300" />
+                      </td>
+                      <td className="px-5 py-3 text-center">
+                        <input type="checkbox" checked={!!p.can_delete} disabled={hidden || isSuperAdmin}
+                          onChange={() => toggle(mod, 'can_delete')}
+                          className="size-3.5 accent-primary cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed rounded border-zinc-300" />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
 
-          <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 text-xs text-slate-500 font-medium">
-            <strong className="text-slate-700">Rules:</strong> <em>Hide</em> removes the module from the user's sidebar entirely. <em>Read</em> lets them open the page. <em>Edit</em> and <em>Delete</em> reveal the matching row-action buttons and auto-enable Read.
+          {/* Footer Guide */}
+          <div className="px-5 py-4 bg-zinc-50/50 border-t border-zinc-100 text-[11px] text-zinc-500 font-medium leading-relaxed">
+            <strong className="text-zinc-700 font-semibold">Rules:</strong> <em>Hide</em> removes the module from the user's sidebar entirely. <em>Read</em> lets them open the page. <em>Edit</em> and <em>Delete</em> reveal the matching row-action buttons and auto-enable Read.
           </div>
         </div>
       )}

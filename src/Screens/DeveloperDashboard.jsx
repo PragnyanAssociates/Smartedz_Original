@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import {
   Building2, Plus, LogOut, Trash2, Edit3, Image as ImageIcon, Shield,
-  Mail, Lock, User, Globe, Phone, Calendar, AlertTriangle, CheckCircle2, Infinity as InfinityIcon
+  Mail, Lock, User, Globe, Phone, Calendar, AlertTriangle, CheckCircle2, Infinity as InfinityIcon, ChevronDown, X, Loader2
 } from 'lucide-react';
 import smartedzLogo from '../assets/smartedzlogo.png';
 
@@ -18,9 +18,9 @@ const todayISO = () => new Date().toISOString().slice(0, 10);
 
 // Format a YYYY-MM-DD (or Date) as DD/MM/YYYY
 const fmtDMY = (val) => {
-  if (!val) return '—';
+  if (!val) return '-';
   const d = new Date(val);
-  if (isNaN(d.getTime())) return '—';
+  if (isNaN(d.getTime())) return '-';
   const dd = String(d.getDate()).padStart(2, '0');
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const yy = d.getFullYear();
@@ -31,7 +31,7 @@ const fmtDMY = (val) => {
 const planBadgeStyle = (inst) => {
   if (inst.usage_plan === 'Full Time' || inst.daysLeft === null) {
     return {
-      wrap: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100',
+      wrap: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20',
       icon: InfinityIcon,
       headline: 'Full Time',
       sub: 'No expiry'
@@ -39,7 +39,7 @@ const planBadgeStyle = (inst) => {
   }
   if (inst.expired) {
     return {
-      wrap: 'bg-red-50 text-red-700 ring-1 ring-red-200',
+      wrap: 'bg-red-50 text-red-700 ring-1 ring-inset ring-red-600/20',
       icon: AlertTriangle,
       headline: 'Plan Expired',
       sub: 'Renew to restore access'
@@ -47,7 +47,7 @@ const planBadgeStyle = (inst) => {
   }
   if (inst.daysLeft <= 7) {
     return {
-      wrap: 'bg-red-50 text-red-700 ring-1 ring-red-200',
+      wrap: 'bg-red-50 text-red-700 ring-1 ring-inset ring-red-600/20',
       icon: AlertTriangle,
       headline: `Only ${inst.daysLeft} day${inst.daysLeft === 1 ? '' : 's'} left`,
       sub: 'Plan ending soon'
@@ -55,14 +55,14 @@ const planBadgeStyle = (inst) => {
   }
   if (inst.daysLeft <= 30) {
     return {
-      wrap: 'bg-amber-50 text-amber-700 ring-1 ring-amber-200',
+      wrap: 'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-600/20',
       icon: Calendar,
       headline: `${inst.daysLeft} days left`,
       sub: 'Active'
     };
   }
   return {
-    wrap: 'bg-blue-50 text-blue-700 ring-1 ring-blue-100',
+    wrap: 'bg-primary/10 text-primary ring-1 ring-inset ring-primary/20',
     icon: CheckCircle2,
     headline: `${inst.daysLeft} days left`,
     sub: 'Active'
@@ -74,6 +74,7 @@ export default function DeveloperDashboard() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isEditMode, setIsEditMode]   = useState(false);
   const [selectedId, setSelectedId]   = useState(null);
+  const [isSaving, setIsSaving]       = useState(false);
 
   const blank = {
     name: '', type: 'School', logo: '', school_email: '', phone: '',
@@ -120,104 +121,120 @@ export default function DeveloperDashboard() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setIsSaving(true);
     const url = isEditMode
       ? `${API_URL}/api/developer/institution/${selectedId}`
       : `${API_URL}/api/developer/onboard`;
-    const res = await fetch(url, {
-      method: isEditMode ? 'PUT' : 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...formData,
-        schoolKey: isEditMode ? undefined : `SK-${Math.random().toString(36).substring(2, 8).toUpperCase()}`
-      })
-    });
-    if (res.ok) {
-      refreshData();
-      setIsModalOpen(false);
-    } else {
-      alert('Failed to save institution.');
+      
+    try {
+      const res = await fetch(url, {
+        method: isEditMode ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...formData,
+          schoolKey: isEditMode ? undefined : `SK-${Math.random().toString(36).substring(2, 8).toUpperCase()}`
+        })
+      });
+      if (res.ok) {
+        refreshData();
+        setIsModalOpen(false);
+      } else {
+        alert('Failed to save institution.');
+      }
+    } catch (error) {
+      alert('Network error while saving.');
+    } finally {
+      setIsSaving(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] flex flex-col font-sans">
-      <header className="bg-white/80 backdrop-blur-md border-b px-8 py-4 flex justify-between items-center sticky top-0 z-30">
+    <div className="min-h-screen bg-zinc-50 flex flex-col font-sans">
+      <header className="bg-white border-b border-zinc-200 px-6 py-3 flex justify-between items-center sticky top-0 z-30 shrink-0">
         <div className="flex items-center gap-4">
-          <img src={smartedzLogo} alt="SmartEdz" className="h-12 w-auto drop-shadow-sm" />
-          <div className="h-8 w-[1px] bg-slate-200"></div>
-          <h1 className="text-xl font-black text-slate-800 tracking-tight">DEV<span className="text-blue-600">CONSOLE</span></h1>
+          <img src={smartedzLogo} alt="SmartEdz" className="h-8 w-auto" />
+          <div className="h-6 w-[1px] bg-zinc-200"></div>
+          <h1 className="text-lg font-semibold text-zinc-900 tracking-tight">DEV<span className="text-primary">CONSOLE</span></h1>
         </div>
-        <button onClick={logout} className="rounded-full hover:bg-red-50 hover:text-red-600 px-4 py-2 flex items-center transition-all text-slate-500">
-          <LogOut size={18} className="mr-2" /> Sign Out
+        <button onClick={logout} className="h-9 px-4 rounded-md hover:bg-zinc-50 border border-zinc-200 text-zinc-600 hover:text-zinc-900 flex items-center transition-colors text-xs font-semibold shadow-sm">
+          <LogOut className="size-3.5 mr-2" /> Sign Out
         </button>
       </header>
 
-      <main className="p-8 max-w-[1400px] mx-auto w-full">
-        <div className="flex justify-between items-center mb-10">
+      <main className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto flex-1 flex flex-col">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
           <div>
-            <h2 className="text-3xl font-black text-slate-900 tracking-tight">Institutions</h2>
-            <p className="text-slate-500 font-medium">Control and monitor your system tenants.</p>
+            <h2 className="text-xl font-semibold text-zinc-900 tracking-tight">Institutions</h2>
+            <p className="text-sm text-zinc-500 mt-1">Control and monitor your system tenants.</p>
           </div>
-          <button onClick={openAddModal} className="bg-blue-600 hover:bg-blue-700 text-white shadow-xl shadow-blue-200 px-8 py-4 rounded-2xl transition-all hover:scale-105 active:scale-95 font-bold flex items-center">
-            <Plus className="w-5 h-5 mr-2" /> Onboard School
+          <button onClick={openAddModal} className="h-9 px-4 bg-primary hover:bg-primary/90 text-white shadow-sm rounded-md text-xs font-semibold flex items-center transition-colors w-full sm:w-auto justify-center shrink-0">
+            <Plus className="size-3.5 mr-1.5" /> Onboard School
           </button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
           {institutions.map(inst => {
             const badge = planBadgeStyle(inst);
             const BadgeIcon = badge.icon;
             const isFullTime = inst.usage_plan === 'Full Time' || inst.daysLeft === null;
             return (
-              <div key={inst.id} className="group border-none shadow-sm hover:shadow-2xl transition-all duration-500 rounded-[2rem] overflow-hidden bg-white ring-1 ring-slate-100 flex flex-col">
-                <div className="flex flex-row justify-between items-center bg-slate-50/50 p-6 border-none">
-                  <span className="bg-blue-600 text-white px-4 py-1.5 rounded-full text-xs font-bold shadow-md shadow-blue-100 uppercase">{inst.type}</span>
-                  <div className="flex gap-2">
-                    <button onClick={() => openEditModal(inst)} className="p-3 bg-white hover:bg-blue-600 hover:text-white text-slate-400 rounded-2xl shadow-sm transition-all duration-300">
-                      <Edit3 size={18} />
+              <div key={inst.id} className="group bg-white rounded-lg ring-1 ring-black/5 shadow-sm hover:ring-black/10 transition-shadow overflow-hidden flex flex-col">
+                <div className="flex flex-row justify-between items-center bg-zinc-50/50 p-4 border-b border-zinc-100">
+                  <span className="bg-zinc-100 text-zinc-700 ring-1 ring-inset ring-black/5 px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider">
+                    {inst.type}
+                  </span>
+                  <div className="flex items-center gap-1.5 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                    <button onClick={() => openEditModal(inst)} title="Edit"
+                      className="size-7 bg-white hover:bg-zinc-50 text-zinc-500 hover:text-primary rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5">
+                      <Edit3 className="size-3.5" />
                     </button>
                     <button
                       onClick={() => {
                         if (window.confirm('Are you sure you want to delete this institution?'))
                           fetch(`${API_URL}/api/developer/institution/${inst.id}`, { method: 'DELETE' }).then(refreshData);
                       }}
-                      className="p-3 bg-white hover:bg-red-600 hover:text-white text-slate-400 rounded-2xl shadow-sm transition-all duration-300">
-                      <Trash2 size={18} />
+                      title="Delete"
+                      className="size-7 bg-white hover:bg-red-50 text-zinc-500 hover:text-red-600 rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5">
+                      <Trash2 className="size-3.5" />
                     </button>
                   </div>
                 </div>
-                <div className="p-10 flex flex-col items-center">
-                  <div className="relative mb-6">
-                    <div className="absolute inset-0 bg-blue-400 blur-2xl opacity-10 rounded-full"></div>
+                
+                <div className="p-6 flex flex-col items-center flex-1">
+                  <div className="size-20 bg-zinc-50 ring-1 ring-inset ring-black/5 rounded-md flex items-center justify-center mb-4 overflow-hidden shadow-sm">
                     {inst.logo ? (
-                      <img src={inst.logo} className="w-28 h-28 object-contain rounded-3xl p-4 bg-white shadow-inner relative z-10 border border-slate-50" alt="logo" />
+                      <img src={inst.logo} className="w-full h-full object-contain p-2" alt="logo" />
                     ) : (
-                      <div className="w-28 h-28 bg-slate-100 rounded-3xl flex items-center justify-center text-slate-300 relative z-10"><Building2 size={40} /></div>
+                      <Building2 className="size-8 text-zinc-300" />
                     )}
                   </div>
-                  <h3 className="font-black text-2xl text-slate-800 tracking-tight">{inst.name}</h3>
-                  <div className="flex items-center gap-2 mt-3 bg-slate-100 px-4 py-1.5 rounded-full">
-                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Key: {inst.schoolKey}</span>
+                  
+                  <h3 className="font-semibold text-lg text-zinc-900 tracking-tight text-center line-clamp-1 w-full">{inst.name}</h3>
+                  <div className="mt-1.5">
+                    <span className="text-[10px] font-medium text-zinc-500 bg-zinc-100 px-2 py-0.5 rounded">
+                      Key: <span className="font-semibold">{inst.schoolKey}</span>
+                    </span>
                   </div>
 
-                  {/* ---- Plan badge ---- */}
-                  <div className={`mt-6 w-full rounded-2xl px-4 py-3 flex items-center gap-3 ${badge.wrap}`}>
-                    <BadgeIcon size={20} className="shrink-0" />
-                    <div className="flex flex-col min-w-0 flex-1">
-                      <span className="text-[10px] font-black uppercase tracking-[0.15em] opacity-70">
-                        {inst.usage_plan || 'Full Time'} Plan
-                      </span>
-                      <span className="text-sm font-black leading-tight truncate">{badge.headline}</span>
-                      {!isFullTime && (
-                        <span className="text-[11px] font-bold mt-0.5 opacity-80 tabular-nums">
-                          {fmtDMY(inst.plan_start_date)} → {fmtDMY(inst.planEndDate)}
+                  <div className="mt-auto pt-6 w-full">
+                    <div className={`w-full rounded-md px-3 py-2.5 flex items-center gap-3 ${badge.wrap}`}>
+                      <BadgeIcon className="size-5 shrink-0" />
+                      <div className="flex flex-col min-w-0 flex-1">
+                        <span className="text-[10px] font-semibold uppercase tracking-wider opacity-80 mb-0.5">
+                          {inst.usage_plan || 'Full Time'} Plan
                         </span>
-                      )}
-                      {isFullTime && (
-                        <span className="text-[11px] font-bold mt-0.5 opacity-80">
-                          Since {fmtDMY(inst.plan_start_date)}
-                        </span>
-                      )}
+                        <span className="text-sm font-semibold leading-tight truncate">{badge.headline}</span>
+                        {!isFullTime && (
+                          <span className="text-[10px] font-medium mt-0.5 opacity-80 tabular-nums">
+                            {fmtDMY(inst.plan_start_date)} - {fmtDMY(inst.planEndDate)}
+                          </span>
+                        )}
+                        {isFullTime && (
+                          <span className="text-[10px] font-medium mt-0.5 opacity-80">
+                            Since {fmtDMY(inst.plan_start_date)}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -226,9 +243,9 @@ export default function DeveloperDashboard() {
           })}
 
           {institutions.length === 0 && (
-            <div className="col-span-full bg-white p-16 rounded-3xl border border-dashed border-slate-200 text-center">
-              <Building2 className="mx-auto text-slate-300 mb-3" size={42} />
-              <p className="text-slate-400 font-bold">No institutions onboarded yet.</p>
+            <div className="col-span-full bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center justify-center">
+              <Building2 className="size-10 text-zinc-300 mb-3" />
+              <p className="text-zinc-500 font-medium text-sm">No institutions onboarded yet.</p>
             </div>
           )}
         </div>
@@ -236,153 +253,187 @@ export default function DeveloperDashboard() {
 
       {/* ============================== MODAL ============================== */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fadeIn">
-          <div className="bg-white rounded-[2.5rem] w-full max-w-xl overflow-hidden shadow-2xl animate-slide-up max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b flex justify-between items-center bg-slate-50">
-              <h2 className="font-bold text-lg text-slate-800">{isEditMode ? 'Update Institution Profile' : 'Onboard New Client'}</h2>
-              <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600 text-2xl">&times;</button>
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-zinc-900/40 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-2xl shadow-xl relative flex flex-col max-h-[92vh] animate-in zoom-in-95 duration-200">
+            
+            <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 rounded-t-lg shrink-0">
+              <h2 className="font-semibold text-lg text-zinc-900 tracking-tight">
+                {isEditMode ? 'Update Institution Profile' : 'Onboard New Client'}
+              </h2>
+              <button onClick={() => setIsModalOpen(false)} className="text-zinc-400 hover:text-zinc-700 transition-colors p-1.5 hover:bg-zinc-100 rounded-md">
+                <X className="size-4" />
+              </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="p-8 space-y-8">
-              {/* Logo */}
-              <div className="flex justify-center">
-                <div className="relative group">
-                  <div className="absolute -inset-1 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-[2.5rem] blur opacity-25 group-hover:opacity-50 transition duration-1000"></div>
-                  <div className="relative w-32 h-32 bg-white rounded-[2rem] border-2 border-dashed border-slate-200 flex items-center justify-center overflow-hidden cursor-pointer hover:border-blue-500 transition-all shadow-inner">
-                    {formData.logo ? (
-                      <img src={formData.logo} className="w-full h-full object-contain p-4" alt="Preview" />
-                    ) : (
-                      <div className="text-center">
-                        <ImageIcon className="mx-auto text-slate-300 mb-1" size={32} />
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Institution Logo</p>
-                      </div>
-                    )}
-                    <input type="file" accept="image/*" onChange={handleFileChange} className="absolute inset-0 opacity-0 cursor-pointer" />
-                  </div>
-                </div>
-              </div>
-
-              {/* General */}
-              <div className="space-y-4">
-                <div className="flex items-center gap-2 text-slate-400 mb-2">
-                  <Globe size={14} />
-                  <span className="text-[10px] font-black uppercase tracking-[0.2em]">General Information</span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="block text-xs font-semibold text-slate-700 mb-1 ml-1">Official Name</label>
-                    <input required placeholder="Lincoln High" value={formData.name}
-                      onChange={e => setFormData({ ...formData, name: e.target.value })}
-                      className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-slate-50/50" />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="block text-xs font-semibold text-slate-700 mb-1 ml-1">Category</label>
-                    <select value={formData.type}
-                      onChange={e => setFormData({ ...formData, type: e.target.value })}
-                      className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-slate-50/50 cursor-pointer appearance-none">
-                      <option value="School">School</option>
-                      <option value="College">College</option>
-                      <option value="University">University</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="block text-xs font-semibold text-slate-700 mb-1 ml-1">School Email</label>
-                    <div className="relative">
-                      <Mail className="absolute left-3 top-3.5 text-slate-400" size={14} />
-                      <input required type="email" placeholder="info@school.com"
-                        className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-slate-50/50 pl-10"
-                        value={formData.school_email}
-                        onChange={e => setFormData({ ...formData, school_email: e.target.value })} />
-                    </div>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="block text-xs font-semibold text-slate-700 mb-1 ml-1">Contact Phone</label>
-                    <div className="relative">
-                      <Phone className="absolute left-3 top-3.5 text-slate-400" size={14} />
-                      <input required placeholder="+91 000-000-0000"
-                        className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-slate-50/50 pl-10"
-                        value={formData.phone}
-                        onChange={e => setFormData({ ...formData, phone: e.target.value })} />
+            <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-8">
+                
+                {/* Logo */}
+                <div className="flex justify-center">
+                  <div className="relative group">
+                    <div className="relative size-24 bg-zinc-50 rounded-md border-2 border-dashed border-zinc-200 flex flex-col items-center justify-center overflow-hidden cursor-pointer hover:border-primary/50 transition-colors shadow-sm">
+                      {formData.logo ? (
+                        <img src={formData.logo} className="w-full h-full object-contain p-2" alt="Preview" />
+                      ) : (
+                        <div className="text-center flex flex-col items-center">
+                          <ImageIcon className="text-zinc-400 mb-1 size-6" />
+                          <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Logo</p>
+                        </div>
+                      )}
+                      <input type="file" accept="image/*" onChange={handleFileChange} className="absolute inset-0 opacity-0 cursor-pointer" disabled={isSaving} />
                     </div>
                   </div>
                 </div>
-              </div>
 
-              {/* ============== Subscription block ============== */}
-              <div className="space-y-4">
-                <div className="flex items-center gap-2 text-slate-400 mb-2">
-                  <Calendar size={14} />
-                  <span className="text-[10px] font-black uppercase tracking-[0.2em]">Subscription Plan</span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="block text-xs font-semibold text-slate-700 mb-1 ml-1">Plan</label>
-                    <select
-                      value={formData.usage_plan}
-                      onChange={e => setFormData({ ...formData, usage_plan: e.target.value })}
-                      className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-slate-50/50 cursor-pointer">
-                      {PLAN_OPTIONS.map(opt => (
-                        <option key={opt} value={opt}>{opt}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="block text-xs font-semibold text-slate-700 mb-1 ml-1">Start Date</label>
-                    <input
-                      type="date"
-                      value={formData.plan_start_date}
-                      onChange={e => setFormData({ ...formData, plan_start_date: e.target.value })}
-                      className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-slate-50/50" />
-                  </div>
-                </div>
-
-                <p className="text-[11px] text-slate-400 font-medium ml-1">
-                  Tip: "Full Time" never expires. Other plans count from the start date you pick.
-                </p>
-              </div>
-
-              {/* Super admin */}
-              <div className="bg-slate-50/80 p-6 rounded-[2rem] border border-slate-100 space-y-4 relative overflow-hidden">
-                <div className="absolute top-0 right-0 p-4 opacity-[0.03]"><Shield size={80} /></div>
-                <div className="flex items-center gap-2 text-blue-600 mb-4">
-                  <Shield size={14} />
-                  <span className="text-[10px] font-black uppercase tracking-[0.2em]">Master Admin Access</span>
-                </div>
-
+                {/* General */}
                 <div className="space-y-4">
-                  <div className="relative">
-                    <User className="absolute left-4 top-4 text-slate-400" size={16} />
-                    <input required placeholder="Full Name"
-                      className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-white pl-12"
-                      value={formData.superAdminName}
-                      onChange={e => setFormData({ ...formData, superAdminName: e.target.value })} />
+                  <div className="flex items-center gap-1.5 text-zinc-500 mb-3 border-b border-zinc-100 pb-2">
+                    <Globe className="size-4" />
+                    <span className="text-[11px] font-semibold uppercase tracking-wider">General Information</span>
                   </div>
-                  <div className="relative">
-                    <Mail className="absolute left-4 top-4 text-slate-400" size={16} />
-                    <input type="email" required placeholder="Admin Login Email"
-                      className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-white pl-12"
-                      value={formData.superAdminEmail}
-                      onChange={e => setFormData({ ...formData, superAdminEmail: e.target.value })} />
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Official Name <span className="text-red-500">*</span></label>
+                      <input required placeholder="Lincoln High" value={formData.name}
+                        onChange={e => setFormData({ ...formData, name: e.target.value })}
+                        disabled={isSaving}
+                        className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Category</label>
+                      <div className="relative">
+                        <select value={formData.type}
+                          onChange={e => setFormData({ ...formData, type: e.target.value })}
+                          disabled={isSaving}
+                          className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 appearance-none shadow-sm transition-colors cursor-pointer">
+                          <option value="School">School</option>
+                          <option value="College">College</option>
+                          <option value="University">University</option>
+                        </select>
+                        <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      </div>
+                    </div>
                   </div>
-                  <div className="relative">
-                    <Lock className="absolute left-4 top-4 text-slate-400" size={16} />
-                    <input required placeholder="Login Password"
-                      className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-white pl-12"
-                      value={formData.superAdminPassword}
-                      onChange={e => setFormData({ ...formData, superAdminPassword: e.target.value })} />
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">School Email <span className="text-red-500">*</span></label>
+                      <div className="relative">
+                        <Mail className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
+                        <input required type="email" placeholder="info@school.com"
+                          disabled={isSaving}
+                          className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors"
+                          value={formData.school_email}
+                          onChange={e => setFormData({ ...formData, school_email: e.target.value })} />
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Contact Phone <span className="text-red-500">*</span></label>
+                      <div className="relative">
+                        <Phone className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
+                        <input required placeholder="+91 000-000-0000"
+                          disabled={isSaving}
+                          className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors"
+                          value={formData.phone}
+                          onChange={e => setFormData({ ...formData, phone: e.target.value })} />
+                      </div>
+                    </div>
                   </div>
                 </div>
+
+                {/* Subscription block */}
+                <div className="space-y-4">
+                  <div className="flex items-center gap-1.5 text-zinc-500 mb-3 border-b border-zinc-100 pb-2 mt-6">
+                    <Calendar className="size-4" />
+                    <span className="text-[11px] font-semibold uppercase tracking-wider">Subscription Plan</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Plan</label>
+                      <div className="relative">
+                        <select
+                          value={formData.usage_plan}
+                          disabled={isSaving}
+                          onChange={e => setFormData({ ...formData, usage_plan: e.target.value })}
+                          className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 appearance-none shadow-sm transition-colors cursor-pointer">
+                          {PLAN_OPTIONS.map(opt => (
+                            <option key={opt} value={opt}>{opt}</option>
+                          ))}
+                        </select>
+                        <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Start Date</label>
+                      <input
+                        type="date"
+                        disabled={isSaving}
+                        value={formData.plan_start_date}
+                        onChange={e => setFormData({ ...formData, plan_start_date: e.target.value })}
+                        className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-zinc-500 font-medium">
+                    Tip: "Full Time" never expires. Other plans count from the start date you pick.
+                  </p>
+                </div>
+
+                {/* Super admin */}
+                <div className="bg-zinc-50 p-5 rounded-md ring-1 ring-inset ring-black/5 space-y-4 relative overflow-hidden mt-6">
+                  <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none"><Shield className="size-24" /></div>
+                  
+                  <div className="flex items-center gap-1.5 text-primary mb-2">
+                    <Shield className="size-4" />
+                    <span className="text-[11px] font-semibold uppercase tracking-wider">Master Admin Access</span>
+                  </div>
+
+                  <div className="space-y-4 relative z-10">
+                    <div className="relative">
+                      <User className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
+                      <input required placeholder="Full Name"
+                        disabled={isSaving}
+                        className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors"
+                        value={formData.superAdminName}
+                        onChange={e => setFormData({ ...formData, superAdminName: e.target.value })} />
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="relative">
+                        <Mail className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
+                        <input type="email" required placeholder="Login Email"
+                          disabled={isSaving}
+                          className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors"
+                          value={formData.superAdminEmail}
+                          onChange={e => setFormData({ ...formData, superAdminEmail: e.target.value })} />
+                      </div>
+                      <div className="relative">
+                        <Lock className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
+                        <input required placeholder="Login Password"
+                          disabled={isSaving}
+                          className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors"
+                          value={formData.superAdminPassword}
+                          onChange={e => setFormData({ ...formData, superAdminPassword: e.target.value })} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
               </div>
 
-              <button type="submit" className="w-full py-6 text-lg font-black rounded-3xl bg-slate-900 text-white hover:bg-blue-600 shadow-2xl shadow-blue-100 transition-all duration-500 uppercase tracking-widest">
-                {isEditMode ? 'Save All Changes' : 'Deploy System'}
-              </button>
+              <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
+                <button type="button" onClick={() => setIsModalOpen(false)} disabled={isSaving}
+                  className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 rounded-md font-semibold text-xs hover:bg-zinc-50 transition-colors w-full sm:w-auto">
+                  Cancel
+                </button>
+                <button type="submit" disabled={isSaving}
+                  className="h-9 px-6 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors w-full sm:w-auto min-w-[120px]">
+                  {isSaving && <Loader2 className="size-3.5 animate-spin shrink-0" />}
+                  {isSaving ? 'Saving...' : (isEditMode ? 'Save Changes' : 'Deploy System')}
+                </button>
+              </div>
             </form>
+
           </div>
         </div>
       )}

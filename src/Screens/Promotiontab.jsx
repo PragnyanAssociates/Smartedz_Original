@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Users, CircleArrowUp, Search, GraduationCap } from 'lucide-react';
+import { Users, CircleArrowUp, Search, GraduationCap, ChevronDown } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
 import { useAuth } from '../context/AuthContext';
 
@@ -81,24 +81,13 @@ export default function PromotionTab({ data, fetchData }) {
     }
   };
 
-  // --- Passout → Alumni -------------------------------------------
+  // --- Passout -> Alumni -------------------------------------------
   const promoteToAlumni = async () => {
-    // Figure out the class they're passing out from. If a source class is
-    // chosen we use that; otherwise we leave it blank (mixed selection).
     const srcClass = data.classes.find(c => String(c.id) === String(sourceClassId));
     const finalClass = srcClass ? classLabel(srcClass) : null;
-    const passoutYear =
-      (activeYear && (activeYear.year_name || activeYear.name)) || '';
+    const passoutYear = (activeYear && (activeYear.year_name || activeYear.name)) || '';
 
-    // Resolve institutionId reliably from the logged-in user, falling
-    // back to the data bundle. Guard with ?? null so we NEVER send
-    // undefined to the backend (mysql2 rejects undefined bind params).
-    const institutionId =
-      user?.institutionId
-      ?? data?.institutionId
-      ?? data?.institution?.id
-      ?? data?.users?.[0]?.institutionId
-      ?? null;
+    const institutionId = user?.institutionId ?? data?.institutionId ?? data?.institution?.id ?? data?.users?.[0]?.institutionId ?? null;
 
     if (!institutionId) {
       return alert('Could not determine the institution. Please reload and try again.');
@@ -130,9 +119,7 @@ export default function PromotionTab({ data, fetchData }) {
     if (!target.classId) return alert('Select a target class.');
 
     if (isAlumniTarget) {
-      if (!window.confirm(
-        `Move ${selectedStudents.length} student(s) to Alumni? They will be marked as passed out.`
-      )) return;
+      if (!window.confirm(`Move ${selectedStudents.length} student(s) to Alumni? They will be marked as passed out.`)) return;
       return promoteToAlumni();
     }
 
@@ -143,82 +130,88 @@ export default function PromotionTab({ data, fetchData }) {
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="text-xl font-bold text-slate-800">Student Promotion Engine</h3>
-        <p className="text-slate-400 text-sm font-medium mt-1">
+        <h3 className="text-lg font-semibold text-zinc-900 tracking-tight">Student Promotion Engine</h3>
+        <p className="text-[11px] text-zinc-500 max-w-3xl mt-1 leading-relaxed">
           Filter by source class, tick the students who passed (or use Select All), pick the destination
-          class and section, then execute. Students who failed simply stay unchecked — they remain in their current class.
-          To graduate a final-year class, pick <strong>Alumni (Passout)</strong> as the destination.
+          class and section, then execute. Students who failed simply stay unchecked &mdash; they remain in their current class.
+          To graduate a final-year class, pick <strong className="text-zinc-700 font-semibold">Alumni (Passout)</strong> as the destination.
         </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        
         {/* LEFT — student list */}
-        <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm">
-          <h4 className="text-xs font-black text-blue-500 uppercase mb-6 tracking-widest flex items-center gap-2">
-            <Users size={14} /> Select Students to Move
+        <div className="ring-1 ring-black/5 rounded-lg bg-white p-6 flex flex-col h-full">
+          <h4 className="text-[11px] font-semibold text-zinc-500 uppercase mb-5 tracking-wider flex items-center gap-2">
+            <Users className="size-4 text-primary" /> Select Students to Move
           </h4>
 
-          <div className="space-y-3 mb-5">
-            <select
-              value={sourceClassId}
-              onChange={e => { setSourceClassId(e.target.value); setSelectedStudents([]); }}
-              className="w-full bg-slate-50 border border-slate-100 rounded-xl p-3 outline-none focus:ring-2 focus:ring-blue-500/10">
-              <option value="">All Classes</option>
-              {data.classes.map(c => (
-                <option key={c.id} value={c.id}>{classLabel(c)}</option>
-              ))}
-            </select>
+          <div className="space-y-3 mb-5 shrink-0">
+            <div className="relative">
+              <select
+                value={sourceClassId}
+                onChange={e => { setSourceClassId(e.target.value); setSelectedStudents([]); }}
+                className="h-9 w-full rounded-md border border-zinc-200 bg-white pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none transition-colors">
+                <option value="">All Classes</option>
+                {data.classes.map(c => (
+                  <option key={c.id} value={c.id}>{classLabel(c)}</option>
+                ))}
+              </select>
+              <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
 
             <div className="relative">
-              <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+              <Search className="size-4 text-zinc-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
-                placeholder="Search by name…"
+                placeholder="Search by name..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-100 rounded-xl pl-10 pr-4 py-3 outline-none focus:ring-2 focus:ring-blue-500/10"
+                className="h-9 w-full rounded-md border border-zinc-200 bg-white pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors"
               />
             </div>
 
             {visibleStudents.length > 0 && (
-              <label className="flex items-center gap-3 px-4 py-3 bg-blue-50 rounded-2xl cursor-pointer border border-blue-100">
+              <label className="flex items-center gap-2.5 px-3 py-2 bg-zinc-50 rounded-md cursor-pointer ring-1 ring-black/5 hover:bg-zinc-100/50 transition-colors">
                 <input
                   type="checkbox"
-                  className="w-5 h-5 accent-blue-600 cursor-pointer"
+                  className="size-4 accent-primary cursor-pointer rounded border-zinc-300"
                   checked={allSelected}
                   onChange={toggleAll}
                 />
-                <span className="text-sm font-black text-blue-700 uppercase tracking-wider">
+                <span className="text-[10px] font-semibold text-zinc-700 uppercase tracking-wider">
                   {allSelected ? 'Deselect All Visible' : 'Select All Visible'}
                 </span>
-                <span className="ml-auto text-xs font-bold text-blue-500">
+                <span className="ml-auto text-[10px] font-semibold text-zinc-400">
                   ({visibleStudents.length})
                 </span>
               </label>
             )}
           </div>
 
-          <div className="max-h-[400px] overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+          <div className="flex-1 overflow-y-auto max-h-[400px] space-y-2 pr-1 custom-scrollbar">
             {visibleStudents.length > 0 ? visibleStudents.map(s => {
               const cls = data.classes.find(c => c.id === s.class_id);
               const isOn = selectedStudents.includes(s.id);
               return (
-                <label key={s.id} className={`flex items-center gap-3 p-4 rounded-2xl border transition-all cursor-pointer ${
-                  isOn ? 'bg-blue-50 border-blue-200 shadow-sm' : 'bg-slate-50 border-transparent hover:border-slate-200'
+                <label key={s.id} className={`flex items-center gap-3 p-3 rounded-md transition-colors cursor-pointer ring-1 ${
+                  isOn 
+                    ? 'bg-primary/5 ring-primary/20' 
+                    : 'bg-zinc-50/50 ring-black/5 hover:bg-zinc-50 hover:ring-zinc-200'
                 }`}>
                   <input type="checkbox"
-                    className="w-5 h-5 accent-blue-600 cursor-pointer"
+                    className="size-4 accent-primary cursor-pointer rounded border-zinc-300"
                     checked={isOn}
                     onChange={() => toggleOne(s.id)} />
                   <div className="flex flex-col">
-                    <span className="font-black text-slate-700 text-sm leading-none">{s.name}</span>
-                    <span className="text-[10px] font-bold text-slate-400 mt-1 uppercase">
+                    <span className="font-semibold text-zinc-900 text-sm">{s.name}</span>
+                    <span className="text-[10px] font-medium text-zinc-500 mt-0.5 uppercase tracking-wider">
                       {cls ? classLabel(cls) : 'Unassigned'}{s.roll_no ? ` • Roll ${s.roll_no}` : ''}
                     </span>
                   </div>
                 </label>
               );
             }) : (
-              <p className="text-slate-400 italic text-center py-10 font-medium text-sm">
+              <p className="text-zinc-400 italic text-center py-10 text-xs">
                 No students match this filter.
               </p>
             )}
@@ -226,62 +219,70 @@ export default function PromotionTab({ data, fetchData }) {
         </div>
 
         {/* RIGHT — destination */}
-        <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-6 h-fit">
-          <h4 className="text-xs font-black text-emerald-500 uppercase mb-6 tracking-widest flex items-center gap-2">
-            <CircleArrowUp size={14} /> Destination Settings
+        <div className="ring-1 ring-black/5 rounded-lg bg-white p-6 h-fit flex flex-col">
+          <h4 className="text-[11px] font-semibold text-zinc-500 uppercase mb-5 tracking-wider flex items-center gap-2">
+            <CircleArrowUp className="size-4 text-primary" /> Destination Settings
           </h4>
 
-          <div className="space-y-4">
-            <div className="flex flex-col gap-2">
-              <label className="text-xs font-bold text-slate-400 uppercase">Target Class</label>
-              <select className="w-full bg-slate-50 border border-slate-100 rounded-xl p-3 outline-none"
-                value={target.classId}
-                onChange={e => setTarget({ ...target, classId: e.target.value })}>
-                <option value="">Select Target Class</option>
-                {data.classes.map(c => (
-                  <option key={c.id} value={c.id}>{classLabel(c)}</option>
-                ))}
-                {/* Special destination: graduate the students out of school */}
-                <option value={ALUMNI_TARGET}>🎓 Alumni (Passout)</option>
-              </select>
+          <div className="space-y-4 mb-8">
+            <div>
+              <label className="text-xs font-medium text-zinc-600 mb-1.5 block">
+                Target Class <span className="text-accent">*</span>
+              </label>
+              <div className="relative">
+                <select 
+                  className="h-9 w-full rounded-md border border-zinc-200 bg-white pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none transition-colors"
+                  value={target.classId}
+                  onChange={e => setTarget({ ...target, classId: e.target.value })}>
+                  <option value="">Select Target Class...</option>
+                  {data.classes.map(c => (
+                    <option key={c.id} value={c.id}>{classLabel(c)}</option>
+                  ))}
+                  <option value={ALUMNI_TARGET}>Alumni (Passout)</option>
+                </select>
+                <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
             </div>
 
-            {/* Section only applies when moving to a real class */}
             {!isAlumniTarget && (
-              <div className="flex flex-col gap-2">
-                <label className="text-xs font-bold text-slate-400 uppercase">Target Section (optional)</label>
-                <input placeholder="e.g. A"
-                  className="w-full bg-slate-50 border border-slate-100 rounded-xl p-3 outline-none"
+              <div>
+                <label className="text-xs font-medium text-zinc-600 mb-1.5 block">
+                  Target Section <span className="text-zinc-400 font-normal">(Optional)</span>
+                </label>
+                <input 
+                  placeholder="e.g. A"
+                  className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors"
                   value={target.section}
-                  onChange={e => setTarget({ ...target, section: e.target.value })} />
+                  onChange={e => setTarget({ ...target, section: e.target.value })} 
+                />
               </div>
             )}
 
-            {/* Alumni note */}
             {isAlumniTarget && (
-              <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-2xl p-4">
-                <GraduationCap size={18} className="text-amber-600 shrink-0 mt-0.5" />
-                <p className="text-xs font-medium text-amber-700 leading-relaxed">
-                  These students will be snapshotted into <strong>Alumni</strong> as passed out
-                  {activeYear ? <> for <strong>{activeYear.year_name || activeYear.name}</strong></> : null}
-                  , and removed from the active student roster. This can't be auto-undone.
+              <div className="flex items-start gap-3 bg-accent/5 ring-1 ring-accent/20 rounded-md p-4">
+                <GraduationCap className="size-5 text-accent shrink-0 mt-0.5" />
+                <p className="text-[11px] font-medium text-zinc-700 leading-relaxed">
+                  These students will be snapshotted into <strong className="font-semibold text-accent">Alumni</strong> as passed out
+                  {activeYear ? <> for <strong className="font-semibold">{activeYear.year_name || activeYear.name}</strong></> : null}
+                  , and removed from the active student roster. This action cannot be auto-undone.
                 </p>
               </div>
             )}
           </div>
 
-          <div className="pt-6 border-t border-slate-50">
-            <div className="flex justify-between items-center mb-6">
-              <span className="text-sm font-bold text-slate-400">Selected Students</span>
-              <span className="text-3xl font-black text-slate-800">{selectedStudents.length}</span>
+          <div className="pt-5 border-t border-zinc-100 mt-auto">
+            <div className="flex justify-between items-center mb-5">
+              <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Selected Students</span>
+              <span className="text-2xl font-semibold text-zinc-900 tabular-nums">{selectedStudents.length}</span>
             </div>
+            
             <button
               onClick={handlePromote}
               disabled={selectedStudents.length === 0 || !target.classId}
-              className={`w-full disabled:bg-slate-200 disabled:cursor-not-allowed text-white py-4 rounded-2xl font-black uppercase tracking-widest transition-all shadow-xl ${
+              className={`w-full py-2.5 rounded-md text-xs font-medium transition-colors disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed ${
                 isAlumniTarget
-                  ? 'bg-amber-500 hover:bg-amber-600 shadow-amber-100'
-                  : 'bg-blue-600 hover:bg-blue-700 shadow-blue-100'
+                  ? 'bg-accent text-white hover:bg-accent/90'
+                  : 'bg-primary text-white hover:bg-primary/90'
               }`}>
               {isAlumniTarget ? 'Move to Alumni' : 'Execute Batch Promotion'}
             </button>

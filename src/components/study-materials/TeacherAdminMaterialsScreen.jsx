@@ -1,21 +1,20 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { API_BASE_URL, SERVER_URL } from "../../apiConfig";
 import { useAuth } from "../../context/AuthContext";
-import { usePermissions } from "../../Screens/PermissionsContext"; // Added Permissions Import
+import { usePermissions } from "../../Screens/PermissionsContext";
 import { 
   Folder, Edit, Trash2, Download, ExternalLink, Plus, 
-  Search, X, FileText, Video, MonitorPlay, FileSpreadsheet, Link
+  Search, X, FileText, Video, MonitorPlay, FileSpreadsheet, Link,
+  Loader2, ChevronDown, BookOpen, Save
 } from 'lucide-react';
-
-const getContainerClasses = () => "w-full max-w-7xl mx-auto px-4 lg:px-8";
 
 const getCardAesthetics = (type) => {
   switch(type) {
-    case "Video Lecture": return { bg: "bg-rose-50", icon: <Video size={48} className="text-rose-400" /> };
-    case "Presentation": return { bg: "bg-amber-50", icon: <MonitorPlay size={48} className="text-amber-400" /> };
-    case "Link": return { bg: "bg-sky-50", icon: <Link size={48} className="text-sky-400" /> };
-    case "Worksheet": return { bg: "bg-emerald-50", icon: <FileSpreadsheet size={48} className="text-emerald-400" /> };
-    default: return { bg: "bg-indigo-50", icon: <FileText size={48} className="text-indigo-400" /> };
+    case "Video Lecture": return { bg: "bg-rose-50", icon: <Video className="size-10 text-rose-400" /> };
+    case "Presentation": return { bg: "bg-amber-50", icon: <MonitorPlay className="size-10 text-amber-400" /> };
+    case "Link": return { bg: "bg-sky-50", icon: <Link className="size-10 text-sky-400" /> };
+    case "Worksheet": return { bg: "bg-emerald-50", icon: <FileSpreadsheet className="size-10 text-emerald-400" /> };
+    default: return { bg: "bg-indigo-50", icon: <FileText className="size-10 text-indigo-400" /> };
   }
 };
 
@@ -82,89 +81,117 @@ export default function TeacherAdminMaterialsScreen() {
   }, [materials, query]);
 
   return (
-    <div className="min-h-screen bg-slate-50 relative">
-      <main className={`${getContainerClasses()} pt-0 pb-6 sm:pb-8 flex flex-col flex-1`}>
+    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
+      
+      <header className="flex flex-col mb-2 sm:mb-0">
+        <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
+          <BookOpen className="text-primary size-5" />
+          Study Materials
+        </h1>
+        <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">Manage and share educational resources.</p>
+      </header>
+
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div className="relative w-full sm:w-72 shrink-0">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
+          <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search materials..."
+            className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-4 text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors placeholder:text-zinc-400" />
+        </div>
         
-        <div className="mb-3 flex flex-col items-center justify-center text-center gap-1">
-          <h1 className="text-xl lg:text-2xl font-black text-slate-800">Study Materials</h1>
-          <p className="text-sm text-slate-500 font-medium">Manage and share educational resources</p>
-        </div>
+        {/* Permissions Wrapper for Add Button */}
+        {(canEdit || isAdmin) && (
+          <button onClick={() => openModal()} className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full sm:w-auto shrink-0">
+            <Plus className="size-3.5" /> Add Material
+          </button>
+        )}
+      </div>
 
-        <div className="mb-6 flex flex-col sm:flex-row justify-between items-center gap-4">
-          <div className="relative w-full sm:w-72">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
-            <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search materials..."
-              className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500/20 shadow-sm" />
+      <div className="flex-1">
+        {isLoading ? (
+          <div className="h-64 flex items-center justify-center">
+            <Loader2 className="animate-spin size-8 text-primary" />
           </div>
-          {/* Permissions Wrapper for Add Button */}
-          {(canEdit || isAdmin) && (
-            <button onClick={() => openModal()} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 shadow-lg w-full sm:w-auto">
-              <Plus size={18} /> Add Material
-            </button>
-          )}
-        </div>
-
-        <div className="flex-1">
-          {isLoading ? <div className="py-20 text-center text-slate-500 font-medium animate-pulse">Loading...</div> : 
-           filteredMaterials.length === 0 ? (
-            <div className="bg-white p-16 rounded-3xl border border-dashed border-slate-200 text-center">
-              <Folder className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-              <p className="text-slate-500 font-medium">No materials uploaded yet.</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {filteredMaterials.map((item) => {
-                const aesthetics = getCardAesthetics(item.material_type);
-                return (
-                  <div key={item.id} className="group bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col hover:shadow-md transition-all">
-                    <div className={`h-36 ${aesthetics.bg} border-b border-slate-100 flex items-center justify-center relative`}>
-                      {aesthetics.icon}
-                      <span className="absolute bottom-3 left-3 bg-white/90 text-slate-700 text-[10px] uppercase font-black px-2.5 py-1 rounded-md">{item.material_type}</span>
-                      <div className="absolute top-3 right-3 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                        {/* Permissions Wrapper for Edit and Delete Buttons */}
-                        {(canEdit || isAdmin) && (
-                          <button onClick={() => openModal(item)} className="p-2 bg-white/90 text-slate-600 rounded-lg hover:text-blue-600"><Edit size={14}/></button>
-                        )}
-                        {(canDelete || isAdmin) && (
-                          <button onClick={() => handleDelete(item.id)} className="p-2 bg-white/90 text-slate-600 rounded-lg hover:text-red-600"><Trash2 size={14}/></button>
-                        )}
-                      </div>
-                    </div>
-                    <div className="p-5 flex flex-col flex-grow">
-                      <h3 className="font-black text-slate-800 text-lg leading-tight line-clamp-1 mb-2">{item.title}</h3>
-                      <div className="flex gap-2 mb-3">
-                        <span className="text-[10px] font-black uppercase tracking-wider bg-slate-100 text-slate-500 px-2 py-1 rounded-md">{item.className} {item.section}</span>
-                        {item.subject_name && <span className="text-[10px] font-black uppercase tracking-wider bg-slate-100 text-slate-500 px-2 py-1 rounded-md">{item.subject_name}</span>}
-                      </div>
-                      {item.description && <p className="text-xs text-slate-500 line-clamp-2 mb-4">{item.description}</p>}
-                      <div className="mt-auto pt-3 border-t border-slate-100">
-                        {item.file_path ? (
-                          <button onClick={() => window.open(`${SERVER_URL.replace('/api','')}${item.file_path}`, "_blank")} className="w-full py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-xs rounded-xl flex justify-center gap-2 items-center"><Download size={14} /> Download</button>
-                        ) : item.external_link ? (
-                          <button onClick={() => window.open(item.external_link, "_blank")} className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl flex justify-center gap-2 items-center"><ExternalLink size={14} /> Open Link</button>
-                        ) : null}
-                      </div>
+        ) : filteredMaterials.length === 0 ? (
+          <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
+            <Folder className="size-10 text-zinc-300 mb-3" />
+            <p className="text-zinc-500 text-sm font-medium">No materials uploaded yet.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
+            {filteredMaterials.map((item) => {
+              const aesthetics = getCardAesthetics(item.material_type);
+              return (
+                <div key={item.id} className="group bg-white rounded-lg ring-1 ring-black/5 shadow-sm flex flex-col hover:ring-primary/30 hover:shadow-md transition-all overflow-hidden">
+                  <div className={`h-32 ${aesthetics.bg} border-b border-zinc-100 flex items-center justify-center relative`}>
+                    {aesthetics.icon}
+                    <span className="absolute bottom-3 left-3 bg-white/90 text-zinc-700 text-[10px] uppercase font-semibold px-2 py-1 rounded shadow-sm tracking-wider">
+                      {item.material_type}
+                    </span>
+                    <div className="absolute top-3 right-3 flex gap-1.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                      {/* Permissions Wrapper for Edit and Delete Buttons */}
+                      {(canEdit || isAdmin) && (
+                        <button onClick={() => openModal(item)} className="size-7 bg-white/90 hover:bg-white text-zinc-600 hover:text-primary rounded-md shadow-sm ring-1 ring-black/5 flex items-center justify-center transition-colors">
+                          <Edit className="size-3.5"/>
+                        </button>
+                      )}
+                      {(canDelete || isAdmin) && (
+                        <button onClick={() => handleDelete(item.id)} className="size-7 bg-white/90 hover:bg-white text-zinc-600 hover:text-red-600 rounded-md shadow-sm ring-1 ring-black/5 flex items-center justify-center transition-colors">
+                          <Trash2 className="size-3.5"/>
+                        </button>
+                      )}
                     </div>
                   </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {isModalVisible && (
-          <MaterialFormModal 
-            material={editingMaterial} 
-            onClose={() => setIsModalVisible(false)} 
-            onSave={fetchMaterialsAndData} 
-            dbClasses={dbClasses} 
-            dbSubjects={dbSubjects} 
-          />
+                  <div className="p-4 sm:p-5 flex flex-col flex-grow bg-white">
+                    <h3 className="font-semibold text-zinc-900 text-base leading-tight line-clamp-1 mb-2">{item.title}</h3>
+                    <div className="flex flex-wrap gap-1.5 mb-3">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider bg-zinc-100 text-zinc-600 px-2 py-1 rounded">
+                        {item.className} {item.section}
+                      </span>
+                      {item.subject_name && (
+                        <span className="text-[10px] font-semibold uppercase tracking-wider bg-zinc-100 text-zinc-600 px-2 py-1 rounded">
+                          {item.subject_name}
+                        </span>
+                      )}
+                    </div>
+                    {item.description && <p className="text-xs text-zinc-500 line-clamp-2 mb-4 leading-relaxed">{item.description}</p>}
+                    
+                    <div className="mt-auto pt-4 border-t border-zinc-100">
+                      {item.file_path ? (
+                        <button onClick={() => window.open(`${SERVER_URL.replace('/api','')}${item.file_path}`, "_blank")} 
+                          className="w-full h-9 bg-zinc-50 hover:bg-zinc-100 text-zinc-700 font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 ring-1 ring-inset ring-zinc-200 transition-colors">
+                          <Download className="size-3.5" /> Download
+                        </button>
+                      ) : item.external_link ? (
+                        <button onClick={() => window.open(item.external_link, "_blank")} 
+                          className="w-full h-9 bg-zinc-50 hover:bg-zinc-100 text-zinc-700 font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 ring-1 ring-inset ring-zinc-200 transition-colors">
+                          <ExternalLink className="size-3.5" /> Open Link
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         )}
-      </main>
+      </div>
+
+      {isModalVisible && (
+        <MaterialFormModal 
+          material={editingMaterial} 
+          onClose={() => setIsModalVisible(false)} 
+          onSave={fetchMaterialsAndData} 
+          dbClasses={dbClasses} 
+          dbSubjects={dbSubjects} 
+        />
+      )}
     </div>
   );
 }
+
+// -----------------------------------------------------------------
+// Subcomponents
+// -----------------------------------------------------------------
 
 const MaterialFormModal = ({ material, onClose, onSave, dbClasses, dbSubjects }) => {
   const { user } = useAuth();
@@ -203,71 +230,106 @@ const MaterialFormModal = ({ material, onClose, onSave, dbClasses, dbSubjects })
   };
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm z-50 p-4">
-      <div className="bg-white rounded-[2.5rem] w-full max-w-2xl p-10 shadow-2xl relative max-h-[92vh] overflow-y-auto custom-scrollbar">
-        <button onClick={onClose} className="absolute top-8 right-8 text-slate-400 hover:text-slate-600"><X size={24} /></button>
-        <h2 className="text-2xl font-black mb-6 text-slate-800">{isEditMode ? "Edit Material" : "Add Material"}</h2>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
+      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-2xl shadow-xl relative max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
+        
+        <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 rounded-t-lg shrink-0">
+          <h2 className="text-lg font-semibold text-zinc-900">{isEditMode ? "Edit Material" : "Add Material"}</h2>
+          <button onClick={onClose} className="text-zinc-400 hover:text-zinc-700 transition-colors p-1.5 hover:bg-zinc-100 rounded-md">
+            <X className="size-4" />
+          </button>
+        </div>
 
-        <form onSubmit={handleSave} className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="md:col-span-2">
-              <Field label="Title *" value={formData.title} onChange={v => setFormData({...formData, title: v})} required />
-            </div>
-            
-            <div className="space-y-1">
-              <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Class *</label>
-              <select value={formData.class_id} onChange={e => setFormData({...formData, class_id: e.target.value})} className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500/10" required>
-                <option value="" disabled>Select Class</option>
-                {dbClasses.map(c => (
-                  <option key={c.id} value={c.id}>{c.className} {c.section || ''}</option>
-                ))}
-              </select>
-            </div>
+        <form onSubmit={handleSave} className="flex flex-col flex-1 overflow-hidden">
+          <div className="p-5 sm:p-6 overflow-y-auto custom-scrollbar space-y-5">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              <div className="md:col-span-2">
+                <Field label="Title" value={formData.title} onChange={v => setFormData({...formData, title: v})} required />
+              </div>
+              
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">Class <span className="text-red-500">*</span></label>
+                <div className="relative">
+                  <select value={formData.class_id} onChange={e => setFormData({...formData, class_id: e.target.value})} className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors" required>
+                    <option value="" disabled>Select Class</option>
+                    {dbClasses.map(c => (
+                      <option key={c.id} value={c.id}>{c.className} {c.section || ''}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+              </div>
 
-            <div className="space-y-1">
-              <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Subject</label>
-              <select value={formData.subject_id} onChange={e => setFormData({...formData, subject_id: e.target.value})} className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500/10">
-                <option value="">No Subject</option>
-                {dbSubjects.map(s => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </select>
-            </div>
-            
-            <div className="space-y-1">
-              <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Type *</label>
-              <select value={formData.material_type} onChange={e => setFormData({...formData, material_type: e.target.value})} className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500/10">
-                {["Notes", "Presentation", "Video Lecture", "Worksheet", "Link", "Other"].map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Subject</label>
+                <div className="relative">
+                  <select value={formData.subject_id} onChange={e => setFormData({...formData, subject_id: e.target.value})} className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
+                    <option value="">No Subject</option>
+                    {dbSubjects.map(s => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+              </div>
+              
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">Type <span className="text-red-500">*</span></label>
+                <div className="relative">
+                  <select value={formData.material_type} onChange={e => setFormData({...formData, material_type: e.target.value})} className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
+                    {["Notes", "Presentation", "Video Lecture", "Worksheet", "Link", "Other"].map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                  <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+              </div>
 
-            <Field label="External Link" type="url" value={formData.external_link} onChange={v => setFormData({...formData, external_link: v})} />
-            
-            <div className="md:col-span-2 space-y-1">
-              <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider">File Upload</label>
-              <input type="file" onChange={e => setFile(e.target.files[0])} className="w-full text-sm text-slate-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer border border-slate-100 rounded-xl bg-slate-50" />
-            </div>
-            
-            <div className="md:col-span-2">
-              <Field type="textarea" label="Description" value={formData.description} onChange={v => setFormData({...formData, description: v})} />
+              <div className="space-y-1.5">
+                <Field label="External Link" type="url" value={formData.external_link} onChange={v => setFormData({...formData, external_link: v})} placeholder="https://..." />
+              </div>
+              
+              <div className="md:col-span-2 space-y-1.5">
+                <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">File Upload</label>
+                <input type="file" onChange={e => setFile(e.target.files[0])} 
+                  className="block w-full text-sm text-zinc-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-zinc-100 file:text-zinc-700 hover:file:bg-zinc-200 cursor-pointer border border-zinc-200 rounded-md bg-white shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 h-9 leading-9" />
+              </div>
+              
+              <div className="md:col-span-2">
+                <Field type="textarea" label="Description" value={formData.description} onChange={v => setFormData({...formData, description: v})} placeholder="Optional details..." />
+              </div>
             </div>
           </div>
 
-          <button type="submit" disabled={isSaving} className="w-full bg-slate-900 hover:bg-blue-600 disabled:bg-slate-300 text-white py-4 rounded-2xl font-black uppercase tracking-widest mt-4 transition-all shadow-xl flex justify-center gap-2">
-            {isSaving ? "Saving..." : "Save Material"}
-          </button>
+          <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
+            <button type="button" onClick={onClose} disabled={isSaving}
+              className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 rounded-md font-semibold text-xs hover:bg-zinc-50 transition-colors w-full sm:w-auto">
+              Cancel
+            </button>
+            <button type="submit" disabled={isSaving}
+              className="h-9 px-6 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors w-full sm:w-auto min-w-[120px]">
+              {isSaving ? <Loader2 className="size-3.5 animate-spin shrink-0" /> : <Save className="size-3.5 shrink-0" />}
+              {isSaving ? "Saving..." : "Save Material"}
+            </button>
+          </div>
         </form>
       </div>
     </div>
   );
 }
 
-function Field({ label, value, onChange, type = 'text', required }) {
-  const base = "w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500/10 text-sm font-medium";
+function Field({ label, value, onChange, type = 'text', required, placeholder }) {
+  const base = "h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm";
   return (
-    <div className="space-y-1">
-      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider">{label}</label>
-      {type === 'textarea' ? <textarea value={value} onChange={e => onChange(e.target.value)} rows={3} className={base + ' resize-none'} required={required} /> : <input type={type} value={value} onChange={e => onChange(e.target.value)} className={base} required={required} />}
+    <div className="space-y-1.5">
+      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">
+        {label} {required && <span className="text-red-500">*</span>}
+      </label>
+      {type === 'textarea' ? (
+        <textarea value={value} onChange={e => onChange(e.target.value)} rows={3} 
+          placeholder={placeholder} className={`${base} h-auto py-2.5 resize-none`} required={required} />
+      ) : (
+        <input type={type} value={value} onChange={e => onChange(e.target.value)} 
+          placeholder={placeholder} className={base} required={required} />
+      )}
     </div>
   );
 }

@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { API_BASE_URL } from '../apiConfig';
 import {
   User as UserIcon, Mail, Phone, Edit, Save, X, Camera, MapPin,
-  Calendar, BadgeCheck, Lock, AtSign, Loader2, ImageOff
+  Calendar, BadgeCheck, Lock, AtSign, Loader2, ImageOff, ChevronDown
 } from 'lucide-react';
 
 const fmtDMY = (val) => {
@@ -71,8 +71,7 @@ export default function Profile() {
 
   const removePic = () => setForm(f => ({ ...f, profile_pic: '' }));
 
-  // ... inside handleSave function ...
-const handleSave = async (e) => {
+  const handleSave = async (e) => {
     e.preventDefault();
     if (!form.name?.trim() || !form.email?.trim()) {
       return alert('Name and email are required.');
@@ -101,7 +100,6 @@ const handleSave = async (e) => {
           }, localStorage.getItem('token'));
         }
         setEditing(false);
-        alert('Profile updated successfully.');
       }
     } catch (err) { alert('Network error.'); }
     setSaving(false);
@@ -110,24 +108,28 @@ const handleSave = async (e) => {
   if (loading) {
     return (
       <div className="h-96 flex items-center justify-center">
-        <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
+        <div className="size-8 border-4 border-zinc-200 border-t-primary rounded-full animate-spin"></div>
       </div>
     );
   }
 
   if (!profile) {
     return (
-      <div className="bg-white p-16 rounded-3xl border border-dashed border-slate-200 text-center max-w-2xl mx-auto">
-        <p className="text-slate-500 font-medium">Profile not available.</p>
+      <div className="p-8 max-w-[1440px] w-full mx-auto">
+        <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center max-w-2xl mx-auto">
+          <p className="text-zinc-500 text-sm font-medium">Profile not available.</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
-      <div className="flex flex-col gap-1 text-center sm:text-left">
-        <h1 className="text-3xl font-black text-slate-900 tracking-tight">Profile</h1>
-        <p className="text-slate-500 font-medium">View and manage your account details.</p>
+    <div className="p-6 sm:p-8 max-w-[1440px] w-full mx-auto space-y-6 animate-in fade-in duration-500">
+      
+      {/* Header */}
+      <div className="flex flex-col mb-6">
+        <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">User Profile</h1>
+        <p className="text-sm text-zinc-500 mt-1">View and manage your account details.</p>
       </div>
 
       {editing ? (
@@ -150,30 +152,33 @@ const handleSave = async (e) => {
 
 function DisplayView({ profile, onEdit }) {
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       <div className="lg:col-span-1">
-        <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-8 text-center">
-          <div className="relative inline-block mb-5">
-            <AvatarBlock src={profile.profile_pic} name={profile.name} size="lg" />
-          </div>
-          <h2 className="text-xl font-black text-slate-800">{profile.name}</h2>
+        <div className="bg-white rounded-lg ring-1 ring-black/5 p-6 flex flex-col items-center text-center">
+          <AvatarBlock src={profile.profile_pic} name={profile.name} size="lg" />
+          
+          <h2 className="text-base font-semibold text-zinc-900 mt-4 leading-tight">{profile.name}</h2>
           {profile.username && (
-            <p className="text-sm text-slate-400 font-medium mt-0.5">@{profile.username}</p>
+            <p className="text-xs text-zinc-500 font-medium mt-0.5">@{profile.username}</p>
           )}
-          <div className="inline-flex items-center gap-1.5 mt-4 bg-blue-50 text-blue-700 text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full">
-            <BadgeCheck size={12} /> {profile.role}
+          
+          <div className="inline-flex items-center gap-1.5 mt-3 bg-primary/10 text-primary text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded">
+            <BadgeCheck className="size-3.5" /> {profile.role}
           </div>
-          <div className="mt-6 space-y-3 text-left">
+          
+          <div className="mt-6 w-full space-y-3 text-left pt-6 border-t border-zinc-100">
             <RowIcon icon={Mail} value={profile.email} />
             <RowIcon icon={Phone} value={profile.phone_no || 'Not provided'} />
           </div>
+          
           <button
             onClick={onEdit}
-            className="mt-7 w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-2xl shadow-lg shadow-blue-100 flex items-center justify-center gap-2 transition-all">
-            <Edit size={16} /> Edit Profile
+            className="mt-6 w-full h-9 bg-primary hover:bg-primary/90 text-white text-xs font-medium rounded-md flex items-center justify-center gap-1.5 transition-colors">
+            <Edit className="size-3.5" /> Edit Profile
           </button>
         </div>
       </div>
+      
       <div className="lg:col-span-2 space-y-6">
         <Section title="Personal Information">
           <Row label="Username" value={profile.username} />
@@ -181,13 +186,13 @@ function DisplayView({ profile, onEdit }) {
           <Row label="Gender" value={profile.gender} />
         </Section>
         <Section title="Contact Information">
-          <Row label="Email" value={profile.email} />
-          <Row label="Phone" value={profile.phone_no} />
-          <Row label="Address" value={profile.address} />
+          <Row label="Email Address" value={profile.email} />
+          <Row label="Phone Number" value={profile.phone_no} />
+          <Row label="Physical Address" value={profile.address} />
         </Section>
-        <Section title="Account">
-          <Row label="Role" value={profile.role} />
-          <Row label="Status" value={profile.status || 'active'} />
+        <Section title="System Account">
+          <Row label="Assigned Role" value={profile.role} />
+          <Row label="Account Status" value={<span className="capitalize">{profile.status || 'active'}</span>} />
         </Section>
       </div>
     </div>
@@ -197,30 +202,37 @@ function DisplayView({ profile, onEdit }) {
 function EditView({ form, setForm, onSave, onCancel, onPicChange, onPicRemove, saving, role }) {
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
   return (
-    <form onSubmit={onSave} className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+    <form onSubmit={onSave} className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       <div className="lg:col-span-1">
-        <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-8 text-center">
-          <div className="relative inline-block mb-5">
+        <div className="bg-white rounded-lg ring-1 ring-black/5 p-6 flex flex-col items-center text-center">
+          <div className="relative mb-5">
             <AvatarBlock src={form.profile_pic} name={form.name} size="lg" />
           </div>
-          <label className="cursor-pointer inline-flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-sm px-4 py-2.5 rounded-xl transition-all">
-            <Camera size={16} /> Change Photo
-            <input type="file" accept="image/*" onChange={onPicChange} className="hidden" />
-          </label>
-          {form.profile_pic && (
-            <button type="button" onClick={onPicRemove}
-              className="mt-2 inline-flex items-center gap-2 bg-red-50 hover:bg-red-100 text-red-600 font-bold text-xs px-4 py-2 rounded-xl">
-              <ImageOff size={14} /> Remove
-            </button>
-          )}
-          <div className="mt-7 bg-slate-50 border border-slate-100 rounded-2xl p-4 text-left">
-            <div className="flex items-center gap-1.5 text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
-              <Lock size={11} /> Role (locked)
+          
+          <div className="flex flex-col items-center gap-2">
+            <label className="cursor-pointer inline-flex items-center gap-1.5 bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-700 font-medium text-xs px-3 py-1.5 rounded-md transition-colors">
+              <Camera className="size-3.5" /> Change Photo
+              <input type="file" accept="image/*" onChange={onPicChange} className="hidden" />
+            </label>
+            
+            {form.profile_pic && (
+              <button type="button" onClick={onPicRemove}
+                className="inline-flex items-center gap-1 text-accent hover:underline font-medium text-[11px]">
+                <ImageOff className="size-3" /> Remove Picture
+              </button>
+            )}
+          </div>
+          
+          <div className="mt-8 w-full bg-zinc-50/50 ring-1 ring-black/5 rounded-md p-4 text-left">
+            <div className="flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1.5">
+              <Lock className="size-3" /> Assigned Role
             </div>
-            <p className="font-bold text-slate-700">{role}</p>
+            <p className="text-sm font-medium text-zinc-900">{role}</p>
+            <p className="text-[10px] text-zinc-400 mt-1">Roles cannot be changed by the user.</p>
           </div>
         </div>
       </div>
+      
       <div className="lg:col-span-2 space-y-6">
         <Section title="Personal Information">
           <FieldRow>
@@ -231,24 +243,31 @@ function EditView({ form, setForm, onSave, onCancel, onPicChange, onPicRemove, s
             <Field label="Date of Birth" type="date" value={form.dob} onChange={set('dob')} icon={Calendar} />
             <Field label="Gender" type="select" value={form.gender} onChange={set('gender')}
               options={[
-                { value: '', label: 'Select…' },
+                { value: '', label: 'Select...' },
                 { value: 'Male', label: 'Male' },
                 { value: 'Female', label: 'Female' },
                 { value: 'Other', label: 'Other' }
               ]} />
           </FieldRow>
         </Section>
+        
         <Section title="Contact Information">
           <FieldRow>
-            <Field label="Email" type="email" value={form.email} onChange={set('email')} icon={Mail} required />
-            <Field label="Phone" value={form.phone_no} onChange={set('phone_no')} icon={Phone} />
+            <Field label="Email Address" type="email" value={form.email} onChange={set('email')} icon={Mail} required />
+            <Field label="Phone Number" value={form.phone_no} onChange={set('phone_no')} icon={Phone} />
           </FieldRow>
-          <Field label="Address" type="textarea" value={form.address} onChange={set('address')} icon={MapPin} />
+          <Field label="Physical Address" type="textarea" value={form.address} onChange={set('address')} icon={MapPin} />
         </Section>
-        <div className="flex justify-end gap-3">
-          <button type="button" onClick={onCancel} disabled={saving} className="px-6 py-3 bg-white border border-slate-200 text-slate-600 font-bold rounded-xl flex items-center gap-2"><X size={16} /> Cancel</button>
-          <button type="submit" disabled={saving} className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl flex items-center gap-2">
-            {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} Save Changes
+        
+        <div className="flex justify-end gap-3 pt-2">
+          <button type="button" onClick={onCancel} disabled={saving} 
+            className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 text-xs font-medium rounded-md hover:bg-zinc-50 transition-colors flex items-center gap-1.5">
+            <X className="size-3.5" /> Cancel
+          </button>
+          <button type="submit" disabled={saving} 
+            className="h-9 px-6 bg-primary hover:bg-primary/90 disabled:bg-zinc-200 disabled:text-zinc-400 text-white text-xs font-medium rounded-md flex items-center gap-1.5 transition-colors">
+            {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />} 
+            {saving ? 'Saving...' : 'Save Changes'}
           </button>
         </div>
       </div>
@@ -256,22 +275,75 @@ function EditView({ form, setForm, onSave, onCancel, onPicChange, onPicRemove, s
   );
 }
 
+// =====================================================================
+// Custom UI Components (Rule Compliant)
+// =====================================================================
+
 function AvatarBlock({ src, name, size = 'lg' }) {
-  const dims = size === 'lg' ? 'w-32 h-32 text-4xl' : 'w-12 h-12 text-base';
-  if (src) return <img src={src} alt={name} className={`${dims} rounded-full object-cover border-4 border-white shadow-xl ring-1 ring-slate-100`} />;
-  return <div className={`${dims} rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-white font-black flex items-center justify-center shadow-xl ring-1 ring-slate-100`}>{(name || '?').charAt(0).toUpperCase()}</div>;
+  const dims = size === 'lg' ? 'size-28 text-3xl' : 'size-10 text-sm';
+  if (src) return <img src={src} alt={name} className={`${dims} rounded-full object-cover ring-1 ring-black/10`} />;
+  return (
+    <div className={`${dims} rounded-full bg-primary text-white font-semibold flex items-center justify-center ring-1 ring-black/10`}>
+      {(name || '?').charAt(0).toUpperCase()}
+    </div>
+  );
 }
 
-function Section({ title, children }) { return <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden"><div className="px-6 py-4 border-b border-slate-50"><h3 className="font-black text-slate-700">{title}</h3></div><div className="p-6 space-y-4">{children}</div></div>; }
-function Row({ label, value }) { return <div className="flex justify-between items-start py-2.5 border-b border-slate-50 last:border-0"><span className="text-sm font-bold text-slate-400 uppercase tracking-wider">{label}</span><span className="text-sm text-slate-700 font-bold text-right max-w-[60%] break-words">{value || '—'}</span></div>; }
-function RowIcon({ icon: Icon, value }) { return <div className="flex items-center gap-3 text-slate-600"><Icon size={16} className="text-slate-400 shrink-0" /><span className="text-sm font-medium break-all">{value}</span></div>; }
-function FieldRow({ children }) { return <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{children}</div>; }
+function Section({ title, children }) { 
+  return (
+    <div className="bg-white rounded-lg ring-1 ring-black/5 overflow-hidden">
+      <div className="px-5 py-3.5 border-b border-zinc-100 bg-zinc-50/50">
+        <h3 className="text-sm font-semibold text-zinc-800">{title}</h3>
+      </div>
+      <div className="p-5 space-y-4">
+        {children}
+      </div>
+    </div>
+  ); 
+}
+
+function Row({ label, value }) { 
+  return (
+    <div className="flex justify-between items-center py-2.5 border-b border-zinc-100 last:border-0 last:pb-0">
+      <span className="text-xs font-medium text-zinc-500">{label}</span>
+      <span className="text-sm font-medium text-zinc-900 max-w-[60%] text-right truncate">{value || '—'}</span>
+    </div>
+  ); 
+}
+
+function RowIcon({ icon: Icon, value }) { 
+  return (
+    <div className="flex items-center gap-3 text-zinc-600">
+      <Icon className="size-4 text-zinc-400 shrink-0" />
+      <span className="text-sm font-medium break-all">{value}</span>
+    </div>
+  ); 
+}
+
+function FieldRow({ children }) { 
+  return <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{children}</div>; 
+}
+
 function Field({ label, value, onChange, type = 'text', icon: Icon, options, required }) {
-  const baseCls = "w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-300 transition-all";
+  const baseCls = "w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors";
   return (
     <div className="space-y-1.5">
-      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">{Icon && <Icon size={11} />} {label}{required && <span className="text-red-500">*</span>}</label>
-      {type === 'select' ? <select value={value || ''} onChange={onChange} className={baseCls + ' cursor-pointer'}>{options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select> : type === 'textarea' ? <textarea value={value || ''} onChange={onChange} rows={3} className={baseCls + ' resize-none'} /> : <input type={type} value={value || ''} onChange={onChange} required={required} className={baseCls} />}
+      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1.5">
+        {Icon && <Icon className="size-3.5" />} {label}{required && <span className="text-accent">*</span>}
+      </label>
+      
+      {type === 'select' ? (
+        <div className="relative">
+          <select value={value || ''} onChange={onChange} className={`${baseCls} h-9 appearance-none cursor-pointer pr-8`}>
+            {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+          <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+        </div>
+      ) : type === 'textarea' ? (
+        <textarea value={value || ''} onChange={onChange} rows={3} className={`${baseCls} py-2 resize-none`} />
+      ) : (
+        <input type={type} value={value || ''} onChange={onChange} required={required} className={`${baseCls} h-9`} />
+      )}
     </div>
   );
 }

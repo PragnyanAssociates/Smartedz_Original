@@ -5,6 +5,10 @@ import { usePermissions } from '../../Screens/PermissionsContext';
 import TeacherOnlineClasses from './TeacherOnlineClasses';
 import StudentOnlineClasses from './StudentOnlineClasses';
 
+// =====================================================================
+//  Online Classes - module entry point.
+// =====================================================================
+
 export default function OnlineClasses() {
   const { user } = useAuth();
   
@@ -20,7 +24,7 @@ export default function OnlineClasses() {
   const canManage = canEdit || canDelete; // If they can do either, they are managing
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-700">
+    <div className="flex flex-col flex-1 h-full w-full animate-in fade-in duration-300">
       {isStudent ? (
         <StudentOnlineClasses />
       ) : (

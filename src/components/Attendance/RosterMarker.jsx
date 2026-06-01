@@ -2,16 +2,16 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import { API_BASE_URL } from '../../apiConfig';
-import { Calendar, Search, Loader2, CheckCheck, Save, Info, AlertTriangle } from 'lucide-react';
+import { Calendar, Search, Loader2, CheckCheck, Save, Info, AlertTriangle, ChevronDown } from 'lucide-react';
 
 // =====================================================================
 //  RosterMarker — bulk attendance marker
 // =====================================================================
 
 const STATUS_OPTIONS = [
-  { code: 'P', label: 'P', full: 'Present', cls: 'bg-emerald-600 border-emerald-600 text-white',  idle: 'border-emerald-300 text-emerald-600 hover:bg-emerald-50' },
-  { code: 'A', label: 'A', full: 'Absent',  cls: 'bg-red-600 border-red-600 text-white',           idle: 'border-red-300 text-red-600 hover:bg-red-50' },
-  { code: 'L', label: 'L', full: 'Late',    cls: 'bg-amber-500 border-amber-500 text-white',       idle: 'border-amber-300 text-amber-600 hover:bg-amber-50' }
+  { code: 'P', label: 'P', full: 'Present', cls: 'bg-emerald-600 border-emerald-600 text-white shadow-sm',  idle: 'bg-white border-zinc-200 text-zinc-400 hover:border-emerald-300 hover:text-emerald-600 hover:bg-emerald-50' },
+  { code: 'A', label: 'A', full: 'Absent',  cls: 'bg-red-600 border-red-600 text-white shadow-sm',          idle: 'bg-white border-zinc-200 text-zinc-400 hover:border-red-300 hover:text-red-600 hover:bg-red-50' },
+  { code: 'L', label: 'L', full: 'Late',    cls: 'bg-amber-500 border-amber-500 text-white shadow-sm',      idle: 'bg-white border-zinc-200 text-zinc-400 hover:border-amber-300 hover:text-amber-600 hover:bg-amber-50' }
 ];
 
 const fmtDateTime = (s) => {
@@ -160,9 +160,9 @@ export default function RosterMarker({ category }) {
   // -----------------------------------------------------------------
   if (teacherCantMark) {
     return (
-      <div className="bg-amber-50 border border-amber-200 rounded-3xl p-8 text-center max-w-2xl mx-auto">
-        <Info className="w-10 h-10 text-amber-500 mx-auto mb-3" />
-        <p className="font-bold text-amber-800">Teachers can't mark teacher attendance.</p>
+      <div className="bg-amber-50 border border-amber-200 rounded-lg p-6 sm:p-8 text-center max-w-2xl mx-auto flex flex-col items-center">
+        <Info className="w-8 h-8 text-amber-500 mb-3" />
+        <p className="font-semibold text-amber-800">Teachers cannot mark teacher attendance.</p>
         <p className="text-sm text-amber-700 mt-1">Only Super Admin or a designated role can do that.</p>
       </div>
     );
@@ -173,17 +173,18 @@ export default function RosterMarker({ category }) {
   const lateCount    = Object.values(edits).filter(s => s === 'L').length;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6 animate-in fade-in duration-500">
+      
       {/* Error banner */}
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-2xl p-4 flex items-start gap-3">
-          <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+        <div className="bg-red-50 border border-red-200 rounded-md p-4 flex items-start gap-3">
+          <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
           <div className="flex-1">
-            <div className="font-bold text-red-800 text-sm">Server error</div>
-            <div className="text-xs text-red-700 mt-0.5 font-mono break-all">{error}</div>
-            <div className="text-xs text-red-600 mt-2">
-              Most common cause: the <code className="bg-red-100 px-1 rounded">attendance</code> table doesn't exist.
-              Run the SQL migration in Railway MySQL.
+            <div className="font-semibold text-red-800 text-sm">Server Error</div>
+            <div className="text-[11px] text-red-700 mt-0.5 font-mono break-all">{error}</div>
+            <div className="text-[11px] text-red-600 mt-2 bg-red-100/50 p-2 rounded">
+              Most common cause: the <code className="bg-red-100 px-1 rounded font-semibold">attendance</code> table doesn't exist.
+              Run the SQL migration in your database.
             </div>
           </div>
         </div>
@@ -191,76 +192,80 @@ export default function RosterMarker({ category }) {
 
       {/* Warning banner */}
       {warning && !error && (
-        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3">
-          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+        <div className="bg-amber-50 border border-amber-200 rounded-md p-4 flex items-start gap-3">
+          <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
           <div className="flex-1">
-            <div className="font-bold text-amber-800 text-sm">Attendance lookup unavailable</div>
-            <div className="text-xs text-amber-700 mt-0.5 font-mono break-all">{warning}</div>
-            <div className="text-xs text-amber-600 mt-2">
-              You can still mark today's attendance. Run the SQL migration to enable history.
+            <div className="font-semibold text-amber-800 text-sm">History Unavailable</div>
+            <div className="text-[11px] text-amber-700 mt-0.5 font-mono break-all">{warning}</div>
+            <div className="text-[11px] text-amber-600 mt-2">
+              You can still mark today's attendance. Run the SQL migration to enable history features.
             </div>
           </div>
         </div>
       )}
 
       {/* Filter bar */}
-      <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-sm">
-        <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-end">
+      <div className="bg-white border border-zinc-200 rounded-lg p-4 sm:p-5 shadow-sm">
+        <div className="flex flex-col sm:flex-row flex-wrap lg:flex-nowrap gap-4 items-stretch lg:items-end">
+          
           <Field label="Date" icon={Calendar}>
             <input type="date" value={date} max={today}
               onChange={e => setDate(e.target.value)}
-              className="bg-slate-50 border border-slate-100 rounded-xl px-3 py-2.5 text-sm w-full outline-none focus:ring-2 focus:ring-blue-500/10" />
+              className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors" />
           </Field>
 
           {category === 'students' && (
             <Field label="Class">
-              <select value={classId} onChange={e => setClassId(e.target.value)}
-                className="bg-slate-50 border border-slate-100 rounded-xl px-3 py-2.5 text-sm w-full outline-none focus:ring-2 focus:ring-blue-500/10 cursor-pointer">
-                <option value="">All classes</option>
-                {classes.map(c => (
-                  <option key={c.id} value={c.id}>
-                    {c.className}{c.section ? ` - ${c.section}` : ''}
-                  </option>
-                ))}
-              </select>
+              <div className="relative w-full">
+                <select value={classId} onChange={e => setClassId(e.target.value)}
+                  className="h-9 w-full rounded-md border border-zinc-200 bg-white pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none transition-colors">
+                  <option value="">All classes</option>
+                  {classes.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.className}{c.section ? ` - ${c.section}` : ''}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
             </Field>
           )}
 
           <Field label="Search">
-            <div className="relative">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input placeholder="Name, username, roll no…" value={search}
+            <div className="relative w-full">
+              <Search className="size-4 text-zinc-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input placeholder="Name, username, roll no..." value={search}
                 onChange={e => setSearch(e.target.value)}
-                className="bg-slate-50 border border-slate-100 rounded-xl pl-9 pr-3 py-2.5 text-sm w-full outline-none focus:ring-2 focus:ring-blue-500/10" />
+                className="h-9 w-full rounded-md border border-zinc-200 bg-white pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors" />
             </div>
           </Field>
 
           <button onClick={markAllPresent}
             disabled={filtered.length === 0}
-            className="bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40 text-emerald-700 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2 shrink-0">
-            <CheckCheck size={14} /> All Present
+            className="h-9 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40 text-emerald-700 px-4 rounded-md text-xs font-semibold uppercase tracking-wider flex items-center justify-center gap-1.5 shrink-0 transition-colors">
+            <CheckCheck className="size-4" /> All Present
           </button>
         </div>
 
-        <div className="mt-4 flex flex-wrap gap-3 text-xs font-bold">
+        <div className="mt-5 pt-4 border-t border-zinc-100 flex flex-wrap gap-2 sm:gap-3 text-xs font-medium">
           <Stat color="emerald" label="Present"  value={presentCount} />
           <Stat color="red"     label="Absent"   value={absentCount} />
           <Stat color="amber"   label="Late"     value={lateCount} />
-          <Stat color="slate"   label="Unmarked" value={filtered.length - presentCount - absentCount - lateCount} />
-          <Stat color="slate"   label="Total"    value={roster.length} />
+          <Stat color="zinc"    label="Unmarked" value={filtered.length - presentCount - absentCount - lateCount} />
+          <Stat color="zinc"    label="Total"    value={roster.length} />
         </div>
       </div>
 
-      {/* Roster */}
+      {/* Roster Table */}
       {loading ? (
-        <div className="text-center py-16">
-          <Loader2 className="animate-spin w-8 h-8 text-blue-600 mx-auto" />
+        <div className="h-48 flex items-center justify-center">
+          <Loader2 className="animate-spin size-6 text-primary" />
         </div>
       ) : filtered.length === 0 ? (
-        <div className="bg-white p-16 rounded-3xl border border-dashed border-slate-200 text-center space-y-2">
-          <p className="text-slate-400 font-medium">No users to mark.</p>
+        <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
+          <p className="text-zinc-500 text-sm font-medium">No users to mark.</p>
           {roster.length === 0 && !error && (
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-zinc-400 mt-1">
               {category === 'students' && classId
                 ? 'No students assigned to this class.'
                 : `No ${category} in this institution. Add some in Manage Logins → Users.`}
@@ -268,56 +273,57 @@ export default function RosterMarker({ category }) {
           )}
         </div>
       ) : (
-        <div className="bg-white rounded-3xl border border-slate-100 overflow-hidden shadow-sm">
-          <table className="w-full">
-            <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest">
+        <div className="bg-white rounded-lg ring-1 ring-black/5 overflow-x-auto custom-scrollbar">
+          <table className="w-full text-left border-collapse min-w-[700px]">
+            <thead className="bg-zinc-50/50">
               <tr>
-                <th className="p-4 text-left">Person</th>
-                <th className="p-4 text-left">Marked By</th>
-                <th className="p-4 text-center">Status</th>
+                <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 whitespace-nowrap">Person</th>
+                <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 whitespace-nowrap">Marked By</th>
+                <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 text-center whitespace-nowrap">Status</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-50">
+            <tbody className="divide-y divide-zinc-100">
               {filtered.map(u => {
                 const status = edits[u.id];
                 return (
-                  <tr key={u.id} className="hover:bg-slate-50/50">
-                    <td className="p-4">
+                  <tr key={u.id} className="hover:bg-zinc-50/60 transition-colors">
+                    <td className="px-5 py-3">
                       <div className="flex items-center gap-3">
                         {u.profile_pic ? (
-                          <img src={u.profile_pic} alt="" className="w-9 h-9 rounded-full object-cover" />
+                          <img src={u.profile_pic} alt="" className="size-8 rounded-full object-cover shrink-0 ring-1 ring-black/5" />
                         ) : (
-                          <div className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 font-bold text-sm">
+                          <div className="size-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-xs shrink-0 ring-1 ring-primary/20">
                             {(u.name || '?').charAt(0).toUpperCase()}
                           </div>
                         )}
-                        <div>
-                          <div className="font-bold text-slate-700 text-sm">{u.name}</div>
-                          <div className="text-xs text-slate-400">
+                        <div className="flex flex-col min-w-0">
+                          <div className="font-medium text-zinc-900 text-sm truncate">{u.name}</div>
+                          <div className="text-[10px] text-zinc-500 truncate">
                             {u.roll_no ? `Roll ${u.roll_no}` : (u.username ? `@${u.username}` : u.role)}
                           </div>
                         </div>
                       </div>
                     </td>
-                    <td className="p-4 text-xs">
+                    <td className="px-5 py-3 text-[11px]">
                       {u.marked_by_name ? (
-                        <div className="space-y-0.5">
-                          <div className="text-slate-600">
-                            <span className="font-bold">{u.marked_by_name}</span>
-                            <span className="text-slate-400"> ({u.marked_by_role})</span>
+                        <div className="flex flex-col gap-0.5">
+                          <div className="text-zinc-600 truncate">
+                            <span className="font-medium text-zinc-800">{u.marked_by_name}</span>
+                            <span className="text-zinc-400"> ({u.marked_by_role})</span>
                           </div>
-                          <div className="text-slate-400">{fmtDateTime(u.marked_at)}</div>
+                          <div className="text-zinc-400 whitespace-nowrap">{fmtDateTime(u.marked_at)}</div>
                           {u.updated_by_name && (
-                            <div className="text-amber-600 mt-1">
-                              Updated by <span className="font-bold">{u.updated_by_name}</span> · {fmtDateTime(u.updated_at)}
+                            <div className="text-amber-600/90 truncate mt-1">
+                              Updated by <span className="font-medium">{u.updated_by_name}</span>
+                              <span className="whitespace-nowrap"> · {fmtDateTime(u.updated_at)}</span>
                             </div>
                           )}
                         </div>
                       ) : (
-                        <span className="text-slate-300 italic">Not yet marked</span>
+                        <span className="text-zinc-300 italic">Not yet marked</span>
                       )}
                     </td>
-                    <td className="p-4">
+                    <td className="px-5 py-3">
                       <div className="flex justify-center gap-2">
                         {STATUS_OPTIONS.map(opt => {
                           const active = status === opt.code;
@@ -325,8 +331,8 @@ export default function RosterMarker({ category }) {
                             <button key={opt.code} type="button"
                               onClick={() => setStatus(u.id, opt.code)}
                               title={opt.full}
-                              className={`w-10 h-10 rounded-full border-2 font-black text-sm transition-all hover:scale-105 ${
-                                active ? opt.cls + ' shadow-md' : 'bg-white ' + opt.idle
+                              className={`size-8 rounded border flex items-center justify-center font-semibold text-xs transition-all ${
+                                active ? opt.cls : opt.idle
                               }`}>
                               {opt.label}
                             </button>
@@ -342,12 +348,13 @@ export default function RosterMarker({ category }) {
         </div>
       )}
 
+      {/* Submit Button */}
       {filtered.length > 0 && (
-        <div className="flex justify-center pt-2">
+        <div className="flex justify-end pt-2">
           <button onClick={handleSubmit} disabled={saving}
-            className="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-black uppercase tracking-widest px-8 py-3.5 rounded-2xl shadow-lg shadow-blue-100 flex items-center gap-2">
-            {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-            {saving ? 'Saving…' : 'Submit Attendance'}
+            className="w-full sm:w-auto h-10 px-6 bg-primary hover:bg-primary/90 disabled:bg-zinc-200 disabled:text-zinc-400 text-white rounded-md text-xs font-semibold transition-colors flex items-center justify-center gap-2 shadow-sm">
+            {saving ? <Loader2 className="size-4 animate-spin shrink-0" /> : <Save className="size-4 shrink-0" />}
+            {saving ? 'Saving...' : 'Submit Attendance'}
           </button>
         </div>
       )}
@@ -355,11 +362,15 @@ export default function RosterMarker({ category }) {
   );
 }
 
+// -----------------------------------------------------------------
+// Subcomponents
+// -----------------------------------------------------------------
+
 function Field({ label, icon: Icon, children }) {
   return (
-    <div className="flex-1 min-w-[140px]">
-      <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1">
-        {Icon && <Icon size={11} />} {label}
+    <div className="flex flex-col w-full lg:w-auto lg:min-w-[160px] flex-1">
+      <div className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+        {Icon && <Icon className="size-3.5" />} {label}
       </div>
       {children}
     </div>
@@ -368,14 +379,14 @@ function Field({ label, icon: Icon, children }) {
 
 function Stat({ color, label, value }) {
   const map = {
-    emerald: 'bg-emerald-50 text-emerald-700',
-    red:     'bg-red-50 text-red-700',
-    amber:   'bg-amber-50 text-amber-700',
-    slate:   'bg-slate-100 text-slate-600'
+    emerald: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20',
+    red:     'bg-red-50 text-red-700 ring-red-600/20',
+    amber:   'bg-amber-50 text-amber-700 ring-amber-600/20',
+    zinc:    'bg-zinc-50 text-zinc-600 ring-zinc-200'
   };
   return (
-    <div className={`${map[color]} rounded-full px-3 py-1.5`}>
-      <span className="opacity-70">{label}:</span> {value}
+    <div className={`ring-1 rounded px-2.5 py-1 ${map[color]}`}>
+      <span className="opacity-80">{label}:</span> <span className="font-semibold ml-0.5">{value}</span>
     </div>
   );
 }

@@ -6,7 +6,7 @@ import {
 import ReportCardView from './ReportCardView';
 
 // =====================================================================
-//  ReportCards — for one class, list students and open their report
+//  ReportCards - for one class, list students and open their report
 //  card. Printing uses the browser's print dialog scoped to the card.
 // =====================================================================
 
@@ -19,7 +19,7 @@ export default function ReportCards({ classInfo, onBack }) {
   const [cardLoading, setCardLoading] = useState(false);
 
   // -----------------------------------------------------------------
-  // Load class roster (reuse class-data endpoint — it returns students)
+  // Load class roster (reuse class-data endpoint - it returns students)
   // -----------------------------------------------------------------
   const load = useCallback(async () => {
     setLoading(true);
@@ -62,23 +62,23 @@ export default function ReportCards({ classInfo, onBack }) {
   // -----------------------------------------------------------------
   if (card) {
     return (
-      <div className="space-y-4">
-        <div className="flex items-center justify-between print:hidden">
+      <div className="space-y-4 sm:space-y-6 animate-in fade-in duration-300">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 print:hidden">
           <button onClick={() => setCard(null)}
-            className="inline-flex items-center gap-1.5 text-sm font-bold text-slate-500 hover:text-blue-600">
-            <ArrowLeft size={14} /> Back to students
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors w-fit">
+            <ArrowLeft className="size-4" /> Back to students
           </button>
           <button onClick={handlePrint}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 shadow-lg shadow-blue-100">
-            <Printer size={15} /> Print
+            className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors w-full sm:w-auto shrink-0">
+            <Printer className="size-4" /> Print
           </button>
         </div>
 
-        <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden print:border-0 print:shadow-none print:rounded-none">
+        <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden print:ring-0 print:shadow-none print:rounded-none">
           <ReportCardView card={card} />
         </div>
 
-        {/* Print CSS — only the report card shows on paper */}
+        {/* Print CSS - only the report card shows on paper */}
         <style>{`
           @media print {
             body * { visibility: hidden; }
@@ -96,59 +96,68 @@ export default function ReportCards({ classInfo, onBack }) {
   // List view
   // -----------------------------------------------------------------
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 sm:space-y-6 animate-in fade-in duration-300">
       <button onClick={onBack}
-        className="inline-flex items-center gap-1.5 text-sm font-bold text-slate-500 hover:text-blue-600">
-        <ArrowLeft size={14} /> Back to classes
+        className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
+        <ArrowLeft className="size-4" /> Back to classes
       </button>
 
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl font-black text-slate-800">{classInfo.class_group}</h2>
-          <p className="text-xs text-slate-400 font-medium">Report Cards</p>
+          <h2 className="text-xl font-semibold text-zinc-900 tracking-tight">{classInfo.class_group}</h2>
+          <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider mt-1">Report Cards</p>
         </div>
-        <div className="relative w-full sm:w-64">
-          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input value={query} onChange={e => setQuery(e.target.value)}
-            placeholder="Search students…"
-            className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500/10 shadow-sm" />
+        <div className="relative w-full sm:w-72 shrink-0">
+          <Search className="size-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <input 
+            value={query} 
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Search students..."
+            className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" 
+          />
         </div>
       </div>
 
       {cardLoading && (
-        <div className="text-center py-4">
-          <Loader2 className="animate-spin w-6 h-6 text-blue-600 mx-auto" />
+        <div className="flex justify-center py-4">
+          <Loader2 className="animate-spin size-6 text-primary" />
         </div>
       )}
 
       {loading ? (
-        <div className="text-center py-16"><Loader2 className="animate-spin w-8 h-8 text-blue-600 mx-auto" /></div>
+        <div className="h-64 flex items-center justify-center">
+          <Loader2 className="animate-spin size-8 text-primary" />
+        </div>
       ) : filtered.length === 0 ? (
-        <div className="bg-white p-16 rounded-3xl border border-dashed border-slate-200 text-center">
-          <FileText className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-          <p className="text-slate-400 font-medium">
+        <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
+          <FileText className="size-10 text-zinc-300 mb-3" />
+          <p className="text-zinc-500 text-sm font-medium">
             {students.length === 0 ? 'No students in this class.' : 'No students match your search.'}
           </p>
         </div>
       ) : (
-        <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
-          <table className="w-full text-left">
-            <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest">
+        <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-x-auto custom-scrollbar">
+          <table className="w-full text-left border-collapse min-w-[500px]">
+            <thead className="bg-zinc-50/80">
               <tr>
-                <th className="p-4 w-20">Roll No</th>
-                <th className="p-4">Student Name</th>
-                <th className="p-4 text-right">Action</th>
+                <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 w-24">Roll No</th>
+                <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Student Name</th>
+                <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 text-right">Action</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-50">
+            <tbody className="divide-y divide-zinc-100">
               {filtered.map(s => (
-                <tr key={s.id} className="hover:bg-slate-50/50">
-                  <td className="p-4 font-bold text-slate-500 text-sm">{s.roll_no || '—'}</td>
-                  <td className="p-4 font-bold text-slate-700 text-sm">{s.name}</td>
-                  <td className="p-4 text-right">
+                <tr key={s.id} className="hover:bg-zinc-50/60 transition-colors group">
+                  <td className="px-5 py-4 font-semibold text-zinc-600 text-sm whitespace-nowrap">
+                    {s.roll_no || '-'}
+                  </td>
+                  <td className="px-5 py-4 font-semibold text-zinc-900 text-sm">
+                    {s.name}
+                  </td>
+                  <td className="px-5 py-4 text-right whitespace-nowrap">
                     <button onClick={() => openCard(s.id)}
-                      className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-4 py-2 rounded-lg inline-flex items-center gap-1.5">
-                      <Eye size={13} /> View Report
+                      className="h-8 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold inline-flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full sm:w-auto">
+                      <Eye className="size-3.5" /> View Report
                     </button>
                   </td>
                 </tr>

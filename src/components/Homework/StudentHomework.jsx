@@ -8,9 +8,9 @@ import {
 import { fmtDate, fileToBase64, openFile, statusStyle } from './HwUtils';
 
 // =====================================================================
-//  StudentHomework — list of assigned homework + detail panel.
-//   • PDF type     → upload files (base64)
-//   • Written type → in-app text answer screen
+//  StudentHomework - list of assigned homework + detail panel.
+//   • PDF type     -> upload files (base64)
+//   • Written type -> in-app text answer screen
 //  Students can delete their submission until it's graded.
 // =====================================================================
 
@@ -115,55 +115,59 @@ export default function StudentHomework() {
   };
 
   if (loading) {
-    return <div className="py-20 text-center"><Loader2 className="animate-spin w-8 h-8 text-blue-600 mx-auto" /></div>;
+    return <div className="h-64 flex items-center justify-center animate-in fade-in duration-300"><Loader2 className="animate-spin size-8 text-primary" /></div>;
   }
 
   return (
-    <div>
-      <div className="mb-5">
-        <h2 className="text-3xl font-black text-slate-900 tracking-tight flex items-center gap-2">
-          <ClipboardList className="text-blue-600" size={28} />
+    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
+      
+      <header className="flex flex-col mb-2 sm:mb-0">
+        <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
+          <ClipboardList className="text-primary size-5" />
           My Homework
-        </h2>
-        <p className="text-slate-500 font-medium mt-1">View and submit your class assignments.</p>
-      </div>
+        </h1>
+        <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">View and submit your class assignments.</p>
+      </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 flex-1 items-start">
+        
         {/* List panel */}
-        <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
-          <div className="p-4 border-b border-slate-100">
-            <div className="flex gap-2">
+        <div className="lg:col-span-4 xl:col-span-4 flex flex-col bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden h-[60vh] lg:h-[calc(100vh-160px)] shrink-0">
+          <div className="p-3 border-b border-zinc-100 bg-zinc-50/50">
+            <div className="flex bg-zinc-100/80 p-1 rounded-md overflow-x-auto custom-scrollbar">
               {['All', 'Pending', 'Completed'].map(f => (
                 <button key={f} onClick={() => setFilter(f)}
-                  className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
-                    filter === f ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                  className={`flex-1 px-3 py-1.5 rounded-md text-[11px] font-semibold transition-colors whitespace-nowrap ${
+                    filter === f ? 'bg-white text-zinc-900 shadow-sm ring-1 ring-black/5' : 'text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50/50'
                   }`}>
                   {f}
                 </button>
               ))}
             </div>
           </div>
-          <div className="max-h-[65vh] overflow-y-auto divide-y divide-slate-50">
+          <div className="flex-1 overflow-y-auto custom-scrollbar divide-y divide-zinc-100">
             {filtered.length === 0 ? (
-              <p className="p-8 text-center text-slate-400 text-sm italic">No assignments here.</p>
+              <div className="p-8 flex flex-col items-center justify-center h-full text-center">
+                <p className="text-zinc-400 text-sm font-medium">No assignments here.</p>
+              </div>
             ) : filtered.map(it => {
               const overdue = !it.submission_id && new Date(it.due_date) < new Date();
               const s = statusStyle(overdue ? 'Overdue' : it.status);
               return (
                 <button key={it.id} onClick={() => setSelId(it.id)}
-                  className={`w-full text-left p-4 transition-colors ${
-                    selectedId === it.id ? 'bg-blue-50' : 'hover:bg-slate-50'
+                  className={`w-full text-left p-4 transition-colors group ${
+                    selectedId === it.id ? 'bg-primary/5' : 'hover:bg-zinc-50/80'
                   }`}>
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className={`font-bold truncate ${selectedId === it.id ? 'text-blue-700' : 'text-slate-700'}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className={`font-semibold truncate text-sm ${selectedId === it.id ? 'text-primary' : 'text-zinc-900 group-hover:text-primary transition-colors'}`}>
                         {it.title}
                       </p>
-                      <p className={`text-xs mt-0.5 ${overdue ? 'text-red-600 font-bold' : 'text-slate-400'}`}>
+                      <p className={`text-[11px] font-medium mt-1 ${overdue ? 'text-red-500' : 'text-zinc-500'}`}>
                         Due {fmtDate(it.due_date)}
                       </p>
                     </div>
-                    <span className={`shrink-0 w-2.5 h-2.5 rounded-full mt-1.5 ${s.dot}`} />
+                    <span className={`shrink-0 size-2 rounded-full mt-1.5 ${s.dot}`} />
                   </div>
                 </button>
               );
@@ -172,7 +176,7 @@ export default function StudentHomework() {
         </div>
 
         {/* Detail panel */}
-        <div className="lg:col-span-2">
+        <div className="lg:col-span-8 xl:col-span-8">
           {selected ? (
             <AssignmentDetail
               hw={selected}
@@ -181,9 +185,10 @@ export default function StudentHomework() {
               onWrite={() => setWriting(selected)}
               onDelete={() => deleteSubmission(selected.submission_id, selected.id)} />
           ) : (
-            <div className="bg-white rounded-3xl border border-dashed border-slate-200 p-16 text-center">
-              <ClipboardList className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-              <p className="text-slate-500 font-medium">No homework selected.</p>
+            <div className="bg-white rounded-lg ring-1 ring-black/5 border-dashed p-12 sm:p-16 text-center flex flex-col items-center">
+              <ClipboardList className="size-12 text-zinc-300 mb-4" />
+              <h3 className="text-base font-semibold text-zinc-400">No homework selected.</h3>
+              <p className="text-zinc-400 font-medium text-sm mt-1">Choose an assignment from the list to view details.</p>
             </div>
           )}
         </div>
@@ -215,42 +220,43 @@ function AssignmentDetail({ hw, busy, onSubmitFiles, onWrite, onDelete }) {
     : statusText === 'Overdue' ? XCircle : Clock;
 
   return (
-    <div className="bg-white rounded-3xl border border-slate-100 shadow-sm">
+    <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm flex flex-col animate-in fade-in duration-300">
+      
       {/* Header */}
-      <div className="p-6 border-b border-slate-100">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-          <h3 className="text-2xl font-black text-slate-800">{hw.title}</h3>
-          <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black ${s.bg} ${s.text}`}>
-            <StatusIcon size={14} /> {statusText}
+      <div className="p-5 sm:p-6 border-b border-zinc-100 bg-zinc-50/50 rounded-t-lg">
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+          <h3 className="text-lg sm:text-xl font-semibold text-zinc-900 tracking-tight leading-tight max-w-[80%]">{hw.title}</h3>
+          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-semibold tracking-wider uppercase ring-1 ring-inset w-fit ${s.bg} ${s.text} ring-${s.text.split('-')[1]}-600/20`}>
+            <StatusIcon className="size-3.5" /> {statusText}
           </span>
         </div>
-        <div className="flex flex-wrap gap-5 mt-3 text-sm text-slate-500 font-medium">
-          <span className="flex items-center gap-1.5"><BookOpen size={14} className="text-slate-400" />
-            {hw.subject_name || '—'}</span>
+        <div className="flex flex-wrap items-center gap-3 sm:gap-5 mt-4 text-xs font-medium text-zinc-500">
+          <span className="flex items-center gap-1.5"><BookOpen className="size-3.5 text-zinc-400" />
+            {hw.subject_name || '-'}</span>
           <span className="flex items-center gap-1.5">Type: {hw.homework_type}</span>
-          <span className={`flex items-center gap-1.5 ${overdue ? 'text-red-600 font-bold' : ''}`}>
-            <Clock size={14} className="text-slate-400" /> Due {fmtDate(hw.due_date)}
+          <span className={`flex items-center gap-1.5 ${overdue ? 'text-red-500 font-semibold' : ''}`}>
+            <Clock className="size-3.5 text-zinc-400" /> Due {fmtDate(hw.due_date)}
           </span>
         </div>
       </div>
 
-      <div className="p-6 space-y-6">
+      <div className="p-5 sm:p-6 space-y-6">
         {/* Description */}
         {hw.description && (
           <Section title="Description">
-            <p className="text-sm text-slate-600 leading-relaxed bg-slate-50 p-4 rounded-xl border border-slate-100 whitespace-pre-wrap">
-              {hw.description}
-            </p>
+            <div className="bg-zinc-50/50 p-4 rounded-md border border-zinc-100">
+              <p className="text-sm text-zinc-700 leading-relaxed whitespace-pre-wrap">{hw.description}</p>
+            </div>
           </Section>
         )}
 
         {/* Questions */}
         {(hw.questions || []).length > 0 && (
           <Section title="Questions">
-            <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
-              <ol className="list-decimal list-inside space-y-1.5">
+            <div className="bg-primary/5 p-4 rounded-md border border-primary/10">
+              <ol className="list-decimal list-inside space-y-2">
                 {hw.questions.map((q, i) => (
-                  <li key={i} className="text-sm text-slate-700">{q}</li>
+                  <li key={i} className="text-sm text-zinc-800 font-medium leading-relaxed">{q}</li>
                 ))}
               </ol>
             </div>
@@ -260,11 +266,12 @@ function AssignmentDetail({ hw, busy, onSubmitFiles, onWrite, onDelete }) {
         {/* Teacher attachments */}
         {(hw.attachments || []).length > 0 && (
           <Section title="Teacher's Attachments">
-            <div className="flex flex-wrap gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {hw.attachments.map((f, i) => (
                 <button key={i} onClick={() => openFile(f)}
-                  className="inline-flex items-center gap-2 bg-blue-50 text-blue-600 hover:bg-blue-100 px-4 py-2 rounded-xl text-sm font-bold transition-all">
-                  <Paperclip size={14} /> {f.name}
+                  className="flex items-center gap-2.5 bg-white hover:bg-zinc-50 border border-zinc-200 p-3 rounded-md transition-colors text-left shadow-sm ring-1 ring-black/5 group w-full">
+                  <Paperclip className="size-4 text-primary shrink-0" />
+                  <span className="text-sm font-semibold text-zinc-700 truncate group-hover:text-primary transition-colors flex-1">{f.name}</span>
                 </button>
               ))}
             </div>
@@ -274,12 +281,12 @@ function AssignmentDetail({ hw, busy, onSubmitFiles, onWrite, onDelete }) {
         {/* Grade & feedback */}
         {hw.status === 'Graded' && (
           <Section title="Grade & Feedback">
-            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-              <div className="text-sm font-bold text-slate-700">
-                Grade: <span className="text-blue-700">{hw.grade}</span>
+            <div className="bg-emerald-50 border border-emerald-200 rounded-md p-4">
+              <div className="text-sm font-semibold text-zinc-800">
+                Grade: <span className="text-emerald-700 ml-1">{hw.grade}</span>
               </div>
               {hw.remarks && (
-                <p className="text-sm text-slate-600 italic mt-2 pt-2 border-t border-blue-200/60">
+                <p className="text-sm text-emerald-800/80 italic mt-2.5 pt-2.5 border-t border-emerald-200/60 leading-relaxed">
                   "{hw.remarks}"
                 </p>
               )}
@@ -291,69 +298,71 @@ function AssignmentDetail({ hw, busy, onSubmitFiles, onWrite, onDelete }) {
         {hw.submission_id && (
           <Section title="Your Submission">
             {hw.written_answer && (
-              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 mb-3 max-h-48 overflow-y-auto">
-                <pre className="whitespace-pre-wrap text-sm text-emerald-800 font-sans">{hw.written_answer}</pre>
+              <div className="bg-zinc-50 border border-zinc-200 rounded-md p-4 mb-4 max-h-56 overflow-y-auto custom-scrollbar shadow-sm">
+                <pre className="whitespace-pre-wrap text-sm text-zinc-800 font-sans leading-relaxed">{hw.written_answer}</pre>
               </div>
             )}
             {(hw.submission_files || []).length > 0 && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
                 {hw.submission_files.map((f, i) => (
                   <button key={i} onClick={() => openFile(f)}
-                    className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 p-3 rounded-xl text-sm text-emerald-800 font-medium transition-all">
-                    <FileText size={16} className="shrink-0" />
-                    <span className="truncate flex-1 text-left">{f.name}</span>
-                    <Eye size={14} />
+                    className="flex items-center gap-2.5 bg-white hover:bg-zinc-50 border border-zinc-200 p-3 rounded-md transition-colors text-left shadow-sm ring-1 ring-black/5 group w-full">
+                    <FileText className="size-4 text-primary shrink-0" />
+                    <div className="flex-1 overflow-hidden">
+                      <span className="text-sm font-semibold text-zinc-800 truncate group-hover:text-primary transition-colors block">{f.name}</span>
+                      <span className="text-[10px] text-zinc-500 font-medium flex items-center gap-1 mt-0.5 uppercase tracking-wider"><Eye className="size-3" /> View file</span>
+                    </div>
                   </button>
                 ))}
               </div>
             )}
-            <p className="text-xs text-slate-400 mt-2">Submitted {fmtDate(hw.submitted_at)}</p>
+            <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider mt-2">Submitted {fmtDate(hw.submitted_at)}</p>
           </Section>
         )}
 
         {/* Actions */}
-        <Section title="Actions">
+        <div className="pt-6 border-t border-zinc-100">
           {hw.submission_id ? (
             hw.status !== 'Graded' ? (
-              <div className="flex flex-wrap gap-3">
+              <div className="flex flex-col sm:flex-row gap-3">
                 {hw.homework_type === 'Written' ? (
                   <button onClick={onWrite}
-                    className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm">
-                    <Edit size={15} /> Edit Answer
+                    className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full sm:w-auto">
+                    <Edit className="size-3.5" /> Edit Answer
                   </button>
                 ) : (
                   <button onClick={onSubmitFiles} disabled={busy}
-                    className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white px-5 py-2.5 rounded-xl font-bold text-sm">
-                    {busy ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}
+                    className="h-9 px-4 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full sm:w-auto">
+                    {busy ? <Loader2 className="size-3.5 animate-spin shrink-0" /> : <Upload className="size-3.5 shrink-0" />}
                     Resubmit Files
                   </button>
                 )}
                 <button onClick={onDelete} disabled={busy}
-                  className="inline-flex items-center gap-2 bg-red-600 hover:bg-red-700 disabled:bg-slate-300 text-white px-5 py-2.5 rounded-xl font-bold text-sm">
-                  {busy ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+                  className="h-9 px-4 bg-white border border-red-200 text-red-600 hover:bg-red-50 disabled:bg-zinc-100 disabled:text-zinc-400 disabled:border-zinc-200 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full sm:w-auto">
+                  {busy ? <Loader2 className="size-3.5 animate-spin shrink-0" /> : <Trash2 className="size-3.5 shrink-0" />}
                   Delete Submission
                 </button>
               </div>
             ) : (
-              <p className="text-sm text-slate-400 italic">
+              <p className="text-sm text-zinc-500 font-medium italic bg-zinc-50 p-3 rounded-md border border-zinc-100 text-center sm:text-left">
                 This submission has been graded and can no longer be changed.
               </p>
             )
           ) : (
             hw.homework_type === 'Written' ? (
               <button onClick={onWrite}
-                className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm">
-                <Edit size={15} /> Start Answering
+                className="h-9 px-6 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full sm:w-auto">
+                <Edit className="size-3.5" /> Start Answering
               </button>
             ) : (
               <button onClick={onSubmitFiles} disabled={busy}
-                className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white px-5 py-2.5 rounded-xl font-bold text-sm">
-                {busy ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}
+                className="h-9 px-6 bg-emerald-600 hover:bg-emerald-700 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full sm:w-auto">
+                {busy ? <Loader2 className="size-3.5 animate-spin shrink-0" /> : <Upload className="size-3.5 shrink-0" />}
                 Submit Homework
               </button>
             )
           )}
-        </Section>
+        </div>
       </div>
     </div>
   );
@@ -367,56 +376,72 @@ function WrittenAnswerScreen({ hw, submitting, onSubmit, onCancel }) {
   const [answer, setAnswer] = useState(hw.written_answer || '');
 
   return (
-    <div className="fixed inset-0 z-[100] bg-white flex flex-col">
+    <div className="fixed inset-0 z-[100] bg-zinc-50 flex flex-col animate-in fade-in duration-200">
+      
       {/* Header */}
-      <div className="bg-blue-600 text-white px-5 py-3 flex items-center justify-between shrink-0">
-        <div className="min-w-0">
-          <h2 className="text-lg font-black truncate">{hw.title}</h2>
-          <p className="text-blue-100 text-xs">{hw.subject_name || ''} · Due {fmtDate(hw.due_date)}</p>
+      <div className="bg-primary text-white px-5 sm:px-6 py-4 flex items-center justify-between shrink-0 shadow-sm z-10">
+        <div className="min-w-0 pr-4">
+          <h2 className="text-lg font-semibold truncate leading-tight">{hw.title}</h2>
+          <p className="text-primary-100 text-xs mt-1 opacity-90">{hw.subject_name || ''} - Due {fmtDate(hw.due_date)}</p>
         </div>
-        <button onClick={onCancel} className="p-2 hover:bg-blue-500 rounded-full">
-          <X size={22} />
+        <button onClick={onCancel} className="p-1.5 hover:bg-white/20 rounded-md transition-colors shrink-0">
+          <X className="size-5" />
         </button>
       </div>
 
-      {/* Body — question left, answer right */}
+      {/* Body - question top/left, answer bottom/right */}
       <div className="flex-1 flex flex-col lg:flex-row min-h-0 overflow-hidden">
-        <div className="lg:w-1/2 border-r border-slate-200 overflow-y-auto p-6 bg-slate-50">
-          <h3 className="text-sm font-black text-slate-500 uppercase tracking-widest mb-3">Question</h3>
+        
+        {/* Question Panel */}
+        <div className="lg:w-[45%] border-b lg:border-b-0 lg:border-r border-zinc-200 overflow-y-auto custom-scrollbar p-5 sm:p-8 bg-zinc-50/50">
+          <h3 className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-4 flex items-center gap-2">
+            <BookOpen className="size-3.5" /> Instructions & Questions
+          </h3>
+          
           {hw.description && (
-            <pre className="whitespace-pre-wrap font-sans text-slate-700 mb-4">{hw.description}</pre>
+            <div className="bg-white p-4 rounded-md ring-1 ring-black/5 shadow-sm mb-6">
+              <pre className="whitespace-pre-wrap font-sans text-sm text-zinc-700 leading-relaxed">{hw.description}</pre>
+            </div>
           )}
+          
           {(hw.questions || []).length > 0 && (
-            <ol className="list-decimal list-inside space-y-2">
-              {hw.questions.map((q, i) => (
-                <li key={i} className="text-slate-700">{q}</li>
-              ))}
-            </ol>
+            <div className="bg-primary/5 p-5 rounded-md border border-primary/10">
+              <ol className="list-decimal list-inside space-y-3">
+                {hw.questions.map((q, i) => (
+                  <li key={i} className="text-sm text-zinc-800 font-medium leading-relaxed pl-1">{q}</li>
+                ))}
+              </ol>
+            </div>
           )}
+          
           {!hw.description && (hw.questions || []).length === 0 && (
-            <p className="text-slate-400 italic">No instructions provided.</p>
+            <p className="text-zinc-400 italic text-sm">No instructions provided.</p>
           )}
         </div>
-        <div className="lg:w-1/2 flex flex-col min-h-0">
-          <div className="px-5 py-2.5 border-b border-slate-200 bg-slate-50">
-            <h3 className="text-sm font-black text-slate-500 uppercase tracking-widest">Your Answer</h3>
+
+        {/* Answer Panel */}
+        <div className="lg:w-[55%] flex flex-col min-h-[40vh] lg:min-h-0 bg-white">
+          <div className="px-5 sm:px-8 py-4 border-b border-zinc-100 bg-white flex items-center shrink-0">
+            <h3 className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-2">
+              <Edit className="size-3.5" /> Your Answer
+            </h3>
           </div>
           <textarea value={answer} onChange={e => setAnswer(e.target.value)}
-            placeholder="Type your answer here…"
-            className="flex-1 w-full p-5 resize-none outline-none text-base leading-relaxed" />
+            placeholder="Type your answer here..."
+            className="flex-1 w-full p-5 sm:p-8 resize-none outline-none text-sm sm:text-base text-zinc-900 leading-relaxed custom-scrollbar placeholder:text-zinc-300" />
         </div>
       </div>
 
       {/* Footer */}
-      <div className="border-t border-slate-200 px-6 py-4 flex items-center justify-between shrink-0">
+      <div className="border-t border-zinc-200 bg-white px-5 sm:px-8 py-4 flex items-center justify-end gap-3 shrink-0 shadow-[0_-4px_6px_-1px_rgb(0,0,0,0.05)] z-10">
         <button onClick={onCancel} disabled={submitting}
-          className="px-5 py-2.5 rounded-xl text-slate-600 font-bold hover:bg-slate-100">
+          className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 rounded-md font-semibold text-xs hover:bg-zinc-50 transition-colors w-full sm:w-auto">
           Cancel
         </button>
         <button onClick={() => onSubmit(answer)} disabled={submitting || !answer.trim()}
-          className="inline-flex items-center gap-2 px-7 py-2.5 rounded-xl font-black text-white bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300">
-          {submitting ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-          {submitting ? 'Submitting…' : 'Submit Answer'}
+          className="h-9 px-6 bg-emerald-600 hover:bg-emerald-700 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors w-full sm:w-auto min-w-[140px]">
+          {submitting ? <Loader2 className="size-3.5 animate-spin shrink-0" /> : <Send className="size-3.5 shrink-0" />}
+          {submitting ? 'Submitting...' : 'Submit Answer'}
         </button>
       </div>
     </div>
@@ -426,7 +451,7 @@ function WrittenAnswerScreen({ hw, submitting, onSubmit, onCancel }) {
 function Section({ title, children }) {
   return (
     <div>
-      <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">{title}</h4>
+      <h4 className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-3">{title}</h4>
       {children}
     </div>
   );

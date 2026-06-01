@@ -2,10 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import { API_BASE_URL } from '../../apiConfig';
-import {
-  CalendarDays, Clock, LayoutGrid, Plus, Trash2, Save,
-  Coffee, AlertCircle
-} from 'lucide-react';
+import { CalendarDays, Clock, LayoutGrid, Plus, Trash2, Save, Coffee, AlertCircle, ChevronDown } from 'lucide-react';
 
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -49,20 +46,22 @@ export default function Timetable() {
   if (loading) {
     return (
       <div className="h-96 flex items-center justify-center">
-        <div className="w-8 h-8 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin"></div>
+        <div className="size-8 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" />
       </div>
     );
   }
 
   if (!data.academic_year_id) {
     return (
-      <div className="bg-white p-16 rounded-3xl border border-dashed border-slate-200 text-center max-w-2xl mx-auto">
-        <AlertCircle className="mx-auto text-amber-400 mb-3" size={42} />
-        <h2 className="text-2xl font-black text-slate-800">No Active Academic Year</h2>
-        <p className="text-slate-500 mt-2 font-medium">
-          The timetable belongs to an academic year. Open <strong>Manage Logins → Academics</strong>,
-          create a year and click <em>Set as Active</em>, then come back.
-        </p>
+      <div className="p-4 sm:p-8 max-w-[1440px] w-full mx-auto">
+        <div className="ring-1 ring-black/5 bg-white rounded-lg p-6 sm:p-10 text-center max-w-2xl mx-auto flex flex-col items-center">
+          <AlertCircle className="text-accent mb-3 size-10 shrink-0" />
+          <h2 className="text-lg font-semibold text-zinc-900">No Active Academic Year</h2>
+          <p className="text-sm text-zinc-500 mt-1 max-w-[50ch] leading-relaxed">
+            The timetable belongs to an academic year. Open <strong>Manage Logins → Academics</strong>,
+            create a year and click <em>Set as Active</em>, then come back.
+          </p>
+        </div>
       </div>
     );
   }
@@ -75,23 +74,28 @@ export default function Timetable() {
   const tabProps = { data, fetchData, user, canEdit };
 
   return (
-    <div className="space-y-10 animate-in fade-in duration-700">
-      <div>
-        <h2 className="text-3xl font-black text-slate-900 tracking-tight">Timetable</h2>
-        <p className="text-slate-500 font-medium mt-1">
+    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto animate-in fade-in duration-700">
+      {/* 1. Page Header */}
+      <header className="mb-6 flex flex-col gap-2">
+        <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Timetable</h1>
+        <p className="text-sm text-zinc-500 max-w-[56ch]">
           Configure the school's weekly schedule once, then fill in each class's grid.
         </p>
-      </div>
+      </header>
 
-      <div className="flex flex-wrap gap-2 bg-white p-2 rounded-[2rem] border border-slate-100 shadow-sm w-fit">
+      {/* Segmented Tabs - Horizontally Scrollable on Mobile */}
+      <div className="flex items-center gap-2 mb-6 sm:mb-8 border-b border-zinc-200 pb-4 overflow-x-auto custom-scrollbar w-full">
         {tabs.map(t => (
           <button
             key={t.id}
             onClick={() => setActiveTab(t.id)}
-            className={`flex items-center gap-2 px-6 py-3 rounded-[1.5rem] font-bold text-sm transition-all ${
-              activeTab === t.id ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-50'
-            }`}>
-            <t.icon size={18} /> {t.label}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors whitespace-nowrap ${
+              activeTab === t.id 
+                ? 'bg-primary text-white' 
+                : 'text-zinc-600 hover:bg-zinc-50 border border-zinc-200'
+            }`}
+          >
+            <t.icon className="size-3.5 shrink-0" /> {t.label}
           </button>
         ))}
       </div>
@@ -103,7 +107,6 @@ export default function Timetable() {
     </div>
   );
 }
-
 
 // =====================================================================
 //  SUB-COMPONENT 1: SetupTab — Days + Periods
@@ -146,11 +149,7 @@ function SetupTab({ data, fetchData, user, canEdit }) {
     const res = await fetch(`${API_BASE_URL}/admin/timetable/days`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        institutionId: user.institutionId,
-        academic_year_id: data.academic_year_id,
-        days
-      })
+      body: JSON.stringify({ institutionId: user.institutionId, academic_year_id: data.academic_year_id, days })
     });
     if (res.ok) { alert('Working days saved.'); fetchData(); }
     else alert('Failed to save days.');
@@ -186,7 +185,8 @@ function SetupTab({ data, fetchData, user, canEdit }) {
       if (p.start_time >= p.end_time) return alert(`"${p.name}" end time must be after start time.`);
     }
     if (periods.length === 0) return alert('Add at least one period.');
-    if (!window.confirm('Saving periods will clear all timetable entries that don\'t match the new period IDs. Continue?')) return;
+    if (!window.confirm('Saving periods will clear all timetable entries that do not match the new period IDs. Continue?')) return;
+    
     setSavingPeriods(true);
     const res = await fetch(`${API_BASE_URL}/admin/timetable/periods`, {
       method: 'POST',
@@ -203,106 +203,131 @@ function SetupTab({ data, fetchData, user, canEdit }) {
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-      <div className="bg-white rounded-3xl border border-slate-100 p-8 shadow-sm">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center text-blue-600">
-            <CalendarDays size={22} />
-          </div>
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start">
+      
+      {/* Column 1: Working Days */}
+      <div className="lg:col-span-5 ring-1 ring-black/5 bg-white rounded-lg flex flex-col">
+        <div className="px-5 py-4 border-b border-zinc-100 flex items-center gap-2">
+          <CalendarDays className="size-4 text-primary shrink-0" />
           <div>
-            <h3 className="text-lg font-black text-slate-800">Working Days</h3>
-            <p className="text-xs text-slate-400 font-medium">Tick the days your school operates.</p>
+            <h2 className="text-sm font-semibold text-zinc-900">Working Days</h2>
+            <p className="text-[11px] text-zinc-500 mt-0.5">Tick the days your school operates.</p>
           </div>
         </div>
 
-        <div className="space-y-2">
+        <div className="p-5 flex flex-col gap-2">
           {days.map(d => (
             <label key={d.day_index}
-              className={`flex items-center gap-3 p-4 rounded-2xl border-2 transition-all cursor-pointer ${
-                d.is_working ? 'bg-blue-50 border-blue-200' : 'bg-slate-50 border-transparent hover:border-slate-200'
+              className={`flex items-center gap-3 p-3 rounded-md ring-1 transition-all cursor-pointer ${
+                d.is_working ? 'bg-primary/5 ring-primary/30' : 'bg-zinc-50 ring-black/5 hover:ring-zinc-200'
               } ${!canEdit ? 'opacity-60 cursor-not-allowed' : ''}`}>
-              <input type="checkbox" checked={d.is_working}
+              <input 
+                type="checkbox" 
+                checked={d.is_working}
                 onChange={() => toggleDay(d.day_index)}
                 disabled={!canEdit}
-                className="w-5 h-5 accent-blue-600 cursor-pointer" />
-              <span className="font-bold text-slate-700">{d.day_name}</span>
-              {d.is_working && <span className="ml-auto text-[10px] font-black text-blue-600 uppercase tracking-widest">Working</span>}
+                className="size-4 accent-primary cursor-pointer rounded border-zinc-300 text-primary focus:ring-primary" 
+              />
+              <span className="text-sm font-medium text-zinc-700">{d.day_name}</span>
+              {d.is_working && <span className="ml-auto text-[10px] font-semibold text-primary uppercase tracking-wider">Working</span>}
             </label>
           ))}
-        </div>
-
-        {canEdit && (
-          <button onClick={saveDays} disabled={savingDays}
-            className="mt-6 w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white py-3 rounded-2xl font-black uppercase tracking-widest transition-all shadow-lg shadow-blue-100 flex items-center justify-center gap-2">
-            <Save size={16} /> {savingDays ? 'Saving…' : 'Save Working Days'}
-          </button>
-        )}
-      </div>
-
-      <div className="bg-white rounded-3xl border border-slate-100 p-8 shadow-sm">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600">
-            <Clock size={22} />
-          </div>
-          <div>
-            <h3 className="text-lg font-black text-slate-800">Periods & Breaks</h3>
-            <p className="text-xs text-slate-400 font-medium">The bell schedule — same for every class.</p>
-          </div>
-        </div>
-
-        <div className="space-y-2 mb-4">
-          {periods.map((p, idx) => (
-            <div key={idx} className={`grid grid-cols-12 gap-2 items-center p-3 rounded-2xl border ${
-              p.is_break ? 'bg-amber-50 border-amber-100' : 'bg-slate-50 border-slate-100'
-            }`}>
-              <div className="col-span-1 text-center text-slate-400">
-                {p.is_break ? <Coffee size={16} /> : <span className="text-xs font-black">{idx + 1}</span>}
-              </div>
-              <input placeholder="Name" disabled={!canEdit}
-                value={p.name}
-                onChange={e => updatePeriod(idx, 'name', e.target.value)}
-                className="col-span-4 bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-sm outline-none disabled:opacity-60" />
-              <input type="time" disabled={!canEdit}
-                value={p.start_time}
-                onChange={e => updatePeriod(idx, 'start_time', e.target.value)}
-                className="col-span-3 bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-sm outline-none disabled:opacity-60" />
-              <input type="time" disabled={!canEdit}
-                value={p.end_time}
-                onChange={e => updatePeriod(idx, 'end_time', e.target.value)}
-                className="col-span-3 bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-sm outline-none disabled:opacity-60" />
-              {canEdit && (
-                <button onClick={() => removePeriod(idx)}
-                  className="col-span-1 text-slate-300 hover:text-red-500 transition-colors">
-                  <Trash2 size={14} />
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-
-        {canEdit && (
-          <>
-            <div className="flex gap-2 mb-4">
-              <button onClick={() => addPeriod(false)}
-                className="flex-1 bg-slate-50 hover:bg-slate-100 text-slate-700 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all">
-                <Plus size={14} /> Add Period
-              </button>
-              <button onClick={() => addPeriod(true)}
-                className="flex-1 bg-amber-50 hover:bg-amber-100 text-amber-700 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all">
-                <Coffee size={14} /> Add Break
-              </button>
-            </div>
-            <button onClick={savePeriods} disabled={savingPeriods}
-              className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white py-3 rounded-2xl font-black uppercase tracking-widest transition-all shadow-lg shadow-emerald-100 flex items-center justify-center gap-2">
-              <Save size={16} /> {savingPeriods ? 'Saving…' : 'Save Periods'}
+          
+          {canEdit && (
+            <button onClick={saveDays} disabled={savingDays}
+              className="mt-4 w-full bg-zinc-50 text-zinc-700 border border-zinc-200 hover:bg-zinc-100 py-2.5 rounded-md text-xs font-medium transition-colors flex items-center justify-center gap-1.5">
+              <Save className="size-3.5 shrink-0" /> {savingDays ? 'Saving...' : 'Save Days'}
             </button>
-          </>
-        )}
+          )}
+        </div>
       </div>
+
+      {/* Column 2: Periods */}
+      <div className="lg:col-span-7 ring-1 ring-black/5 bg-white rounded-lg flex flex-col">
+        <div className="px-5 py-4 border-b border-zinc-100 flex items-center gap-2">
+          <Clock className="size-4 text-primary shrink-0" />
+          <div>
+            <h2 className="text-sm font-semibold text-zinc-900">Periods & Breaks</h2>
+            <p className="text-[11px] text-zinc-500 mt-0.5">The bell schedule — applied globally to all classes.</p>
+          </div>
+        </div>
+
+        <div className="p-4 sm:p-5 flex flex-col gap-4">
+          <div className="flex flex-col gap-3">
+            {periods.map((p, idx) => (
+              <div key={idx} className={`flex flex-col sm:flex-row gap-3 p-3 rounded-md ring-1 items-start sm:items-center ${
+                p.is_break ? 'bg-amber-50 ring-amber-200' : 'bg-white ring-zinc-200'
+              }`}>
+                <div className="flex justify-between items-center w-full sm:w-8 sm:justify-center text-zinc-400 shrink-0">
+                  <div className="flex items-center gap-2">
+                    {p.is_break ? <Coffee className="size-4 text-amber-600" /> : <span className="text-sm font-semibold tabular-nums text-zinc-500">{idx + 1}</span>}
+                    <span className="sm:hidden text-xs font-semibold uppercase text-zinc-500 tracking-wider">
+                      {p.is_break ? 'Break' : 'Period'}
+                    </span>
+                  </div>
+                  {canEdit && (
+                    <button onClick={() => removePeriod(idx)} className="sm:hidden text-zinc-400 hover:text-accent p-1 transition-colors">
+                      <Trash2 className="size-4 shrink-0" />
+                    </button>
+                  )}
+                </div>
+                
+                <div className="flex flex-col sm:flex-row gap-2 w-full flex-1">
+                  <input 
+                    placeholder="Name" disabled={!canEdit}
+                    value={p.name}
+                    onChange={e => updatePeriod(idx, 'name', e.target.value)}
+                    className="h-9 w-full rounded border border-zinc-200 bg-white px-3 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:opacity-60" 
+                  />
+                  <div className="flex gap-2 w-full sm:w-auto shrink-0">
+                    <input 
+                      type="time" disabled={!canEdit}
+                      value={p.start_time}
+                      onChange={e => updatePeriod(idx, 'start_time', e.target.value)}
+                      className="h-9 w-full sm:w-32 rounded border border-zinc-200 bg-white px-3 text-sm tabular-nums text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:opacity-60" 
+                    />
+                    <input 
+                      type="time" disabled={!canEdit}
+                      value={p.end_time}
+                      onChange={e => updatePeriod(idx, 'end_time', e.target.value)}
+                      className="h-9 w-full sm:w-32 rounded border border-zinc-200 bg-white px-3 text-sm tabular-nums text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:opacity-60" 
+                    />
+                  </div>
+                </div>
+
+                {canEdit && (
+                  <button onClick={() => removePeriod(idx)} className="hidden sm:flex p-1.5 justify-center text-zinc-400 hover:text-accent transition-colors shrink-0">
+                    <Trash2 className="size-4 shrink-0" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {canEdit && (
+            <div className="flex flex-col sm:flex-row gap-3 pt-4 border-t border-zinc-100">
+              <div className="flex gap-2 w-full sm:flex-1">
+                <button onClick={() => addPeriod(false)}
+                  className="flex-1 text-zinc-700 h-9 border border-zinc-200 rounded-md text-xs font-medium hover:bg-zinc-50 flex items-center justify-center gap-1.5 transition-colors">
+                  <Plus className="size-3.5 shrink-0" /> Add Period
+                </button>
+                <button onClick={() => addPeriod(true)}
+                  className="flex-1 text-amber-700 bg-amber-50 h-9 border border-amber-200 rounded-md text-xs font-medium hover:bg-amber-100 flex items-center justify-center gap-1.5 transition-colors">
+                  <Coffee className="size-3.5 shrink-0" /> Add Break
+                </button>
+              </div>
+              <button onClick={savePeriods} disabled={savingPeriods}
+                className="bg-primary text-white h-9 px-6 rounded-md text-xs font-medium hover:bg-primary/90 transition-colors flex items-center justify-center gap-1.5 w-full sm:w-auto shrink-0 shadow-sm">
+                <Save className="size-3.5 shrink-0" /> {savingPeriods ? 'Saving...' : 'Save Periods'}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+      
     </div>
   );
 }
-
 
 // =====================================================================
 //  SUB-COMPONENT 2: GridTab — teacher dropdown filtered by subject
@@ -338,7 +363,6 @@ function GridTab({ data, fetchData, user, canEdit }) {
 
   const [saving, setSaving] = useState(false);
 
-  // Filter teachers by the subject chosen in the cell.
   const teachersForSubject = useCallback((subjectId) => {
     if (!subjectId) return data.teachers;
     const sid = parseInt(subjectId, 10);
@@ -378,12 +402,7 @@ function GridTab({ data, fetchData, user, canEdit }) {
     const res = await fetch(`${API_BASE_URL}/admin/timetable/entries/bulk`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        institutionId: user.institutionId,
-        academic_year_id: data.academic_year_id,
-        class_id: selectedClassId,
-        entries
-      })
+      body: JSON.stringify({ institutionId: user.institutionId, academic_year_id: data.academic_year_id, class_id: selectedClassId, entries })
     });
     if (res.ok) { alert('Timetable saved.'); fetchData(); }
     else alert('Failed to save.');
@@ -394,10 +413,10 @@ function GridTab({ data, fetchData, user, canEdit }) {
 
   if (workingDays.length === 0 || sortedPeriods.length === 0) {
     return (
-      <div className="bg-white p-16 rounded-3xl border border-dashed border-slate-200 text-center max-w-2xl mx-auto">
-        <AlertCircle className="mx-auto text-amber-400 mb-3" size={42} />
-        <h2 className="text-2xl font-black text-slate-800">Set Up the Schedule First</h2>
-        <p className="text-slate-500 mt-2 font-medium">
+      <div className="ring-1 ring-black/5 bg-white rounded-lg p-6 sm:p-10 text-center flex flex-col items-center">
+        <AlertCircle className="text-accent mb-3 size-10 shrink-0" />
+        <h2 className="text-sm font-semibold text-zinc-900">Set Up the Schedule First</h2>
+        <p className="text-xs text-zinc-500 mt-1 max-w-[50ch]">
           Go to <strong>Days & Periods</strong> and configure the working days and bell schedule before filling in class timetables.
         </p>
       </div>
@@ -406,10 +425,10 @@ function GridTab({ data, fetchData, user, canEdit }) {
 
   if (data.classes.length === 0) {
     return (
-      <div className="bg-white p-16 rounded-3xl border border-dashed border-slate-200 text-center max-w-2xl mx-auto">
-        <AlertCircle className="mx-auto text-amber-400 mb-3" size={42} />
-        <h2 className="text-2xl font-black text-slate-800">No Classes Created</h2>
-        <p className="text-slate-500 mt-2 font-medium">
+      <div className="ring-1 ring-black/5 bg-white rounded-lg p-6 sm:p-10 text-center flex flex-col items-center">
+        <AlertCircle className="text-accent mb-3 size-10 shrink-0" />
+        <h2 className="text-sm font-semibold text-zinc-900">No Classes Created</h2>
+        <p className="text-xs text-zinc-500 mt-1 max-w-[50ch]">
           Create classes first in <strong>Manage Logins → Classes</strong>, then return here.
         </p>
       </div>
@@ -418,91 +437,106 @@ function GridTab({ data, fetchData, user, canEdit }) {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col lg:flex-row gap-4 justify-between lg:items-center">
-        <div className="flex items-center gap-3">
-          <label className="text-xs font-bold text-slate-500 uppercase">Class</label>
-          <select
-            value={selectedClassId}
-            onChange={e => setSelectedClassId(e.target.value)}
-            className="bg-white border border-slate-100 rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-blue-500/10 min-w-[220px] font-bold">
-            {data.classes.map(c => (
-              <option key={c.id} value={c.id}>{classLabel(c)}</option>
-            ))}
-          </select>
+      
+      {/* Top action bar */}
+      <div className="flex flex-col sm:flex-row gap-4 justify-between sm:items-end">
+        <div className="flex flex-col gap-1.5 w-full sm:w-auto">
+          <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Target Class</label>
+          <div className="relative w-full sm:w-48">
+            <select
+              value={selectedClassId}
+              onChange={e => setSelectedClassId(e.target.value)}
+              className="h-9 w-full rounded-md border border-zinc-200 bg-white pl-3 pr-8 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 appearance-none transition-colors">
+              {data.classes.map(c => (
+                <option key={c.id} value={c.id}>{classLabel(c)}</option>
+              ))}
+            </select>
+            <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
         </div>
+        
         {canEdit && (
           <button onClick={handleSave} disabled={saving}
-            className="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-blue-100">
-            <Save size={16} /> {saving ? 'Saving…' : 'Save Timetable'}
+            className="bg-primary text-white h-9 px-6 rounded-md text-xs font-medium hover:bg-primary/90 transition-colors flex items-center justify-center gap-1.5 w-full sm:w-auto shadow-sm">
+            <Save className="size-3.5 shrink-0" /> {saving ? 'Saving...' : 'Save Timetable'}
           </button>
         )}
       </div>
 
-      <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-x-auto custom-scrollbar">
-        <table className="w-full text-left" style={{ minWidth: 880 }}>
+      <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-x-auto custom-scrollbar flex flex-col">
+        <table className="w-full text-left border-collapse min-w-[880px]">
           <thead>
-            <tr className="bg-slate-50">
-              <th className="p-4 text-[10px] font-black uppercase text-slate-400 tracking-widest sticky left-0 bg-slate-50 z-10" style={{ minWidth: 110 }}>
+            <tr className="bg-white">
+              <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-r border-zinc-100 sticky left-0 bg-white z-20 w-32 shadow-[1px_0_0_0_rgba(0,0,0,0.05)]">
                 Day / Period
               </th>
               {sortedPeriods.map(p => (
-                <th key={p.id} className={`p-4 text-center text-[10px] font-black uppercase tracking-widest border-l border-slate-100 ${
-                  p.is_break ? 'bg-amber-50 text-amber-700' : 'text-slate-500'
-                }`} style={{ minWidth: 160 }}>
-                  <div>{p.name}</div>
-                  <div className="text-[9px] font-bold text-slate-400 mt-0.5 tabular-nums">
+                <th key={p.id} className="px-3 py-3 border-b border-r border-zinc-100 text-center min-w-[160px] bg-zinc-50/50">
+                  <div className={`text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap ${p.is_break ? 'text-amber-600' : 'text-zinc-700'}`}>
+                    {p.name}
+                  </div>
+                  <div className="text-[9px] font-medium text-zinc-400 mt-0.5 tabular-nums whitespace-nowrap">
                     {fmtTime(p.start_time)} – {fmtTime(p.end_time)}
                   </div>
                 </th>
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-zinc-100">
             {workingDays.map(d => (
-              <tr key={d.id}>
-                <td className="p-4 font-black text-slate-700 sticky left-0 bg-white z-10 border-r border-slate-100">
+              <tr key={d.id} className="hover:bg-zinc-50/60 transition-colors">
+                <td className="px-5 py-4 text-sm font-medium text-zinc-900 sticky left-0 bg-white z-10 border-r border-zinc-100 shadow-[1px_0_0_0_rgba(0,0,0,0.05)]">
                   {d.day_name}
                 </td>
                 {sortedPeriods.map(p => {
                   const key = `${d.id}-${p.id}`;
                   const cell = cells[key] || { subject_id: '', teacher_id: '', room_no: '' };
+                  
                   if (p.is_break) {
                     return (
-                      <td key={p.id} className="p-4 bg-amber-50/40 text-center text-amber-700 font-bold text-xs uppercase tracking-widest border-l border-slate-100">
-                        <Coffee size={16} className="inline mr-1" /> Break
+                      <td key={p.id} className="p-4 bg-amber-50/50 text-center border-r border-zinc-100">
+                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700 ring-1 ring-amber-600/10 whitespace-nowrap">
+                          <Coffee className="size-3 shrink-0" /> Break
+                        </span>
                       </td>
                     );
                   }
+
                   const eligibleTeachers = teachersForSubject(cell.subject_id);
                   return (
-                    <td key={p.id} className="p-2 border-l border-slate-100 align-top">
-                      <div className="space-y-1.5">
-                        <select
-                          disabled={!canEdit}
-                          value={cell.subject_id}
-                          onChange={e => updateCell(d.id, p.id, 'subject_id', e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-100 rounded-lg px-2 py-1.5 text-xs font-bold outline-none disabled:opacity-60">
-                          <option value="">Subject</option>
-                          {data.subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                        </select>
-                        <select
-                          disabled={!canEdit}
-                          value={cell.teacher_id}
-                          onChange={e => updateCell(d.id, p.id, 'teacher_id', e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-100 rounded-lg px-2 py-1.5 text-xs outline-none disabled:opacity-60">
-                          <option value="">
-                            {cell.subject_id
-                              ? (eligibleTeachers.length ? 'Teacher' : 'No teacher for subject')
-                              : 'Teacher'}
-                          </option>
-                          {eligibleTeachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                        </select>
+                    <td key={p.id} className="p-2 sm:p-3 border-r border-zinc-100 align-top">
+                      <div className="flex flex-col gap-1.5">
+                        <div className="relative">
+                          <select
+                            disabled={!canEdit}
+                            value={cell.subject_id}
+                            onChange={e => updateCell(d.id, p.id, 'subject_id', e.target.value)}
+                            className="h-8 w-full rounded border border-zinc-200 bg-zinc-50 pl-2 pr-6 text-[11px] text-zinc-900 focus:outline-none focus:ring-1 focus:ring-primary/40 focus:border-primary/40 disabled:opacity-60 appearance-none cursor-pointer">
+                            <option value="">Select Subject</option>
+                            {data.subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                          </select>
+                          <ChevronDown className="size-3 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        </div>
+                        <div className="relative">
+                          <select
+                            disabled={!canEdit}
+                            value={cell.teacher_id}
+                            onChange={e => updateCell(d.id, p.id, 'teacher_id', e.target.value)}
+                            className="h-8 w-full rounded border border-zinc-200 bg-zinc-50 pl-2 pr-6 text-[11px] text-zinc-900 focus:outline-none focus:ring-1 focus:ring-primary/40 focus:border-primary/40 disabled:opacity-60 appearance-none cursor-pointer">
+                            <option value="">
+                              {cell.subject_id ? (eligibleTeachers.length ? 'Select Teacher' : 'No teacher') : 'Select Teacher'}
+                            </option>
+                            {eligibleTeachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                          </select>
+                          <ChevronDown className="size-3 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        </div>
                         <input
                           disabled={!canEdit}
-                          placeholder="Room"
+                          placeholder="Room (e.g. 101)"
                           value={cell.room_no}
                           onChange={e => updateCell(d.id, p.id, 'room_no', e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-100 rounded-lg px-2 py-1.5 text-xs outline-none disabled:opacity-60" />
+                          className="h-8 w-full rounded border border-zinc-200 bg-white px-2 text-[11px] text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-primary/40 focus:border-primary/40 disabled:opacity-60" 
+                        />
                       </div>
                     </td>
                   );
@@ -513,10 +547,12 @@ function GridTab({ data, fetchData, user, canEdit }) {
         </table>
       </div>
 
-      <p className="text-xs text-slate-400 font-medium">
-        Tip: pick a subject first — the teacher dropdown will show only teachers who teach that subject.
-        Manage subjects in <strong>Manage Logins → Subjects</strong>.
-      </p>
+      <div className="bg-blue-50/50 border border-blue-100 rounded-md p-4 flex gap-3 text-[11px] text-blue-700 leading-relaxed">
+        <AlertCircle className="size-4 shrink-0 text-blue-500 mt-0.5" />
+        <p>
+          <strong className="font-semibold text-blue-900">Tip:</strong> Pick a subject first — the teacher dropdown will filter to show only teachers who are assigned to that subject. Manage subjects in <em>Manage Logins → Subjects</em>.
+        </p>
+      </div>
     </div>
   );
 }

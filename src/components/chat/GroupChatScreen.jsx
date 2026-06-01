@@ -15,7 +15,7 @@ import EmojiPicker from "emoji-picker-react";
 import { getProfileImageSource } from "../../utils/imageHelpers";
 import { v4 as uuidv4 } from 'uuid';
 
-const THEME = { myMessageBg: "bg-[#d9fdd3]", otherMessageBg: "bg-white" };
+const THEME = { myMessageBg: "bg-primary/10 ring-1 ring-primary/20 shadow-sm", otherMessageBg: "bg-white ring-1 ring-black/5 shadow-sm" };
 const MESSAGES_PER_PAGE = 20; 
 
 const getLocalISOString = () => {
@@ -42,12 +42,12 @@ const formatFileSize = (bytes) => {
 const getFileIcon = (fileName) => {
   const extension = fileName?.split('.').pop()?.toLowerCase();
   switch (extension) {
-    case 'pdf': return { icon: FileText, color: 'text-red-600' };
+    case 'pdf': return { icon: FileText, color: 'text-red-500' };
     case 'doc': case 'docx': return { icon: FileText, color: 'text-blue-600' };
-    case 'xls': case 'xlsx': return { icon: FileText, color: 'text-green-600' };
-    case 'ppt': case 'pptx': return { icon: FileText, color: 'text-orange-600' };
-    case 'zip': case 'rar': return { icon: Archive, color: 'text-yellow-600' };
-    default: return { icon: File, color: 'text-gray-600' };
+    case 'xls': case 'xlsx': return { icon: FileText, color: 'text-emerald-600' };
+    case 'ppt': case 'pptx': return { icon: FileText, color: 'text-orange-500' };
+    case 'zip': case 'rar': return { icon: Archive, color: 'text-amber-500' };
+    default: return { icon: File, color: 'text-zinc-500' };
   }
 };
 
@@ -297,12 +297,12 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
   const cancelReply = () => setReplyingTo(null); const cancelEdit = () => { setEditingMessage(null); setNewMessage(""); };
 
   const renderMessageItem = (item) => {
-    if (item.type === 'date') return <div key={item.id} className="flex justify-center my-4"><div className="bg-[#f0f2f5] px-3 py-1.5 rounded-lg shadow-sm"><span className="text-xs text-[#54656f] font-medium uppercase">{item.date}</span></div></div>;
+    if (item.type === 'date') return <div key={item.id} className="flex justify-center my-4"><div className="bg-white ring-1 ring-black/5 px-3 py-1 rounded-md shadow-sm"><span className="text-[11px] text-zinc-500 font-semibold uppercase tracking-wider">{item.date}</span></div></div>;
     
     if (item.type === 'unread_banner') return (
         <div key={item.id} id="unread-banner" className="flex justify-center my-4 w-full">
-            <div className="bg-[#e7fce3] px-3 py-1 rounded-full shadow-sm flex justify-center border border-[#d9fdd3]">
-                <span className="text-xs text-[#00a884] font-bold">Unread Messages</span>
+            <div className="bg-primary/10 px-3 py-1 rounded-full shadow-sm flex justify-center border border-primary/20">
+                <span className="text-[11px] text-primary font-semibold uppercase tracking-wider">Unread Messages</span>
             </div>
         </div>
     );
@@ -316,61 +316,61 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
       if (item.is_deleted) {
           const removedByMe = item.deleted_by === user?.id;
           return (
-              <div className="text-sm italic text-gray-500 p-2 flex items-center gap-2">
-                  <Shield className="w-4 h-4 text-gray-400" />
+              <div className="text-xs italic text-zinc-400 p-2 flex items-center gap-1.5">
+                  <Shield className="size-3.5 text-zinc-300" />
                   {removedByMe ? "You deleted this message" : "Removed by Moderator"}
               </div>
           );
       }
 
       const sourceUri = item.localUri || (item.file_url ? SERVER_URL + item.file_url : null);
-      if (!sourceUri && (isImageOrVideo || isFile)) return <div className="flex items-center gap-2 p-3 text-red-600 bg-red-50 rounded-lg"><AlertCircle className="w-5 h-5" /><span className="text-sm">Media not available</span></div>;
+      if (!sourceUri && (isImageOrVideo || isFile)) return <div className="flex items-center gap-2 p-3 text-red-600 bg-red-50 rounded-md"><AlertCircle className="size-4" /><span className="text-sm">Media not available</span></div>;
       
-      const renderUploadOverlay = () => { if (item.status !== 'uploading' && item.status !== 'failed') return null; return <div className="absolute inset-0 bg-black bg-opacity-60 flex flex-col items-center justify-center rounded-lg">{item.status === 'uploading' && <><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-white" /><span className="text-white mt-2 font-bold text-base">{item.progress || 0}%</span></>}{item.status === 'failed' && <><AlertCircle className="w-10 h-10 text-white" /><span className="text-white mt-2 font-bold text-base">Failed</span></>}</div>; };
+      const renderUploadOverlay = () => { if (item.status !== 'uploading' && item.status !== 'failed') return null; return <div className="absolute inset-0 bg-black bg-opacity-60 flex flex-col items-center justify-center rounded-lg">{item.status === 'uploading' && <><div className="animate-spin rounded-full size-8 border-b-2 border-white" /><span className="text-white mt-2 font-bold text-sm">{item.progress || 0}%</span></>}{item.status === 'failed' && <><AlertCircle className="size-8 text-white" /><span className="text-white mt-2 font-bold text-sm">Failed</span></>}</div>; };
 
-      if (item.message_type === 'image') return <div className="relative cursor-pointer" onClick={(e) => { e.stopPropagation(); setFullScreenImage(sourceUri); }}><img src={sourceUri} className="w-64 h-64 rounded-lg object-cover" alt="Shared" />{renderUploadOverlay()}</div>;
-      if (item.message_type === 'video') return <div className="relative"><video src={sourceUri} className="w-64 h-64 rounded-lg object-cover" controls={!item.status} muted playsInline onError={(e) => setVideoErrors(prev => ({ ...prev, [item.id]: true }))} />{renderUploadOverlay()}</div>;
+      if (item.message_type === 'image') return <div className="relative cursor-pointer" onClick={(e) => { e.stopPropagation(); setFullScreenImage(sourceUri); }}><img src={sourceUri} className="w-64 h-64 rounded-md object-cover" alt="Shared" />{renderUploadOverlay()}</div>;
+      if (item.message_type === 'video') return <div className="relative"><video src={sourceUri} className="w-64 h-64 rounded-md object-cover" controls={!item.status} muted playsInline onError={(e) => setVideoErrors(prev => ({ ...prev, [item.id]: true }))} />{renderUploadOverlay()}</div>;
       if (item.message_type === 'file') {
         const iconInfo = getFileIcon(item.file_name); const IconComponent = iconInfo.icon;
         return (
-           <div className="bg-white/50 rounded-lg p-3 w-64 overflow-hidden flex flex-col gap-2">
+           <div className={`rounded-md p-3 w-64 overflow-hidden flex flex-col gap-2 ${isMyMessage ? 'bg-white/60' : 'bg-zinc-50'}`}>
                <div className="flex items-center gap-3">
-                   <div className="relative"><IconComponent className={`w-10 h-10 ${iconInfo.color}`} />{renderUploadOverlay()}</div>
+                   <div className="relative"><IconComponent className={`size-8 ${iconInfo.color}`} />{renderUploadOverlay()}</div>
                    <div className="flex-1 min-w-0">
-                       <div className="text-sm font-medium text-gray-900 truncate">{item.file_name}</div>
-                       <div className="text-xs text-gray-500 mt-0.5">{formatFileSize(item.file_size)}</div>
+                       <div className="text-sm font-semibold text-zinc-900 truncate">{item.file_name}</div>
+                       <div className="text-[11px] font-medium text-zinc-500 mt-0.5">{formatFileSize(item.file_size)}</div>
                    </div>
                </div>
                {!item.status && (
-                   <div className="flex gap-4 border-t border-gray-200 pt-2 mt-1">
-                       <button onClick={(e) => {e.stopPropagation(); downloadAndOpenFile(item.file_url, item.file_name, 'view');}} className="text-xs text-blue-600 font-medium hover:underline">View</button>
-                       <button onClick={(e) => {e.stopPropagation(); downloadAndOpenFile(item.file_url, item.file_name, 'download');}} className="text-xs text-blue-600 font-medium hover:underline">Download</button>
+                   <div className="flex gap-4 border-t border-zinc-200/60 pt-2 mt-1">
+                       <button onClick={(e) => {e.stopPropagation(); downloadAndOpenFile(item.file_url, item.file_name, 'view');}} className="text-xs text-primary font-semibold hover:underline">View</button>
+                       <button onClick={(e) => {e.stopPropagation(); downloadAndOpenFile(item.file_url, item.file_name, 'download');}} className="text-xs text-primary font-semibold hover:underline">Download</button>
                    </div>
                )}
            </div>
         );
       }
-      return <span className="text-sm sm:text-base text-gray-900 break-words whitespace-pre-wrap leading-relaxed">{item.message_text}</span>;
+      return <span className="text-sm text-zinc-800 break-words whitespace-pre-wrap leading-relaxed">{item.message_text}</span>;
     };
 
     const key = item.id ? item.id.toString() : item.clientMessageId;
     return (
-      <div key={key} className={`flex flex-row my-1 px-4 sm:px-8 items-start ${isMyMessage ? "justify-end" : "justify-start"}`}>
-        {!isMyMessage && <img src={getProfileImageSource(item.profile_image_url)} alt="User" className="w-8 h-8 rounded-full mr-2 mt-1 bg-gray-200 flex-shrink-0" />}
-        <div className={`relative max-w-[85%] sm:max-w-[65%] cursor-pointer shadow-sm ${isMyMessage ? (isImageOrVideo ? "rounded-lg" : `${THEME.myMessageBg} rounded-lg rounded-tr-none p-2 px-3`) : (isImageOrVideo ? "rounded-lg" : `${THEME.otherMessageBg} rounded-lg rounded-tl-none p-2 px-3`)} ${item.is_deleted ? 'bg-slate-50 border border-slate-200 shadow-none' : ''}`} onContextMenu={(e) => { e.preventDefault(); onLongPressMessage(item); }} onClick={() => onLongPressMessage(item)}>
+      <div key={key} className={`flex flex-row my-1 px-4 sm:px-6 items-start ${isMyMessage ? "justify-end" : "justify-start"}`}>
+        {!isMyMessage && <img src={getProfileImageSource(item.profile_image_url)} alt="User" className="size-8 rounded-full mr-2.5 mt-0.5 bg-zinc-200 flex-shrink-0 object-cover" />}
+        <div className={`relative max-w-[85%] sm:max-w-[65%] cursor-pointer ${isMyMessage ? (isImageOrVideo ? "rounded-lg shadow-sm ring-1 ring-black/5" : `${THEME.myMessageBg} rounded-lg rounded-tr-none p-2.5`) : (isImageOrVideo ? "rounded-lg shadow-sm ring-1 ring-black/5" : `${THEME.otherMessageBg} rounded-lg rounded-tl-none p-2.5`)} ${item.is_deleted ? 'bg-zinc-50 border border-zinc-200 shadow-none' : ''}`} onContextMenu={(e) => { e.preventDefault(); onLongPressMessage(item); }} onClick={() => onLongPressMessage(item)}>
           
-          {!!item.is_pinned && !item.is_deleted && <div className="absolute -top-2 -right-2 bg-yellow-100 text-yellow-600 rounded-full p-1 shadow-sm border border-yellow-200"><Pin className="w-3 h-3" /></div>}
+          {!!item.is_pinned && !item.is_deleted && <div className="absolute -top-2 -right-2 bg-amber-100 text-amber-600 rounded-full p-1 shadow-sm border border-amber-200"><Pin className="size-3" /></div>}
           
-          {!isMyMessage && !isImageOrVideo && !isFile && !item.is_deleted && <div className="text-xs font-bold text-[#54656f] mb-1">{item.full_name}</div>}
+          {!isMyMessage && !isImageOrVideo && !isFile && !item.is_deleted && <div className="text-[11px] font-semibold text-zinc-500 mb-1">{item.full_name}</div>}
           
-          {!!item.reply_to_message_id && !isImageOrVideo && !item.is_deleted && <div className={`mb-2 p-2 rounded-md border-l-4 bg-black/5 border-[#00a884]`}><div className="text-xs font-bold text-[#00a884]">{item.reply_sender_name}</div><div className="text-xs text-gray-600 truncate">{item.reply_type === 'text' ? item.reply_text : 'Media'}</div></div>}
+          {!!item.reply_to_message_id && !isImageOrVideo && !item.is_deleted && <div className="mb-2 p-2 rounded-md border-l-4 bg-black/5 border-primary"><div className="text-[11px] font-semibold text-primary mb-0.5">{item.reply_sender_name}</div><div className="text-xs text-zinc-600 truncate">{item.reply_type === 'text' ? item.reply_text : 'Media'}</div></div>}
           
           {renderContent()}
           
-          <div className={`${(isImageOrVideo) ? 'absolute bottom-2 right-2 bg-black/40 text-white px-1.5 rounded-full' : 'float-right ml-2 mt-1'} flex items-center gap-1 text-[11px] ${(isImageOrVideo) ? 'text-white' : 'text-gray-500'}`}>
+          <div className={`${(isImageOrVideo) ? 'absolute bottom-2 right-2 bg-black/50 text-white px-1.5 rounded-full backdrop-blur-sm' : 'float-right ml-3 mt-1.5'} flex items-center gap-1 text-[10px] font-medium ${(isImageOrVideo) ? 'text-white' : 'text-zinc-400'}`}>
               {!!item.is_edited && !item.is_deleted && <span>Edited</span>}
               <span>{messageTime}</span>
-              {isMyMessage && !item.is_deleted && <span className={isImageOrVideo ? "text-white" : "text-[#53bdeb]"}><CheckCheck className="w-3.5 h-3.5 inline-block" /></span>}
+              {isMyMessage && !item.is_deleted && <span className={isImageOrVideo ? "text-white" : "text-primary"}><CheckCheck className="size-3.5 inline-block" /></span>}
           </div>
         </div>
       </div>
@@ -383,23 +383,23 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
     const canDeleteThisMessage = isMyMessage || hasGlobalDelete;
 
     return (
-      <div className={`fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 ${isOptionsModalVisible ? '' : 'hidden'}`}>
-        <div className="bg-white rounded-lg p-2 w-72 max-w-[90%] shadow-xl">
-          {canSendMessages && <button className="w-full flex items-center gap-3 p-3 hover:bg-slate-100 rounded-md" onClick={() => { setReplyingTo(selectedMessage); setOptionsModalVisible(false); }}><Reply className="w-5 h-5 text-slate-600" /><span className="text-slate-700">Reply</span></button>}
-          {isMyMessage && selectedMessage.message_type === 'text' && <button className="w-full flex items-center gap-3 p-3 hover:bg-slate-100 rounded-md" onClick={() => { setEditingMessage(selectedMessage); setNewMessage(selectedMessage.message_text); setOptionsModalVisible(false); }}><Edit3 className="w-5 h-5 text-slate-600" /><span className="text-slate-700">Edit</span></button>}
-          {canDeleteThisMessage && <button className="w-full flex items-center gap-3 p-3 hover:bg-slate-100 rounded-md" onClick={() => { if (window.confirm('Delete message?')) { handleDeleteMessage(selectedMessage.id); setOptionsModalVisible(false); } }}><Trash2 className="w-5 h-5 text-red-500" /><span className="text-red-600">Delete</span></button>}
-          <div className="h-px bg-slate-100 my-1"></div>
-          <button className="w-full flex items-center gap-3 p-3 hover:bg-slate-100 rounded-md" onClick={() => setOptionsModalVisible(false)}><X className="w-5 h-5 text-slate-600" /><span className="text-slate-700">Cancel</span></button>
+      <div className={`fixed inset-0 bg-zinc-900/40 backdrop-blur-sm flex items-center justify-center z-[60] ${isOptionsModalVisible ? '' : 'hidden'}`}>
+        <div className="bg-white rounded-lg p-2 w-72 max-w-[90%] shadow-xl ring-1 ring-black/5 animate-in zoom-in-95 duration-200">
+          {canSendMessages && <button className="w-full flex items-center gap-3 p-3 hover:bg-zinc-50 rounded-md transition-colors" onClick={() => { setReplyingTo(selectedMessage); setOptionsModalVisible(false); }}><Reply className="size-4 text-zinc-500" /><span className="text-sm font-medium text-zinc-700">Reply</span></button>}
+          {isMyMessage && selectedMessage.message_type === 'text' && <button className="w-full flex items-center gap-3 p-3 hover:bg-zinc-50 rounded-md transition-colors" onClick={() => { setEditingMessage(selectedMessage); setNewMessage(selectedMessage.message_text); setOptionsModalVisible(false); }}><Edit3 className="size-4 text-zinc-500" /><span className="text-sm font-medium text-zinc-700">Edit</span></button>}
+          {canDeleteThisMessage && <button className="w-full flex items-center gap-3 p-3 hover:bg-red-50 rounded-md transition-colors" onClick={() => { if (window.confirm('Delete message?')) { handleDeleteMessage(selectedMessage.id); setOptionsModalVisible(false); } }}><Trash2 className="size-4 text-red-500" /><span className="text-sm font-medium text-red-600">Delete</span></button>}
+          <div className="h-px bg-zinc-100 my-1"></div>
+          <button className="w-full flex items-center gap-3 p-3 hover:bg-zinc-50 rounded-md transition-colors" onClick={() => setOptionsModalVisible(false)}><X className="size-4 text-zinc-500" /><span className="text-sm font-medium text-zinc-700">Cancel</span></button>
         </div>
       </div>
     );
   };
 
   return (
-    <div className="flex flex-col h-full w-full bg-[#efeae2]">
+    <div className="flex flex-col h-full w-full bg-zinc-50">
       {fullScreenImage && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-90" onClick={() => setFullScreenImage(null)}>
-          <button className="absolute top-4 right-4 p-2 text-white hover:text-gray-300" onClick={(e) => { e.stopPropagation(); setFullScreenImage(null); }}><X className="w-8 h-8" /></button>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setFullScreenImage(null)}>
+          <button className="absolute top-6 right-6 p-2 text-white/70 hover:text-white transition-colors bg-white/10 rounded-full" onClick={(e) => { e.stopPropagation(); setFullScreenImage(null); }}><X className="size-6" /></button>
           <img src={fullScreenImage} className="max-w-full max-h-full object-contain p-4" alt="Full screen view" onClick={(e) => e.stopPropagation()} />
         </div>
       )}
@@ -407,43 +407,43 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
       {renderOptionsModal()} 
       
       {/* Header */}
-      <div className="h-16 bg-[#f0f2f5] border-b border-slate-200 px-4 flex items-center justify-between flex-shrink-0 z-50">
-        {isEmbedded && onBack && <button onClick={onBack} className="md:hidden mr-3 p-1 rounded-full hover:bg-slate-200 text-slate-600"><MdArrowBack className="w-6 h-6" /></button>}
+      <div className="h-16 bg-white border-b border-zinc-200 px-4 flex items-center justify-between flex-shrink-0 z-30">
+        {isEmbedded && onBack && <button onClick={onBack} className="md:hidden mr-3 p-1.5 rounded-full hover:bg-zinc-100 text-zinc-500 transition-colors"><MdArrowBack className="size-6" /></button>}
         
         {/* Clickable Group Profile Area */}
         <div className="flex items-center flex-1 cursor-pointer" onClick={() => {
              if (isEmbedded && onOpenSettings) { onOpenSettings(); } 
              else { navigate(`/GroupSettingsScreen`, { state: { group } }); }
         }}>
-          <img src={getProfileImageSource(group.group_dp_url)} alt="Group" className="w-10 h-10 rounded-full mr-3 bg-slate-200 object-cover" />
-          <div className="flex flex-col">
-              <span className="font-semibold text-slate-800 text-base leading-tight flex items-center gap-2">
-                  {group.name} {isReadOnlyMode && <Megaphone className="w-4 h-4 text-gray-500" />}
+          <img src={getProfileImageSource(group.group_dp_url)} alt="Group" className="size-10 rounded-full mr-3 bg-zinc-100 object-cover ring-1 ring-black/5" />
+          <div className="flex flex-col min-w-0 pr-4">
+              <span className="font-semibold text-zinc-900 text-sm leading-tight flex items-center gap-1.5 truncate">
+                  {group.name} {isReadOnlyMode && <Megaphone className="size-3.5 text-zinc-400 shrink-0" />}
               </span>
-              <span className="text-xs text-slate-500">Tap for group info</span>
+              <span className="text-[11px] font-medium text-zinc-500 mt-0.5 truncate">Tap for group info</span>
           </div>
         </div>
         
         {/* Three Dots & Dropdown Menu Container */}
         <div className="relative">
-          <button onClick={() => setGroupMenuVisible(!isGroupMenuVisible)} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
-              <MoreVertical className="w-5 h-5 text-[#54656f]" />
+          <button onClick={() => setGroupMenuVisible(!isGroupMenuVisible)} className="p-2 hover:bg-zinc-100 rounded-full transition-colors">
+              <MoreVertical className="size-5 text-zinc-500" />
           </button>
           
           {isGroupMenuVisible && (
               <>
                   <div className="fixed inset-0 z-40" onClick={() => setGroupMenuVisible(false)}></div>
-                  <div className="absolute right-0 top-full mt-2 bg-white rounded-md shadow-xl border border-slate-200 py-1 w-48 z-50">
+                  <div className="absolute right-0 top-full mt-2 bg-white rounded-md shadow-lg ring-1 ring-black/5 py-1 w-48 z-50 animate-in fade-in slide-in-from-top-2 duration-200">
                       <button 
-                          className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-100 transition-colors text-left"
+                          className="w-full flex items-center gap-2.5 px-4 py-2.5 hover:bg-zinc-50 transition-colors text-left"
                           onClick={() => { 
                               setGroupMenuVisible(false); 
                               if (isEmbedded && onOpenSettings) { onOpenSettings(); } 
                               else { navigate(`/GroupSettingsScreen`, { state: { group } }); } 
                           }}
                       >
-                          <Settings className="w-4 h-4 text-slate-600" />
-                          <span className="text-slate-700 font-medium text-sm">Group Settings</span>
+                          <Settings className="size-4 text-zinc-500" />
+                          <span className="text-zinc-700 font-medium text-sm">Group Settings</span>
                       </button>
                   </div>
               </>
@@ -452,22 +452,22 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
       </div>
 
       {/* Message List */}
-      <div ref={messagesContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto relative bg-[#efeae2] bg-opacity-50 min-h-0">
-        <div className="absolute inset-0 opacity-[0.06] pointer-events-none" style={{ backgroundImage: "url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png')", backgroundRepeat: 'repeat' }}></div>
+      <div ref={messagesContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto custom-scrollbar relative bg-zinc-50/50 min-h-0">
+        <div className="absolute inset-0 opacity-[0.03] pointer-events-none mix-blend-multiply" style={{ backgroundImage: "url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png')", backgroundRepeat: 'repeat' }}></div>
         
-        {isFetchingMore && <div className="flex justify-center p-2 z-20"><Loader2 className="w-6 h-6 animate-spin text-[#00a884]" /></div>}
+        {isFetchingMore && <div className="flex justify-center p-3 z-20"><Loader2 className="size-5 animate-spin text-primary" /></div>}
 
         {loading ? (
-            <div className="flex items-center justify-center h-full"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#00a884]" /></div>
+            <div className="flex items-center justify-center h-full"><Loader2 className="size-8 animate-spin text-primary" /></div>
         ) : (
             <div className="flex flex-col py-4 relative z-10">
                 {processedData.length > 0 ? (
                     processedData.map(renderMessageItem)
                 ) : (
-                    <div className="flex flex-col items-center justify-center h-full text-center p-8 opacity-60">
-                          <div className="w-32 h-32 bg-[#e9edef] rounded-full flex items-center justify-center mb-4"><Smile className="w-12 h-12 text-slate-400" /></div>
-                          <h3 className="text-lg font-medium text-gray-700">No messages yet</h3>
-                          <p className="text-sm text-gray-500 max-w-xs mt-2">Send a message to start the conversation.</p>
+                    <div className="flex flex-col items-center justify-center h-full text-center p-8">
+                          <div className="size-24 bg-white ring-1 ring-black/5 rounded-full flex items-center justify-center mb-4 shadow-sm"><Smile className="size-10 text-zinc-300" /></div>
+                          <h3 className="text-base font-semibold text-zinc-700">No messages yet</h3>
+                          <p className="text-sm font-medium text-zinc-500 max-w-xs mt-2 leading-relaxed">Send a message to start the conversation.</p>
                     </div>
                 )}
                 <div ref={messagesEndRef} />
@@ -477,39 +477,39 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
 
       {/* Input Area (Dynamic Notice Board Logic) */}
       {canSendMessages ? (
-          <div className="bg-[#f0f2f5] px-4 py-2 flex items-center gap-2 flex-shrink-0 z-20 relative">
-            {replyingTo && <div className="absolute bottom-full left-0 right-0 bg-white/95 backdrop-blur-sm p-2 border-l-4 border-[#00a884] flex justify-between items-center shadow-sm px-4"><div className="flex-1"><div className="text-xs font-bold text-[#00a884]">{replyingTo.reply_sender_name}</div><div className="text-sm text-gray-500 truncate">{replyingTo.message_text}</div></div><button onClick={cancelReply}><X className="w-5 h-5 text-gray-500" /></button></div>}
-            {editingMessage && <div className="absolute bottom-full left-0 right-0 bg-blue-50 p-2 border-l-4 border-blue-500 flex justify-between items-center px-4"><span className="text-blue-600 font-medium">Editing message...</span><button onClick={cancelEdit}><X className="w-5 h-5 text-blue-400" /></button></div>}
+          <div className="bg-white border-t border-zinc-200 px-4 py-3 flex items-end gap-3 flex-shrink-0 z-20 relative">
+            {replyingTo && <div className="absolute bottom-full left-0 right-0 bg-white/95 backdrop-blur-sm p-3 border-l-4 border-primary flex justify-between items-center shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] px-4"><div className="flex-1 min-w-0 pr-4"><div className="text-xs font-semibold text-primary mb-0.5">{replyingTo.reply_sender_name}</div><div className="text-sm text-zinc-500 truncate">{replyingTo.message_text}</div></div><button onClick={cancelReply} className="p-1 hover:bg-zinc-100 rounded-md transition-colors"><X className="size-4 text-zinc-400" /></button></div>}
+            {editingMessage && <div className="absolute bottom-full left-0 right-0 bg-primary/5 p-3 border-l-4 border-primary flex justify-between items-center shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] px-4"><span className="text-primary text-sm font-medium">Editing message...</span><button onClick={cancelEdit} className="p-1 hover:bg-primary/10 rounded-md transition-colors"><X className="size-4 text-primary" /></button></div>}
             
-            {/* THE FIX: Anchored Emoji Picker Wrapper */}
-            <div className="relative flex items-center">
-                <button onClick={() => setIsEmojiPickerOpen(!isEmojiPickerOpen)} className="p-2 text-[#54656f] hover:bg-slate-200 rounded-full"><Smile className="w-6 h-6" /></button>
+            {/* Anchored Emoji Picker Wrapper */}
+            <div className="relative flex items-center pb-1 shrink-0">
+                <button onClick={() => setIsEmojiPickerOpen(!isEmojiPickerOpen)} className="p-2 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 rounded-full transition-colors"><Smile className="size-5" /></button>
                 {isEmojiPickerOpen && (
                     <>
                         <div className="fixed inset-0 z-40" onClick={() => setIsEmojiPickerOpen(false)}></div>
-                        <div className="absolute bottom-full left-0 mb-4 z-50 shadow-lg rounded-lg overflow-hidden">
+                        <div className="absolute bottom-full left-0 mb-4 z-50 shadow-xl ring-1 ring-black/5 rounded-lg overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200">
                             <EmojiPicker onEmojiClick={(emojiData) => { setNewMessage((prev) => prev + emojiData.emoji); setIsEmojiPickerOpen(false); }} width={300} height={400} />
                         </div>
                     </>
                 )}
             </div>
 
-            {/* THE FIX: Anchored Attachment Popup Menu */}
-            <div className="relative flex items-center">
-                <button onClick={() => setAttachmentModalVisible(!isAttachmentModalVisible)} className="p-2 text-[#54656f] hover:bg-slate-200 rounded-full"><Paperclip className="w-6 h-6" /></button>
+            {/* Anchored Attachment Popup Menu */}
+            <div className="relative flex items-center pb-1 shrink-0">
+                <button onClick={() => setAttachmentModalVisible(!isAttachmentModalVisible)} className="p-2 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 rounded-full transition-colors"><Paperclip className="size-5" /></button>
                 
                 {isAttachmentModalVisible && (
                     <>
                         <div className="fixed inset-0 z-40" onClick={() => setAttachmentModalVisible(false)}></div>
-                        <div className="absolute bottom-full left-0 mb-4 z-50 bg-white rounded-2xl shadow-xl border border-slate-200 p-4 w-72">
-                            <div className="grid grid-cols-2 gap-4">
-                                <button className="flex flex-col items-center gap-2 p-3 hover:bg-slate-50 rounded-xl transition-colors" onClick={() => { setAttachmentModalVisible(false); document.getElementById('chat-media-upload').click(); }}>
-                                    <div className="w-14 h-14 bg-purple-100 rounded-full flex items-center justify-center"><ImageIcon className="w-7 h-7 text-purple-600" /></div>
-                                    <span className="text-xs font-medium text-gray-700">Photos & Videos</span>
+                        <div className="absolute bottom-full left-0 mb-4 z-50 bg-white rounded-lg shadow-xl ring-1 ring-black/5 p-4 w-72 animate-in fade-in slide-in-from-bottom-2 duration-200">
+                            <div className="grid grid-cols-2 gap-3">
+                                <button className="flex flex-col items-center gap-2 p-3 hover:bg-zinc-50 rounded-md transition-colors border border-transparent hover:border-zinc-200" onClick={() => { setAttachmentModalVisible(false); document.getElementById('chat-media-upload').click(); }}>
+                                    <div className="size-12 bg-purple-100 rounded-full flex items-center justify-center ring-1 ring-purple-200"><ImageIcon className="size-5 text-purple-600" /></div>
+                                    <span className="text-xs font-semibold text-zinc-700">Photos & Videos</span>
                                 </button>
-                                <button className="flex flex-col items-center gap-2 p-3 hover:bg-slate-50 rounded-xl transition-colors" onClick={() => { setAttachmentModalVisible(false); document.getElementById('chat-document-upload').click(); }}>
-                                    <div className="w-14 h-14 bg-indigo-100 rounded-full flex items-center justify-center"><FileText className="w-7 h-7 text-indigo-600" /></div>
-                                    <span className="text-xs font-medium text-gray-700">Document</span>
+                                <button className="flex flex-col items-center gap-2 p-3 hover:bg-zinc-50 rounded-md transition-colors border border-transparent hover:border-zinc-200" onClick={() => { setAttachmentModalVisible(false); document.getElementById('chat-document-upload').click(); }}>
+                                    <div className="size-12 bg-indigo-100 rounded-full flex items-center justify-center ring-1 ring-indigo-200"><FileText className="size-5 text-indigo-600" /></div>
+                                    <span className="text-xs font-semibold text-zinc-700">Document</span>
                                 </button>
                             </div>
                         </div>
@@ -517,20 +517,24 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
                 )}
             </div>
 
-            <div className="flex-1 bg-white rounded-lg flex items-center px-4 py-2">
-                <textarea className="w-full bg-transparent outline-none text-slate-900 resize-none max-h-24 min-h-[24px]" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyPress={handleKeyPress} placeholder="Type a message" rows={1} onFocus={() => setIsEmojiPickerOpen(false)} />
+            <div className="flex-1 bg-zinc-50 ring-1 ring-inset ring-zinc-200 focus-within:ring-primary/40 rounded-md flex items-center px-4 py-2 transition-shadow">
+                <textarea className="w-full bg-transparent outline-none text-sm text-zinc-900 resize-none max-h-24 min-h-[20px] custom-scrollbar placeholder:text-zinc-400" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyPress={handleKeyPress} placeholder="Type a message..." rows={1} onFocus={() => setIsEmojiPickerOpen(false)} />
             </div>
 
             <input type="file" accept="image/*,video/*" className="hidden" id="chat-media-upload" onChange={handlePickImageVideo} />
             <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.rar,.txt" className="hidden" id="chat-document-upload" onChange={handlePickDocument} />
             
-            <button className="p-2 text-[#54656f] hover:bg-slate-200 rounded-full" onClick={handleSend} disabled={!newMessage.trim() && !editingMessage}>{editingMessage ? <Check className="w-6 h-6 text-[#00a884]" /> : <Send className="w-6 h-6" />}</button>
+            <div className="pb-1 shrink-0">
+                <button className={`p-2 rounded-full transition-colors ${!newMessage.trim() && !editingMessage ? 'text-zinc-400 cursor-not-allowed' : 'text-white bg-primary hover:bg-primary/90 shadow-sm'}`} onClick={handleSend} disabled={!newMessage.trim() && !editingMessage}>
+                    {editingMessage ? <Check className="size-5" /> : <Send className="size-5 ml-0.5" />}
+                </button>
+            </div>
           </div>
       ) : (
-          <div className="bg-[#f0f2f5] px-4 py-4 flex items-center justify-center flex-shrink-0 z-10 border-t border-slate-200">
-              <div className="bg-white px-6 py-2 rounded-lg border border-slate-200 shadow-sm flex items-center gap-2">
-                  <Megaphone className="w-5 h-5 text-gray-500" />
-                  <span className="text-sm font-medium text-gray-600">Only Admins can send messages</span>
+          <div className="bg-zinc-50 px-4 py-3 flex items-center justify-center flex-shrink-0 z-10 border-t border-zinc-200">
+              <div className="bg-white px-5 py-2.5 rounded-md ring-1 ring-black/5 shadow-sm flex items-center gap-2">
+                  <Megaphone className="size-4 text-zinc-400" />
+                  <span className="text-sm font-semibold text-zinc-600">Only Admins can send messages</span>
               </div>
           </div>
       )}

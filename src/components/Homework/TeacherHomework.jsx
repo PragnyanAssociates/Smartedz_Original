@@ -3,14 +3,14 @@ import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   Plus, Edit, Trash2, X, Eye, Search, Loader2, ArrowLeft,
-  Paperclip, FileText, Star, ClipboardList, BookOpen
+  Paperclip, FileText, Star, ClipboardList, BookOpen, ChevronDown, Save
 } from 'lucide-react';
 import { fmtDate, isoDate, fileToBase64, openFile } from './HwUtils';
 
 // =====================================================================
-//  TeacherHomework — two views:
-//    'list'        → all homework (create / edit / delete)
-//    'submissions' → roster for one homework (view & grade)
+//  TeacherHomework - two views:
+//    'list'        -> all homework (create / edit / delete)
+//    'submissions' -> roster for one homework (view & grade)
 // =====================================================================
 
 export default function TeacherHomework({ canManage = true }) {
@@ -19,16 +19,16 @@ export default function TeacherHomework({ canManage = true }) {
   const [activeHw, setActiveHw] = useState(null);
 
   return (
-    <div>
-      <div className="mb-2">
-        <h2 className="text-3xl font-black text-slate-900 tracking-tight flex items-center gap-2">
-          <ClipboardList className="text-blue-600" size={28} />
+    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
+      <header className="flex flex-col mb-2 sm:mb-0">
+        <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
+          <ClipboardList className="text-primary size-5" />
           Homework
-        </h2>
-        <p className="text-slate-500 font-medium mt-1">
+        </h1>
+        <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
           Create assignments, then review and grade student submissions.
         </p>
-      </div>
+      </header>
 
       {view === 'list' ? (
         <AssignmentList user={user} canManage={canManage}
@@ -43,7 +43,7 @@ export default function TeacherHomework({ canManage = true }) {
 
 
 // =====================================================================
-//  VIEW 1 — Assignment list + create/edit modal
+//  VIEW 1 - Assignment list + create/edit modal
 // =====================================================================
 function AssignmentList({ user, canManage, onOpenSubmissions }) {
   const [items, setItems]     = useState([]);
@@ -165,7 +165,8 @@ function AssignmentList({ user, canManage, onOpenSubmissions }) {
   const removeAttachment = (i) => setAttachments(prev => prev.filter((_, idx) => idx !== i));
 
   // --- Save ------------------------------------------------------
-  const handleSave = async () => {
+  const handleSave = async (e) => {
+    e.preventDefault();
     if (!form.title.trim() || !form.class_id || !form.due_date) {
       return alert('Title, Class and Due Date are required.');
     }
@@ -209,187 +210,220 @@ function AssignmentList({ user, canManage, onOpenSubmissions }) {
   };
 
   if (loading) {
-    return <div className="py-20 text-center"><Loader2 className="animate-spin w-8 h-8 text-blue-600 mx-auto" /></div>;
+    return <div className="h-64 flex items-center justify-center"><Loader2 className="animate-spin size-8 text-primary" /></div>;
   }
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-col sm:flex-row justify-between gap-3 sm:items-center">
-        <div className="relative">
-          <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+    <div className="space-y-4 flex flex-col flex-1">
+      <div className="flex flex-col sm:flex-row justify-between gap-4 sm:items-center">
+        <div className="relative w-full sm:w-72 shrink-0">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
           <input value={query} onChange={e => setQuery(e.target.value)}
-            placeholder="Search homework…"
-            className="bg-white border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500/10 w-full sm:w-72" />
+            placeholder="Search homework..."
+            className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-4 text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors placeholder:text-zinc-400" />
         </div>
         {canManage && (
           <button onClick={openCreate}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-blue-100">
-            <Plus size={18} /> Create Homework
+            className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full sm:w-auto shrink-0">
+            <Plus className="size-3.5" /> Create Homework
           </button>
         )}
       </div>
 
-      {filtered.length === 0 ? (
-        <div className="bg-white p-16 rounded-3xl border border-dashed border-slate-200 text-center">
-          <ClipboardList className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-          <p className="text-slate-500 font-medium">No homework yet.</p>
-          {canManage && <p className="text-slate-400 text-sm mt-1">Click "Create Homework" to begin.</p>}
-        </div>
-      ) : (
-        <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
-          <table className="w-full text-left">
-            <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest">
-              <tr>
-                <th className="p-5">Assignment</th>
-                <th className="p-5">Type</th>
-                <th className="p-5">Class / Subject</th>
-                <th className="p-5">Due</th>
-                <th className="p-5">Submissions</th>
-                <th className="p-5 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {filtered.map(it => (
-                <tr key={it.id} className="hover:bg-slate-50/50 transition-colors">
-                  <td className="p-5 font-bold text-slate-700">{it.title}</td>
-                  <td className="p-5">
-                    <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase ${
-                      it.homework_type === 'Written'
-                        ? 'bg-emerald-50 text-emerald-600'
-                        : 'bg-blue-50 text-blue-600'
-                    }`}>{it.homework_type}</span>
-                  </td>
-                  <td className="p-5 text-sm font-medium text-slate-500">
-                    {it.class_group}{it.subject_name ? ` · ${it.subject_name}` : ''}
-                  </td>
-                  <td className="p-5 text-sm font-medium text-slate-500">{fmtDate(it.due_date)}</td>
-                  <td className="p-5 font-black text-blue-600">{it.submission_count}</td>
-                  <td className="p-5 text-right">
-                    <div className="flex justify-end gap-2">
-                      <button onClick={() => onOpenSubmissions(it)}
-                        className="inline-flex items-center gap-1.5 border border-blue-200 text-blue-600 hover:bg-blue-50 px-3 py-1.5 rounded-lg text-xs font-bold transition-all">
-                        <Eye size={14} /> Submissions
-                      </button>
-                      {canManage && (
-                        <>
-                          <button onClick={() => openEdit(it)}
-                            className="p-2 text-slate-300 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-all">
-                            <Edit size={16} />
-                          </button>
-                          <button onClick={() => handleDelete(it)}
-                            className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all">
-                            <Trash2 size={16} />
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </td>
+      <div className="flex-1">
+        {filtered.length === 0 ? (
+          <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
+            <ClipboardList className="size-10 text-zinc-300 mb-3" />
+            <p className="text-zinc-500 text-sm font-medium">No homework yet.</p>
+            {canManage && <p className="text-zinc-400 text-xs mt-1.5">Click "Create Homework" to begin.</p>}
+          </div>
+        ) : (
+          <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-x-auto custom-scrollbar">
+            <table className="w-full text-left border-collapse min-w-[800px]">
+              <thead className="bg-zinc-50/80">
+                <tr>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Assignment</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Type</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Class / Subject</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Due</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Submissions</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 text-right">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+              </thead>
+              <tbody className="divide-y divide-zinc-100">
+                {filtered.map(it => (
+                  <tr key={it.id} className="hover:bg-zinc-50/60 transition-colors group">
+                    <td className="px-5 py-4 font-semibold text-zinc-900 text-sm">{it.title}</td>
+                    <td className="px-5 py-4">
+                      <span className={`inline-flex px-2 py-1 rounded text-[10px] font-semibold uppercase tracking-wider ring-1 ring-inset ${
+                        it.homework_type === 'Written'
+                          ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20'
+                          : 'bg-primary/10 text-primary ring-primary/20'
+                      }`}>{it.homework_type}</span>
+                    </td>
+                    <td className="px-5 py-4 text-sm font-medium text-zinc-600">
+                      {it.class_group}{it.subject_name ? ` - ${it.subject_name}` : ''}
+                    </td>
+                    <td className="px-5 py-4 text-sm font-medium text-zinc-500 whitespace-nowrap">{fmtDate(it.due_date)}</td>
+                    <td className="px-5 py-4 font-semibold text-primary tabular-nums">{it.submission_count}</td>
+                    <td className="px-5 py-4 text-right whitespace-nowrap">
+                      <div className="flex items-center justify-end gap-2">
+                        <button onClick={() => onOpenSubmissions(it)}
+                          className="h-8 px-3 bg-white border border-zinc-200 text-zinc-700 hover:text-primary hover:border-primary/30 hover:bg-primary/5 rounded-md text-xs font-semibold inline-flex items-center justify-center gap-1.5 shadow-sm transition-colors">
+                          <Eye className="size-3.5" /> Submissions
+                        </button>
+                        {canManage && (
+                          <div className="flex items-center gap-1 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                            <button onClick={() => openEdit(it)}
+                              className="size-8 bg-white hover:bg-zinc-50 text-zinc-600 hover:text-primary rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5" title="Edit">
+                              <Edit className="size-3.5" />
+                            </button>
+                            <button onClick={() => handleDelete(it)}
+                              className="size-8 bg-white hover:bg-zinc-50 text-zinc-600 hover:text-red-600 rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5" title="Delete">
+                              <Trash2 className="size-3.5" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       {/* ---- CREATE / EDIT MODAL ---- */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-[2.5rem] w-full max-w-3xl p-10 shadow-2xl relative max-h-[92vh] overflow-y-auto">
-            <button onClick={() => setModalOpen(false)}
-              className="absolute top-8 right-8 text-slate-400 hover:text-slate-600">
-              <X size={24} />
-            </button>
-            <h2 className="text-2xl font-black mb-6 text-slate-800">
-              {editing ? 'Edit Homework' : 'Create Homework'}
-            </h2>
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-3xl shadow-xl relative max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
+            
+            <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 rounded-t-lg shrink-0">
+              <h2 className="text-lg font-semibold text-zinc-900">
+                {editing ? 'Edit Homework' : 'Create Homework'}
+              </h2>
+              <button onClick={() => setModalOpen(false)}
+                className="text-zinc-400 hover:text-zinc-700 transition-colors p-1.5 hover:bg-zinc-100 rounded-md">
+                <X className="size-4" />
+              </button>
+            </div>
 
-            <div className="space-y-5">
-              <Field label="Title" required value={form.title}
-                onChange={v => setForm({ ...form, title: v })} placeholder="e.g. Chapter 5 Exercise" />
+            <form onSubmit={handleSave} className="flex flex-col flex-1 overflow-hidden">
+              <div className="p-5 sm:p-6 overflow-y-auto custom-scrollbar space-y-6">
+                
+                <Field label="Title" required value={form.title}
+                  onChange={v => setForm({ ...form, title: v })} placeholder="e.g. Chapter 5 Exercise" />
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Field label="Type" type="select" value={form.homework_type}
-                  onChange={v => setForm({ ...form, homework_type: v })}
-                  options={[
-                    { value: 'PDF', label: 'PDF / File Upload' },
-                    { value: 'Written', label: 'Written / Text Answer' }
-                  ]} />
-                <Field label="Due Date" type="date" required value={form.due_date}
-                  onChange={v => setForm({ ...form, due_date: v })} />
-                <Field label="Class" type="select" required value={form.class_id}
-                  onChange={v => setForm({ ...form, class_id: v, subject_id: '' })}
-                  options={[
-                    { value: '', label: 'Select a class' },
-                    ...classes.map(c => ({ value: String(c.id), label: classLabel(c) }))
-                  ]} />
-                <Field label="Subject" type="select" value={form.subject_id}
-                  onChange={v => setForm({ ...form, subject_id: v })}
-                  options={[
-                    { value: '', label: form.class_id ? 'Select a subject' : 'Select a class first' },
-                    ...subjectsForClass.map(s => ({ value: String(s.id), label: s.name }))
-                  ]} />
-              </div>
-
-              <Field label="Description / Instructions" type="textarea" value={form.description}
-                onChange={v => setForm({ ...form, description: v })}
-                placeholder="General instructions…" />
-
-              {/* Questions */}
-              <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Questions</label>
-                <div className="space-y-2 mt-2">
-                  {questions.map((q, i) => (
-                    <div key={i} className="flex items-start gap-2">
-                      <span className="mt-2.5 text-xs font-black text-slate-400 w-7">Q{i + 1}</span>
-                      <textarea value={q} rows={2}
-                        onChange={e => updateQuestion(i, e.target.value)}
-                        placeholder="Enter question…"
-                        className="flex-1 bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500/10 resize-none" />
-                      {questions.length > 1 && (
-                        <button onClick={() => removeQuestion(i)}
-                          className="mt-1.5 p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg">
-                          <Trash2 size={14} />
-                        </button>
-                      )}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+                  <Field label="Type" type="select" value={form.homework_type}
+                    onChange={v => setForm({ ...form, homework_type: v })}
+                    options={[
+                      { value: 'PDF', label: 'PDF / File Upload' },
+                      { value: 'Written', label: 'Written / Text Answer' }
+                    ]} />
+                  <Field label="Due Date" type="date" required value={form.due_date}
+                    onChange={v => setForm({ ...form, due_date: v })} />
+                  
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">
+                      Class <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <select required value={form.class_id}
+                        onChange={v => setForm({ ...form, class_id: v.target.value, subject_id: '' })}
+                        className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
+                        <option value="" disabled>Select a class</option>
+                        {classes.map(c => <option key={c.id} value={String(c.id)}>{classLabel(c)}</option>)}
+                      </select>
+                      <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                     </div>
-                  ))}
-                </div>
-                <button onClick={addQuestion}
-                  className="mt-2 inline-flex items-center gap-1.5 text-blue-600 hover:bg-blue-50 px-3 py-1.5 rounded-lg text-xs font-bold">
-                  <Plus size={13} /> Add Question
-                </button>
-              </div>
+                  </div>
 
-              {/* Attachments */}
-              <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Attachments</label>
-                <div className="mt-2 flex items-center gap-3">
-                  <label className="cursor-pointer inline-flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs px-4 py-2 rounded-xl transition-all">
-                    <Paperclip size={14} /> Attach Files
-                    <input type="file" multiple onChange={handleFiles} className="hidden" />
-                  </label>
-                  <span className="text-[11px] text-slate-400">PDF / images · max 5 MB each</span>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
+                      Subject
+                    </label>
+                    <div className="relative">
+                      <select value={form.subject_id}
+                        onChange={v => setForm({ ...form, subject_id: v.target.value })}
+                        className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
+                        <option value="">{form.class_id ? 'Select a subject' : 'Select a class first'}</option>
+                        {subjectsForClass.map(s => <option key={s.id} value={String(s.id)}>{s.name}</option>)}
+                      </select>
+                      <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    </div>
+                  </div>
                 </div>
-                {attachments.length > 0 && (
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {attachments.map((f, i) => (
-                      <div key={i} className="bg-blue-50 text-blue-700 border border-blue-200 px-3 py-1.5 rounded-lg text-xs flex items-center gap-2">
-                        <span className="max-w-[160px] truncate">{f.name}</span>
-                        <button onClick={() => removeAttachment(i)} className="hover:text-red-500">
-                          <X size={13} />
-                        </button>
+
+                <Field label="Description / Instructions" type="textarea" value={form.description}
+                  onChange={v => setForm({ ...form, description: v })}
+                  placeholder="General instructions..." />
+
+                {/* Questions */}
+                <div className="pt-2 border-t border-zinc-100">
+                  <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Questions</label>
+                  <div className="space-y-3 mt-3">
+                    {questions.map((q, i) => (
+                      <div key={i} className="flex items-start gap-3">
+                        <span className="mt-2.5 text-[11px] font-semibold text-zinc-400 uppercase tracking-wider shrink-0 w-6">Q{i + 1}</span>
+                        <textarea value={q} rows={2}
+                          onChange={e => updateQuestion(i, e.target.value)}
+                          placeholder="Enter question..."
+                          className="flex-1 bg-white border border-zinc-200 rounded-md px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 resize-none shadow-sm transition-colors" />
+                        {questions.length > 1 && (
+                          <button type="button" onClick={() => removeQuestion(i)}
+                            className="mt-1.5 p-1.5 text-zinc-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors ring-1 ring-black/5 shadow-sm bg-white">
+                            <Trash2 className="size-4" />
+                          </button>
+                        )}
                       </div>
                     ))}
                   </div>
-                )}
+                  <button type="button" onClick={addQuestion}
+                    className="mt-3 h-8 inline-flex items-center justify-center gap-1.5 bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-700 px-3 rounded-md text-xs font-semibold transition-colors shadow-sm">
+                    <Plus className="size-3" /> Add Question
+                  </button>
+                </div>
+
+                {/* Attachments */}
+                <div className="pt-2 border-t border-zinc-100">
+                  <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Attachments</label>
+                  <div className="mt-3 flex flex-col sm:flex-row sm:items-center gap-3">
+                    <label className="cursor-pointer h-8 inline-flex items-center justify-center gap-1.5 bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-700 px-3 rounded-md text-xs font-semibold transition-colors shadow-sm w-full sm:w-auto shrink-0">
+                      <Paperclip className="size-3" /> Attach Files
+                      <input type="file" multiple onChange={handleFiles} className="hidden" />
+                    </label>
+                    <span className="text-[11px] font-medium text-zinc-400">PDF / images - max 5 MB each</span>
+                  </div>
+                  {attachments.length > 0 && (
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {attachments.map((f, i) => (
+                        <div key={i} className="bg-primary/5 text-primary ring-1 ring-primary/20 px-2.5 py-1.5 rounded-md text-xs font-medium flex items-center gap-2 max-w-[200px]">
+                          <span className="truncate flex-1">{f.name}</span>
+                          <button type="button" onClick={() => removeAttachment(i)} className="hover:text-red-500 shrink-0">
+                            <X className="size-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
               </div>
 
-              <button onClick={handleSave} disabled={saving}
-                className="w-full bg-slate-900 hover:bg-blue-600 disabled:bg-slate-300 text-white py-4 rounded-2xl font-black uppercase tracking-widest transition-all shadow-xl flex items-center justify-center gap-2">
-                {saving && <Loader2 size={16} className="animate-spin" />}
-                {saving ? 'Saving…' : (editing ? 'Save Changes' : 'Create Homework')}
-              </button>
-            </div>
+              <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
+                <button type="button" onClick={() => setModalOpen(false)} disabled={saving}
+                  className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 rounded-md font-semibold text-xs hover:bg-zinc-50 transition-colors w-full sm:w-auto">
+                  Cancel
+                </button>
+                <button type="submit" disabled={saving}
+                  className="h-9 px-6 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors w-full sm:w-auto min-w-[120px]">
+                  {saving ? <Loader2 className="size-3.5 animate-spin shrink-0" /> : <Save className="size-3.5 shrink-0" />}
+                  {saving ? 'Saving...' : (editing ? 'Save Changes' : 'Create Homework')}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -399,7 +433,7 @@ function AssignmentList({ user, canManage, onOpenSubmissions }) {
 
 
 // =====================================================================
-//  VIEW 2 — Submissions roster + grading modal
+//  VIEW 2 - Submissions roster + grading modal
 // =====================================================================
 function SubmissionList({ user, homework, canManage, onBack }) {
   const [roster, setRoster]   = useState([]);
@@ -441,7 +475,8 @@ function SubmissionList({ user, homework, canManage, onBack }) {
     setGradeForm({ grade: row.grade || '', remarks: row.remarks || '' });
   };
 
-  const handleGrade = async () => {
+  const handleGrade = async (e) => {
+    e.preventDefault();
     if (!grading?.submission_id) return;
     setSaving(true);
     try {
@@ -458,176 +493,201 @@ function SubmissionList({ user, homework, canManage, onBack }) {
   };
 
   return (
-    <div className="space-y-5">
-      <button onClick={onBack}
-        className="inline-flex items-center gap-1.5 text-sm font-bold text-slate-500 hover:text-blue-600">
-        <ArrowLeft size={14} /> Back to homework
-      </button>
+    <div className="space-y-4 flex flex-col flex-1">
+      <div className="flex items-center">
+        <button onClick={onBack}
+          className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
+          <ArrowLeft className="size-4" /> Back to homework
+        </button>
+      </div>
 
-      <div>
-        <h3 className="text-xl font-black text-slate-800">{homework.title}</h3>
-        <p className="text-xs text-slate-400 font-medium">
-          {homework.class_group}{homework.subject_name ? ` · ${homework.subject_name}` : ''} · {homework.homework_type}
+      <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm p-4 sm:p-5">
+        <h3 className="text-lg font-semibold text-zinc-900 tracking-tight">{homework.title}</h3>
+        <p className="text-[11px] text-zinc-500 font-semibold uppercase tracking-wider mt-1.5">
+          {homework.class_group}{homework.subject_name ? ` - ${homework.subject_name}` : ''} - {homework.homework_type}
         </p>
       </div>
 
-      <div className="flex flex-col sm:flex-row justify-between gap-3 sm:items-center">
-        <div className="flex bg-slate-100 p-1 rounded-xl">
+      <div className="flex flex-col sm:flex-row justify-between gap-4 sm:items-center">
+        <div className="flex bg-zinc-100/80 p-1 rounded-md overflow-x-auto custom-scrollbar w-full sm:w-auto">
           {['All', 'Submitted', 'Pending'].map(t => (
             <button key={t} onClick={() => setTab(t)}
-              className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                tab === t ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              className={`flex-1 sm:flex-none px-4 py-1.5 rounded-md text-[11px] font-semibold transition-colors whitespace-nowrap ${
+                tab === t ? 'bg-white text-zinc-900 shadow-sm ring-1 ring-black/5' : 'text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50/50'
               }`}>
               {t}
             </button>
           ))}
         </div>
-        <div className="relative">
-          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+        <div className="relative w-full sm:w-72 shrink-0">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
           <input value={query} onChange={e => setQuery(e.target.value)}
-            placeholder="Search student…"
-            className="bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500/10 w-full sm:w-56" />
+            placeholder="Search student..."
+            className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-4 text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors placeholder:text-zinc-400" />
         </div>
       </div>
 
-      {loading ? (
-        <div className="py-20 text-center"><Loader2 className="animate-spin w-8 h-8 text-blue-600 mx-auto" /></div>
-      ) : filtered.length === 0 ? (
-        <div className="bg-white p-14 rounded-3xl border border-dashed border-slate-200 text-center">
-          <p className="text-slate-400 font-medium italic">No students match this view.</p>
-        </div>
-      ) : (
-        <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
-          <table className="w-full text-left">
-            <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest">
-              <tr>
-                <th className="p-5">Student</th>
-                <th className="p-5">Status</th>
-                <th className="p-5">Grade</th>
-                <th className="p-5 text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {filtered.map(r => (
-                <tr key={r.student_id} className="hover:bg-slate-50/50 transition-colors">
-                  <td className="p-5 font-bold text-slate-700">
-                    {r.roll_no ? <span className="text-slate-400 font-medium">({r.roll_no}) </span> : ''}
-                    {r.student_name}
-                  </td>
-                  <td className="p-5">
-                    {r.submission_id ? (
-                      <div className="flex items-center gap-2">
-                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                        <div>
-                          <div className="text-xs font-bold text-emerald-600">Submitted</div>
-                          <div className="text-[11px] text-slate-400">{fmtDate(r.submitted_at)}</div>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-2">
-                        <span className="w-2.5 h-2.5 rounded-full bg-slate-300" />
-                        <span className="text-xs text-slate-400 italic">Not submitted</span>
-                      </div>
-                    )}
-                  </td>
-                  <td className="p-5">
-                    {r.grade ? (
-                      <span className="inline-flex items-center gap-1.5 text-emerald-600 font-bold text-sm">
-                        <Star size={14} className="fill-amber-400 text-amber-400" /> {r.grade}
-                      </span>
-                    ) : (
-                      <span className="text-xs text-slate-400">Not graded</span>
-                    )}
-                  </td>
-                  <td className="p-5 text-right">
-                    {r.submission_id && canManage && (
-                      <button onClick={() => openGrade(r)}
-                        className="inline-flex items-center gap-1.5 text-emerald-600 hover:bg-emerald-50 px-3 py-1.5 rounded-lg text-xs font-bold">
-                        <Star size={13} /> {r.grade ? 'Update Grade' : 'Grade'}
-                      </button>
-                    )}
-                    {r.submission_id && !canManage && (
-                      <button onClick={() => openGrade(r)}
-                        className="inline-flex items-center gap-1.5 text-blue-600 hover:bg-blue-50 px-3 py-1.5 rounded-lg text-xs font-bold">
-                        <Eye size={13} /> View
-                      </button>
-                    )}
-                  </td>
+      <div className="flex-1">
+        {loading ? (
+          <div className="h-64 flex items-center justify-center"><Loader2 className="animate-spin size-8 text-primary" /></div>
+        ) : filtered.length === 0 ? (
+          <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
+            <p className="text-zinc-500 text-sm font-medium">No students match this view.</p>
+          </div>
+        ) : (
+          <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-x-auto custom-scrollbar">
+            <table className="w-full text-left border-collapse min-w-[600px]">
+              <thead className="bg-zinc-50/80">
+                <tr>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Student</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Status</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Grade</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 text-right">Action</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+              </thead>
+              <tbody className="divide-y divide-zinc-100">
+                {filtered.map(r => (
+                  <tr key={r.student_id} className="hover:bg-zinc-50/60 transition-colors">
+                    <td className="px-5 py-4 font-semibold text-zinc-900 text-sm whitespace-nowrap">
+                      {r.roll_no ? <span className="text-zinc-400 font-medium mr-1.5">({r.roll_no})</span> : ''}
+                      {r.student_name}
+                    </td>
+                    <td className="px-5 py-4 whitespace-nowrap">
+                      {r.submission_id ? (
+                        <div className="flex flex-col">
+                          <div className="flex items-center gap-1.5">
+                            <span className="size-2 rounded-full bg-emerald-500 shrink-0" />
+                            <span className="text-xs font-semibold text-emerald-700">Submitted</span>
+                          </div>
+                          <div className="text-[11px] text-zinc-500 font-medium mt-0.5 ml-3.5">{fmtDate(r.submitted_at)}</div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1.5">
+                          <span className="size-2 rounded-full bg-zinc-300 shrink-0" />
+                          <span className="text-xs text-zinc-500 italic font-medium">Not submitted</span>
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-5 py-4 whitespace-nowrap">
+                      {r.grade ? (
+                        <span className="inline-flex items-center gap-1.5 text-emerald-700 font-semibold text-sm bg-emerald-50 px-2 py-0.5 rounded ring-1 ring-inset ring-emerald-600/20">
+                          <Star className="size-3.5 fill-amber-400 text-amber-400" /> {r.grade}
+                        </span>
+                      ) : (
+                        <span className="text-xs font-medium text-zinc-400">Not graded</span>
+                      )}
+                    </td>
+                    <td className="px-5 py-4 text-right whitespace-nowrap">
+                      {r.submission_id && canManage && (
+                        <button onClick={() => openGrade(r)}
+                          className="h-8 px-3 bg-white border border-zinc-200 text-zinc-700 hover:text-primary hover:border-primary/30 hover:bg-primary/5 rounded-md text-xs font-semibold inline-flex items-center justify-center gap-1.5 shadow-sm transition-colors">
+                          <Star className="size-3.5" /> {r.grade ? 'Update Grade' : 'Grade'}
+                        </button>
+                      )}
+                      {r.submission_id && !canManage && (
+                        <button onClick={() => openGrade(r)}
+                          className="h-8 px-3 bg-white border border-zinc-200 text-zinc-700 hover:text-primary hover:border-primary/30 hover:bg-primary/5 rounded-md text-xs font-semibold inline-flex items-center justify-center gap-1.5 shadow-sm transition-colors">
+                          <Eye className="size-3.5" /> View
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       {/* ---- GRADING MODAL ---- */}
       {grading && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-[2.5rem] w-full max-w-2xl p-10 shadow-2xl relative max-h-[92vh] overflow-y-auto">
-            <button onClick={() => setGrading(null)}
-              className="absolute top-8 right-8 text-slate-400 hover:text-slate-600">
-              <X size={24} />
-            </button>
-            <h2 className="text-2xl font-black mb-1 text-slate-800">Submission</h2>
-            <p className="text-sm text-slate-400 font-medium mb-6">
-              {grading.roll_no ? `(${grading.roll_no}) ` : ''}{grading.student_name}
-            </p>
-
-            {/* Questions context */}
-            {homework.questions && homework.questions.length > 0 && (
-              <div className="bg-blue-50/50 border border-blue-100 rounded-2xl p-4 mb-5">
-                <div className="text-[10px] font-black text-blue-600 uppercase tracking-widest mb-2">Questions</div>
-                <ol className="list-decimal list-inside space-y-1">
-                  {homework.questions.map((q, i) => (
-                    <li key={i} className="text-sm text-slate-700">{q}</li>
-                  ))}
-                </ol>
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-2xl shadow-xl relative max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
+            
+            <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 rounded-t-lg shrink-0">
+              <div>
+                <h2 className="text-lg font-semibold text-zinc-900 leading-tight">Submission</h2>
+                <p className="text-[11px] text-zinc-500 font-semibold uppercase tracking-wider mt-1">
+                  {grading.roll_no ? `(${grading.roll_no}) ` : ''}{grading.student_name}
+                </p>
               </div>
-            )}
-
-            {/* Submitted content */}
-            <div className="mb-5">
-              <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Submitted Answer</div>
-              {grading.written_answer && (
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-3 max-h-56 overflow-y-auto">
-                  <pre className="whitespace-pre-wrap text-sm text-slate-800 font-sans">{grading.written_answer}</pre>
-                </div>
-              )}
-              {(grading.files || []).length > 0 && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {grading.files.map((f, i) => (
-                    <button key={i} onClick={() => openFile(f)}
-                      className="flex items-center gap-3 bg-white hover:bg-slate-50 border border-slate-200 p-3 rounded-xl transition-all text-left">
-                      <FileText size={20} className="text-blue-500 shrink-0" />
-                      <div className="flex-1 overflow-hidden">
-                        <p className="text-sm font-bold text-slate-700 truncate">{f.name}</p>
-                        <p className="text-xs text-blue-600 flex items-center gap-1"><Eye size={10} /> View file</p>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-              {!grading.written_answer && (grading.files || []).length === 0 && (
-                <p className="text-sm text-slate-400 italic">No submission content.</p>
-              )}
+              <button onClick={() => setGrading(null)} className="text-zinc-400 hover:text-zinc-700 transition-colors p-1.5 hover:bg-zinc-100 rounded-md">
+                <X className="size-4" />
+              </button>
             </div>
 
-            {/* Grade form */}
-            {canManage && (
-              <div className="border-t border-slate-100 pt-5 space-y-4">
-                <Field label="Grade" value={gradeForm.grade}
-                  onChange={v => setGradeForm({ ...gradeForm, grade: v })}
-                  placeholder="e.g. A+, 95/100" />
-                <Field label="Remarks / Feedback" type="textarea" value={gradeForm.remarks}
-                  onChange={v => setGradeForm({ ...gradeForm, remarks: v })}
-                  placeholder="Feedback for the student…" />
-                <button onClick={handleGrade} disabled={saving}
-                  className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white py-3.5 rounded-2xl font-black uppercase tracking-widest transition-all shadow-lg flex items-center justify-center gap-2">
-                  {saving && <Loader2 size={16} className="animate-spin" />}
-                  {saving ? 'Saving…' : 'Submit Grade'}
-                </button>
+            <form onSubmit={handleGrade} className="flex flex-col flex-1 overflow-hidden">
+              <div className="p-5 sm:p-6 overflow-y-auto custom-scrollbar space-y-6">
+                
+                {/* Questions context */}
+                {homework.questions && homework.questions.length > 0 && (
+                  <div className="bg-primary/5 border border-primary/10 rounded-md p-4">
+                    <div className="text-[10px] font-semibold text-primary uppercase tracking-wider mb-2.5">Questions</div>
+                    <ol className="list-decimal list-inside space-y-1.5">
+                      {homework.questions.map((q, i) => (
+                        <li key={i} className="text-sm text-zinc-700 font-medium leading-relaxed">{q}</li>
+                      ))}
+                    </ol>
+                  </div>
+                )}
+
+                {/* Submitted content */}
+                <div>
+                  <div className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-3">Submitted Answer</div>
+                  
+                  {grading.written_answer && (
+                    <div className="bg-zinc-50 border border-zinc-200 rounded-md p-4 mb-4 max-h-56 overflow-y-auto custom-scrollbar shadow-sm">
+                      <pre className="whitespace-pre-wrap text-sm text-zinc-800 font-sans leading-relaxed">{grading.written_answer}</pre>
+                    </div>
+                  )}
+                  
+                  {(grading.files || []).length > 0 && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {grading.files.map((f, i) => (
+                        <button type="button" key={i} onClick={() => openFile(f)}
+                          className="flex items-start gap-3 bg-white hover:bg-zinc-50 border border-zinc-200 p-3 rounded-md transition-colors text-left shadow-sm ring-1 ring-black/5 group">
+                          <FileText className="size-5 text-primary shrink-0 mt-0.5" />
+                          <div className="flex-1 overflow-hidden">
+                            <p className="text-sm font-semibold text-zinc-800 truncate group-hover:text-primary transition-colors">{f.name}</p>
+                            <p className="text-[11px] text-zinc-500 font-medium flex items-center gap-1 mt-0.5 uppercase tracking-wider"><Eye className="size-3" /> View file</p>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  
+                  {!grading.written_answer && (grading.files || []).length === 0 && (
+                    <p className="text-sm text-zinc-400 font-medium italic bg-zinc-50 border border-dashed border-zinc-200 p-4 rounded-md text-center">No submission content.</p>
+                  )}
+                </div>
+
+                {/* Grade form */}
+                {canManage && (
+                  <div className="border-t border-zinc-100 pt-5 space-y-4">
+                    <Field label="Grade" value={gradeForm.grade}
+                      onChange={v => setGradeForm({ ...gradeForm, grade: v })}
+                      placeholder="e.g. A+, 95/100" />
+                    <Field label="Remarks / Feedback" type="textarea" value={gradeForm.remarks}
+                      onChange={v => setGradeForm({ ...gradeForm, remarks: v })}
+                      placeholder="Feedback for the student..." />
+                  </div>
+                )}
               </div>
-            )}
+
+              {canManage && (
+                <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
+                  <button type="button" onClick={() => setGrading(null)} disabled={saving}
+                    className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 rounded-md font-semibold text-xs hover:bg-zinc-50 transition-colors w-full sm:w-auto">
+                    Cancel
+                  </button>
+                  <button type="submit" disabled={saving}
+                    className="h-9 px-6 bg-emerald-600 hover:bg-emerald-700 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors w-full sm:w-auto min-w-[120px]">
+                    {saving ? <Loader2 className="size-3.5 animate-spin shrink-0" /> : <Save className="size-3.5 shrink-0" />}
+                    {saving ? 'Saving...' : 'Submit Grade'}
+                  </button>
+                </div>
+              )}
+            </form>
           </div>
         </div>
       )}
@@ -638,23 +698,26 @@ function SubmissionList({ user, homework, canManage, onBack }) {
 
 // --- Shared field input --------------------------------------------
 function Field({ label, value, onChange, type = 'text', options, required, placeholder }) {
-  const base = "w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500/10 text-sm";
+  const base = "h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm";
   return (
-    <div className="space-y-1">
-      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-        {label}{required && <span className="text-red-500 ml-0.5">*</span>}
+    <div className="space-y-1.5">
+      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">
+        {label} {required && <span className="text-red-500">*</span>}
       </label>
       {type === 'select' ? (
-        <select value={value || ''} onChange={e => onChange(e.target.value)}
-          className={base + ' cursor-pointer'}>
-          {(options || []).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
+        <div className="relative">
+          <select value={value || ''} onChange={e => onChange(e.target.value)}
+            className={`${base} cursor-pointer appearance-none pr-8`}>
+            {(options || []).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+          <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+        </div>
       ) : type === 'textarea' ? (
         <textarea value={value || ''} onChange={e => onChange(e.target.value)} rows={3}
-          placeholder={placeholder} className={base + ' resize-none'} />
+          placeholder={placeholder} className={`${base} h-auto py-2.5 resize-none`} required={required} />
       ) : (
         <input type={type} value={value || ''} onChange={e => onChange(e.target.value)}
-          placeholder={placeholder} className={base} />
+          placeholder={placeholder} className={base} required={required} />
       )}
     </div>
   );

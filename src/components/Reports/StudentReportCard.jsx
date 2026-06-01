@@ -5,7 +5,7 @@ import { Loader2, Printer, AlertCircle } from 'lucide-react';
 import ReportCardView from './ReportCardView';
 
 // =====================================================================
-//  StudentReportCard — the logged-in student's own report card.
+//  StudentReportCard - the logged-in student's own report card.
 //  Read-only. Reuses the shared ReportCardView + print CSS.
 // =====================================================================
 
@@ -33,14 +33,18 @@ export default function StudentReportCard() {
   const handlePrint = () => window.print();
 
   if (loading) {
-    return <div className="text-center py-16"><Loader2 className="animate-spin w-8 h-8 text-blue-600 mx-auto" /></div>;
+    return (
+      <div className="h-64 flex items-center justify-center animate-in fade-in duration-300">
+        <Loader2 className="animate-spin size-8 text-primary" />
+      </div>
+    );
   }
 
   if (error) {
     return (
-      <div className="bg-white p-16 rounded-3xl border border-dashed border-slate-200 text-center">
-        <AlertCircle className="w-12 h-12 text-red-300 mx-auto mb-3" />
-        <p className="text-slate-500 font-medium">{error}</p>
+      <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center animate-in fade-in duration-300">
+        <AlertCircle className="size-10 text-red-400 mb-3" />
+        <p className="text-zinc-500 text-sm font-medium">{error}</p>
       </div>
     );
   }
@@ -48,15 +52,16 @@ export default function StudentReportCard() {
   if (!card) return null;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 sm:space-y-6 animate-in fade-in duration-300">
+      
       <div className="flex justify-end print:hidden">
         <button onClick={handlePrint}
-          className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 shadow-lg shadow-blue-100">
-          <Printer size={15} /> Print
+          className="h-9 px-6 bg-primary hover:bg-primary/90 text-white rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors w-full sm:w-auto shrink-0">
+          <Printer className="size-4 shrink-0" /> Print
         </button>
       </div>
 
-      <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden print:border-0 print:shadow-none print:rounded-none">
+      <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden print:ring-0 print:shadow-none print:rounded-none">
         <ReportCardView card={card} />
       </div>
 
@@ -69,6 +74,7 @@ export default function StudentReportCard() {
           }
         }
       `}</style>
+      
     </div>
   );
 }

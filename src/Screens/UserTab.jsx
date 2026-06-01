@@ -1,10 +1,10 @@
 import React, { useState, useMemo } from 'react';
-import { Plus, Edit, Trash2, X, Search, UserCircle2, BookOpen, Camera, AtSign, GraduationCap } from 'lucide-react';
+import { Plus, Edit, Trash2, X, Search, UserCircle2, BookOpen, Camera, AtSign, GraduationCap, ChevronDown } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
 
 export default function UserTab({ data, fetchData, user }) {
   const [activeRoleTab, setActiveRoleTab] = useState('all');
-  const [activeClass, setActiveClass]     = useState('all');   // 'all' | class id
+  const [activeClass, setActiveClass]     = useState('all');
   const [isModalOpen, setIsModalOpen]     = useState(false);
   const [editingUser, setEditingUser]     = useState(null);
   const [search, setSearch]               = useState('');
@@ -18,11 +18,6 @@ export default function UserTab({ data, fetchData, user }) {
   };
   const [form, setForm] = useState(emptyForm);
 
-  // ------------------------------------------------------------------
-  // Active roster only. Students promoted to Alumni have
-  // status === 'alumni' and live in the Alumni module — they are
-  // hidden from the User Registry everywhere (list + counts).
-  // ------------------------------------------------------------------
   const activeUsers = useMemo(
     () => data.users.filter(u => (u.status || '').toLowerCase() !== 'alumni'),
     [data.users]
@@ -36,11 +31,6 @@ export default function UserTab({ data, fetchData, user }) {
     return merged.map(r => ({ name: r, count: counts[r] || 0 }));
   }, [activeUsers, data.roles]);
 
-  // ------------------------------------------------------------------
-  // Class filter: count students per class. Only meaningful when the
-  // current role view is 'all' or a student-ish role, but we always
-  // compute it from class_id so it stays accurate.
-  // ------------------------------------------------------------------
   const classFilters = useMemo(() => {
     const counts = {};
     activeUsers.forEach(u => {
@@ -53,8 +43,6 @@ export default function UserTab({ data, fetchData, user }) {
     }));
   }, [activeUsers, data.classes]);
 
-  // Show the class filter only when it makes sense — i.e. the current
-  // role view actually contains class-assigned users (students).
   const showClassFilter = useMemo(() => {
     if (classFilters.length === 0) return false;
     if (activeRoleTab === 'all') return true;
@@ -164,7 +152,6 @@ export default function UserTab({ data, fetchData, user }) {
     return ids.map(sid => data.subjects?.find(s => s.id === sid)?.name).filter(Boolean).join(', ');
   };
 
-  // When switching to a non-student role view, clear any class filter
   const handleRoleTab = (roleName) => {
     setActiveRoleTab(roleName);
     if (roleName !== 'all' && !roleName.toLowerCase().includes('student')) {
@@ -172,157 +159,163 @@ export default function UserTab({ data, fetchData, user }) {
     }
   };
 
-  // Render pills when few classes, dropdown when many
   const useDropdown = classFilters.length > 6;
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col lg:flex-row justify-between gap-4 lg:items-center">
-        <h3 className="text-xl font-bold text-slate-800">User Registry</h3>
-        <div className="flex gap-3">
-          <div className="relative">
-            <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              placeholder="Search name, email, username…"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="bg-white border border-slate-100 rounded-xl pl-10 pr-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500/10 w-72"
-            />
-          </div>
-          <button onClick={openAdd} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-blue-100">
-            <Plus size={18} /> Add User
-          </button>
+      
+      {/* Top action bar - Fixed Mobile Responsive Widths */}
+      <div className="flex flex-col sm:flex-row justify-between gap-4 sm:items-center mb-6">
+        <div className="relative w-full sm:w-auto flex-1 max-w-sm">
+          <Search className="size-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 shrink-0 pointer-events-none" />
+          <input
+            placeholder="Search name, email, username..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="w-full text-sm bg-white border border-zinc-200 rounded-md pl-9 pr-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 text-zinc-900 placeholder:text-zinc-400 transition-colors shadow-sm"
+          />
         </div>
-      </div>
-
-      {/* Role tabs */}
-      <div className="flex flex-wrap gap-2">
-        <button onClick={() => handleRoleTab('all')}
-          className={`px-4 py-2 rounded-full text-xs font-black uppercase tracking-wider transition-all ${
-            activeRoleTab === 'all' ? 'bg-slate-900 text-white' : 'bg-white text-slate-500 border border-slate-100 hover:border-slate-300'
-          }`}>
-          All <span className="ml-2 opacity-60">{activeUsers.length}</span>
+        <button onClick={openAdd} className="bg-primary text-white px-4 py-2 rounded-md text-xs font-medium hover:bg-primary/90 transition-colors flex items-center justify-center gap-1.5 shadow-sm w-fit shrink-0 self-start sm:self-auto">
+          <Plus className="size-3.5 shrink-0" /> New User
         </button>
-        {roleTabs.map(t => (
-          <button key={t.name} onClick={() => handleRoleTab(t.name)}
-            className={`px-4 py-2 rounded-full text-xs font-black uppercase tracking-wider transition-all ${
-              activeRoleTab === t.name ? 'bg-slate-900 text-white' : 'bg-white text-slate-500 border border-slate-100 hover:border-slate-300'
-            }`}>
-            {t.name} <span className="ml-2 opacity-60">{t.count}</span>
-          </button>
-        ))}
       </div>
 
-      {/* Class filter — adaptive: pills for few classes, dropdown for many */}
-      {showClassFilter && (
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="inline-flex items-center gap-1.5 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-            <GraduationCap size={13} /> Class
-          </span>
-
-          {useDropdown ? (
-            <select
-              value={activeClass}
-              onChange={e => setActiveClass(e.target.value)}
-              className="bg-white border border-slate-100 rounded-xl px-3 py-2 text-xs font-bold text-slate-600 outline-none focus:ring-2 focus:ring-blue-500/10 cursor-pointer">
-              <option value="all">
-                All Classes ({classFilters.reduce((s, c) => s + c.count, 0)})
-              </option>
-              {classFilters.map(c => (
-                <option key={c.id} value={c.id}>{c.label} ({c.count})</option>
-              ))}
-            </select>
-          ) : (
-            <>
-              <button onClick={() => setActiveClass('all')}
-                className={`px-3.5 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider transition-all ${
-                  activeClass === 'all'
-                    ? 'bg-blue-600 text-white shadow shadow-blue-200'
-                    : 'bg-white text-slate-500 border border-slate-100 hover:border-blue-300'
-                }`}>
-                All <span className="ml-1.5 opacity-60">
-                  {classFilters.reduce((s, c) => s + c.count, 0)}
-                </span>
-              </button>
-              {classFilters.map(c => (
-                <button key={c.id} onClick={() => setActiveClass(String(c.id))}
-                  className={`px-3.5 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider transition-all ${
-                    String(activeClass) === String(c.id)
-                      ? 'bg-blue-600 text-white shadow shadow-blue-200'
-                      : 'bg-white text-slate-500 border border-slate-100 hover:border-blue-300'
-                  }`}>
-                  {c.label} <span className="ml-1.5 opacity-60">{c.count}</span>
-                </button>
-              ))}
-            </>
-          )}
+      {/* Filters Area */}
+      <div className="flex flex-col gap-4">
+        
+        {/* Role tabs */}
+        <div className="flex flex-wrap gap-2">
+          <button onClick={() => handleRoleTab('all')}
+            className={`px-3 py-1.5 rounded-md text-[10px] font-semibold uppercase tracking-wider transition-colors ${
+              activeRoleTab === 'all' 
+                ? 'bg-primary/10 text-primary ring-1 ring-primary/20' 
+                : 'bg-white text-zinc-500 ring-1 ring-zinc-200 hover:bg-zinc-50 hover:text-zinc-700'
+            }`}>
+            All <span className="ml-1 opacity-80 tabular-nums">{activeUsers.length}</span>
+          </button>
+          {roleTabs.map(t => (
+            <button key={t.name} onClick={() => handleRoleTab(t.name)}
+              className={`px-3 py-1.5 rounded-md text-[10px] font-semibold uppercase tracking-wider transition-colors ${
+                activeRoleTab === t.name 
+                  ? 'bg-primary/10 text-primary ring-1 ring-primary/20' 
+                  : 'bg-white text-zinc-500 ring-1 ring-zinc-200 hover:bg-zinc-50 hover:text-zinc-700'
+              }`}>
+              {t.name} <span className="ml-1 opacity-80 tabular-nums">{t.count}</span>
+            </button>
+          ))}
         </div>
-      )}
 
-      <div className="bg-white rounded-3xl border border-slate-100 overflow-hidden shadow-sm">
-        <table className="w-full text-left">
-          <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest">
-            <tr>
-              <th className="p-5">Name & Contact</th>
-              <th className="p-5">Role</th>
-              <th className="p-5">Class / Subjects</th>
-              <th className="p-5">Status</th>
-              <th className="p-5 text-right">Actions</th>
+        {/* Class filters */}
+        {showClassFilter && (
+          <div className="flex items-center gap-3 flex-wrap bg-zinc-50/50 p-2.5 rounded-md ring-1 ring-black/5">
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider pl-1">
+              <GraduationCap className="size-3.5 shrink-0" /> Class Filter
+            </span>
+
+            {useDropdown ? (
+              <div className="relative w-full sm:w-auto">
+                <select
+                  value={activeClass}
+                  onChange={e => setActiveClass(e.target.value)}
+                  className="h-8 w-full sm:w-auto appearance-none rounded border border-zinc-200 bg-white pl-2 pr-7 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer">
+                  <option value="all">All Classes ({classFilters.reduce((s, c) => s + c.count, 0)})</option>
+                  {classFilters.map(c => (
+                    <option key={c.id} value={c.id}>{c.label} ({c.count})</option>
+                  ))}
+                </select>
+                <ChevronDown className="size-3.5 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                <button onClick={() => setActiveClass('all')}
+                  className={`px-2.5 py-1.5 rounded-md text-[10px] font-semibold uppercase tracking-wider transition-colors ${
+                    activeClass === 'all' 
+                      ? 'bg-primary/10 text-primary ring-1 ring-primary/20' 
+                      : 'bg-white text-zinc-500 ring-1 ring-zinc-200 hover:bg-zinc-50 hover:text-zinc-700'
+                  }`}>
+                  All <span className="ml-1 opacity-80 tabular-nums">{classFilters.reduce((s, c) => s + c.count, 0)}</span>
+                </button>
+                {classFilters.map(c => (
+                  <button key={c.id} onClick={() => setActiveClass(String(c.id))}
+                    className={`px-2.5 py-1.5 rounded-md text-[10px] font-semibold uppercase tracking-wider transition-colors ${
+                      String(activeClass) === String(c.id) 
+                        ? 'bg-primary/10 text-primary ring-1 ring-primary/20' 
+                        : 'bg-white text-zinc-500 ring-1 ring-zinc-200 hover:bg-zinc-50 hover:text-zinc-700'
+                    }`}>
+                    {c.label} <span className="ml-1 opacity-80 tabular-nums">{c.count}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Main Table - Fixed Mobile Scroll Overflow */}
+      <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-x-auto custom-scrollbar">
+        <table className="w-full text-left border-collapse min-w-[800px]">
+          <thead>
+            <tr className="bg-zinc-50/50">
+              <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100">User Details</th>
+              <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100">Role</th>
+              <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100">Assignment</th>
+              <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100">Status</th>
+              <th className="px-5 py-3 border-b border-zinc-100"></th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-50">
+          <tbody className="divide-y divide-zinc-100">
             {filteredUsers.length > 0 ? filteredUsers.map(u => {
               const cls = data.classes.find(c => c.id === u.class_id);
               const isTeacher = (u.role || '').toLowerCase().includes('teacher');
               const isStudent = (u.role || '').toLowerCase().includes('student');
               return (
-                <tr key={u.id} className="hover:bg-slate-50/50 transition-colors">
-                  <td className="p-5">
+                <tr key={u.id} className="hover:bg-zinc-50/60 transition-colors group">
+                  <td className="px-5 py-4">
                     <div className="flex items-center gap-3">
                       {u.profile_pic ? (
-                        <img src={u.profile_pic} alt={u.name} className="w-10 h-10 rounded-full object-cover" />
+                        <img src={u.profile_pic} alt={u.name} className="size-8 rounded-full object-cover shrink-0 ring-1 ring-black/5" />
                       ) : (
-                        <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center text-slate-400">
-                          <UserCircle2 size={22} />
+                        <div className="size-8 bg-zinc-100 rounded-full flex items-center justify-center text-zinc-400 shrink-0 ring-1 ring-black/5">
+                          <UserCircle2 className="size-4" />
                         </div>
                       )}
-                      <div>
-                        <div className="font-bold text-slate-700">{u.name}</div>
-                        <div className="text-xs font-medium text-slate-400">
-                          {u.email}{u.username && <span className="ml-2 text-blue-400">@{u.username}</span>}
-                        </div>
+                      <div className="flex flex-col">
+                        <span className="text-sm font-medium text-zinc-900">{u.name}</span>
+                        <span className="text-[10px] text-zinc-500">
+                          {u.email}{u.username && <span className="ml-1 text-zinc-400">@{u.username}</span>}
+                        </span>
                       </div>
                     </div>
                   </td>
-                  <td className="p-5">
-                    <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase ${
-                      u.role === 'Super Admin' ? 'bg-purple-50 text-purple-600' : 'bg-blue-50 text-blue-600'
+                  <td className="px-5 py-4">
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium ring-1 ${
+                      u.role === 'Super Admin' ? 'bg-primary/10 text-primary ring-primary/20' : 'bg-zinc-50 text-zinc-700 ring-zinc-200'
                     }`}>{u.role}</span>
                   </td>
-                  <td className="p-5 text-sm font-medium text-slate-500">
+                  <td className="px-5 py-4 text-xs text-zinc-700">
                     {isStudent && cls ? `${cls.className}${u.section ? ` - ${u.section}` : ''}`
-                      : isTeacher ? (teacherSubjectNames(u.id) || <span className="italic text-slate-300">No subjects</span>)
+                      : isTeacher ? (teacherSubjectNames(u.id) || <span className="italic text-zinc-400">Unassigned</span>)
                       : '—'}
                   </td>
-                  <td className="p-5">
-                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                      u.status === 'active' ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'
+                  <td className="px-5 py-4">
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium ring-1 ${
+                      u.status === 'active' ? 'bg-green-50 text-green-700 ring-green-600/10' : 'bg-zinc-50 text-zinc-600 ring-zinc-600/10'
                     }`}>{u.status || 'active'}</span>
                   </td>
-                  <td className="p-5 text-right">
-                    <div className="flex justify-end gap-2">
-                      <button onClick={() => openEdit(u)} className="p-2 text-slate-300 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-all">
-                        <Edit size={16} />
+                  <td className="px-5 py-4 text-right">
+                    <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button onClick={() => openEdit(u)} className="p-1.5 text-zinc-400 hover:text-zinc-700 rounded transition-colors">
+                        <Edit className="size-4 shrink-0" />
                       </button>
-                      <button onClick={() => handleDelete(u)} className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all">
-                        <Trash2 size={16} />
+                      <button onClick={() => handleDelete(u)} className="p-1.5 text-zinc-400 hover:text-accent rounded transition-colors">
+                        <Trash2 className="size-4 shrink-0" />
                       </button>
                     </div>
                   </td>
                 </tr>
               );
             }) : (
-              <tr><td colSpan="5" className="p-10 text-center text-slate-400 font-medium italic">No users in this view.</td></tr>
+              <tr><td colSpan="5" className="px-5 py-8 text-center text-xs text-zinc-500 italic">No users found in this view.</td></tr>
             )}
           </tbody>
         </table>
@@ -330,47 +323,55 @@ export default function UserTab({ data, fetchData, user }) {
 
       {/* Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-[2.5rem] w-full max-w-3xl p-10 shadow-2xl relative max-h-[92vh] overflow-y-auto">
-            <button onClick={() => setIsModalOpen(false)} className="absolute top-8 right-8 text-slate-400 hover:text-slate-600">
-              <X size={24} />
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-3xl p-6 shadow-xl relative max-h-[90vh] overflow-y-auto custom-scrollbar">
+            <button onClick={() => setIsModalOpen(false)} className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-700 transition-colors">
+              <X className="size-5 shrink-0" />
             </button>
-            <h2 className="text-2xl font-black mb-2 text-slate-800">
-              {editingUser ? 'Edit User' : 'Create New Account'}
-            </h2>
-            <p className="text-slate-400 text-sm font-medium mb-8">Fill in all the details. The user can edit personal info later.</p>
+            
+            <div className="mb-6">
+              <h2 className="text-lg font-semibold text-zinc-900">
+                {editingUser ? 'Edit User Record' : 'Create New User'}
+              </h2>
+              <p className="text-[11px] text-zinc-500 mt-1">Fill in the required information. Users can update personal details later.</p>
+            </div>
 
             <form onSubmit={handleSubmit} className="space-y-6">
-              <div className="flex items-center gap-5">
+              
+              {/* Photo Upload */}
+              <div className="flex items-center gap-4">
                 {form.profile_pic ? (
-                  <img src={form.profile_pic} alt="preview" className="w-20 h-20 rounded-2xl object-cover ring-2 ring-slate-100" />
+                  <img src={form.profile_pic} alt="preview" className="size-16 rounded-full object-cover ring-1 ring-black/5" />
                 ) : (
-                  <div className="w-20 h-20 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400">
-                    <UserCircle2 size={40} />
+                  <div className="size-16 rounded-full bg-zinc-50 ring-1 ring-black/5 flex items-center justify-center text-zinc-400">
+                    <UserCircle2 className="size-8" />
                   </div>
                 )}
-                <div>
-                  <label className="cursor-pointer inline-flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs px-4 py-2 rounded-xl transition-all">
-                    <Camera size={14} /> Choose Photo
-                    <input type="file" accept="image/*" onChange={handlePicChange} className="hidden" />
-                  </label>
-                  {form.profile_pic && (
-                    <button type="button" onClick={() => setForm(f => ({ ...f, profile_pic: '' }))}
-                      className="ml-2 text-xs text-red-500 font-bold">Remove</button>
-                  )}
-                  <p className="text-[10px] text-slate-400 mt-1">JPG/PNG · max 3 MB</p>
+                <div className="flex flex-col items-start gap-1">
+                  <div className="flex items-center gap-2">
+                    <label className="cursor-pointer inline-flex items-center gap-1.5 text-zinc-700 px-3 py-1.5 border border-zinc-200 rounded text-xs font-medium hover:bg-zinc-50 transition-colors">
+                      <Camera className="size-3.5 shrink-0" /> Upload Photo
+                      <input type="file" accept="image/*" onChange={handlePicChange} className="hidden" />
+                    </label>
+                    {form.profile_pic && (
+                      <button type="button" onClick={() => setForm(f => ({ ...f, profile_pic: '' }))} className="text-xs font-medium text-accent hover:underline">
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-zinc-400">JPG/PNG · max 3 MB</p>
                 </div>
               </div>
 
-              <Section title="Account">
+              <Section title="Account Credentials">
                 <Grid>
                   <Field label="Full Name" required value={form.name} onChange={v => setForm({ ...form, name: v })} />
                   <Field label="Role" type="select" required value={form.role} onChange={v => setForm({ ...form, role: v })}
-                    options={[{ value: '', label: 'Select role…' }, ...data.roles.map(r => ({ value: r.role_name, label: r.role_name }))]} />
-                  <Field label="Email" type="email" required value={form.email} onChange={v => setForm({ ...form, email: v })} />
-                  <Field label="Username" icon={AtSign} value={form.username} onChange={v => setForm({ ...form, username: v })} placeholder="e.g. sagar" />
+                    options={[{ value: '', label: 'Select role...' }, ...data.roles.map(r => ({ value: r.role_name, label: r.role_name }))]} />
+                  <Field label="Email Address" type="email" required value={form.email} onChange={v => setForm({ ...form, email: v })} />
+                  <Field label="Username" value={form.username} onChange={v => setForm({ ...form, username: v })} placeholder="e.g. jsmith" />
                   <Field label="Password" required value={form.password} onChange={v => setForm({ ...form, password: v })} />
-                  <Field label="Status" type="select" value={form.status} onChange={v => setForm({ ...form, status: v })}
+                  <Field label="Account Status" type="select" value={form.status} onChange={v => setForm({ ...form, status: v })}
                     options={[{ value: 'active', label: 'Active' }, { value: 'inactive', label: 'Inactive' }, { value: 'alumni', label: 'Alumni' }]} />
                 </Grid>
               </Section>
@@ -379,22 +380,23 @@ export default function UserTab({ data, fetchData, user }) {
                 <Grid>
                   <Field label="Date of Birth" type="date" value={form.dob} onChange={v => setForm({ ...form, dob: v })} />
                   <Field label="Gender" type="select" value={form.gender} onChange={v => setForm({ ...form, gender: v })}
-                    options={[{ value: '', label: 'Select…' }, { value: 'Male', label: 'Male' }, { value: 'Female', label: 'Female' }, { value: 'Other', label: 'Other' }]} />
-                  <Field label="Phone" value={form.phone_no} onChange={v => setForm({ ...form, phone_no: v })} />
+                    options={[{ value: '', label: 'Select...' }, { value: 'Male', label: 'Male' }, { value: 'Female', label: 'Female' }, { value: 'Other', label: 'Other' }]} />
+                  <Field label="Phone Number" value={form.phone_no} onChange={v => setForm({ ...form, phone_no: v })} />
                 </Grid>
-                <Field label="Address" type="textarea" value={form.address} onChange={v => setForm({ ...form, address: v })} />
+                <div className="mt-4">
+                  <Field label="Full Address" type="textarea" value={form.address} onChange={v => setForm({ ...form, address: v })} />
+                </div>
               </Section>
 
               {isTeacherRole && (
-                <Section title="Teaching Subjects" accent="blue">
-                  <div className="flex items-center gap-2 mb-3">
-                    <BookOpen size={14} className="text-blue-600" />
-                    <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Pick all that this teacher will teach</span>
-                    <span className="ml-auto text-[11px] font-bold text-blue-600 bg-white px-2.5 py-0.5 rounded-full">{form.subject_ids.length} selected</span>
+                <Section title="Teaching Assignments">
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-[11px] text-zinc-500">Select all subjects this teacher is qualified to teach.</p>
+                    <span className="text-[10px] font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded-full tabular-nums">{form.subject_ids.length} selected</span>
                   </div>
                   {(data.subjects || []).length === 0 ? (
-                    <p className="text-xs text-slate-500 italic">
-                      No subjects created yet. Open <strong>Timetable → Subjects</strong> first.
+                    <p className="text-xs text-accent bg-accent/5 p-3 rounded border border-accent/20">
+                      No subjects available. Configure them in System Configuration → Subjects first.
                     </p>
                   ) : (
                     <div className="flex flex-wrap gap-2">
@@ -403,9 +405,8 @@ export default function UserTab({ data, fetchData, user }) {
                         const selected = form.subject_ids.includes(id);
                         return (
                           <button type="button" key={s.id} onClick={() => toggleSubject(s.id)}
-                            className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
-                              selected ? 'bg-blue-600 text-white shadow shadow-blue-200'
-                                       : 'bg-white border border-slate-200 text-slate-600 hover:border-blue-300'
+                            className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                              selected ? 'bg-primary text-white ring-1 ring-primary' : 'bg-white text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-50'
                             }`}>
                             {s.name}
                           </button>
@@ -417,23 +418,29 @@ export default function UserTab({ data, fetchData, user }) {
               )}
 
               {isStudentRole && (
-                <Section title="Academic Details" accent="emerald">
+                <Section title="Academic Details">
                   <Grid>
-                    <Field label="Class" type="select" value={form.class_id} onChange={v => setForm({ ...form, class_id: v })}
-                      options={[{ value: '', label: 'Select class' }, ...data.classes.map(c => ({
+                    <Field label="Class Assignment" type="select" value={form.class_id} onChange={v => setForm({ ...form, class_id: v })}
+                      options={[{ value: '', label: 'Select class...' }, ...data.classes.map(c => ({
                         value: c.id, label: `${c.className}${c.section ? ' - ' + c.section : ''}`
                       }))]} />
-                    <Field label="Section" value={form.section} onChange={v => setForm({ ...form, section: v })} placeholder="e.g. A" />
+                    <Field label="Section (Optional)" value={form.section} onChange={v => setForm({ ...form, section: v })} placeholder="e.g. A" />
                     <Field label="Roll Number" value={form.roll_no} onChange={v => setForm({ ...form, roll_no: v })} />
                     <Field label="Admission Number" value={form.admission_no} onChange={v => setForm({ ...form, admission_no: v })} />
                   </Grid>
                 </Section>
               )}
 
-              <button type="submit" className="w-full bg-slate-900 hover:bg-blue-600 text-white py-4 rounded-2xl font-black uppercase tracking-widest mt-2 transition-all shadow-xl">
-                {editingUser ? 'Save Changes' : 'Save User Account'}
-              </button>
+              <div className="pt-4 border-t border-zinc-100 flex justify-end gap-3">
+                <button type="button" onClick={() => setIsModalOpen(false)} className="text-zinc-700 px-4 py-2 border border-zinc-200 rounded-md text-xs font-medium hover:bg-zinc-50 transition-colors">
+                  Cancel
+                </button>
+                <button type="submit" className="bg-primary text-white px-6 py-2 rounded-md text-xs font-medium hover:bg-primary/90 transition-colors flex items-center gap-2">
+                  {editingUser ? 'Save Changes' : 'Create User'}
+                </button>
+              </div>
             </form>
+            
           </div>
         </div>
       )}
@@ -441,33 +448,39 @@ export default function UserTab({ data, fetchData, user }) {
   );
 }
 
-function Section({ title, accent = 'slate', children }) {
-  const accentMap = {
-    slate:   'bg-slate-50 border-slate-100',
-    blue:    'bg-blue-50/40 border-blue-100',
-    emerald: 'bg-emerald-50/40 border-emerald-100'
-  };
+// =====================================================================
+// Sub-components matching Rule 12 & Layout Rules
+// =====================================================================
+
+function Section({ title, children }) {
   return (
-    <div className={`${accentMap[accent]} border rounded-2xl p-5 space-y-4`}>
-      <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{title}</div>
+    <div className="ring-1 ring-black/5 rounded-md p-5 bg-zinc-50/30">
+      <h3 className="text-sm font-semibold text-zinc-900 mb-4">{title}</h3>
       {children}
     </div>
   );
 }
-function Grid({ children }) { return <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{children}</div>; }
-function Field({ label, value, onChange, type = 'text', icon: Icon, options, required, placeholder }) {
-  const baseCls = "w-full bg-white border border-slate-100 rounded-xl px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500/10 text-sm";
+
+function Grid({ children }) { 
+  return <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{children}</div>; 
+}
+
+function Field({ label, value, onChange, type = 'text', options, required, placeholder }) {
+  const baseCls = "h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors";
   return (
-    <div className="space-y-1">
-      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
-        {Icon && <Icon size={10} />} {label}{required && <span className="text-red-500">*</span>}
+    <div className="flex flex-col">
+      <label className="text-xs font-medium text-zinc-600 mb-1.5 flex items-center gap-1">
+        {label} {required && <span className="text-accent">*</span>}
       </label>
       {type === 'select' ? (
-        <select value={value || ''} onChange={e => onChange(e.target.value)} className={baseCls + ' cursor-pointer'}>
-          {(options || []).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
+        <div className="relative">
+          <select value={value || ''} onChange={e => onChange(e.target.value)} className={`${baseCls} appearance-none cursor-pointer pr-8`}>
+            {(options || []).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+          <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+        </div>
       ) : type === 'textarea' ? (
-        <textarea value={value || ''} onChange={e => onChange(e.target.value)} rows={2} className={baseCls + ' resize-none'} placeholder={placeholder} />
+        <textarea value={value || ''} onChange={e => onChange(e.target.value)} rows={3} className={`${baseCls} h-auto py-2 resize-none`} placeholder={placeholder} />
       ) : (
         <input type={type} value={value || ''} onChange={e => onChange(e.target.value)} required={required} placeholder={placeholder} className={baseCls} />
       )}

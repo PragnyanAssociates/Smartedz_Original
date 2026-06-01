@@ -6,12 +6,8 @@ import { useAuth } from "../../context/AuthContext.jsx";
 import { usePermissions } from "../../Screens/PermissionsContext"; 
 import { MdArrowBack } from 'react-icons/md';
 import apiClient from '../../api/client';
-import { Camera, Save, Trash2, Eye, EyeOff, Megaphone, Loader2 } from 'lucide-react';
+import { Camera, Save, Trash2, Eye, EyeOff, Megaphone, Loader2, Image as ImageIcon } from 'lucide-react';
 import { getProfileImageSource } from '../../utils/imageHelpers';
-
-const getContainerClasses = () => {
-  return "w-full max-w-7xl 2xl:max-w-[85vw] mx-auto px-3 sm:px-4 md:px-6 lg:px-8";
-};
 
 const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDeleted }) => {
   const { user } = useAuth();
@@ -47,14 +43,17 @@ const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDele
     }
 
     setIsSaving(true);
- const formData = new FormData();
- formData.append('group_dp', file);
-formData.append('userId', user.id); 
+    const formData = new FormData();
+    formData.append('group_dp', file);
+    
+    // Add fallback in case user is not fully loaded
+    if (user?.id) {
+      formData.append('userId', user.id); 
+    }
 
     try {
-      const res = await apiClient.post(`/groups/${group.id}/dp`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
+      // FIX: Removed the manual Content-Type header so the browser can set the boundary automatically
+      const res = await apiClient.post(`/groups/${group.id}/dp`, formData);
       setGroup({ ...group, group_dp_url: res.data.group_dp_url });
       alert('Success: Group DP updated.');
     } catch (error) {
@@ -74,7 +73,7 @@ formData.append('userId', user.id);
     setIsSaving(true);
     try {
       await apiClient.put(`/groups/${group.id}`, {
-           userId: user.id,   
+        userId: user.id,   
         name: groupName.trim(),
         backgroundColor: group.background_color,
         isReadOnly: isReadOnly
@@ -84,9 +83,9 @@ formData.append('userId', user.id);
       alert('Success: Group details updated.');
       
       if (isEmbedded && onBack) {
-          onBack(); 
+        onBack(); 
       } else {
-          navigate('/WhatsAppLayout', { state: { selectedGroup: updatedGroup } });
+        navigate('/WhatsAppLayout', { state: { selectedGroup: updatedGroup } });
       }
       
     } catch (error) {
@@ -113,16 +112,17 @@ formData.append('userId', user.id);
       alert('Success: Group has been deleted.');
       
       if (isEmbedded && onGroupDeleted) {
-          onGroupDeleted();
+        onGroupDeleted();
       } else if (isEmbedded && onBack) {
-          onBack();
+        onBack();
       } else {
-          navigate('/WhatsAppLayout'); 
+        navigate('/WhatsAppLayout'); 
       }
     } catch (error) {
       alert('Deletion Failed: ' + (error.response?.data?.message || 'An error occurred.'));
     }
-};
+  };
+
   const handleKeyPress = (e) => {
     if (e.key === 'Enter' && !isSaving && hasEditRights) {
       handleSaveChanges();
@@ -130,135 +130,131 @@ formData.append('userId', user.id);
   };
 
   const handleBackClick = () => {
-      if (isEmbedded && onBack) {
-          onBack();
-      } else {
-          navigate('/WhatsAppLayout', { state: { selectedGroup: group } });
-      }
+    if (isEmbedded && onBack) {
+      onBack();
+    } else {
+      navigate('/WhatsAppLayout', { state: { selectedGroup: group } });
+    }
   };
 
   const imageSourceForDisplay = getProfileImageSource(group.group_dp_url);
 
   return (
-    <div className={`${isEmbedded ? 'h-full w-full overflow-y-auto' : 'min-h-screen'} bg-slate-50`}>
+    <div className={`flex flex-col bg-white max-w-2xl mx-auto w-full border-x border-zinc-200 shadow-sm animate-in slide-in-from-right-8 duration-300 ${isEmbedded ? 'h-full' : 'min-h-[calc(100vh-64px)]'}`}>
       
+      {/* Full Screen Image Viewer */}
       {isViewerVisible && (
-        <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50 p-4" onClick={() => setViewerVisible(false)}>
-          <div className="relative max-w-4xl w-full h-full flex items-center justify-center">
-            <button onClick={() => setViewerVisible(false)} className="absolute top-4 right-4 text-white hover:text-gray-300 bg-black bg-opacity-50 rounded-full p-2 z-10">
-              <EyeOff className="w-6 h-6" />
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setViewerVisible(false)}>
+          <div className="relative max-w-4xl w-full h-full flex items-center justify-center p-4">
+            <button onClick={() => setViewerVisible(false)} className="absolute top-6 right-6 p-2 text-white/70 hover:text-white transition-colors bg-white/10 rounded-full z-10">
+              <EyeOff className="size-6" />
             </button>
             <img src={imageSourceForDisplay} alt="Group profile enlarged" className="max-w-full max-h-full object-contain rounded-lg shadow-2xl" onClick={(e) => e.stopPropagation()} />
           </div>
         </div>
       )}
 
-      <main className={`${getContainerClasses()} py-6 sm:py-8`}>
-        <div className="mb-6">
-          <button onClick={handleBackClick} className="inline-flex items-center gap-2 text-sm font-semibold text-slate-600 hover:text-blue-600 transition-colors" title="Go Back">
-            <MdArrowBack className="text-lg" />
-            <span>Back to Chat</span>
-          </button>
-        </div>
+      {/* Header */}
+      <div className="flex items-center px-4 py-3 border-b border-zinc-200 bg-zinc-50 shrink-0">
+        <button onClick={handleBackClick} className="p-2 mr-2 hover:bg-zinc-200 rounded-full text-zinc-500 hover:text-zinc-900 transition-colors">
+          <MdArrowBack className="size-5" />
+        </button>
+        <h1 className="text-lg font-semibold text-zinc-900 tracking-tight">Group Settings</h1>
+      </div>
 
-        <div className="max-w-4xl mx-auto">
-          <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden p-6 md:p-8">
+      {/* Content */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-8">
+        
+        {/* Image Section */}
+        <div className="flex flex-col items-center justify-center space-y-4">
+          <div className="relative group">
+            <button onClick={() => setViewerVisible(true)} className="relative block">
+              <img src={imageSourceForDisplay} alt="Group profile" className="size-32 sm:size-40 rounded-full bg-zinc-100 object-cover cursor-pointer hover:opacity-95 transition-opacity ring-4 ring-white shadow-md" />
+              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/30 rounded-full pointer-events-none backdrop-blur-[1px]">
+                <Eye className="text-white size-8 drop-shadow-md" />
+              </div>
+            </button>
             
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-              
-              {/* Image Section */}
-              <div className="flex flex-col items-center md:items-start">
-                <label className="block text-base font-medium text-slate-900 mb-2 text-center md:text-left">
-                  Group Icon
+            {hasEditRights && (
+              <div className="absolute bottom-0 right-0 sm:bottom-1 sm:right-1">
+                <input type="file" accept="image/*" className="hidden" id="group-dp-upload" onChange={handlePickImage} disabled={isSaving} />
+                <label htmlFor="group-dp-upload" className="flex items-center justify-center size-10 sm:size-11 bg-primary hover:bg-primary/90 text-white rounded-full cursor-pointer shadow-lg transition-colors ring-4 ring-white">
+                  <Camera className="size-5" />
                 </label>
-                <div className="relative group">
-                  <button onClick={() => setViewerVisible(true)} className="relative block">
-                    <img src={imageSourceForDisplay} alt="Group profile" className="w-36 h-36 rounded-full bg-gray-200 object-cover cursor-pointer hover:opacity-95 transition-opacity border-4 border-white shadow-md" />
-                    <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black bg-opacity-20 rounded-full pointer-events-none">
-                        <Eye className="text-white w-6 h-6 drop-shadow-md" />
-                    </div>
-                  </button>
-                  
-                  {hasEditRights && (
-                    <div className="absolute bottom-1 right-1">
-                      <input type="file" accept="image/*" className="hidden" id="group-dp-upload" onChange={handlePickImage} disabled={isSaving} />
-                      <label htmlFor="group-dp-upload" className="flex items-center justify-center w-10 h-10 bg-blue-600 hover:bg-blue-700 text-white rounded-full cursor-pointer shadow-lg transition-colors border-2 border-white">
-                        <Camera className="w-5 h-5" />
-                      </label>
-                    </div>
-                  )}
-                </div>
               </div>
-
-              {/* Form Section */}
-              <div className="md:col-span-2 flex flex-col gap-6">
-                
-                {/* Group Name */}
-                <div>
-                  <label htmlFor="groupName" className="block text-sm font-medium text-slate-700 mb-2">Group Name</label>
-                  <input
-                    type="text"
-                    id="groupName"
-                    value={groupName}
-                    onChange={(e) => setGroupName(e.target.value)}
-                    onKeyPress={handleKeyPress}
-                    disabled={!hasEditRights || isSaving}
-                    placeholder="Enter group name"
-                    className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none text-slate-900 bg-white disabled:bg-slate-50 disabled:text-slate-500"
-                  />
-                </div>
-
-                {/* Broadcast Toggle (Notice Board) */}
-                {hasEditRights && (
-                  <div className="bg-slate-50 rounded-lg p-4 border border-slate-200">
-                    <div className="flex items-start justify-between">
-                      <div className="flex flex-col">
-                        <span className="text-sm font-medium text-slate-900 flex items-center gap-2">
-                           <Megaphone className="w-4 h-4 text-blue-600" />
-                           Announcement Mode
-                        </span>
-                        <span className="text-xs text-slate-500 mt-1 max-w-sm">
-                          When enabled, only Admins and authorized roles can send messages.
-                        </span>
-                      </div>
-                      <label className="relative inline-flex items-center cursor-pointer mt-1">
-                        <input type="checkbox" className="sr-only peer" checked={isReadOnly} onChange={() => setIsReadOnly(!isReadOnly)} disabled={isSaving} />
-                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                      </label>
-                    </div>
-                  </div>
-                )}
-
-                {/* Actions */}
-                <div className="flex flex-col sm:flex-row gap-4 pt-4 border-t border-slate-100 mt-2">
-                  {hasEditRights && (
-                    <button
-                      onClick={handleSaveChanges}
-                      disabled={isSaving}
-                      className="flex-1 flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
-                    >
-                      {isSaving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
-                      <span>{isSaving ? 'Saving...' : 'Save Changes'}</span>
-                    </button>
-                  )}
-
-                  {hasDeleteRights && (
-                    <button
-                      onClick={handleDeleteGroup}
-                      disabled={isSaving}
-                      className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-3 bg-white border border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300 rounded-lg font-medium transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
-                    >
-                      <Trash2 className="w-5 h-5" />
-                      <span>Delete Group</span>
-                    </button>
-                  )}
-                </div>
-
-              </div>
-            </div>
+            )}
+          </div>
+          <div className="text-center">
+            <h2 className="text-xl font-semibold text-zinc-900 tracking-tight">{group.name}</h2>
+            <p className="text-xs font-medium text-zinc-500 mt-1 uppercase tracking-wider">Group Icon</p>
           </div>
         </div>
-      </main>
+
+        {/* Form Section */}
+        <div className="space-y-6 pt-4 border-t border-zinc-100">
+          
+          <div className="space-y-1.5">
+            <label htmlFor="groupName" className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">
+              Group Name <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              id="groupName"
+              value={groupName}
+              onChange={(e) => setGroupName(e.target.value)}
+              onKeyPress={handleKeyPress}
+              disabled={!hasEditRights || isSaving}
+              placeholder="Enter group name"
+              className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors disabled:bg-zinc-50 disabled:text-zinc-500"
+            />
+          </div>
+
+          {/* Broadcast Toggle (Notice Board) */}
+          {hasEditRights && (
+            <div className="bg-zinc-50 rounded-lg p-4 ring-1 ring-inset ring-black/5 flex items-start justify-between">
+              <div className="flex flex-col pr-4">
+                <span className="text-sm font-semibold text-zinc-900 flex items-center gap-2">
+                  <Megaphone className="size-4 text-primary" />
+                  Announcement Mode
+                </span>
+                <span className="text-[11px] font-medium text-zinc-500 mt-1 leading-relaxed max-w-sm">
+                  When enabled, only Admins and authorized roles can send messages.
+                </span>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer mt-1 shrink-0">
+                <input type="checkbox" className="sr-only peer" checked={isReadOnly} onChange={() => setIsReadOnly(!isReadOnly)} disabled={isSaving} />
+                <div className="w-9 h-5 bg-zinc-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
+              </label>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Action Footer */}
+      <div className="p-4 border-t border-zinc-200 bg-zinc-50 shrink-0 flex flex-col sm:flex-row gap-3">
+        {hasEditRights && (
+          <button
+            onClick={handleSaveChanges}
+            disabled={isSaving || !groupName.trim() || (groupName === group.name && isReadOnly === (group.is_read_only === 1 || group.is_read_only === true))}
+            className="flex-1 h-10 flex items-center justify-center gap-2 bg-primary hover:bg-primary/90 text-white rounded-md font-semibold text-sm shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isSaving ? <Loader2 className="size-4 animate-spin shrink-0" /> : <Save className="size-4 shrink-0" />}
+            <span>{isSaving ? 'Saving...' : 'Save Changes'}</span>
+          </button>
+        )}
+
+        {hasDeleteRights && (
+          <button
+            onClick={handleDeleteGroup}
+            disabled={isSaving}
+            className="flex-1 sm:flex-none h-10 px-6 flex items-center justify-center gap-2 bg-white text-red-600 hover:bg-red-50 ring-1 ring-inset ring-red-200 hover:ring-red-300 rounded-md font-semibold text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+          >
+            <Trash2 className="size-4 shrink-0" />
+            <span>Delete Group</span>
+          </button>
+        )}
+      </div>
+
     </div>
   );
 };

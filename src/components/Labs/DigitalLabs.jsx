@@ -5,12 +5,12 @@ import TeacherLabs from './TeacherLabs';
 import StudentLabs from './StudentLabs';
 
 // =====================================================================
-//  Digital Labs — module entry point.
+//  Digital Labs - module entry point.
 //
-//   • Super Admin / Developer / staff roles → TeacherLabs
+//   - Super Admin / Developer / staff roles -> TeacherLabs
 //       (create/edit/delete labs with video, link & live-class resources)
-//   • Teacher → TeacherLabs (sees only their own labs — backend-enforced)
-//   • Student → StudentLabs (browse labs for their class, watch & join)
+//   - Teacher -> TeacherLabs (sees only their own labs - backend-enforced)
+//   - Student -> StudentLabs (browse labs for their class, watch & join)
 // =====================================================================
 
 export default function DigitalLabs() {
@@ -19,7 +19,7 @@ export default function DigitalLabs() {
   const isStudent = role.includes('student');
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-700">
+    <div className="flex flex-col flex-1 h-full w-full animate-in fade-in duration-300">
       {isStudent ? <StudentLabs /> : <TeacherLabs canManage={!isStudent} />}
     </div>
   );

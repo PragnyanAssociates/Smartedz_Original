@@ -4479,7 +4479,7 @@ app.put('/api/groups/:groupId', checkGroupPermission('edit'), async (req, res) =
 // --- 9. Update Group Display Picture ---
 // POST /api/groups/:groupId/dp
 // Form data: { userId, group_dp (file) }
-app.post('/api/groups/:groupId/dp', checkGroupPermission('edit'), chatUpload.single('group_dp'), async (req, res) => {
+app.post('/api/groups/:groupId/dp', chatUpload.single('group_dp'), checkGroupPermission('edit'), async (req, res) => {
     if (!req.file) return res.status(400).json({ message: 'No file uploaded.' });
     const { groupId } = req.params;
     const fileUrl = `/public/uploads/chat_media/${req.file.filename}`;
@@ -4495,8 +4495,6 @@ app.post('/api/groups/:groupId/dp', checkGroupPermission('edit'), chatUpload.sin
         res.status(500).json({ message: 'Failed to update group DP.' });
     }
 });
-
-
 // --- 10. Delete Group ---
 // DELETE /api/groups/:groupId
 // Body: { userId }

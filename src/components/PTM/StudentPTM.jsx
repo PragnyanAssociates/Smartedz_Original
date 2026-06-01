@@ -2,8 +2,8 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import { 
-  Users, Calendar, Clock, GraduationCap, Target, 
-  Video, Search, X, Link as LinkIcon, Loader2 
+  Users, Clock, GraduationCap, Video, Search, X, 
+  Link as LinkIcon, Loader2, RefreshCw 
 } from 'lucide-react';
 
 export default function StudentPTM() {
@@ -41,135 +41,127 @@ export default function StudentPTM() {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="mb-2">
-        <h2 className="text-3xl font-black text-slate-900 tracking-tight flex items-center gap-2">
-          <Users className="text-blue-600" size={28} />
+    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
+      
+      <header className="flex flex-col mb-2 sm:mb-0">
+        <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
+          <Users className="text-primary size-5" />
           Meeting Schedules
-        </h2>
-        <p className="text-slate-500 font-medium mt-1">
+        </h1>
+        <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
           View upcoming and past Parent-Teacher Meetings.
         </p>
-      </div>
+      </header>
 
-      <div className="flex flex-col sm:flex-row justify-between gap-3 sm:items-center">
-        <div className="relative">
-          <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div className="relative w-full sm:w-72 shrink-0">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
           <input value={query} onChange={e => setQuery(e.target.value)}
-            placeholder="Search meetings…"
-            className="bg-white border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500/10 w-full sm:w-72 shadow-sm" />
+            placeholder="Search meetings..."
+            className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-8 text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors placeholder:text-zinc-400" />
           {query && (
-            <button onClick={() => setQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
-              <X size={14} />
+            <button onClick={() => setQuery('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 transition-colors p-0.5">
+              <X className="size-3.5" />
             </button>
           )}
         </div>
         
         <button onClick={loadMeetings} disabled={loading}
-          className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all shadow-sm">
-          {loading ? <Loader2 size={16} className="animate-spin" /> : 'Refresh'}
+          className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 hover:bg-zinc-50 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full sm:w-auto shrink-0">
+          {loading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+          Refresh
         </button>
       </div>
 
-      {loading ? (
-        <div className="py-20 text-center"><Loader2 className="animate-spin w-8 h-8 text-blue-600 mx-auto" /></div>
-      ) : filtered.length === 0 ? (
-        <div className="bg-white p-16 rounded-3xl border border-dashed border-slate-200 text-center">
-          <Users className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-          <p className="text-slate-500 font-medium">No meetings found.</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {filtered.map(item => {
-            const meetingDate = new Date(item.meeting_datetime);
-            const isCompleted = item.status === 'Completed';
-            const isJoinable = item.status === 'Scheduled' && item.meeting_link;
+      <div className="flex-1">
+        {loading ? (
+          <div className="h-64 flex items-center justify-center">
+            <Loader2 className="animate-spin size-8 text-primary" />
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
+            <Users className="size-10 text-zinc-300 mb-3" />
+            <p className="text-zinc-500 text-sm font-medium">No meetings found.</p>
+          </div>
+        ) : (
+          <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-x-auto custom-scrollbar">
+            <table className="w-full text-left border-collapse min-w-[800px]">
+              <thead className="bg-zinc-50/80">
+                <tr>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Date & Time</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Teacher & Class</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Meeting Focus</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Status</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100">
+                {filtered.map(item => {
+                  const meetingDate = new Date(item.meeting_datetime);
+                  const isCompleted = item.status === 'Completed';
+                  const isJoinable = item.status === 'Scheduled' && item.meeting_link;
 
-            return (
-              <div key={item.id} className={`bg-white rounded-3xl shadow-sm transition-all duration-300 hover:shadow-md hover:-translate-y-1 border-l-4 ${isCompleted ? 'border-emerald-500' : 'border-blue-500'}`}>
-                
-                {/* Header */}
-                <div className="flex justify-between items-start p-6 border-b border-slate-50">
-                  <div className="flex items-center gap-4">
-                    <div className={`flex-shrink-0 w-12 h-12 rounded-2xl flex items-center justify-center ${isCompleted ? 'bg-emerald-50 text-emerald-600' : 'bg-blue-50 text-blue-600'}`}>
-                      <Users size={24} />
-                    </div>
-                    <div>
-                      <h3 className="font-black text-lg text-slate-800 truncate leading-tight">{item.teacher_name || 'N/A'}</h3>
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Parent-Teacher Meeting</p>
-                    </div>
-                  </div>
-                  
-                  {isJoinable && (
-                    <button onClick={() => handleJoinMeeting(item.meeting_link)} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-all shadow-sm text-xs">
-                      <Video size={14} /> Join
-                    </button>
-                  )}
-                </div>
-                
-                {/* Body */}
-                <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-6">
-                  <div className="flex items-center gap-2">
-                    <Calendar size={16} className="text-slate-400" />
-                    <div className="flex flex-col">
-                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Date</span>
-                      <span className="text-sm font-bold text-slate-700">{meetingDate.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Clock size={16} className="text-slate-400" />
-                    <div className="flex flex-col">
-                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Time</span>
-                      <span className="text-sm font-bold text-slate-700">{meetingDate.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <GraduationCap size={16} className="text-slate-400" />
-                    <div className="flex flex-col">
-                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Class</span>
-                      <span className="text-sm font-bold text-slate-700">{item.className ? `${item.className}${item.section ? ` - ${item.section}` : ''}` : 'All Classes'}</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Target size={16} className="text-slate-400" /> 
-                    <div className="flex flex-col">
-                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Focus</span>
-                      <span className="text-sm font-bold text-slate-700 truncate max-w-[150px]">{item.subject_focus || 'General'}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Footer */}
-                <div className="bg-slate-50 p-6 mt-auto flex flex-col gap-4 rounded-b-3xl">
-                  {item.notes && (
-                    <div className="text-sm text-slate-600 bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
-                      <span className="font-bold block mb-1">Notes:</span>
-                      {item.notes}
-                    </div>
-                  )}
-                  
-                  <div className="flex items-center justify-between">
-                    <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${
-                      isCompleted ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'
-                    }`}>
-                      {item.status}
-                    </span>
-                    
-                    {item.meeting_link && !isCompleted && !isJoinable && (
-                      <div className="flex items-center gap-2 text-sm">
-                        <LinkIcon size={14} className="text-slate-400" />
-                        <button onClick={() => handleJoinMeeting(item.meeting_link)} className="text-blue-600 hover:underline font-bold truncate">
-                          Join Link
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
+                  return (
+                    <tr key={item.id} className="hover:bg-zinc-50/60 transition-colors group">
+                      <td className="px-5 py-4 whitespace-nowrap">
+                        <span className="text-zinc-900 font-semibold text-sm block">
+                          {meetingDate.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}
+                        </span>
+                        <span className="text-zinc-500 text-[11px] font-medium mt-0.5 block flex items-center gap-1">
+                          <Clock className="size-3" />
+                          {meetingDate.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </td>
+                      <td className="px-5 py-4">
+                        <div className="font-semibold text-zinc-900 text-sm mb-1">{item.teacher_name || 'N/A'}</div>
+                        <div className="text-[11px] text-zinc-500 flex items-center gap-1">
+                          <GraduationCap className="size-3" />
+                          {item.className ? `${item.className}${item.section ? ` - ${item.section}` : ''}` : 'All Classes'}
+                        </div>
+                      </td>
+                      <td className="px-5 py-4">
+                        <div className="font-semibold text-zinc-900 text-sm line-clamp-1">{item.subject_focus || 'General'}</div>
+                        {item.notes ? (
+                          <div className="text-xs text-zinc-500 mt-1 line-clamp-1 max-w-[250px]" title={item.notes}>{item.notes}</div>
+                        ) : (
+                          <div className="text-xs text-zinc-400 italic mt-1">No additional notes</div>
+                        )}
+                      </td>
+                      <td className="px-5 py-4 whitespace-nowrap">
+                        <div className="flex flex-col gap-2 items-start">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ring-1 ring-inset ${
+                            isCompleted ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' : 'bg-primary/10 text-primary ring-primary/20'
+                          }`}>
+                            {item.status}
+                          </span>
+                          {item.meeting_link && !isCompleted && !isJoinable && (
+                            <button onClick={() => handleJoinMeeting(item.meeting_link)} 
+                              className="text-xs font-semibold text-primary hover:text-primary/80 flex items-center gap-1 transition-colors">
+                              <LinkIcon className="size-3" /> Join Link
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-5 py-4 text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end">
+                          {isJoinable ? (
+                            <button onClick={() => handleJoinMeeting(item.meeting_link)} 
+                              className="h-8 px-4 rounded-md font-semibold text-xs text-white transition-colors inline-flex items-center justify-center gap-1.5 shadow-sm bg-primary hover:bg-primary/90">
+                              <Video className="size-3.5"/> Join
+                            </button>
+                          ) : (
+                            <span className="text-zinc-400 text-xs font-medium">-</span>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -9,19 +9,19 @@ import SubjectIndex from './SubjectIndex';
 import Periods from './Periods';
 
 // =====================================================================
-//  Syllabus — module entry point.
+//  Syllabus - module entry point.
 //
 //  Navigation (matches the real screens):
 //
-//    SyllabusManagement  ← landing screen: list of syllabuses
-//        │  green chart icon ─────────────► SubjectIndex
-//        │
-//    SubjectIndex        ← chapters / PDF / keywords for ONE syllabus
-//        │  "Periods" button ────────────► Periods
-//        │  "Back" ───────────────────────► SyllabusManagement
-//        │
-//    Periods             ← lesson period schedule for the same syllabus
-//        │  "Back to Subject Index" ──────► SubjectIndex
+//    SyllabusManagement  <- landing screen: list of syllabuses
+//        |  green chart icon -------------> SubjectIndex
+//        |
+//    SubjectIndex        <- chapters / PDF / keywords for ONE syllabus
+//        |  "Periods" button -------------> Periods
+//        |  "Back" -----------------------> SyllabusManagement
+//        |
+//    Periods             <- lesson period schedule for the same syllabus
+//        |  "Back to Subject Index" ------> SubjectIndex
 //
 //  A "nav" object { screen, syllabus } is threaded through so the same
 //  class/subject/syllabus carries across all three screens.
@@ -40,7 +40,7 @@ export default function Syllabus() {
   const [activeYear, setYear]   = useState(null);
   const [loading, setLoading]   = useState(true);
 
-  // nav.screen ∈ 'management' | 'index' | 'periods'
+  // nav.screen -> 'management' | 'index' | 'periods'
   // nav.syllabus = the selected syllabus row (for index / periods)
   const [nav, setNav] = useState({ screen: 'management', syllabus: null });
 
@@ -53,7 +53,7 @@ export default function Syllabus() {
       setClasses(d.classes || []);
       setSubjects(d.subjects || []);
       setSC(d.subjectClasses || {});
-      // teachers — users whose role is Teacher
+      // teachers - users whose role is Teacher
       const staff = (d.users || []).filter(u =>
         (u.role || '').toLowerCase().includes('teacher'));
       setTeachers(staff);
@@ -67,8 +67,8 @@ export default function Syllabus() {
 
   if (loading) {
     return (
-      <div className="h-96 flex items-center justify-center">
-        <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
+      <div className="flex items-center justify-center flex-1 h-full min-h-[calc(100vh-64px)]">
+        <Loader2 className="size-8 text-primary animate-spin" />
       </div>
     );
   }
@@ -82,7 +82,7 @@ export default function Syllabus() {
   const goPeriods = (syllabus) => setNav({ screen: 'periods', syllabus });
 
   return (
-    <div className="animate-in fade-in duration-700">
+    <div className="flex flex-col flex-1 h-full w-full animate-in fade-in duration-300">
       {nav.screen === 'management' && (
         <SyllabusManagement {...shared} onOpenSyllabus={goIndex} />
       )}

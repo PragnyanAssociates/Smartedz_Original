@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Mail, Phone } from 'lucide-react';
+import { Mail, Phone, Menu } from 'lucide-react';
 import smartedzLogo from '../assets/smartedzlogo.png';
 
-export default function DashboardHeader() {
+export default function DashboardHeader({ onMenuClick }) {
   const { user, API_URL } = useAuth();
   const [inst, setInst] = useState(null);
 
@@ -21,63 +21,72 @@ export default function DashboardHeader() {
   }, [user, API_URL]);
 
   return (
-    <header className="w-full bg-white z-50 border-b border-slate-200">
-      {/* Top Brown Border */}
-      <div className="h-2 w-full bg-[#3d2b1f]"></div>
-
-      <div className="px-10 py-4 grid grid-cols-12 items-center min-h-[110px]">
+    <header className="w-full bg-white z-20 border-b border-zinc-200 shadow-sm shrink-0">
+      
+      {/* Changed px-8 to px-4 sm:px-8 for tighter mobile padding */}
+      <div className="px-4 sm:px-8 py-3 flex items-center justify-between gap-4">
         
-        {/* SECTION 1: School Logo (Left) */}
-        <div className="col-span-3 flex items-center">
+        {/* SECTION 1: School Logo + Mobile Hamburger */}
+        <div className="flex-1 md:w-1/3 flex items-center justify-start gap-3">
+          
+          {/* HAMBURGER ICON: Visible only on mobile (< 768px) */}
+          <button 
+            onClick={onMenuClick} 
+            className="md:hidden p-1.5 -ml-1.5 text-zinc-600 hover:text-primary hover:bg-zinc-50 rounded-md transition-colors shrink-0"
+          >
+            <Menu className="size-6" />
+          </button>
+
           {inst?.logo ? (
             <img 
               src={inst.logo} 
               alt="School Logo" 
-              className="h-20 w-auto object-contain" 
+              className="h-8 md:h-10 w-auto object-contain shrink-0" 
             />
           ) : (
-            <div className="flex items-center gap-3">
-               <div className="h-16 w-16 bg-slate-100 rounded-full flex items-center justify-center border border-slate-200">
-                  <span className="text-[10px] font-bold text-slate-400">LOGO</span>
+            <div className="flex items-center gap-2 sm:gap-3">
+               <div className="size-8 sm:size-10 bg-zinc-50 rounded flex items-center justify-center border border-zinc-200 shrink-0">
+                  <span className="text-[8px] sm:text-[9px] font-semibold text-zinc-400">LOGO</span>
                </div>
                <div className="flex flex-col">
-                  <span className="text-[10px] font-bold text-orange-500 uppercase leading-none">Knowledge is Light</span>
-                  <span className="text-sm font-black text-green-700 leading-tight">VIVEKANANDA</span>
-                  <span className="text-[10px] font-bold text-slate-500 leading-none">Public School</span>
+                  <span className="text-[8px] sm:text-[9px] font-semibold text-accent uppercase leading-none mb-0.5">Knowledge is Light</span>
+                  <span className="text-xs sm:text-sm font-semibold text-zinc-900 leading-none truncate max-w-[120px] sm:max-w-full">VIVEKANANDA</span>
+                  <span className="hidden sm:block text-[9px] font-medium text-zinc-500 leading-none mt-0.5">Public School</span>
                </div>
             </div>
           )}
         </div>
 
-        {/* SECTION 2: School Official Info (Center) */}
-        <div className="col-span-6 flex flex-col items-center justify-center text-center">
-          <h1 className="text-4xl font-black text-[#1e3a5f] uppercase tracking-tighter mb-2">
+        {/* SECTION 2: School Official Info (Hidden on Mobile) */}
+        <div className="hidden md:flex w-1/3 flex-col items-center justify-center text-center">
+          <h1 className="text-lg font-semibold text-zinc-900 uppercase tracking-tight leading-none mb-1.5 truncate w-full px-4">
             {inst?.name || "VIVEKANANDA PUBLIC SCHOOL"}
           </h1>
           
-          <div className="flex items-center justify-center gap-8 text-slate-600 font-bold text-sm">
-            <span className="flex items-center gap-2">
-              <Mail size={18} className="text-[#1e3a5f]" />
-              {inst?.school_email || "vivekanandaschoolhyd@gmail.com"}
+          <div className="flex items-center justify-center gap-6 text-zinc-500 font-medium text-[11px]">
+            <span className="flex items-center gap-1.5">
+              <Mail className="size-3.5 text-primary shrink-0" />
+              <span className="truncate max-w-[150px] lg:max-w-full">{inst?.school_email || "vivekanandaschoolhyd@gmail.com"}</span>
             </span>
-            <span className="flex items-center gap-2">
-              <Phone size={18} className="text-[#1e3a5f]" />
-              {inst?.phone || "040-23355998 / +91 9394073325"}
+            <span className="flex items-center gap-1.5">
+              <Phone className="size-3.5 text-primary shrink-0" />
+              <span className="tabular-nums whitespace-nowrap">{inst?.phone || "040-23355998"}</span>
             </span>
           </div>
         </div>
 
-        {/* SECTION 3: Branding (Right) */}
-        <div className="col-span-3 flex justify-end items-center">
-          {/* Background and border classes removed to match the second image */}
-          <div className="flex items-center gap-3">
-            <img src={smartedzLogo} alt="SmartEdz" className="h-12 w-auto object-contain" />
-            <div className="flex flex-col leading-none">
-              <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Powered By</p>
-              <p className="text-xl font-black text-[#0070c0] italic">Smart<span className="text-[#f7941d]">Edz</span></p>
-            </div>
+        {/* SECTION 3: Branding */}
+        <div className="flex-1 md:w-1/3 flex items-center justify-end gap-2 sm:gap-2.5">
+          <div className="flex flex-col text-right leading-none">
+            <p className="text-[7px] sm:text-[8px] font-semibold text-zinc-400 uppercase tracking-wider mb-1">Powered By</p>
+            <p className="text-sm sm:text-base font-semibold italic tracking-tight">
+              <span className="text-primary">Smart</span>
+              <span className="text-accent">Edz</span>
+            </p>
           </div>
+          <img src={smartedzLogo} alt="SmartEdz" className="h-6 sm:h-8 w-auto object-contain shrink-0" />
         </div>
+        
       </div>
     </header>
   );

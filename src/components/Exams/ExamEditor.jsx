@@ -3,11 +3,11 @@ import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
-  ArrowLeft, Save, Loader2, Plus, X, AlertTriangle, BookOpen, Info
+  ArrowLeft, Save, Loader2, Plus, X, AlertTriangle, BookOpen, Info, ChevronDown
 } from 'lucide-react';
 
 // =====================================================================
-//  ExamEditor — create or edit an online exam
+//  ExamEditor - create or edit an online exam
 //
 //  Top-level exam fields: title, description, class, section, subject,
 //  time_limit_mins. Then a question editor underneath.
@@ -196,38 +196,59 @@ export default function ExamEditor({ examToEdit, onFinish }) {
 
   if (loading) {
     return (
-      <div className="text-center py-16"><Loader2 className="animate-spin w-8 h-8 text-blue-600 mx-auto" /></div>
+      <div className="h-64 flex items-center justify-center">
+        <Loader2 className="animate-spin size-8 text-primary" />
+      </div>
     );
   }
 
   const totalMarks = questions.reduce((s, q) => s + (parseInt(q.marks, 10) || 0), 0);
 
   return (
-    <div className="space-y-5">
-      <button onClick={onFinish}
-        className="inline-flex items-center gap-1.5 text-sm font-bold text-slate-500 hover:text-blue-600">
-        <ArrowLeft size={14} /> Cancel
-      </button>
+    <div className="space-y-6 animate-in fade-in duration-300">
+      
+      {/* Top Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <button onClick={onFinish}
+          className="inline-flex items-center gap-1.5 text-sm font-semibold text-zinc-500 hover:text-zinc-900 transition-colors w-fit">
+          <ArrowLeft className="size-4" /> Cancel
+        </button>
+
+        <div className="flex items-center justify-end gap-3 w-full sm:w-auto">
+          <button onClick={onFinish} disabled={saving}
+            className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 rounded-md font-semibold text-xs hover:bg-zinc-50 transition-colors flex-1 sm:flex-none">
+            Cancel
+          </button>
+          <button onClick={handleSave} disabled={saving}
+            className="h-9 px-6 bg-primary hover:bg-primary/90 disabled:bg-zinc-200 disabled:text-zinc-400 text-white rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors flex-1 sm:flex-none">
+            {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+            {saving ? 'Saving...' : (isEditMode ? 'Save Changes' : 'Create Exam')}
+          </button>
+        </div>
+      </div>
 
       {isEditMode && examToEdit?.submission_count > 0 && (
-        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3">
-          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-          <div className="text-xs text-amber-700">
-            This exam has <strong>{examToEdit.submission_count}</strong> submission(s).
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
+          <AlertTriangle className="size-5 text-amber-600 shrink-0 mt-0.5" />
+          <div className="text-xs text-amber-800 leading-relaxed">
+            This exam has <strong className="font-semibold">{examToEdit.submission_count}</strong> submission(s).
             Removing or restructuring questions will affect existing graded scores.
           </div>
         </div>
       )}
 
       {/* Details card */}
-      <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-6 space-y-5">
-        <h2 className="font-black text-slate-800">Exam Details</h2>
+      <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden">
+        <div className="px-5 sm:px-6 py-4 border-b border-zinc-100 bg-zinc-50/50">
+          <h2 className="text-sm font-semibold text-zinc-900">Exam Details</h2>
+        </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="p-5 sm:p-6 grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
           <FormField label="Title" required>
             <input value={details.title} onChange={e => setDetails({ ...details, title: e.target.value })}
               placeholder="e.g. Mid-Term Physics Test" className={inputCls} />
           </FormField>
+          
           <FormField label="Time Limit (minutes)">
             <input type="number" min="0" value={details.time_limit_mins}
               onChange={e => setDetails({ ...details, time_limit_mins: e.target.value })}
@@ -235,17 +256,20 @@ export default function ExamEditor({ examToEdit, onFinish }) {
           </FormField>
 
           <FormField label="Class" required>
-            <select value={details.class_id} onChange={e => setDetails({ ...details, class_id: e.target.value })}
-              className={inputCls}>
-              <option value="">Select class…</option>
-              {classes.map(c => (
-                <option key={c.id} value={c.id}>
-                  {c.className}{c.section ? ` - ${c.section}` : ''}
-                </option>
-              ))}
-            </select>
+            <div className="relative">
+              <select value={details.class_id} onChange={e => setDetails({ ...details, class_id: e.target.value })}
+                className={`${inputCls} appearance-none pr-8 cursor-pointer`}>
+                <option value="">Select class...</option>
+                {classes.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.className}{c.section ? ` - ${c.section}` : ''}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
             {isTeacher && !isAllAccess && classes.length === 0 && (
-              <p className="text-xs text-amber-600 mt-1">You're not assigned to any class in Timetable.</p>
+              <p className="text-[11px] text-amber-600 mt-1 font-medium">You are not assigned to any class in the Timetable.</p>
             )}
           </FormField>
 
@@ -255,50 +279,57 @@ export default function ExamEditor({ examToEdit, onFinish }) {
           </FormField>
 
           <FormField label="Subject">
-            <select value={details.subject_id} onChange={e => setDetails({ ...details, subject_id: e.target.value })}
-              className={inputCls}>
-              <option value="">— Optional —</option>
-              {availableSubjects.map(s => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </select>
+            <div className="relative">
+              <select value={details.subject_id} onChange={e => setDetails({ ...details, subject_id: e.target.value })}
+                className={`${inputCls} appearance-none pr-8 cursor-pointer`}>
+                <option value="">- Optional -</option>
+                {availableSubjects.map(s => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+              <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
           </FormField>
 
           <FormField label="Status">
-            <select value={details.status} onChange={e => setDetails({ ...details, status: e.target.value })}
-              className={inputCls}>
-              <option value="published">Published (students can attempt)</option>
-              <option value="draft">Draft (hidden from students)</option>
-              <option value="closed">Closed (no new attempts)</option>
-            </select>
+            <div className="relative">
+              <select value={details.status} onChange={e => setDetails({ ...details, status: e.target.value })}
+                className={`${inputCls} appearance-none pr-8 cursor-pointer`}>
+                <option value="published">Published (students can attempt)</option>
+                <option value="draft">Draft (hidden from students)</option>
+                <option value="closed">Closed (no new attempts)</option>
+              </select>
+              <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
           </FormField>
 
           <div className="md:col-span-2">
             <FormField label="Description (optional)">
               <textarea value={details.description}
                 onChange={e => setDetails({ ...details, description: e.target.value })}
-                rows={2} placeholder="Brief context for students" className={inputCls + ' resize-none'} />
+                rows={2} placeholder="Brief context for students..." 
+                className={`${inputCls} h-auto py-2 min-h-[80px] resize-none`} />
             </FormField>
           </div>
         </div>
       </div>
 
       {/* Questions card */}
-      <div className="bg-white rounded-3xl border border-slate-100 shadow-sm">
-        <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+      <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col">
+        <div className="p-5 sm:p-6 border-b border-zinc-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-zinc-50/50">
           <div>
-            <h2 className="font-black text-slate-800">Questions</h2>
-            <p className="text-xs text-slate-400 font-medium mt-0.5">
-              {questions.length} question{questions.length === 1 ? '' : 's'} · {totalMarks} total marks
+            <h2 className="text-sm font-semibold text-zinc-900">Questions</h2>
+            <p className="text-[11px] text-zinc-500 font-medium mt-0.5">
+              {questions.length} question{questions.length === 1 ? '' : 's'} | {totalMarks} total marks
             </p>
           </div>
-          <button onClick={addQuestion}
-            className="bg-blue-50 hover:bg-blue-100 text-blue-700 px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5">
-            <Plus size={12} /> Add Question
+          <button onClick={addQuestion} type="button"
+            className="h-8 px-3 bg-primary/10 hover:bg-primary/20 text-primary rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors w-full sm:w-auto shrink-0">
+            <Plus className="size-3.5" /> Add Question
           </button>
         </div>
 
-        <div className="p-6 space-y-4">
+        <div className="p-5 sm:p-6 space-y-4 bg-zinc-50/30">
           {questions.map((q, idx) => (
             <QuestionEditor key={q.id} index={idx} question={q}
               onChange={(field, value) => updateQuestion(q.id, field, value)}
@@ -306,60 +337,62 @@ export default function ExamEditor({ examToEdit, onFinish }) {
               onRemove={() => removeQuestion(q.id)} />
           ))}
           {questions.length === 0 && (
-            <div className="border-2 border-dashed border-slate-200 rounded-2xl p-8 text-center italic text-slate-400">
-              No questions — add one above.
+            <div className="border border-dashed border-zinc-300 bg-white rounded-lg p-8 text-center italic text-zinc-400 text-sm font-medium">
+              No questions - click "Add Question" above.
             </div>
           )}
         </div>
       </div>
 
-      <div className="flex justify-end gap-3">
-        <button onClick={onFinish} disabled={saving}
-          className="px-5 py-3 bg-white border border-slate-200 text-slate-600 rounded-xl font-bold text-sm hover:bg-slate-50">
-          Cancel
-        </button>
-        <button onClick={handleSave} disabled={saving}
-          className="px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white rounded-xl font-bold text-sm flex items-center gap-2 shadow-lg shadow-blue-100">
-          {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-          {saving ? 'Saving…' : (isEditMode ? 'Save Changes' : 'Create Exam')}
-        </button>
-      </div>
+      {/* Bottom Actions Duplicate for convenience on long forms */}
+      {questions.length > 2 && (
+        <div className="flex justify-end gap-3 pb-8">
+          <button onClick={handleSave} disabled={saving}
+            className="h-10 px-8 bg-primary hover:bg-primary/90 disabled:bg-zinc-200 disabled:text-zinc-400 text-white rounded-md font-semibold text-sm flex items-center justify-center gap-2 shadow-sm transition-colors w-full sm:w-auto">
+            {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+            {saving ? 'Saving...' : (isEditMode ? 'Save Changes' : 'Create Exam')}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
-
 // =====================================================================
-//  QuestionEditor — single question card in the editor
+//  QuestionEditor - single question card in the editor
 // =====================================================================
 function QuestionEditor({ index, question, onChange, onOptionChange, onRemove }) {
   return (
-    <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5 relative">
-      <button onClick={onRemove}
-        className="absolute top-4 right-4 text-slate-400 hover:text-red-500" title="Remove">
-        <X size={16} />
+    <div className="bg-white ring-1 ring-zinc-200 rounded-lg p-4 sm:p-6 relative group transition-all hover:ring-zinc-300 hover:shadow-sm">
+      <button onClick={onRemove} type="button"
+        className="absolute top-4 right-4 text-zinc-400 hover:text-red-500 rounded p-1 transition-colors sm:opacity-0 sm:group-hover:opacity-100" title="Remove Question">
+        <X className="size-4" />
       </button>
 
-      <div className="flex items-center gap-2 mb-4">
-        <span className="w-7 h-7 rounded-full bg-blue-600 text-white text-xs font-black flex items-center justify-center">
-          {index + 1}
+      <div className="flex items-center gap-2.5 mb-4">
+        <span className="size-6 rounded-md bg-zinc-100 ring-1 ring-zinc-200 text-zinc-600 text-[11px] font-semibold flex items-center justify-center shrink-0">
+          Q{index + 1}
         </span>
-        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Question</span>
+        <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Question Configuration</span>
       </div>
 
-      <div className="space-y-4 pr-6">
+      <div className="space-y-4 sm:pr-8">
         <textarea value={question.question_text} onChange={e => onChange('question_text', e.target.value)}
-          rows={2} placeholder="Enter the question…"
-          className={inputCls + ' resize-none'} />
+          rows={2} placeholder="Enter the question..."
+          className={`${inputCls} h-auto py-2 min-h-[60px] resize-none`} />
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <FormField label="Type">
-            <select value={question.question_type} onChange={e => onChange('question_type', e.target.value)}
-              className={inputCls}>
-              <option value="multiple_choice">Multiple Choice (auto-graded)</option>
-              <option value="short_answer">Written Answer (manual grading)</option>
-            </select>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <FormField label="Question Type">
+            <div className="relative">
+              <select value={question.question_type} onChange={e => onChange('question_type', e.target.value)}
+                className={`${inputCls} appearance-none pr-8 cursor-pointer`}>
+                <option value="multiple_choice">Multiple Choice (auto-graded)</option>
+                <option value="short_answer">Written Answer (manual grading)</option>
+              </select>
+              <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
           </FormField>
+          
           <FormField label="Marks">
             <input type="number" min="1" value={question.marks}
               onChange={e => onChange('marks', e.target.value)} className={inputCls} />
@@ -367,35 +400,44 @@ function QuestionEditor({ index, question, onChange, onOptionChange, onRemove })
         </div>
 
         {question.question_type === 'multiple_choice' && question.options && (
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Options</label>
-            {Object.keys(question.options).map(key => (
-              <div key={key} className="flex items-center gap-2">
-                <span className="w-7 h-7 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-500 flex items-center justify-center">
-                  {key}
-                </span>
-                <input value={question.options[key]} placeholder={`Option ${key}`}
-                  onChange={e => onOptionChange(key, e.target.value)}
-                  className={inputCls + ' flex-1'} />
-              </div>
-            ))}
-            <FormField label="Correct Answer">
-              <select value={question.correct_answer} onChange={e => onChange('correct_answer', e.target.value)}
-                className={inputCls}>
-                <option value="">Pick correct option…</option>
-                {Object.keys(question.options).map(key =>
-                  question.options[key].trim() && (
-                    <option key={key} value={key}>{key} · {question.options[key]}</option>
-                  ))}
-              </select>
-            </FormField>
+          <div className="space-y-3 pt-2 border-t border-zinc-100 mt-4">
+            <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider block">Options</label>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {Object.keys(question.options).map(key => (
+                <div key={key} className="flex items-center gap-2">
+                  <span className="size-8 rounded-md bg-zinc-50 ring-1 ring-zinc-200 text-xs font-semibold text-zinc-500 flex items-center justify-center shrink-0">
+                    {key}
+                  </span>
+                  <input value={question.options[key]} placeholder={`Option ${key}...`}
+                    onChange={e => onOptionChange(key, e.target.value)}
+                    className={`${inputCls} flex-1`} />
+                </div>
+              ))}
+            </div>
+
+            <div className="pt-2">
+              <FormField label="Correct Answer">
+                <div className="relative sm:w-1/2">
+                  <select value={question.correct_answer} onChange={e => onChange('correct_answer', e.target.value)}
+                    className={`${inputCls} appearance-none pr-8 cursor-pointer`}>
+                    <option value="">Pick correct option...</option>
+                    {Object.keys(question.options).map(key =>
+                      question.options[key].trim() && (
+                        <option key={key} value={key}>{key} - {question.options[key]}</option>
+                      ))}
+                  </select>
+                  <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+              </FormField>
+            </div>
           </div>
         )}
 
         {question.question_type === 'short_answer' && (
-          <div className="bg-blue-50/40 border border-blue-100 rounded-xl p-3 text-xs text-blue-700 flex gap-2">
-            <Info size={14} className="shrink-0 mt-0.5" />
-            <span>Written answers are graded manually after students submit.</span>
+          <div className="bg-blue-50/50 border border-blue-100/50 rounded-lg p-3 text-xs font-medium text-blue-700 flex gap-2.5 mt-4">
+            <Info className="size-4 shrink-0 mt-0.5" />
+            <span className="leading-relaxed">Written answers are graded manually after students submit. They will not be auto-scored.</span>
           </div>
         )}
       </div>
@@ -403,13 +445,16 @@ function QuestionEditor({ index, question, onChange, onOptionChange, onRemove })
   );
 }
 
-const inputCls = 'w-full bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500/10';
+// -----------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------
+const inputCls = 'h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors';
 
 function FormField({ label, required, children }) {
   return (
-    <div className="space-y-1">
-      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-1">
-        {label}{required && <span className="text-red-500">*</span>}
+    <div className="space-y-1.5">
+      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">
+        {label}{required && <span className="text-accent">*</span>}
       </label>
       {children}
     </div>

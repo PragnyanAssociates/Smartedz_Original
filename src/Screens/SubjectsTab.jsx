@@ -2,14 +2,6 @@ import React, { useState } from 'react';
 import { Plus, Edit, Trash2, X, BookOpen, Loader2, Check } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
 
-// =====================================================================
-//  SubjectsTab — manage the school's subjects (moved here from
-//  Timetable). Each subject is linked to one or more classes via a
-//  multi-select. The Marks Entry grid uses these links to show only a
-//  class's own subjects.
-//  A subject with NO classes selected is treated as "all classes".
-// =====================================================================
-
 export default function SubjectsTab({ data, fetchData, user }) {
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing]     = useState(null);
@@ -19,7 +11,6 @@ export default function SubjectsTab({ data, fetchData, user }) {
 
   const subjectClasses = data.subjectClasses || {};
 
-  // -----------------------------------------------------------------
   const openAdd = () => {
     setEditing(null);
     setName('');
@@ -80,7 +71,7 @@ export default function SubjectsTab({ data, fetchData, user }) {
   const classLabel = (c) => `${c.className}${c.section ? ` - ${c.section}` : ''}`;
   const subjectClassNames = (subjectId) => {
     const ids = subjectClasses[subjectId] || [];
-    if (ids.length === 0) return null;   // → "All classes"
+    if (ids.length === 0) return null;   // -> "All classes"
     return ids
       .map(cid => {
         const c = data.classes.find(x => x.id === cid);
@@ -91,64 +82,67 @@ export default function SubjectsTab({ data, fetchData, user }) {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col lg:flex-row justify-between gap-4 lg:items-center">
+      
+      {/* Header - Fixed for Mobile */}
+      <div className="flex flex-col sm:flex-row justify-between gap-4 sm:items-start mb-6">
         <div>
-          <h3 className="text-xl font-bold text-slate-800">Subjects</h3>
-          <p className="text-sm text-slate-400 font-medium">
+          <h3 className="text-lg font-semibold text-zinc-900 tracking-tight">Subjects</h3>
+          <p className="text-[11px] text-zinc-500 max-w-2xl mt-1">
             Create subjects and assign them to classes. Marks Entry shows only a class's own subjects.
           </p>
         </div>
         <button onClick={openAdd}
-          className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-blue-100">
-          <Plus size={18} /> Add Subject
+          className="bg-primary text-white px-4 py-2 rounded-md text-xs font-medium hover:bg-primary/90 transition-colors flex items-center justify-center gap-1.5 shadow-sm shrink-0 w-fit self-start sm:self-auto">
+          <Plus className="size-3.5 shrink-0" /> Add Subject
         </button>
       </div>
 
       {(data.subjects || []).length === 0 ? (
-        <div className="bg-white p-16 rounded-3xl border border-dashed border-slate-200 text-center">
-          <BookOpen className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-          <p className="text-slate-400 font-medium">No subjects yet. Add one to begin.</p>
+        <div className="bg-white p-8 rounded-lg ring-1 ring-black/5 border-dashed text-center">
+          <BookOpen className="mx-auto text-zinc-300 mb-3 size-8" />
+          <p className="text-xs text-zinc-500 italic">No subjects yet. Add one to begin.</p>
         </div>
       ) : (
-        <div className="bg-white rounded-3xl border border-slate-100 overflow-hidden shadow-sm">
-          <table className="w-full text-left">
-            <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest">
-              <tr>
-                <th className="p-5">Subject</th>
-                <th className="p-5">Assigned Classes</th>
-                <th className="p-5 text-right">Actions</th>
+        /* Main Table Layout - Fixed Mobile Scroll Overflow */
+        <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-x-auto custom-scrollbar">
+          <table className="w-full text-left border-collapse min-w-[600px]">
+            <thead>
+              <tr className="bg-zinc-50/50">
+                <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 whitespace-nowrap">Subject Name</th>
+                <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 whitespace-nowrap">Assigned Classes</th>
+                <th className="px-5 py-3 border-b border-zinc-100"></th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-50">
+            <tbody className="divide-y divide-zinc-100">
               {data.subjects.map(s => {
                 const names = subjectClassNames(s.id);
                 return (
-                  <tr key={s.id} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="p-5 font-bold text-slate-700">{s.name}</td>
-                    <td className="p-5">
+                  <tr key={s.id} className="hover:bg-zinc-50/60 transition-colors group">
+                    <td className="px-5 py-4 text-sm font-medium text-zinc-900 whitespace-nowrap">{s.name}</td>
+                    <td className="px-5 py-4">
                       {names === null ? (
-                        <span className="text-xs font-bold bg-amber-50 text-amber-600 px-2.5 py-1 rounded-full">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-zinc-100 text-zinc-600 ring-1 ring-zinc-200 whitespace-nowrap">
                           All classes
                         </span>
                       ) : (
                         <div className="flex flex-wrap gap-1.5">
                           {names.map((n, i) => (
-                            <span key={i} className="text-xs font-bold bg-blue-50 text-blue-600 px-2.5 py-1 rounded-full">
+                            <span key={i} className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-primary/10 text-primary ring-1 ring-primary/20 whitespace-nowrap">
                               {n}
                             </span>
                           ))}
                         </div>
                       )}
                     </td>
-                    <td className="p-5 text-right">
-                      <div className="flex justify-end gap-2">
+                    <td className="px-5 py-4 text-right">
+                      <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button onClick={() => openEdit(s)}
-                          className="p-2 text-slate-300 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-all">
-                          <Edit size={16} />
+                          className="p-1.5 text-zinc-400 hover:text-zinc-700 rounded transition-colors" title="Edit">
+                          <Edit className="size-4 shrink-0" />
                         </button>
                         <button onClick={() => handleDelete(s)}
-                          className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all">
-                          <Trash2 size={16} />
+                          className="p-1.5 text-zinc-400 hover:text-accent rounded transition-colors" title="Delete">
+                          <Trash2 className="size-4 shrink-0" />
                         </button>
                       </div>
                     </td>
@@ -162,43 +156,49 @@ export default function SubjectsTab({ data, fetchData, user }) {
 
       {/* Modal */}
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-[2.5rem] w-full max-w-2xl p-10 shadow-2xl relative max-h-[92vh] overflow-y-auto">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg p-6 shadow-xl relative max-h-[90vh] overflow-y-auto custom-scrollbar">
             <button onClick={() => setShowModal(false)}
-              className="absolute top-8 right-8 text-slate-400 hover:text-slate-600">
-              <X size={24} />
+              className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-700 transition-colors">
+              <X className="size-5 shrink-0" />
             </button>
-            <h2 className="text-2xl font-black mb-2 text-slate-800">
-              {editing ? 'Edit Subject' : 'Add Subject'}
-            </h2>
-            <p className="text-slate-400 text-sm font-medium mb-8">
-              Pick every class that studies this subject.
-            </p>
+            
+            <div className="mb-5">
+              <h2 className="text-lg font-semibold text-zinc-900 mb-1">
+                {editing ? 'Edit Subject' : 'Add Subject'}
+              </h2>
+              <p className="text-[11px] text-zinc-500">
+                Pick every class that studies this subject.
+              </p>
+            </div>
 
             <div className="space-y-6">
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                  Subject Name <span className="text-red-500">*</span>
+              <div>
+                <label className="text-xs font-medium text-zinc-600 mb-1.5 block">
+                  Subject Name <span className="text-accent">*</span>
                 </label>
-                <input value={name} onChange={e => setName(e.target.value)}
+                <input 
+                  value={name} 
+                  onChange={e => setName(e.target.value)}
                   placeholder="e.g. Mathematics"
-                  className="w-full bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500/10 text-sm" />
+                  className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors" 
+                />
               </div>
 
-              <div className="bg-blue-50/40 border border-blue-100 rounded-2xl p-5 space-y-3">
-                <div className="flex items-center gap-2">
-                  <BookOpen size={14} className="text-blue-600" />
-                  <span className="text-[10px] font-black text-blue-600 uppercase tracking-widest">
-                    Assign to Classes
-                  </span>
-                  <span className="ml-auto text-[11px] font-bold text-blue-600 bg-white px-2.5 py-0.5 rounded-full">
+              <div className="ring-1 ring-black/5 rounded-md p-5 bg-zinc-50/50">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-1.5">
+                    <BookOpen className="size-3.5 text-zinc-500" />
+                    <span className="text-xs font-semibold text-zinc-700">Assign to Classes</span>
+                  </div>
+                  <span className="text-[10px] font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded-full tabular-nums">
                     {classIds.length} selected
                   </span>
                 </div>
 
                 {(data.classes || []).length === 0 ? (
-                  <p className="text-xs text-slate-500 italic">
-                    No classes created yet. Add classes in the <strong>Classes</strong> tab first.
+                  <p className="text-[11px] text-zinc-500 italic bg-white p-3 rounded ring-1 ring-black/5">
+                    No classes created yet. Add classes in the Classes tab first.
                   </p>
                 ) : (
                   <div className="flex flex-wrap gap-2">
@@ -207,28 +207,34 @@ export default function SubjectsTab({ data, fetchData, user }) {
                       const selected = classIds.includes(id);
                       return (
                         <button type="button" key={c.id} onClick={() => toggleClass(c.id)}
-                          className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1 ${
+                          className={`px-2.5 py-1.5 rounded-md text-[10px] font-semibold tracking-wide transition-colors flex items-center gap-1.5 ${
                             selected
-                              ? 'bg-blue-600 text-white shadow shadow-blue-200'
-                              : 'bg-white border border-slate-200 text-slate-600 hover:border-blue-300'
+                              ? 'bg-primary text-white ring-1 ring-primary'
+                              : 'bg-white text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-50'
                           }`}>
-                          {selected && <Check size={11} />}
+                          {selected && <Check className="size-3" />}
                           {classLabel(c)}
                         </button>
                       );
                     })}
                   </div>
                 )}
-                <p className="text-[11px] text-slate-400 font-medium">
+                <p className="text-[10px] text-zinc-400 mt-3 pt-3 border-t border-zinc-200/60">
                   Leave all unticked to make this subject available to <strong>every</strong> class.
                 </p>
               </div>
 
-              <button onClick={handleSave} disabled={saving}
-                className="w-full bg-slate-900 hover:bg-blue-600 disabled:bg-slate-300 text-white py-4 rounded-2xl font-black uppercase tracking-widest transition-all shadow-xl flex items-center justify-center gap-2">
-                {saving ? <Loader2 size={16} className="animate-spin" /> : null}
-                {saving ? 'Saving…' : (editing ? 'Save Changes' : 'Save Subject')}
-              </button>
+              <div className="pt-2 flex justify-end gap-3">
+                <button type="button" onClick={() => setShowModal(false)} 
+                  className="text-zinc-700 px-4 py-2 border border-zinc-200 rounded-md text-xs font-medium hover:bg-zinc-50 transition-colors">
+                  Cancel
+                </button>
+                <button onClick={handleSave} disabled={saving}
+                  className="bg-primary hover:bg-primary/90 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed text-white px-6 py-2 rounded-md text-xs font-medium transition-colors flex items-center gap-2">
+                  {saving && <Loader2 className="size-3.5 animate-spin" />}
+                  {saving ? 'Saving...' : (editing ? 'Save Changes' : 'Create Subject')}
+                </button>
+              </div>
             </div>
           </div>
         </div>

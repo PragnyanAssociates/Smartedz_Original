@@ -48,19 +48,31 @@ export default function ManageLogin() {
   const tabProps = { data, fetchData, user };
 
   return (
-    <div className="space-y-10 animate-in fade-in duration-700">
-      {/* Tab nav */}
-      <div className="flex flex-wrap gap-2 bg-white p-2 rounded-[2rem] border border-slate-100 shadow-sm w-fit">
+    <div className="p-8 max-w-[1440px] w-full mx-auto animate-in fade-in duration-700">
+      
+      {/* 1. Page Header */}
+      <header className="mb-6 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">System Configuration</h1>
+          <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
+            Manage users, roles, classes, and core academic settings.
+          </p>
+        </div>
+      </header>
+
+      {/* Segmented Tabs (Matches Timetable style) */}
+      <div className="flex flex-wrap items-center gap-2 mb-8 border-b border-zinc-200 pb-4">
         {tabs.map(t => (
           <button
             key={t.id}
             onClick={() => setActiveTab(t.id)}
-            className={`flex items-center gap-2 px-6 py-3 rounded-[1.5rem] font-bold text-sm transition-all ${
-              activeTab === t.id
-                ? 'bg-slate-900 text-white shadow-lg'
-                : 'text-slate-400 hover:bg-slate-50'
-            }`}>
-            <t.icon size={18} /> {t.label}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+              activeTab === t.id 
+                ? 'bg-primary text-white' 
+                : 'text-zinc-600 hover:bg-zinc-50 border border-zinc-200'
+            }`}
+          >
+            <t.icon className="size-3.5 shrink-0" /> {t.label}
           </button>
         ))}
       </div>
@@ -69,7 +81,7 @@ export default function ManageLogin() {
       <div className="min-h-[500px]">
         {loading ? (
           <div className="h-96 flex items-center justify-center">
-            <div className="w-8 h-8 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin"></div>
+            <div className="size-8 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" />
           </div>
         ) : (
           <>

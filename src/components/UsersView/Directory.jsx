@@ -3,7 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import { 
   Search, Users, GraduationCap, School, UserCheck, 
-  ChevronLeft, LayoutGrid, ListFilter 
+  ChevronLeft, LayoutGrid, ListFilter, Loader2
 } from 'lucide-react';
 import UserProfileDetail from './UserProfileDetail';
 
@@ -52,98 +52,107 @@ export default function Directory() {
   }
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
+    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-6 animate-in fade-in duration-500">
+      
       {/* Header */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-black text-slate-900 tracking-tight">Institution Directory</h1>
-          <p className="text-slate-500 font-medium">Browse and view profiles of all members.</p>
+      <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div className="flex flex-col">
+          <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Institution Directory</h1>
+          <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">Browse and view profiles of all members.</p>
         </div>
         
-        <div className="relative w-full md:w-72">
-          <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+        <div className="relative w-full md:w-72 shrink-0">
+          <Search className="size-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input 
             type="text"
             placeholder="Search by name..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full bg-white border border-slate-200 rounded-2xl pl-12 pr-4 py-3 outline-none focus:ring-2 focus:ring-blue-500/10 transition-all shadow-sm"
+            className="h-9 w-full rounded-md border border-zinc-200 bg-white pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm"
           />
         </div>
-      </div>
+      </header>
 
       {/* Role Tabs */}
-      <div className="flex flex-wrap gap-2 bg-slate-100/50 p-1.5 rounded-2xl w-fit">
-        {['All', ...data.roles.map(r => r.role_name)].map(role => (
-          <button
-            key={role}
-            onClick={() => { setActiveRole(role); setActiveClass('all'); }}
-            className={`px-5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${
-              activeRole === role ? 'bg-slate-900 text-white shadow-md' : 'text-slate-500 hover:bg-white'
-            }`}
-          >
-            {role}
-          </button>
-        ))}
+      <div className="flex justify-start">
+        <div className="inline-flex bg-zinc-100/80 p-1 rounded-md overflow-x-auto custom-scrollbar max-w-full">
+          {['All', ...data.roles.map(r => r.role_name)].map(role => (
+            <button
+              key={role}
+              onClick={() => { setActiveRole(role); setActiveClass('all'); }}
+              className={`flex-1 sm:flex-none px-4 py-1.5 rounded text-[11px] font-semibold uppercase tracking-wider transition-colors whitespace-nowrap ${
+                activeRole === role ? 'bg-white text-zinc-900 shadow-sm ring-1 ring-black/5' : 'text-zinc-500 hover:text-zinc-700'
+              }`}
+            >
+              {role}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Conditional Class Filter for Students */}
       {activeRole === 'Student' && (
-        <div className="flex items-center gap-3 overflow-x-auto pb-2 no-scrollbar">
+        <div className="flex items-center gap-2 overflow-x-auto custom-scrollbar w-full pb-2 sm:pb-0 pt-1">
           <button
             onClick={() => setActiveClass('all')}
-            className={`whitespace-nowrap px-4 py-2 rounded-full text-[11px] font-bold border ${
-              activeClass === 'all' ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-200 text-slate-500'
+            className={`h-8 px-4 rounded-md text-[11px] font-semibold ring-1 transition-colors whitespace-nowrap ${
+              activeClass === 'all' 
+                ? 'bg-primary/10 text-primary ring-primary/20' 
+                : 'bg-white text-zinc-600 ring-zinc-200 hover:bg-zinc-50'
             }`}
           >
             All Classes
           </button>
-          {data.classes.map(c => (
-            <button
-              key={c.id}
-              onClick={() => setActiveClass(c.id)}
-              className={`whitespace-nowrap px-4 py-2 rounded-full text-[11px] font-bold border ${
-                String(activeClass) === String(c.id) ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-200 text-slate-500'
-              }`}
-            >
-              {c.className} {c.section ? `- ${c.section}` : ''}
-            </button>
-          ))}
+          {data.classes.map(c => {
+            const isActive = String(activeClass) === String(c.id);
+            return (
+              <button
+                key={c.id}
+                onClick={() => setActiveClass(c.id)}
+                className={`h-8 px-4 rounded-md text-[11px] font-semibold ring-1 transition-colors whitespace-nowrap ${
+                  isActive 
+                    ? 'bg-primary/10 text-primary ring-primary/20' 
+                    : 'bg-white text-zinc-600 ring-zinc-200 hover:bg-zinc-50'
+                }`}
+              >
+                {c.className} {c.section ? `- ${c.section}` : ''}
+              </button>
+            );
+          })}
         </div>
       )}
 
       {/* Grid */}
       {loading ? (
         <div className="h-64 flex items-center justify-center">
-          <div className="w-8 h-8 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin"></div>
+          <Loader2 className="animate-spin size-8 text-primary" />
         </div>
-      ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6">
+      ) : filteredUsers.length > 0 ? (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-6">
           {filteredUsers.map(u => (
             <div 
               key={u.id}
               onClick={() => setSelectedUserId(u.id)}
-              className="bg-white p-4 rounded-[2rem] border border-slate-100 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all cursor-pointer group text-center"
+              className="bg-white p-4 sm:p-5 rounded-lg ring-1 ring-black/5 shadow-sm hover:ring-zinc-300 transition-all cursor-pointer group flex flex-col items-center text-center"
             >
-              <div className="relative inline-block mb-4">
+              <div className="relative mb-3 sm:mb-4">
                 {u.profile_pic ? (
-                  <img src={u.profile_pic} className="w-24 h-24 rounded-[1.5rem] object-cover ring-4 ring-white shadow-lg" alt={u.name} />
+                  <img src={u.profile_pic} className="size-20 sm:size-24 rounded-full object-cover ring-1 ring-black/5 shadow-sm" alt={u.name} />
                 ) : (
-                  <div className="w-24 h-24 rounded-[1.5rem] bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center text-slate-400 group-hover:from-blue-500 group-hover:to-indigo-600 group-hover:text-white transition-all">
-                    <Users size={32} />
+                  <div className="size-20 sm:size-24 rounded-full bg-zinc-100 flex items-center justify-center text-zinc-400 group-hover:bg-primary/10 group-hover:text-primary transition-colors ring-1 ring-black/5">
+                    <Users className="size-8 sm:size-10" />
                   </div>
                 )}
               </div>
-              <h3 className="font-bold text-slate-800 text-sm line-clamp-1">{u.name}</h3>
-              <p className="text-[10px] font-black uppercase text-slate-400 tracking-tighter mt-1">{u.role}</p>
+              <h3 className="font-semibold text-zinc-900 text-sm truncate w-full">{u.name}</h3>
+              <p className="text-[10px] font-medium uppercase text-zinc-500 tracking-wider mt-1 truncate w-full">{u.role}</p>
             </div>
           ))}
         </div>
-      )}
-
-      {!loading && filteredUsers.length === 0 && (
-        <div className="text-center py-20 bg-white rounded-3xl border border-dashed border-slate-200">
-          <p className="text-slate-400 font-medium">No users found in this category.</p>
+      ) : (
+        <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
+          <Users className="size-10 text-zinc-300 mb-3" />
+          <p className="text-zinc-500 text-sm font-medium">No users found matching your criteria.</p>
         </div>
       )}
     </div>

@@ -5,6 +5,10 @@ import { usePermissions } from '../../Screens/PermissionsContext';
 import TeacherAdminPTM from './TeacherAdminPTM';
 import StudentPTM from './StudentPTM';
 
+// =====================================================================
+//  PTM - module entry point.
+// =====================================================================
+
 export default function PTM() {
   const { user } = useAuth();
   
@@ -19,7 +23,7 @@ export default function PTM() {
   const canDelete = can('PTM', 'delete');
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-700">
+    <div className="flex flex-col flex-1 h-full w-full animate-in fade-in duration-300">
       {isStudent ? (
         <StudentPTM />
       ) : (

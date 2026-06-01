@@ -7,8 +7,8 @@ export default function ClassesTab({ data, fetchData, user }) {
   const [editing, setEditing]         = useState(null);
 
   // -------- Form state --------
-  // CREATE mode → uses className + sections[] (chip array) + hasSections
-  // EDIT mode   → uses className + section (single string)
+  // CREATE mode -> uses className + sections[] (chip array) + hasSections
+  // EDIT mode   -> uses className + section (single string)
   const emptyForm = {
     className: '',
     hasSections: false,
@@ -143,59 +143,65 @@ export default function ClassesTab({ data, fetchData, user }) {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      
+      {/* Header - Fixed for Mobile */}
+      <div className="flex flex-col sm:flex-row justify-between gap-4 sm:items-start mb-6">
         <div>
-          <h3 className="text-xl font-bold text-slate-800">Class Settings</h3>
-          <p className="text-slate-400 text-sm font-medium mt-1">
+          <h3 className="text-lg font-semibold text-zinc-900 tracking-tight">Class Settings</h3>
+          <p className="text-[11px] text-zinc-500 max-w-2xl mt-1">
             Create the classes that exist in your institution. Toggle "Has Sections"
-            and add as many sections as you need in one go — A, B, C, D…
+            and add as many sections as you need in one go &mdash; A, B, C, D...
           </p>
         </div>
-        <button onClick={openAdd} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-blue-100">
-          <Plus size={18} /> Add Class
+        <button onClick={openAdd} 
+          className="bg-primary text-white px-4 py-2 rounded-md text-xs font-medium hover:bg-primary/90 transition-colors flex items-center gap-1.5 shadow-sm shrink-0 w-fit self-start sm:self-auto">
+          <Plus className="size-3.5 shrink-0" /> Add Class
         </button>
       </div>
 
       {grouped.length === 0 ? (
-        <div className="bg-white p-12 rounded-3xl border border-dashed border-slate-200 text-center">
-          <Layers className="mx-auto text-slate-300 mb-3" size={42} />
-          <p className="text-slate-400 font-bold">No classes created yet.</p>
+        <div className="bg-white p-8 rounded-lg ring-1 ring-black/5 border-dashed text-center">
+          <Layers className="mx-auto text-zinc-300 mb-3 size-8" />
+          <p className="text-xs text-zinc-500 italic">No classes created yet.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {grouped.map(g => (
-            <div key={g.className} className="bg-white rounded-3xl border border-slate-100 p-6 shadow-sm">
-              <div className="flex items-center gap-3 mb-5">
-                <div className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center text-blue-600">
-                  <Layers size={20} />
+            <div key={g.className} className="bg-white rounded-lg ring-1 ring-black/5 p-5 flex flex-col hover:ring-zinc-200 transition-colors">
+              
+              {/* Card Header */}
+              <div className="flex items-center gap-3 mb-4">
+                <div className="size-10 bg-zinc-50 ring-1 ring-black/5 rounded-md flex items-center justify-center text-primary shrink-0">
+                  <Layers className="size-4" />
                 </div>
-                <div>
-                  <h4 className="text-lg font-black text-slate-800">{g.className}</h4>
-                  <p className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                <div className="min-w-0 flex-1">
+                  <h4 className="text-sm font-semibold text-zinc-900 leading-tight truncate">{g.className}</h4>
+                  <p className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 mt-0.5 whitespace-nowrap">
                     {g.rows.length} {g.rows.length === 1 && !g.rows[0].section ? 'entry' : 'section(s)'}
                   </p>
                 </div>
               </div>
 
-              <div className="space-y-2">
+              {/* Rows */}
+              <div className="space-y-2 mt-auto">
                 {g.rows.map(c => {
                   const studentCount = data.users.filter(u => u.class_id === c.id).length;
                   return (
-                    <div key={c.id} className="flex items-center justify-between bg-slate-50 rounded-2xl px-4 py-3">
-                      <div>
-                        <p className="font-bold text-slate-700 text-sm">
+                    <div key={c.id} className="group flex items-center justify-between bg-zinc-50/50 rounded-md px-3 py-2 ring-1 ring-black/5 hover:bg-zinc-50 transition-colors">
+                      <div className="min-w-0 pr-2">
+                        <p className="font-semibold text-zinc-700 text-xs truncate">
                           {c.section ? `Section ${c.section}` : 'No Sections'}
                         </p>
-                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                        <p className="text-[9px] text-zinc-500 font-medium uppercase tracking-wider mt-0.5 whitespace-nowrap">
                           {studentCount} student{studentCount === 1 ? '' : 's'}
                         </p>
                       </div>
-                      <div className="flex gap-1">
-                        <button onClick={() => openEdit(c)} className="p-2 text-slate-300 hover:text-blue-500 hover:bg-white rounded-lg transition-all">
-                          <Edit size={14} />
+                      <div className="flex gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity shrink-0">
+                        <button onClick={() => openEdit(c)} className="p-1.5 sm:p-1 text-zinc-400 hover:text-zinc-700 rounded transition-colors" title="Edit">
+                          <Edit className="size-4 sm:size-3.5" />
                         </button>
-                        <button onClick={() => handleDelete(c)} className="p-2 text-slate-300 hover:text-red-500 hover:bg-white rounded-lg transition-all">
-                          <Trash2 size={14} />
+                        <button onClick={() => handleDelete(c)} className="p-1.5 sm:p-1 text-zinc-400 hover:text-accent rounded transition-colors" title="Delete">
+                          <Trash2 className="size-4 sm:size-3.5" />
                         </button>
                       </div>
                     </div>
@@ -207,57 +213,63 @@ export default function ClassesTab({ data, fetchData, user }) {
         </div>
       )}
 
+      {/* Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-[2.5rem] w-full max-w-lg p-10 shadow-2xl relative max-h-[92vh] overflow-y-auto">
-            <button onClick={() => setIsModalOpen(false)} className="absolute top-8 right-8 text-slate-400 hover:text-slate-600">
-              <X size={24} />
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-md p-6 shadow-xl relative max-h-[90vh] overflow-y-auto custom-scrollbar">
+            <button onClick={() => setIsModalOpen(false)} className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-700 transition-colors">
+              <X className="size-5 shrink-0" />
             </button>
-            <h2 className="text-2xl font-black mb-2 text-slate-800">
-              {editing ? 'Edit Class' : 'Create Class'}
-            </h2>
-            <p className="text-sm text-slate-400 font-medium mb-8">
-              {editing
-                ? 'Editing a single row. To add more sections, close this and click "Add Class" again.'
-                : 'Tick "Has Sections" and type each section. Press Enter or comma to add it as a chip.'}
-            </p>
+            
+            <div className="mb-5">
+              <h2 className="text-lg font-semibold text-zinc-900 mb-1">
+                {editing ? 'Edit Class' : 'Create Class'}
+              </h2>
+              <p className="text-[11px] text-zinc-500">
+                {editing
+                  ? 'Editing a single row. To add more sections, close this and click "Add Class" again.'
+                  : 'Tick "Has Sections" and type each section. Press Enter or comma to add it as a chip.'}
+              </p>
+            </div>
 
-            <form onSubmit={handleSubmit} className="space-y-5">
-              <div className="flex flex-col gap-2">
-                <label className="text-xs font-bold text-slate-500 uppercase">Class Name</label>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className="text-xs font-medium text-zinc-600 mb-1.5 block">
+                  Class Name <span className="text-accent">*</span>
+                </label>
                 <input required placeholder="e.g. Class 5"
-                  className="bg-slate-50 border border-slate-100 rounded-xl p-3 focus:ring-2 focus:ring-blue-500/10 outline-none"
+                  className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors"
                   value={form.className} onChange={e => setForm({ ...form, className: e.target.value })} />
               </div>
 
-              <label className="flex items-center gap-3 bg-slate-50 rounded-2xl p-4 cursor-pointer">
-                <input type="checkbox" className="w-5 h-5 accent-blue-600 cursor-pointer"
+              <label className="flex items-center gap-2 bg-zinc-50 ring-1 ring-black/5 rounded-md p-3 cursor-pointer mt-4 transition-colors hover:bg-zinc-100/50">
+                <input type="checkbox" className="size-3.5 accent-primary cursor-pointer rounded border-zinc-300"
                   checked={form.hasSections}
                   onChange={e => setForm({ ...form, hasSections: e.target.checked })} />
-                <span className="text-sm font-bold text-slate-700">This class has sections</span>
+                <span className="text-xs font-semibold text-zinc-700">This class has sections</span>
               </label>
 
               {/* CREATE MODE: chip input for multiple sections */}
               {form.hasSections && !editing && (
-                <div className="flex flex-col gap-2">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Sections</label>
+                <div className="flex flex-col gap-1.5 mt-4">
+                  <label className="text-xs font-medium text-zinc-600 block">Sections</label>
 
-                  <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 focus-within:ring-2 focus-within:ring-blue-500/10 min-h-[52px] flex flex-wrap items-center gap-2">
+                  <div className="bg-white border border-zinc-200 rounded-md p-2 focus-within:ring-2 focus-within:ring-primary/20 focus-within:border-primary/40 min-h-[36px] flex flex-wrap items-center gap-1.5 transition-colors">
                     {form.sections.map(s => (
-                      <span key={s} className="inline-flex items-center gap-1 bg-blue-600 text-white text-xs font-black uppercase tracking-wider px-3 py-1.5 rounded-full">
+                      <span key={s} className="inline-flex items-center gap-1 bg-primary/10 text-primary ring-1 ring-primary/20 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded">
                         {s}
                         <button
                           type="button"
                           onClick={() => removeSectionChip(s)}
-                          className="hover:bg-white/20 rounded-full p-0.5 -mr-1">
-                          <X size={12} />
+                          className="hover:bg-primary/20 rounded-full p-0.5 -mr-0.5 text-primary transition-colors">
+                          <X className="size-3" />
                         </button>
                       </span>
                     ))}
                     <input
                       autoFocus={form.sections.length === 0}
-                      placeholder={form.sections.length ? 'Add another…' : 'Type A, then press Enter…'}
-                      className="flex-1 min-w-[120px] bg-transparent outline-none text-sm py-1"
+                      placeholder={form.sections.length ? 'Add another...' : 'Type A, then press Enter...'}
+                      className="flex-1 min-w-[120px] bg-transparent outline-none text-sm text-zinc-900 placeholder:text-zinc-400 py-0.5"
                       value={form.sectionInput}
                       onChange={e => setForm({ ...form, sectionInput: e.target.value })}
                       onKeyDown={handleSectionKeyDown}
@@ -265,11 +277,11 @@ export default function ClassesTab({ data, fetchData, user }) {
                     />
                   </div>
 
-                  <div className="flex justify-between items-center text-[11px]">
-                    <span className="text-slate-400 font-medium">
-                      Press <kbd className="px-1.5 py-0.5 bg-slate-100 rounded font-mono">Enter</kbd> or <kbd className="px-1.5 py-0.5 bg-slate-100 rounded font-mono">,</kbd> after each section. You can also paste "A, B, C, D".
+                  <div className="flex justify-between items-center text-[10px] mt-0.5">
+                    <span className="text-zinc-500">
+                      Press <kbd className="px-1 py-0.5 bg-zinc-100 rounded border border-zinc-200 font-mono">Enter</kbd> or <kbd className="px-1 py-0.5 bg-zinc-100 rounded border border-zinc-200 font-mono">,</kbd> after each.
                     </span>
-                    <span className="text-slate-500 font-bold">
+                    <span className="text-zinc-500 font-medium">
                       {form.sections.length} section{form.sections.length === 1 ? '' : 's'}
                     </span>
                   </div>
@@ -278,22 +290,29 @@ export default function ClassesTab({ data, fetchData, user }) {
 
               {/* EDIT MODE: single section input */}
               {form.hasSections && editing && (
-                <div className="flex flex-col gap-2">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Section</label>
+                <div className="flex flex-col gap-1.5 mt-4">
+                  <label className="text-xs font-medium text-zinc-600 block">
+                    Section <span className="text-accent">*</span>
+                  </label>
                   <input required placeholder="e.g. A"
-                    className="bg-slate-50 border border-slate-100 rounded-xl p-3 focus:ring-2 focus:ring-blue-500/10 outline-none uppercase"
+                    className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors uppercase"
                     value={form.section}
                     onChange={e => setForm({ ...form, section: e.target.value.toUpperCase() })} />
                 </div>
               )}
 
-              <button type="submit" className="w-full bg-slate-900 hover:bg-blue-600 text-white py-4 rounded-2xl font-black uppercase tracking-widest mt-4 transition-all shadow-xl">
-                {editing
-                  ? 'Save Changes'
-                  : form.hasSections
-                    ? `Create ${form.sections.length || '…'} Section${form.sections.length === 1 ? '' : 's'}`
-                    : 'Create Class'}
-              </button>
+              <div className="pt-4 mt-4 border-t border-zinc-100 flex justify-end gap-3">
+                <button type="button" onClick={() => setIsModalOpen(false)} className="text-zinc-700 px-4 py-2 border border-zinc-200 rounded-md text-xs font-medium hover:bg-zinc-50 transition-colors">
+                  Cancel
+                </button>
+                <button type="submit" className="bg-primary text-white px-6 py-2 rounded-md text-xs font-medium hover:bg-primary/90 transition-colors">
+                  {editing
+                    ? 'Save Changes'
+                    : form.hasSections
+                      ? `Create ${form.sections.length || '...'} Section${form.sections.length === 1 ? '' : 's'}`
+                      : 'Create Class'}
+                </button>
+              </div>
             </form>
           </div>
         </div>

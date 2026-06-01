@@ -1,21 +1,21 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   GraduationCap, Search, Loader2, Mail, Phone, CalendarDays,
-  Briefcase, Plus
+  Briefcase, Plus, ChevronDown
 } from 'lucide-react';
 import { initials, statusStyle } from './AlumniUtils';
 import AlumniDetail from './AlumniDetail';
 
 // =====================================================================
-//  Alumni — card list of passed-out students.
-//   • Academic-year filter + search bar.
-//   • Each card: photo/initials, name, phone, email, current status,
-//     passout year. Click → full detail (AlumniDetail).
-//   • Edit access (can('Alumni','edit')) unlocks editing extra fields
-//     and the manual "Add to Alumni" action.
+//  Alumni - card list of passed-out students.
+//  • Academic-year filter + search bar.
+//  • Each card: photo/initials, name, phone, email, current status,
+//    passout year. Click -> full detail (AlumniDetail).
+//  • Edit access (can('Alumni','edit')) unlocks editing extra fields
+//    and the manual "Add to Alumni" action.
 // =====================================================================
 
 export default function Alumni() {
@@ -64,7 +64,7 @@ export default function Alumni() {
     return () => clearTimeout(t);
   }, [loadList]);
 
-  const yearLabel = (y) => y.passout_year || y.year_name || '—';
+  const yearLabel = (y) => y.passout_year || y.year_name || '-';
 
   // detail view takes over the whole module
   if (openId) {
@@ -76,56 +76,61 @@ export default function Alumni() {
   }
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-700">
-      <div>
-        <h2 className="text-3xl font-black text-slate-900 tracking-tight flex items-center gap-2">
-          <GraduationCap className="text-blue-600" size={30} />
+    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300">
+      
+      <header className="flex flex-col mb-4 sm:mb-0">
+        <h2 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
+          <GraduationCap className="text-primary size-5" />
           Alumni
         </h2>
-        <p className="text-slate-500 font-medium mt-1">
+        <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
           Past students of the institution and where they are now.
         </p>
-      </div>
+      </header>
 
       {/* Filter + search bar */}
-      <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Year</span>
-          <select value={yearId} onChange={e => setYearId(e.target.value)}
-            className="bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/10 cursor-pointer">
-            <option value="">All Years</option>
-            {years.map(y => (
-              <option key={y.academic_year_id || y.passout_year} value={y.academic_year_id || ''}>
-                {yearLabel(y)}
-              </option>
-            ))}
-          </select>
+      <div className="flex flex-col sm:flex-row gap-3 sm:items-center justify-between">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider shrink-0">Year</span>
+          <div className="relative w-full sm:w-48">
+            <select value={yearId} onChange={e => setYearId(e.target.value)}
+              className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm font-medium text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
+              <option value="">All Years</option>
+              {years.map(y => (
+                <option key={y.academic_year_id || y.passout_year} value={y.academic_year_id || ''}>
+                  {yearLabel(y)}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
         </div>
-        <div className="relative flex-1 max-w-md">
-          <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+        
+        <div className="relative w-full sm:w-72 shrink-0">
+          <Search className="size-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input value={query} onChange={e => setQuery(e.target.value)}
-            placeholder="Search by name, email, phone, status…"
-            className="w-full bg-white border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500/10" />
+            placeholder="Search by name, email, phone..."
+            className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-3 text-sm placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
         </div>
       </div>
 
       {/* Cards */}
       {loading ? (
-        <div className="py-20 text-center"><Loader2 className="animate-spin w-8 h-8 text-blue-600 mx-auto" /></div>
+        <div className="h-64 flex items-center justify-center"><Loader2 className="animate-spin size-8 text-primary" /></div>
       ) : list.length === 0 ? (
-        <div className="bg-white p-16 rounded-3xl border border-dashed border-slate-200 text-center">
-          <GraduationCap className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-          <p className="text-slate-500 font-medium">
+        <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
+          <GraduationCap className="size-10 text-zinc-300 mb-3" />
+          <p className="text-zinc-500 text-sm font-medium">
             {query || yearId ? 'No alumni match your filters.' : 'No alumni yet.'}
           </p>
           {!query && !yearId && (
-            <p className="text-slate-400 text-sm mt-1">
+            <p className="text-zinc-400 text-xs mt-1.5">
               Students appear here when promoted to "Alumni (Passout)" in the Promotion tab.
             </p>
           )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
           {list.map(a => (
             <AlumniCard key={a.id} a={a} instId={user.institutionId}
               onClick={() => setOpenId(a.id)} />
@@ -140,46 +145,43 @@ export default function Alumni() {
 // --- One alumni card -----------------------------------------------
 function AlumniCard({ a, instId, onClick }) {
   const ss = statusStyle(a.current_status);
-  const picUrl = a.has_pic
-    ? `${API_BASE_URL}/admin/alumni/detail/${a.id}`   // detail carries the pic; cards use initials
-    : null;
 
   return (
     <button onClick={onClick}
-      className="bg-white rounded-3xl border border-slate-100 shadow-sm p-5 text-left hover:border-blue-200 hover:shadow-md transition-all">
-      <div className="flex items-center gap-3">
-        <div className="w-14 h-14 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center font-black text-lg shrink-0">
+      className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm p-4 sm:p-5 text-left hover:ring-primary/30 hover:shadow-md transition-all group flex flex-col h-full w-full">
+      <div className="flex items-start gap-3 w-full">
+        <div className="size-12 rounded-md bg-primary/10 text-primary flex items-center justify-center font-semibold text-lg shrink-0 ring-1 ring-primary/20">
           {initials(a.name)}
         </div>
         <div className="min-w-0 flex-1">
-          <h3 className="font-black text-slate-800 truncate">{a.name}</h3>
+          <h3 className="font-semibold text-zinc-900 truncate group-hover:text-primary transition-colors">{a.name}</h3>
           {a.passout_year && (
-            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-400 mt-0.5">
-              <CalendarDays size={11} /> {a.passout_year}
-              {a.final_class ? ` · ${a.final_class}` : ''}
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 mt-0.5">
+              <CalendarDays className="size-3" /> {a.passout_year}
+              {a.final_class ? ` - ${a.final_class}` : ''}
             </span>
           )}
         </div>
       </div>
 
-      <div className="mt-4 space-y-1.5">
+      <div className="mt-4 space-y-2 w-full">
         {a.phone && (
-          <p className="flex items-center gap-2 text-sm text-slate-500">
-            <Phone size={13} className="text-slate-400 shrink-0" />
+          <p className="flex items-center gap-2 text-xs text-zinc-500 font-medium">
+            <Phone className="size-3.5 text-zinc-400 shrink-0" />
             <span className="truncate">{a.phone}</span>
           </p>
         )}
         {a.email && (
-          <p className="flex items-center gap-2 text-sm text-slate-500">
-            <Mail size={13} className="text-slate-400 shrink-0" />
+          <p className="flex items-center gap-2 text-xs text-zinc-500 font-medium">
+            <Mail className="size-3.5 text-zinc-400 shrink-0" />
             <span className="truncate">{a.email}</span>
           </p>
         )}
       </div>
 
-      <div className="mt-4 pt-3 border-t border-slate-50">
-        <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${ss.bg} ${ss.text}`}>
-          <Briefcase size={12} />
+      <div className="mt-auto pt-4 border-t border-zinc-100 w-full">
+        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-semibold ${ss.bg} ${ss.text} ring-1 ring-inset ring-black/5`}>
+          <Briefcase className="size-3" />
           {a.current_status || 'Status not set'}
         </span>
       </div>

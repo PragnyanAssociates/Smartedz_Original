@@ -60,54 +60,62 @@ export default function AcademicsTab({ data, fetchData, user }) {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      
+      {/* Header - Fixed Mobile Flex and Button Width */}
+      <div className="flex flex-col sm:flex-row justify-between gap-4 sm:items-start mb-6">
         <div>
-          <h3 className="text-xl font-bold text-slate-800">Academic Years</h3>
-          <p className="text-slate-400 text-sm font-medium mt-1">
-            One year is always <strong>active</strong>; modules like Attendance, Fees and Reports
-            anchor to whichever is currently flagged.
+          <h3 className="text-lg font-semibold text-zinc-900 tracking-tight">Academic Years</h3>
+          <p className="text-[11px] text-zinc-500 max-w-2xl mt-1">
+            One year is always <strong>active</strong>; modules like Attendance, Fees and Reports anchor to whichever is currently flagged.
           </p>
         </div>
-        <button onClick={openAdd} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-blue-100">
-          <Plus size={18} /> Add Year
+        <button onClick={openAdd} 
+          className="bg-primary text-white px-4 py-2 rounded-md text-xs font-medium hover:bg-primary/90 transition-colors flex items-center justify-center gap-1.5 shadow-sm shrink-0 w-fit self-start sm:self-auto">
+          <Plus className="size-3.5 shrink-0" /> Add Year
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+      {/* Cards Grid - Progressive Breakpoints */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {data.academicYears.map(y => (
-          <div key={y.id} className={`rounded-3xl border p-6 shadow-sm transition-all ${
+          <div key={y.id} className={`group relative bg-white rounded-lg p-5 transition-all flex flex-col ${
             y.isActive
-              ? 'bg-emerald-50/50 border-emerald-200 shadow-emerald-100'
-              : 'bg-white border-slate-100 hover:shadow-md'
+              ? 'ring-2 ring-green-500/20 bg-green-50/30'
+              : 'ring-1 ring-black/5 hover:ring-zinc-200 hover:shadow-sm'
           }`}>
-            <div className="flex justify-between items-start mb-5">
-              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${
-                y.isActive ? 'bg-emerald-100 text-emerald-600' : 'bg-blue-50 text-blue-600'
+            <div className="flex justify-between items-start mb-4">
+              <div className={`size-10 rounded-md flex items-center justify-center shrink-0 ${
+                y.isActive ? 'bg-green-100 text-green-600' : 'bg-zinc-50 text-zinc-500 ring-1 ring-black/5'
               }`}>
-                <Calendar size={20} />
+                <Calendar className="size-4" />
               </div>
-              <div className="flex gap-2">
-                <button onClick={() => openEdit(y)} className="p-2 text-slate-300 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-all">
-                  <Edit size={16} />
+
+              {/* Hover Actions */}
+              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button onClick={() => openEdit(y)} className="p-1.5 rounded text-zinc-400 hover:text-zinc-700 hover:bg-zinc-50 transition-colors" title="Edit">
+                  <Edit className="size-4 shrink-0" />
                 </button>
-                <button onClick={() => handleDelete(y)} className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all">
-                  <Trash2 size={16} />
+                <button onClick={() => handleDelete(y)} className="p-1.5 rounded text-zinc-400 hover:text-accent hover:bg-accent/10 transition-colors" title="Delete">
+                  <Trash2 className="size-4 shrink-0" />
                 </button>
               </div>
             </div>
-            <h4 className="text-xl font-black text-slate-800">{y.name}</h4>
-            <p className="text-xs text-slate-500 font-bold uppercase tracking-wider mt-2">
-              {fmt(y.startDate)} → {fmt(y.endDate)}
+
+            <h4 className="text-sm font-semibold text-zinc-900 leading-tight">{y.name}</h4>
+            <p className="text-[10px] font-medium text-zinc-500 mt-1 uppercase tracking-wider whitespace-nowrap">
+              {fmt(y.startDate)} &mdash; {fmt(y.endDate)}
             </p>
-            <div className="mt-5">
+
+            {/* Footer Row */}
+            <div className="mt-5 pt-4 border-t border-zinc-100/60 flex items-center">
               {y.isActive ? (
-                <span className="inline-flex items-center gap-2 text-emerald-700 font-black text-xs uppercase tracking-widest">
-                  <CheckCircle2 size={14} /> Currently Active
+                <span className="inline-flex items-center gap-1.5 text-green-700 font-semibold text-[10px] uppercase tracking-wider whitespace-nowrap">
+                  <CheckCircle2 className="size-3.5" /> Currently Active
                 </span>
               ) : (
                 <button onClick={() => handleSetActive(y)}
-                  className="inline-flex items-center gap-2 text-slate-500 hover:text-slate-800 font-bold text-xs uppercase tracking-widest transition-colors">
-                  <Circle size={14} /> Set as Active
+                  className="inline-flex items-center gap-1.5 text-zinc-500 hover:text-primary font-semibold text-[10px] uppercase tracking-wider transition-colors whitespace-nowrap">
+                  <Circle className="size-3.5" /> Set as Active
                 </button>
               )}
             </div>
@@ -115,48 +123,62 @@ export default function AcademicsTab({ data, fetchData, user }) {
         ))}
 
         {data.academicYears.length === 0 && (
-          <div className="col-span-full bg-white p-12 rounded-3xl border border-dashed border-slate-200 text-center">
-            <p className="text-slate-400 font-bold">No academic years yet. Create one to get started.</p>
+          <div className="col-span-full bg-white p-8 rounded-lg ring-1 ring-black/5 border-dashed text-center">
+            <p className="text-xs text-zinc-500 italic">No academic years yet. Create one to get started.</p>
           </div>
         )}
       </div>
 
+      {/* Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-[2.5rem] w-full max-w-lg p-10 shadow-2xl relative">
-            <button onClick={() => setIsModalOpen(false)} className="absolute top-8 right-8 text-slate-400 hover:text-slate-600">
-              <X size={24} />
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-sm p-6 shadow-xl relative">
+            <button onClick={() => setIsModalOpen(false)} className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-700 transition-colors">
+              <X className="size-5 shrink-0" />
             </button>
-            <h2 className="text-2xl font-black mb-2 text-slate-800">
-              {editing ? 'Edit Academic Year' : 'Create Academic Year'}
-            </h2>
-            <p className="text-sm text-slate-400 font-medium mb-8">
-              Pick the start and end dates (e.g. June 2026 – April 2027).
-            </p>
-            <form onSubmit={handleSubmit} className="space-y-5">
-              <div className="flex flex-col gap-2">
-                <label className="text-xs font-bold text-slate-500 uppercase">Name</label>
+            
+            <div className="mb-5">
+              <h2 className="text-lg font-semibold text-zinc-900 mb-1">
+                {editing ? 'Edit Academic Year' : 'Create Academic Year'}
+              </h2>
+              <p className="text-[11px] text-zinc-500">
+                Pick the start and end dates (e.g. June 2026 - April 2027).
+              </p>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className="text-xs font-medium text-zinc-600 mb-1.5 block">
+                  Name <span className="text-accent">*</span>
+                </label>
                 <input required placeholder="e.g. 2026 - 2027"
-                  className="bg-slate-50 border border-slate-100 rounded-xl p-3 focus:ring-2 focus:ring-blue-500/10 outline-none"
+                  className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors"
                   value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
               </div>
+
               <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col gap-2">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Start Date</label>
+                <div>
+                  <label className="text-xs font-medium text-zinc-600 mb-1.5 block">Start Date <span className="text-accent">*</span></label>
                   <input type="date" required
-                    className="bg-slate-50 border border-slate-100 rounded-xl p-3 outline-none"
+                    className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors"
                     value={form.startDate} onChange={e => setForm({ ...form, startDate: e.target.value })} />
                 </div>
-                <div className="flex flex-col gap-2">
-                  <label className="text-xs font-bold text-slate-500 uppercase">End Date</label>
+                <div>
+                  <label className="text-xs font-medium text-zinc-600 mb-1.5 block">End Date <span className="text-accent">*</span></label>
                   <input type="date" required
-                    className="bg-slate-50 border border-slate-100 rounded-xl p-3 outline-none"
+                    className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors"
                     value={form.endDate} onChange={e => setForm({ ...form, endDate: e.target.value })} />
                 </div>
               </div>
-              <button type="submit" className="w-full bg-slate-900 hover:bg-blue-600 text-white py-4 rounded-2xl font-black uppercase tracking-widest mt-4 transition-all shadow-xl">
-                {editing ? 'Save Changes' : 'Create Year'}
-              </button>
+
+              <div className="pt-2 flex justify-end gap-3">
+                <button type="button" onClick={() => setIsModalOpen(false)} className="text-zinc-700 px-4 py-2 border border-zinc-200 rounded-md text-xs font-medium hover:bg-zinc-50 transition-colors">
+                  Cancel
+                </button>
+                <button type="submit" className="bg-primary text-white px-6 py-2 rounded-md text-xs font-medium hover:bg-primary/90 transition-colors">
+                  {editing ? 'Save Changes' : 'Create Year'}
+                </button>
+              </div>
             </form>
           </div>
         </div>

@@ -9,8 +9,13 @@ module.exports = {
         xs: '475px',
       },
       colors: {
-        primary: '#your-school-primary-color',
-        secondary: '#your-school-secondary-color',
+        primary: '#18469A',
+        accent: '#E35D14',
+      },
+      backgroundImage: {
+        'gradient-smart': 'linear-gradient(to bottom right, #18469A, #2563EB, #06B6D4)',
+        'gradient-edz': 'linear-gradient(to bottom right, #E35D14, #FBBF24)',
+        'gradient-brand': 'linear-gradient(to right, #18469A, #2563EB, #06B6D4, #FBBF24, #E35D14)',
       },
       animation: {
         fadeIn: 'fadeIn 0.3s ease-in-out',

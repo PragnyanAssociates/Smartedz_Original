@@ -8,12 +8,12 @@ import {
 } from 'lucide-react';
 
 // =====================================================================
-//  Meals — each school defines its own meal slots (Breakfast / Lunch /
-//  Snacks / Dinner — 1 to 4 of them), then fills a weekly menu grid.
+//  Meals - each school defines its own meal slots (Breakfast / Lunch /
+//  Snacks / Dinner - 1 to 4 of them), then fills a weekly menu grid.
 //
 //  Two tabs:
-//   • 'slots' — define the meal periods (edit access only)
-//   • 'menu'  — the Mon-Sun x slot grid of food items
+//   • 'slots' - define the meal periods (edit access only)
+//   • 'menu'  - the Mon-Sun x slot grid of food items
 //
 //  Students / staff without edit access see the menu read-only.
 // =====================================================================
@@ -64,8 +64,8 @@ export default function Meals() {
 
   if (loading) {
     return (
-      <div className="h-96 flex items-center justify-center">
-        <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
+      <div className="h-64 flex items-center justify-center">
+        <Loader2 className="size-8 text-primary animate-spin" />
       </div>
     );
   }
@@ -78,28 +78,31 @@ export default function Meals() {
   const tabProps = { data, fetchData, user, canEdit };
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-700">
-      <div>
-        <h2 className="text-3xl font-black text-slate-900 tracking-tight flex items-center gap-2">
-          <UtensilsCrossed className="text-blue-600" size={28} />
+    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-6 animate-in fade-in duration-500">
+      
+      <header className="flex flex-col mb-4">
+        <h2 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
+          <UtensilsCrossed className="text-primary size-5" />
           Meals
         </h2>
-        <p className="text-slate-500 font-medium mt-1">
+        <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
           Define your school's meal slots, then plan the weekly menu.
         </p>
-      </div>
+      </header>
 
       {/* Only show the tab bar if the user can edit (others just see the menu) */}
       {canEdit && (
-        <div className="flex flex-wrap gap-2 bg-white p-2 rounded-[2rem] border border-slate-100 shadow-sm w-fit">
-          {tabs.map(t => (
-            <button key={t.id} onClick={() => setActiveTab(t.id)}
-              className={`flex items-center gap-2 px-6 py-3 rounded-[1.5rem] font-bold text-sm transition-all ${
-                activeTab === t.id ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-50'
-              }`}>
-              <t.icon size={18} /> {t.label}
-            </button>
-          ))}
+        <div className="flex justify-start">
+          <div className="inline-flex bg-zinc-100/80 p-1 rounded-md overflow-x-auto custom-scrollbar max-w-full">
+            {tabs.map(t => (
+              <button key={t.id} onClick={() => setActiveTab(t.id)}
+                className={`flex items-center gap-1.5 flex-1 sm:flex-none px-4 py-1.5 rounded text-[11px] font-semibold uppercase tracking-wider transition-colors whitespace-nowrap ${
+                  activeTab === t.id ? 'bg-white text-zinc-900 shadow-sm ring-1 ring-black/5' : 'text-zinc-500 hover:text-zinc-700'
+                }`}>
+                <t.icon className="size-3.5" /> {t.label}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
@@ -114,7 +117,7 @@ export default function Meals() {
 
 
 // =====================================================================
-//  TAB 1 — Meal Slots setup
+//  TAB 1 - Meal Slots setup
 // =====================================================================
 function SlotsTab({ data, fetchData, user, canEdit }) {
   const [slots, setSlots] = useState(() =>
@@ -153,59 +156,72 @@ function SlotsTab({ data, fetchData, user, canEdit }) {
 
   return (
     <div className="max-w-2xl">
-      <div className="bg-white rounded-3xl border border-slate-100 p-8 shadow-sm">
-        <div className="flex items-center gap-3 mb-2">
-          <div className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center text-blue-600">
-            <Clock size={22} />
+      <div className="bg-white rounded-lg ring-1 ring-black/5 p-5 sm:p-6 shadow-sm">
+        
+        <div className="flex items-center gap-3 mb-6">
+          <div className="size-10 bg-primary/10 rounded-md flex items-center justify-center text-primary ring-1 ring-primary/20">
+            <Clock className="size-5" />
           </div>
           <div>
-            <h3 className="text-lg font-black text-slate-800">Meal Slots</h3>
-            <p className="text-xs text-slate-400 font-medium">
-              Add the meals your school serves — one, two, three or four.
+            <h3 className="text-sm font-semibold text-zinc-900">Meal Slots</h3>
+            <p className="text-[11px] text-zinc-500 mt-0.5">
+              Add the meals your school serves - one, two, three or four.
             </p>
           </div>
         </div>
 
-        <div className="space-y-2 mt-6 mb-4">
+        <div className="space-y-3 mb-6">
           {slots.map((s, i) => {
             const Icon = slotIcon(s.name);
             return (
-              <div key={i} className="grid grid-cols-12 gap-2 items-center p-3 rounded-2xl bg-slate-50 border border-slate-100">
-                <div className="col-span-1 text-center text-slate-400">
-                  <Icon size={18} />
+              <div key={i} className="flex flex-col sm:flex-row gap-3 items-start sm:items-center p-4 rounded-md bg-zinc-50/50 ring-1 ring-zinc-200">
+                <div className="flex items-center gap-3 w-full sm:w-auto flex-1">
+                  <div className="size-6 rounded-full bg-white ring-1 ring-black/5 flex items-center justify-center text-zinc-400 shrink-0 shadow-sm">
+                    <Icon className="size-3.5" />
+                  </div>
+                  <input placeholder="Meal name (e.g. Breakfast)" value={s.name}
+                    onChange={e => updateSlot(i, 'name', e.target.value)}
+                    className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
                 </div>
-                <input placeholder="Meal name (e.g. Breakfast)" value={s.name}
-                  onChange={e => updateSlot(i, 'name', e.target.value)}
-                  className="col-span-5 bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500/10" />
-                <input type="time" value={s.start_time}
-                  onChange={e => updateSlot(i, 'start_time', e.target.value)}
-                  className="col-span-3 bg-white border border-slate-200 rounded-lg px-2 py-2 text-sm outline-none" />
-                <input type="time" value={s.end_time}
-                  onChange={e => updateSlot(i, 'end_time', e.target.value)}
-                  className="col-span-2 bg-white border border-slate-200 rounded-lg px-2 py-2 text-sm outline-none" />
-                <button onClick={() => removeSlot(i)}
-                  className="col-span-1 text-slate-300 hover:text-red-500 transition-colors flex justify-center">
-                  <Trash2 size={15} />
-                </button>
+                
+                <div className="flex items-center gap-2 w-full sm:w-auto shrink-0 pl-9 sm:pl-0">
+                  <input type="time" value={s.start_time}
+                    onChange={e => updateSlot(i, 'start_time', e.target.value)}
+                    className="h-9 w-full sm:w-28 bg-white border border-zinc-200 rounded-md px-2 text-sm tabular-nums text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
+                  <span className="text-zinc-400 text-xs">-</span>
+                  <input type="time" value={s.end_time}
+                    onChange={e => updateSlot(i, 'end_time', e.target.value)}
+                    className="h-9 w-full sm:w-28 bg-white border border-zinc-200 rounded-md px-2 text-sm tabular-nums text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
+                  
+                  <button onClick={() => removeSlot(i)}
+                    className="p-2 text-zinc-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors shrink-0">
+                    <Trash2 className="size-4" />
+                  </button>
+                </div>
               </div>
             );
           })}
         </div>
 
-        <button onClick={addSlot}
-          className="w-full bg-slate-50 hover:bg-slate-100 text-slate-700 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all mb-4">
-          <Plus size={14} /> Add Meal Slot
-        </button>
+        <div className="flex flex-col-reverse sm:flex-row items-center justify-between gap-4 border-t border-zinc-100 pt-5 mt-2">
+          <p className="text-[11px] text-zinc-400 text-center sm:text-left">
+            Removing a slot also clears its menu items. Times are optional.
+          </p>
+          
+          <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto shrink-0">
+            <button onClick={addSlot} type="button"
+              className="h-9 px-4 bg-zinc-50 hover:bg-zinc-100 text-zinc-700 rounded-md font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors ring-1 ring-zinc-200 w-full sm:w-auto">
+              <Plus className="size-3.5" /> Add Meal Slot
+            </button>
 
-        <button onClick={handleSave} disabled={saving}
-          className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white py-3 rounded-2xl font-black uppercase tracking-widest transition-all shadow-lg shadow-blue-100 flex items-center justify-center gap-2">
-          {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-          {saving ? 'Saving…' : 'Save Meal Slots'}
-        </button>
+            <button onClick={handleSave} disabled={saving} type="button"
+              className="h-9 px-6 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md font-semibold text-xs transition-colors shadow-sm flex items-center justify-center gap-2 w-full sm:w-auto">
+              {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+              {saving ? 'Saving...' : 'Save Meal Slots'}
+            </button>
+          </div>
+        </div>
 
-        <p className="text-[11px] text-slate-400 font-medium mt-3">
-          Removing a slot also clears its menu items. Times are optional.
-        </p>
       </div>
     </div>
   );
@@ -213,10 +229,10 @@ function SlotsTab({ data, fetchData, user, canEdit }) {
 
 
 // =====================================================================
-//  TAB 2 — Weekly Menu grid
+//  TAB 2 - Weekly Menu grid
 // =====================================================================
 function MenuTab({ data, fetchData, user, canEdit }) {
-  // Build cell map: `${slotId}-${dayIndex}` → items text
+  // Build cell map: `${slotId}-${dayIndex}` -> items text
   const initialCells = useMemo(() => {
     const map = {};
     data.menu.forEach(m => { map[`${m.slot_id}-${m.day_index}`] = m.items || ''; });
@@ -261,10 +277,10 @@ function MenuTab({ data, fetchData, user, canEdit }) {
   // --- No slots yet ----------------------------------------------
   if (data.slots.length === 0) {
     return (
-      <div className="bg-white p-16 rounded-3xl border border-dashed border-slate-200 text-center max-w-2xl mx-auto">
-        <AlertCircle className="mx-auto text-amber-400 mb-3" size={42} />
-        <h3 className="text-2xl font-black text-slate-800">No Meal Slots Yet</h3>
-        <p className="text-slate-500 mt-2 font-medium">
+      <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center max-w-2xl mx-auto flex flex-col items-center">
+        <AlertCircle className="text-amber-400 mb-3 size-10" />
+        <h3 className="text-lg font-semibold text-zinc-900">No Meal Slots Yet</h3>
+        <p className="text-zinc-500 mt-1 text-sm font-medium">
           {canEdit
             ? <>Open the <strong>Meal Slots</strong> tab and add the meals your school serves first.</>
             : 'The school has not set up its meal plan yet.'}
@@ -279,29 +295,33 @@ function MenuTab({ data, fetchData, user, canEdit }) {
       <div className="space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {DAYS.map((day, dayIndex) => (
-            <div key={day} className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
-              <div className="bg-slate-900 text-white px-5 py-3 font-black text-sm uppercase tracking-widest">
+            <div key={day} className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col">
+              <div className="bg-zinc-50 border-b border-zinc-100 px-5 py-3 font-semibold text-xs uppercase tracking-wider text-zinc-700">
                 {day}
               </div>
-              <div className="divide-y divide-slate-50">
+              <div className="divide-y divide-zinc-100">
                 {data.slots.map(slot => {
                   const Icon = slotIcon(slot.name);
                   const items = getCell(slot.id, dayIndex);
                   return (
-                    <div key={slot.id} className="p-4">
-                      <div className="flex items-center gap-2 mb-1">
-                        <Icon size={14} className="text-blue-500" />
-                        <span className="text-[11px] font-black text-slate-500 uppercase tracking-wider">
-                          {slot.name}
-                        </span>
+                    <div key={slot.id} className="p-4 bg-white hover:bg-zinc-50/50 transition-colors">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <div className="size-5 rounded bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                            <Icon className="size-3" />
+                          </div>
+                          <span className="text-[11px] font-semibold text-zinc-600 uppercase tracking-wider">
+                            {slot.name}
+                          </span>
+                        </div>
                         {slot.start_time && (
-                          <span className="text-[10px] text-slate-300 ml-auto">
+                          <span className="text-[10px] text-zinc-400 font-medium tabular-nums bg-zinc-100 px-1.5 py-0.5 rounded">
                             {fmtTime(slot.start_time)}
                           </span>
                         )}
                       </div>
-                      <p className="text-sm text-slate-700">
-                        {items || <span className="text-slate-300 italic">Not planned</span>}
+                      <p className="text-sm text-zinc-800 leading-relaxed ml-7">
+                        {items || <span className="text-zinc-400 italic">Not planned</span>}
                       </p>
                     </div>
                   );
@@ -316,35 +336,35 @@ function MenuTab({ data, fetchData, user, canEdit }) {
 
   // --- Editable grid ---------------------------------------------
   return (
-    <div className="space-y-5">
+    <div className="space-y-4 sm:space-y-6">
       <div className="flex justify-end">
         <button onClick={handleSave} disabled={saving}
-          className="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-blue-100">
-          {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-          {saving ? 'Saving…' : 'Save Weekly Menu'}
+          className="h-10 w-full sm:w-auto bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white px-6 rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors">
+          {saving ? <Loader2 className="size-4 animate-spin shrink-0" /> : <Save className="size-4 shrink-0" />}
+          {saving ? 'Saving...' : 'Save Weekly Menu'}
         </button>
       </div>
 
-      <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-x-auto">
-        <table className="w-full text-left" style={{ minWidth: 720 }}>
+      <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-x-auto custom-scrollbar">
+        <table className="w-full text-left border-collapse min-w-[800px]">
           <thead>
-            <tr className="bg-slate-50">
-              <th className="p-4 text-[10px] font-black uppercase text-slate-400 tracking-widest sticky left-0 bg-slate-50 z-10"
-                style={{ minWidth: 110 }}>
+            <tr className="bg-zinc-50/80">
+              <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider sticky left-0 bg-zinc-50/95 backdrop-blur z-10 border-b border-r border-zinc-100 w-24">
                 Day
               </th>
               {data.slots.map(slot => {
                 const Icon = slotIcon(slot.name);
                 return (
-                  <th key={slot.id} className="p-4 text-center border-l border-slate-100"
-                    style={{ minWidth: 200 }}>
-                    <div className="flex items-center justify-center gap-1.5 text-slate-600">
-                      <Icon size={14} className="text-blue-500" />
-                      <span className="text-xs font-black uppercase tracking-wider">{slot.name}</span>
+                  <th key={slot.id} className="p-4 text-center border-b border-r border-zinc-100 last:border-r-0 min-w-[200px]">
+                    <div className="flex items-center justify-center gap-2 text-zinc-700">
+                      <div className="size-5 rounded bg-white ring-1 ring-black/5 text-primary flex items-center justify-center shadow-sm">
+                        <Icon className="size-3" />
+                      </div>
+                      <span className="text-xs font-semibold uppercase tracking-wider">{slot.name}</span>
                     </div>
                     {slot.start_time && (
-                      <div className="text-[9px] font-bold text-slate-400 mt-0.5">
-                        {fmtTime(slot.start_time)}{slot.end_time ? ` – ${fmtTime(slot.end_time)}` : ''}
+                      <div className="text-[10px] font-medium text-zinc-400 mt-1 tabular-nums">
+                        {fmtTime(slot.start_time)}{slot.end_time ? ` - ${fmtTime(slot.end_time)}` : ''}
                       </div>
                     )}
                   </th>
@@ -352,21 +372,22 @@ function MenuTab({ data, fetchData, user, canEdit }) {
               })}
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-zinc-100">
             {DAYS.map((day, dayIndex) => (
-              <tr key={day}>
-                <td className="p-4 font-black text-slate-700 sticky left-0 bg-white z-10 border-r border-slate-100">
+              <tr key={day} className="hover:bg-zinc-50/30 transition-colors">
+                <td className="px-5 py-4 font-semibold text-zinc-800 sticky left-0 bg-white z-10 border-r border-zinc-100 shadow-[1px_0_0_0_rgba(0,0,0,0.05)]">
                   <div>{DAYS_SHORT[dayIndex]}</div>
-                  <div className="text-[10px] font-medium text-slate-400 normal-case">{day}</div>
+                  <div className="text-[10px] font-medium text-zinc-400 mt-0.5">{day}</div>
                 </td>
                 {data.slots.map(slot => (
-                  <td key={slot.id} className="p-2 border-l border-slate-100 align-top">
+                  <td key={slot.id} className="p-3 border-r border-zinc-100 last:border-r-0 align-top">
                     <textarea
                       value={getCell(slot.id, dayIndex)}
                       onChange={e => setCell(slot.id, dayIndex, e.target.value)}
                       rows={3}
                       placeholder="e.g. Rice, Dal, Curd, Banana"
-                      className="w-full bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500/10 resize-none" />
+                      className="w-full bg-zinc-50/50 border border-zinc-200 rounded-md px-3 py-2.5 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 focus:bg-white resize-none transition-all shadow-sm" 
+                    />
                   </td>
                 ))}
               </tr>
@@ -375,9 +396,10 @@ function MenuTab({ data, fetchData, user, canEdit }) {
         </table>
       </div>
 
-      <p className="text-xs text-slate-400 font-medium">
-        Type the food items for each meal, separated by commas. Leave a cell empty if there's no meal that day.
-      </p>
+      <div className="bg-blue-50/50 border border-blue-100 rounded-md p-4 text-[11px] font-medium text-blue-700 leading-relaxed flex gap-2">
+        <AlertCircle className="size-4 shrink-0 text-blue-500" />
+        <p>Type the food items for each meal, separated by commas. Leave a cell empty if there's no meal scheduled for that slot on that day.</p>
+      </div>
     </div>
   );
 }

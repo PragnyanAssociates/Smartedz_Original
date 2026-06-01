@@ -6,7 +6,7 @@ import MarksEntry from './MarksEntry';
 import ReportCards from './ReportCards';
 
 // =====================================================================
-//  ClassList — overview table of classes with performance summaries.
+//  ClassList - overview table of classes with performance summaries.
 //  Clicking a class drills into MarksEntry or ReportCards depending
 //  on `mode`.
 // =====================================================================
@@ -43,69 +43,89 @@ export default function ClassList({ mode, canManage }) {
   );
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <p className="text-sm text-slate-500 font-medium">
+    <div className="space-y-4 sm:space-y-6 animate-in fade-in duration-300">
+      
+      {/* Control Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <p className="text-sm text-zinc-500 font-medium">
           {mode === 'marks'
             ? 'Pick a class to enter or edit marks.'
             : 'Pick a class to view and print report cards.'}
         </p>
-        <div className="relative w-full sm:w-64">
-          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input value={query} onChange={e => setQuery(e.target.value)}
-            placeholder="Search classes…"
-            className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500/10 shadow-sm" />
+        <div className="relative w-full sm:w-72 shrink-0">
+          <Search className="size-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <input 
+            value={query} 
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Search classes..."
+            className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" 
+          />
         </div>
       </div>
 
       {loading ? (
-        <div className="text-center py-16"><Loader2 className="animate-spin w-8 h-8 text-blue-600 mx-auto" /></div>
+        <div className="h-64 flex items-center justify-center">
+          <Loader2 className="animate-spin size-8 text-primary" />
+        </div>
       ) : filtered.length === 0 ? (
-        <div className="bg-white p-16 rounded-3xl border border-dashed border-slate-200 text-center">
-          <GraduationCap className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-          <p className="text-slate-400 font-medium">
+        <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
+          <GraduationCap className="size-10 text-zinc-300 mb-3" />
+          <p className="text-zinc-500 text-sm font-medium">
             {summaries.length === 0 ? 'No classes found.' : 'No classes match your search.'}
           </p>
         </div>
       ) : (
-        <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
-          <table className="w-full text-left">
-            <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest">
+        <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-x-auto custom-scrollbar">
+          <table className="w-full text-left border-collapse min-w-[600px]">
+            <thead className="bg-zinc-50/80">
               <tr>
-                <th className="p-4">Class</th>
-                <th className="p-4">Total Marks</th>
-                <th className="p-4">Top Student</th>
-                <th className="p-4">Top Subject</th>
-                <th className="p-4 w-12"></th>
+                <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 whitespace-nowrap">Class</th>
+                <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 whitespace-nowrap">Total Marks</th>
+                <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 whitespace-nowrap">Top Student</th>
+                <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 whitespace-nowrap">Top Subject</th>
+                <th className="px-5 py-3 border-b border-zinc-100 w-12"></th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-50">
+            <tbody className="divide-y divide-zinc-100">
               {filtered.map(s => (
                 <tr key={s.class_id}
                   onClick={() => setPicked({ class_id: s.class_id, class_group: s.class_group })}
-                  className="hover:bg-blue-50/40 cursor-pointer group">
-                  <td className="p-4 font-bold text-slate-800">{s.class_group}</td>
-                  <td className="p-4 font-black text-blue-600">{s.totalClassMarks}</td>
-                  <td className="p-4">
-                    <div className="flex items-center gap-2">
-                      <Star size={14} className="text-amber-400 shrink-0" />
-                      <div>
-                        <div className="text-sm font-bold text-slate-700">{s.topStudent.name}</div>
-                        <div className="text-xs text-slate-400">{s.topStudent.marks} marks</div>
+                  className="hover:bg-zinc-50/60 transition-colors cursor-pointer group">
+                  
+                  <td className="px-5 py-4 font-semibold text-zinc-900 whitespace-nowrap">
+                    {s.class_group}
+                  </td>
+                  
+                  <td className="px-5 py-4 font-semibold text-primary tabular-nums whitespace-nowrap">
+                    {s.totalClassMarks}
+                  </td>
+                  
+                  <td className="px-5 py-4 whitespace-nowrap">
+                    <div className="flex items-center gap-2.5">
+                      <div className="size-6 rounded-md bg-amber-50 ring-1 ring-amber-500/20 flex items-center justify-center shrink-0">
+                        <Star className="size-3.5 text-amber-500" />
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-sm font-semibold text-zinc-800 leading-tight">{s.topStudent.name}</span>
+                        <span className="text-[11px] font-medium text-zinc-500">{s.topStudent.marks} marks</span>
                       </div>
                     </div>
                   </td>
-                  <td className="p-4">
-                    <div className="flex items-center gap-2">
-                      <BookOpen size={14} className="text-indigo-400 shrink-0" />
-                      <div>
-                        <div className="text-sm font-bold text-slate-700">{s.topSubject.name}</div>
-                        <div className="text-xs text-slate-400">{s.topSubject.marks} marks</div>
+                  
+                  <td className="px-5 py-4 whitespace-nowrap">
+                    <div className="flex items-center gap-2.5">
+                      <div className="size-6 rounded-md bg-indigo-50 ring-1 ring-indigo-500/20 flex items-center justify-center shrink-0">
+                        <BookOpen className="size-3.5 text-indigo-500" />
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-sm font-semibold text-zinc-800 leading-tight">{s.topSubject.name}</span>
+                        <span className="text-[11px] font-medium text-zinc-500">{s.topSubject.marks} marks</span>
                       </div>
                     </div>
                   </td>
-                  <td className="p-4 text-right">
-                    <ChevronRight size={16} className="text-slate-300 group-hover:text-blue-600 transition-colors" />
+                  
+                  <td className="px-5 py-4 text-right">
+                    <ChevronRight className="size-4 text-zinc-300 group-hover:text-primary transition-colors ml-auto" />
                   </td>
                 </tr>
               ))}

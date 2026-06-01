@@ -7,12 +7,12 @@ import ClassList from './ClassList';
 import StudentReportCard from './StudentReportCard';
 
 // =====================================================================
-//  Reports — offline exams, marks entry & report cards
+//  Reports - offline exams, marks entry & report cards
 //
 //  Tabs (admin / teacher):
-//   • Exam Setup   — define exam types, max marks, teacher assignments
-//   • Marks Entry  — pick a class → enter marks
-//   • Report Cards — pick a class → view/print student report cards
+//   • Exam Setup   - define exam types, max marks, teacher assignments
+//   • Marks Entry  - pick a class -> enter marks
+//   • Report Cards - pick a class -> view/print student report cards
 //
 //  Students get a single read-only StudentReportCard.
 // =====================================================================
@@ -30,11 +30,11 @@ export default function Reports() {
 
   if (isStudent) {
     return (
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-3xl font-black text-slate-900 tracking-tight">My Report Card</h1>
-          <p className="text-slate-500 font-medium mt-1">Your academic progress</p>
-        </div>
+      <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-6 animate-in fade-in duration-500">
+        <header className="flex flex-col mb-4">
+          <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">My Report Card</h1>
+          <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">Your academic progress</p>
+        </header>
         <StudentReportCard />
       </div>
     );
@@ -50,35 +50,42 @@ export default function Reports() {
   ];
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-black text-slate-900 tracking-tight">Reports</h1>
-        <p className="text-slate-500 font-medium mt-1">
+    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-6 animate-in fade-in duration-500">
+      
+      <header className="flex flex-col mb-4">
+        <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Reports</h1>
+        <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
           Offline exams, marks entry and report cards
         </p>
-      </div>
+      </header>
 
-      <div className="flex justify-center">
-        <div className="inline-flex bg-white border border-slate-100 rounded-2xl p-1.5 shadow-sm">
+      {/* Tab Switcher */}
+      <div className="flex justify-start">
+        <div className="flex items-center gap-2 overflow-x-auto custom-scrollbar w-full sm:w-auto pb-2 sm:pb-0">
           {tabs.map(t => {
             const Icon = t.icon;
             const active = tab === t.id;
             return (
               <button key={t.id} onClick={() => setTab(t.id)}
-                className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold transition-all ${
-                  active ? 'bg-blue-600 text-white shadow shadow-blue-200'
-                         : 'text-slate-500 hover:text-slate-800'
+                className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-xs font-semibold transition-colors whitespace-nowrap ${
+                  active 
+                    ? 'bg-primary text-white shadow-sm ring-1 ring-primary/20' 
+                    : 'bg-white text-zinc-600 hover:bg-zinc-50 border border-zinc-200'
                 }`}>
-                <Icon size={16} /> {t.label}
+                <Icon className="size-3.5 shrink-0" /> {t.label}
               </button>
             );
           })}
         </div>
       </div>
 
-      {tab === 'setup' && <ExamSetup />}
-      {tab === 'marks' && <ClassList mode="marks" canManage={canManage} />}
-      {tab === 'cards' && <ClassList mode="cards" canManage={canManage} />}
+      {/* Tab Content */}
+      <div className="mt-6">
+        {tab === 'setup' && <ExamSetup />}
+        {tab === 'marks' && <ClassList mode="marks" canManage={canManage} />}
+        {tab === 'cards' && <ClassList mode="cards" canManage={canManage} />}
+      </div>
+      
     </div>
   );
 }

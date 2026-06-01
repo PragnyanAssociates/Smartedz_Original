@@ -26,41 +26,41 @@ const GroupListScreen = ({ groups, onSelectGroup, selectedGroup, onCreateGroup, 
     };
 
     return (
-        <div className="flex flex-col h-full bg-white border-r border-slate-200">
+        <div className="flex flex-col h-full bg-white">
             {/* Header */}
-            <div className="px-4 py-3 bg-slate-50 flex items-center justify-between border-b border-slate-200">
-                <h1 className="text-xl font-bold text-slate-800">Chats</h1>
+            <div className="px-4 py-3 bg-zinc-50 flex items-center justify-between border-b border-zinc-200 shrink-0">
+                <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Chats</h1>
                 {hasCreateRights && (
                     <button 
                         onClick={onCreateGroup}
-                        className="p-2 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-full transition-colors"
+                        className="p-2 bg-primary/10 text-primary hover:bg-primary/20 rounded-full transition-colors shrink-0"
                         title="New Group"
                     >
-                        <Plus className="w-5 h-5" />
+                        <Plus className="size-5" />
                     </button>
                 )}
             </div>
 
             {/* Search */}
-            <div className="px-4 py-3 border-b border-slate-100">
+            <div className="px-4 py-3 border-b border-zinc-100 shrink-0">
                 <div className="relative">
-                    <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" />
+                    <Search className="size-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-zinc-400" />
                     <input 
                         type="text" 
                         placeholder="Search groups..." 
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full bg-slate-100 text-sm text-slate-900 rounded-lg pl-9 pr-4 py-2 outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
+                        className="h-9 w-full bg-zinc-100/80 text-sm text-zinc-900 rounded-md pl-9 pr-4 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 focus:bg-white transition-all placeholder:text-zinc-400"
                     />
                 </div>
             </div>
 
             {/* List */}
-            <div className="flex-1 overflow-y-auto">
+            <div className="flex-1 overflow-y-auto custom-scrollbar">
                 {loading ? (
-                    <div className="flex flex-col items-center justify-center h-40 text-slate-400">
-                        <Loader2 className="w-6 h-6 animate-spin mb-2" />
-                        <span className="text-sm">Loading chats...</span>
+                    <div className="flex flex-col items-center justify-center h-40 text-zinc-400">
+                        <Loader2 className="size-6 animate-spin mb-2 text-primary" />
+                        <span className="text-sm font-medium">Loading chats...</span>
                     </div>
                 ) : filteredGroups.length > 0 ? (
                     filteredGroups.map(group => {
@@ -72,29 +72,29 @@ const GroupListScreen = ({ groups, onSelectGroup, selectedGroup, onCreateGroup, 
                             <div 
                                 key={group.id} 
                                 onClick={() => onSelectGroup(group)}
-                                className={`flex items-center px-4 py-3 cursor-pointer transition-colors border-b border-slate-50 ${isSelected ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
+                                className={`flex items-center px-4 py-3 cursor-pointer transition-colors border-b border-zinc-50 ${isSelected ? 'bg-primary/5' : 'hover:bg-zinc-50'}`}
                             >
                                 <img 
                                     src={getProfileImageSource(group.group_dp_url)} 
                                     alt="Group DP" 
-                                    className="w-12 h-12 rounded-full object-cover bg-slate-200 border border-slate-200" 
+                                    className="size-12 rounded-full object-cover bg-zinc-100 border border-zinc-200 shrink-0" 
                                 />
                                 <div className="ml-3 flex-1 min-w-0">
                                     <div className="flex justify-between items-baseline mb-0.5">
-                                        <h3 className="font-semibold text-slate-800 text-sm truncate flex items-center gap-1.5">
+                                        <h3 className="font-semibold text-zinc-900 text-sm truncate flex items-center gap-1.5">
                                             {group.name}
-                                            {isReadOnly && <Megaphone className="w-3 h-3 text-slate-400" />}
+                                            {isReadOnly && <Megaphone className="size-3 text-zinc-400 shrink-0" />}
                                         </h3>
-                                        <span className={`text-xs whitespace-nowrap ml-2 ${unread ? 'text-blue-600 font-bold' : 'text-slate-500'}`}>
+                                        <span className={`text-[11px] whitespace-nowrap ml-2 font-medium ${unread ? 'text-primary font-semibold' : 'text-zinc-500'}`}>
                                             {renderDate(group.last_message_timestamp || group.created_at)}
                                         </span>
                                     </div>
-                                    <div className="flex justify-between items-center">
-                                        <p className={`text-sm truncate mr-2 ${unread ? 'text-slate-900 font-medium' : 'text-slate-500'}`}>
+                                    <div className="flex justify-between items-center mt-0.5">
+                                        <p className={`text-[13px] truncate mr-2 ${unread ? 'text-zinc-900 font-medium' : 'text-zinc-500'}`}>
                                             {group.last_message_text || "No messages yet"}
                                         </p>
                                         {unread && (
-                                            <div className="w-5 h-5 bg-blue-600 rounded-full flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0">
+                                            <div className="min-w-[20px] h-5 px-1.5 bg-primary rounded-full flex items-center justify-center text-white text-[10px] font-semibold shrink-0">
                                                 {group.unread_count > 99 ? '99+' : group.unread_count}
                                             </div>
                                         )}
@@ -104,9 +104,9 @@ const GroupListScreen = ({ groups, onSelectGroup, selectedGroup, onCreateGroup, 
                         );
                     })
                 ) : (
-                    <div className="flex flex-col items-center justify-center h-40 text-slate-400">
-                        <MessageSquare className="w-8 h-8 mb-2 opacity-50" />
-                        <span className="text-sm">No groups found</span>
+                    <div className="flex flex-col items-center justify-center h-40 text-zinc-400">
+                        <MessageSquare className="size-8 mb-2 opacity-50" />
+                        <span className="text-sm font-medium">No groups found</span>
                     </div>
                 )}
             </div>

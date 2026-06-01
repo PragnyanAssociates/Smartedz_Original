@@ -4,7 +4,7 @@ import { API_BASE_URL } from '../../apiConfig';
 import { ArrowLeft, Loader2, Save, CheckCircle2, XCircle } from 'lucide-react';
 
 // =====================================================================
-//  GradingView — load one attempt + its answers, allow teacher to
+//  GradingView - load one attempt + its answers, allow teacher to
 //  award marks per question, write overall feedback, then submit.
 // =====================================================================
 
@@ -65,38 +65,40 @@ export default function GradingView({ attemptId, examTitle, totalMarks, onBack }
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Grading failed');
-      alert(`Saved · final score ${data.final_score} / ${totalMarks}`);
+      alert(`Saved | final score ${data.final_score} / ${totalMarks}`);
       onBack();
     } catch (e) { alert(e.message); }
     setSaving(false);
   };
 
   if (loading) {
-    return <div className="text-center py-16"><Loader2 className="animate-spin w-8 h-8 text-blue-600 mx-auto" /></div>;
+    return <div className="h-64 flex items-center justify-center"><Loader2 className="animate-spin size-8 text-primary" /></div>;
   }
 
   if (!attempt) return null;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6 animate-in fade-in duration-300">
+      
+      {/* Top Navigation */}
       <button onClick={onBack}
-        className="inline-flex items-center gap-1.5 text-sm font-bold text-slate-500 hover:text-blue-600">
-        <ArrowLeft size={14} /> Back to submissions
+        className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
+        <ArrowLeft className="size-4" /> Back to submissions
       </button>
 
       {/* Header */}
-      <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Grading</p>
-          <h2 className="text-xl font-black text-slate-800 mt-1">{examTitle}</h2>
-          <p className="text-sm text-slate-500 mt-0.5">
-            Student: <span className="font-bold text-slate-700">{attempt.student_name}</span>
-            {attempt.roll_no && <span className="text-slate-400"> · Roll {attempt.roll_no}</span>}
+          <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Grading</p>
+          <h2 className="text-lg font-semibold text-zinc-900 mt-1">{examTitle}</h2>
+          <p className="text-sm text-zinc-500 mt-0.5 flex flex-wrap items-center gap-1.5">
+            <span>Student: <span className="font-semibold text-zinc-700">{attempt.student_name}</span></span>
+            {attempt.roll_no && <span className="text-zinc-400">| Roll {attempt.roll_no}</span>}
           </p>
         </div>
-        <div className="bg-blue-50 text-blue-700 px-5 py-3 rounded-2xl text-center">
-          <div className="text-3xl font-black">{totalAwarded.toFixed(2)}</div>
-          <div className="text-[10px] font-black uppercase tracking-widest opacity-70">out of {totalMarks}</div>
+        <div className="bg-primary/5 text-primary px-5 py-3 rounded-lg text-center ring-1 ring-primary/20 shrink-0 w-full sm:w-auto">
+          <div className="text-2xl font-bold tabular-nums leading-none">{totalAwarded.toFixed(2)}</div>
+          <div className="text-[10px] font-semibold uppercase tracking-wider opacity-80 mt-1">out of {totalMarks}</div>
         </div>
       </div>
 
@@ -106,54 +108,61 @@ export default function GradingView({ attemptId, examTitle, totalMarks, onBack }
           const isMCQ = it.question_type === 'multiple_choice';
           const isCorrect = isMCQ && it.answer_text === it.correct_answer;
           return (
-            <div key={it.question_id} className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
-              <div className="p-5 border-b border-slate-100">
-                <div className="flex items-start justify-between gap-3">
+            <div key={it.question_id} className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col">
+              <div className="p-4 sm:p-5 border-b border-zinc-100 bg-zinc-50/50">
+                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
                   <div>
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                      Question {idx + 1} · Max {it.marks} marks · {isMCQ ? 'MCQ' : 'Written'}
+                    <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1.5 flex items-center flex-wrap gap-1.5">
+                      <span>Question {idx + 1}</span>
+                      <span className="text-zinc-300">|</span>
+                      <span>Max {it.marks} marks</span>
+                      <span className="text-zinc-300">|</span>
+                      <span>{isMCQ ? 'MCQ' : 'Written'}</span>
                     </p>
-                    <p className="font-bold text-slate-800 mt-1">{it.question_text}</p>
+                    <p className="font-medium text-zinc-900 text-sm leading-relaxed">{it.question_text}</p>
                   </div>
                   {isMCQ && (
-                    isCorrect
-                      ? <span className="text-[10px] font-black uppercase tracking-widest bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-full whitespace-nowrap inline-flex items-center gap-1"><CheckCircle2 size={12} /> Correct</span>
-                      : <span className="text-[10px] font-black uppercase tracking-widest bg-red-50 text-red-700 px-2.5 py-1 rounded-full whitespace-nowrap inline-flex items-center gap-1"><XCircle size={12} /> Wrong</span>
+                    <div className="shrink-0 self-start">
+                      {isCorrect
+                        ? <span className="text-[10px] font-semibold uppercase tracking-wider bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-md whitespace-nowrap inline-flex items-center gap-1.5 ring-1 ring-emerald-600/20"><CheckCircle2 className="size-3.5" /> Correct</span>
+                        : <span className="text-[10px] font-semibold uppercase tracking-wider bg-red-50 text-red-700 px-2.5 py-1 rounded-md whitespace-nowrap inline-flex items-center gap-1.5 ring-1 ring-red-600/20"><XCircle className="size-3.5" /> Wrong</span>
+                      }
+                    </div>
                   )}
                 </div>
               </div>
 
-              <div className="p-5 space-y-3 bg-slate-50/30">
+              <div className="p-4 sm:p-5 space-y-4">
                 {/* Student answer */}
                 <div>
-                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">Student's Answer</p>
-                  <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-sm text-slate-700">
+                  <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1.5">Student's Answer</p>
+                  <div className="bg-primary/5 border border-primary/20 rounded-md p-3 text-sm text-zinc-800">
                     {isMCQ && it.options && it.answer_text
-                      ? `${it.answer_text} · ${it.options[it.answer_text] || '—'}`
-                      : (it.answer_text || <span className="italic text-slate-400">Not answered</span>)}
+                      ? <><span className="font-semibold">{it.answer_text}</span> - {it.options[it.answer_text] || '-'}</>
+                      : (it.answer_text || <span className="italic text-zinc-400">Not answered</span>)}
                   </div>
                 </div>
 
                 {/* Correct answer (MCQ only) */}
                 {isMCQ && it.correct_answer && it.options && (
                   <div>
-                    <p className="text-[10px] font-black text-emerald-700 uppercase tracking-widest mb-1.5">Correct Answer</p>
-                    <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-3 text-sm text-emerald-800">
-                      {it.correct_answer} · {it.options[it.correct_answer]}
+                    <p className="text-[10px] font-semibold text-emerald-700 uppercase tracking-wider mb-1.5">Correct Answer</p>
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-md p-3 text-sm text-emerald-800">
+                      <span className="font-semibold">{it.correct_answer}</span> - {it.options[it.correct_answer]}
                     </div>
                   </div>
                 )}
 
                 {/* Marks input */}
                 <div>
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-1.5">
+                  <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider block mb-1.5">
                     Award Marks (max {it.marks})
                   </label>
                   <input type="text" inputMode="decimal"
                     value={grades[it.question_id] ?? ''}
                     onChange={e => setMark(it.question_id, e.target.value)}
-                    placeholder={`0 – ${it.marks}`}
-                    className="w-full sm:w-48 bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500/10" />
+                    placeholder={`0 - ${it.marks}`}
+                    className="h-9 w-full sm:w-48 bg-white border border-zinc-200 rounded-md px-3 text-sm font-semibold tabular-nums outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors" />
                 </div>
               </div>
             </div>
@@ -162,25 +171,25 @@ export default function GradingView({ attemptId, examTitle, totalMarks, onBack }
       </div>
 
       {/* Overall feedback */}
-      <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-6 space-y-2">
-        <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block">
-          Overall Feedback (optional)
+      <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm p-5 sm:p-6 space-y-2">
+        <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider block">
+          Overall Feedback <span className="text-zinc-400 normal-case tracking-normal">(Optional)</span>
         </label>
         <textarea value={feedback} onChange={e => setFeedback(e.target.value)} rows={3}
-          placeholder="Write feedback the student will see…"
-          className="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-2.5 text-sm resize-none outline-none focus:ring-2 focus:ring-blue-500/10" />
+          placeholder="Write feedback the student will see..."
+          className="w-full bg-white border border-zinc-200 rounded-md px-3 py-2.5 text-sm resize-none outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors min-h-[80px]" />
       </div>
 
       {/* Submit */}
-      <div className="flex justify-end gap-3">
+      <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 pb-8">
         <button onClick={onBack} disabled={saving}
-          className="px-5 py-3 bg-white border border-slate-200 text-slate-600 rounded-xl font-bold text-sm hover:bg-slate-50">
+          className="h-10 px-6 bg-white border border-zinc-200 text-zinc-700 rounded-md font-semibold text-xs hover:bg-zinc-50 transition-colors w-full sm:w-auto">
           Cancel
         </button>
         <button onClick={handleSubmit} disabled={saving}
-          className="px-6 py-3 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded-xl font-bold text-sm flex items-center gap-2 shadow-lg shadow-emerald-100">
-          {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-          {saving ? 'Saving…' : 'Submit Grades'}
+          className="h-10 px-8 bg-emerald-600 hover:bg-emerald-700 disabled:bg-zinc-200 disabled:text-zinc-400 text-white rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors w-full sm:w-auto">
+          {saving ? <Loader2 className="size-4 animate-spin shrink-0" /> : <Save className="size-4 shrink-0" />}
+          {saving ? 'Saving...' : 'Submit Grades'}
         </button>
       </div>
     </div>
