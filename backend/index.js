@@ -286,24 +286,155 @@ app.get('/api/admin/data/:instId', async (req, res) => {
 // =====================================================================
 // === 4. USERS — Full CRUD ============================================
 // =====================================================================
+
+function _todayISO() {
+    return new Date().toISOString().slice(0, 10);
+}
+
+// Is this string a real, parseable date?
+function _isValidDate(s) {
+    if (!s) return false;
+    const d = new Date(s);
+    return !isNaN(d.getTime());
+}
+
+// Synchronous format / range validation. Returns an error string, or
+// null when everything is fine.
+function validateUserData(body) {
+    const {
+        role, phone_no, aadhar_no, pen_no, tc_number,
+        joining_date,
+        school_joined_date, school_joined_grade
+    } = body;
+
+    const today = _todayISO();
+    const isStaff = role === 'Super Admin' || (role || '').toLowerCase().includes('teacher');
+
+    // --- Phone: exactly 10 digits, numbers only, cannot start with 0 ---
+    if (phone_no && !/^[1-9][0-9]{9}$/.test(String(phone_no))) {
+        return 'Phone number must be exactly 10 digits (numbers only) and cannot start with 0.';
+    }
+
+    // --- Aadhaar: exactly 12 digits, numbers only ----------------------
+    if (aadhar_no && !/^[0-9]{12}$/.test(String(aadhar_no))) {
+        return 'Aadhaar number must be exactly 12 digits (numbers only).';
+    }
+
+    // --- PEN: alphanumeric, 6-20 chars ---------------------------------
+    if (pen_no && !/^[A-Za-z0-9]{6,20}$/.test(String(pen_no))) {
+        return 'PEN number must be 6-20 characters, letters and numbers only.';
+    }
+
+    // --- TC number: alphanumeric, 5-20 chars ---------------------------
+    if (tc_number && !/^[A-Za-z0-9]{5,20}$/.test(String(tc_number))) {
+        return 'TC number must be 5-20 characters, letters and numbers only.';
+    }
+
+    // --- Staff joining date: valid, not in the future ------------------
+    if (isStaff && joining_date) {
+        if (!_isValidDate(joining_date)) return 'Joining date is not a valid date.';
+        if (joining_date > today)        return 'Joining date cannot be in the future.';
+    }
+
+    // --- Student school joined grade: whole number 1-12 ----------------
+    if (school_joined_grade !== '' && school_joined_grade != null) {
+        const g = parseInt(school_joined_grade, 10);
+        if (isNaN(g) || g < 1 || g > 12) {
+            return 'School joined grade must be a whole number between 1 and 12.';
+        }
+    }
+
+    // --- Student school joined date: valid, not in the future ----------
+    if (school_joined_date) {
+        if (!_isValidDate(school_joined_date)) return 'School joined date is not a valid date.';
+        if (school_joined_date > today)        return 'School joined date cannot be in the future.';
+    }
+
+    return null;
+}
+
+// Is `value` already used by ANOTHER user in the same school?
+// `column` is always a hard-coded name from our own code (never user
+// input), so interpolating it here is safe.
+async function _isFieldTaken(conn, instId, column, value, excludeId) {
+    if (!value) return false;
+    const [rows] = await conn.execute(
+        `SELECT id FROM users WHERE institutionId = ? AND ${column} = ? AND id <> ?`,
+        [instId, value, excludeId || 0]
+    );
+    return rows.length > 0;
+}
+
+// Roll No, PEN No and TC No must each be unique within the school.
+// Returns an error string, or null when all are free.
+async function checkUserUniqueness(conn, instId, body, excludeId) {
+    const checks = [
+        ['roll_no',   body.roll_no,   'Roll number'],
+        ['pen_no',    body.pen_no,    'PEN number'],
+        ['tc_number', body.tc_number, 'TC number'],
+    ];
+    for (const [col, val, label] of checks) {
+        if (val && await _isFieldTaken(conn, instId, col, val, excludeId)) {
+            return `${label} "${val}" is already used by another user in this school.`;
+        }
+    }
+    return null;
+}
+
+
+// ---------------------------------------------------------------------
+//  4.1  Create user
+// ---------------------------------------------------------------------
 app.post('/api/admin/users', async (req, res) => {
-    const { name, email, username, password, role, institutionId, modules,
-            phone_no, roll_no, admission_no, class_id, section, status,
-            dob, gender, address, profile_pic, subject_ids } = req.body;
+    const body = req.body;
+    const {
+        name, email, username, password, role, institutionId, modules,
+        phone_no, roll_no, admission_no, class_id, section, status,
+        dob, gender, address, profile_pic, subject_ids,
+        // staff
+        aadhar_no, joining_date, prev_salary, present_salary, experience,
+        // student
+        pen_no, parent_name, admission_date,
+        school_joined_date, school_joined_grade, tc_number
+    } = body;
+
+    // 1) Format / range validation (fast, no DB needed)
+    const vErr = validateUserData(body);
+    if (vErr) return res.status(400).json({ error: vErr });
+
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
+
+        // 2) Uniqueness (roll / PEN / TC) within this school
+        const uErr = await checkUserUniqueness(conn, institutionId, body, 0);
+        if (uErr) { await conn.rollback(); return res.status(400).json({ error: uErr }); }
+
+        // 3) Insert
         const [result] = await conn.execute(
             `INSERT INTO users
               (name, email, username, password, role, institutionId, modules,
                phone_no, roll_no, admission_no, class_id, section, status,
-               dob, gender, address, profile_pic)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+               dob, gender, address, profile_pic,
+               aadhar_no, joining_date, prev_salary, present_salary, experience,
+               pen_no, parent_name, admission_date,
+               school_joined_date, school_joined_grade, tc_number)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [name, email, username || null, password, role, institutionId, modules || null,
              phone_no || null, roll_no || null, admission_no || null,
              class_id || null, section || null, status || 'active',
-             dob || null, gender || null, address || null, profile_pic || null]
+             dob || null, gender || null, address || null, profile_pic || null,
+             // staff
+             aadhar_no || null, joining_date || null,
+             prev_salary || null, present_salary || null, experience || null,
+             // student
+             pen_no || null, parent_name || null, admission_date || null,
+             school_joined_date || null,
+             school_joined_grade ? parseInt(school_joined_grade, 10) : null,
+             tc_number || null]
         );
+
         await syncTeacherSubjects(conn, result.insertId, role, subject_ids);
         await conn.commit();
         res.json({ success: true });
@@ -316,25 +447,66 @@ app.post('/api/admin/users', async (req, res) => {
     } finally { conn.release(); }
 });
 
+
+// ---------------------------------------------------------------------
+//  4.2  Update user
+// ---------------------------------------------------------------------
 app.put('/api/admin/users/:id', async (req, res) => {
     const { id } = req.params;
-    const { name, email, username, password, role, modules,
-            phone_no, roll_no, admission_no, class_id, section, status,
-            dob, gender, address, profile_pic, subject_ids } = req.body;
+    const body = req.body;
+    const {
+        name, email, username, password, role, modules,
+        phone_no, roll_no, admission_no, class_id, section, status,
+        dob, gender, address, profile_pic, subject_ids,
+        // staff
+        aadhar_no, joining_date, prev_salary, present_salary, experience,
+        // student
+        pen_no, parent_name, admission_date,
+        school_joined_date, school_joined_grade, tc_number
+    } = body;
+
+    // 1) Format / range validation
+    const vErr = validateUserData(body);
+    if (vErr) return res.status(400).json({ error: vErr });
+
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
+
+        // 2) Find this user's school so uniqueness is scoped correctly
+        const [owner] = await conn.execute('SELECT institutionId FROM users WHERE id = ?', [id]);
+        if (owner.length === 0) { await conn.rollback(); return res.status(404).json({ error: 'User not found.' }); }
+        const instId = owner[0].institutionId;
+
+        // 3) Uniqueness (excluding this same user)
+        const uErr = await checkUserUniqueness(conn, instId, body, parseInt(id, 10));
+        if (uErr) { await conn.rollback(); return res.status(400).json({ error: uErr }); }
+
+        // 4) Update
         await conn.execute(
             `UPDATE users SET
                 name=?, email=?, username=?, password=?, role=?, modules=?,
                 phone_no=?, roll_no=?, admission_no=?, class_id=?, section=?, status=?,
-                dob=?, gender=?, address=?, profile_pic=?
+                dob=?, gender=?, address=?, profile_pic=?,
+                aadhar_no=?, joining_date=?, prev_salary=?, present_salary=?, experience=?,
+                pen_no=?, parent_name=?, admission_date=?,
+                school_joined_date=?, school_joined_grade=?, tc_number=?
               WHERE id=?`,
             [name, email, username || null, password, role, modules || null,
              phone_no || null, roll_no || null, admission_no || null,
              class_id || null, section || null, status || 'active',
-             dob || null, gender || null, address || null, profile_pic || null, id]
+             dob || null, gender || null, address || null, profile_pic || null,
+             // staff
+             aadhar_no || null, joining_date || null,
+             prev_salary || null, present_salary || null, experience || null,
+             // student
+             pen_no || null, parent_name || null, admission_date || null,
+             school_joined_date || null,
+             school_joined_grade ? parseInt(school_joined_grade, 10) : null,
+             tc_number || null,
+             id]
         );
+
         await syncTeacherSubjects(conn, parseInt(id, 10), role, subject_ids);
         await conn.commit();
         res.json({ success: true });
@@ -347,79 +519,13 @@ app.put('/api/admin/users/:id', async (req, res) => {
     } finally { conn.release(); }
 });
 
+
+// ---------------------------------------------------------------------
+//  4.3  Delete user
+// ---------------------------------------------------------------------
 app.delete('/api/admin/users/:id', async (req, res) => {
     try {
         await db.execute('DELETE FROM users WHERE id = ?', [req.params.id]);
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-
-// =====================================================================
-// === 5. ROLES — system roles cannot be renamed or deleted ============
-// =====================================================================
-app.post('/api/admin/roles', async (req, res) => {
-    const { role_name, institutionId } = req.body;
-    const trimmed = (role_name || '').trim();
-    if (!trimmed) return res.status(400).json({ error: 'Role name is required.' });
-    // Disallow creating a duplicate of any system role name (case-sensitive
-    // unique key handles same-case; we also block trivial collisions).
-    try {
-        await db.execute('INSERT INTO roles (role_name, institutionId) VALUES (?, ?)', [trimmed, institutionId]);
-        res.json({ success: true });
-    } catch (err) {
-        if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
-            return res.status(400).json({ error: 'A role with that name already exists.' });
-        }
-        res.status(500).json({ error: err.message });
-    }
-});
-
-app.put('/api/admin/roles/:id', async (req, res) => {
-    const { id } = req.params;
-    const { role_name, institutionId } = req.body;
-    const conn = await db.getConnection();
-    try {
-        await conn.beginTransaction();
-        const [existing] = await conn.execute('SELECT role_name FROM roles WHERE id = ?', [id]);
-        if (existing.length === 0) {
-            await conn.rollback();
-            return res.status(404).json({ error: 'Role not found' });
-        }
-        const oldName = existing[0].role_name;
-
-        // System role guard
-        if (isSystemRole(oldName)) {
-            await conn.rollback();
-            return res.status(400).json({ error: `The system role "${oldName}" cannot be renamed.` });
-        }
-        // Also block renaming into a system role name
-        if (isSystemRole(role_name)) {
-            await conn.rollback();
-            return res.status(400).json({ error: `"${role_name}" is a reserved system role name.` });
-        }
-
-        await conn.execute('UPDATE roles SET role_name = ? WHERE id = ?', [role_name, id]);
-        await conn.execute('UPDATE users SET role = ? WHERE role = ? AND institutionId = ?', [role_name, oldName, institutionId]);
-        await conn.commit();
-        res.json({ success: true });
-    } catch (err) {
-        await conn.rollback();
-        if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
-            return res.status(400).json({ error: 'A role with that name already exists.' });
-        }
-        res.status(500).json({ error: err.message });
-    } finally { conn.release(); }
-});
-
-app.delete('/api/admin/roles/:id', async (req, res) => {
-    try {
-        const [rows] = await db.execute('SELECT role_name FROM roles WHERE id = ?', [req.params.id]);
-        if (rows.length === 0) return res.status(404).json({ error: 'Role not found' });
-        if (isSystemRole(rows[0].role_name)) {
-            return res.status(400).json({ error: `The system role "${rows[0].role_name}" cannot be deleted.` });
-        }
-        await db.execute('DELETE FROM roles WHERE id = ?', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });

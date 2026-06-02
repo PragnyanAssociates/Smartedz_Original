@@ -8,22 +8,10 @@ import { pageLabel, fileToBase64 } from './SyllabusUtils';
 
 // =====================================================================
 //  Subject Index — textbook-first, auto-detected chapters.
-//    LEFT   - Chapters (auto: Index + chapter-wise; edit/delete to fix)
+//    LEFT   - Chapters (auto from the book's index; edit/delete to fix)
 //    MIDDLE - PDF viewer showing ONLY the selected chapter's pages
 //    RIGHT  - Keywords for the selected chapter
-//
-//  Page numbers shown are the BOOK'S PRINTED numbers (printed_from/to,
-//  computed by the backend from the detected front-matter offset). The
-//  PDF still opens at exactly the right pages.
 // =====================================================================
-
-// printed label for a chapter (falls back to PDF pages if no printed map)
-function chapterLabel(ch) {
-  if (/^index$/i.test((ch.title || '').trim())) return '';
-  const from = ch.printed_from != null ? ch.printed_from : ch.page_from;
-  const to   = ch.printed_to   != null ? ch.printed_to   : ch.page_to;
-  return pageLabel(from, to);
-}
 
 export default function SubjectIndex({ syllabus, canEdit, activeYear, onBack, onOpenPeriods }) {
   const [chapters, setChapters] = useState([]);
@@ -183,6 +171,24 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
   const [form, setForm] = useState({ title: '', page_from: '', page_to: '' });
   const [saving, setSaving] = useState(false);
 
+  const [offset, setOffset]    = useState(book?.page_offset ?? 0);
+  const [savingOff, setSavOff] = useState(false);
+  useEffect(() => { setOffset(book?.page_offset ?? 0); }, [book]);
+
+  const saveOffset = async () => {
+    setSavOff(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/syllabus/${syllabusId}/book/offset`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ page_offset: parseInt(offset, 10) || 0 })
+      });
+      if (!res.ok) throw new Error('Could not save offset');
+      reload();
+    } catch (e) { alert(e.message); }
+    setSavOff(false);
+  };
+
   const openCreate = () => {
     setEditing(null);
     setForm({ title: '', page_from: '', page_to: '' });
@@ -190,10 +196,7 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
   };
   const openEdit = (ch) => {
     setEditing(ch);
-    // edit in PRINTED numbers (what the teacher sees in the book)
-    const pf = ch.printed_from != null ? ch.printed_from : ch.page_from;
-    const pt = ch.printed_to   != null ? ch.printed_to   : ch.page_to;
-    setForm({ title: ch.title || '', page_from: pf || '', page_to: pt || '' });
+    setForm({ title: ch.title || '', page_from: ch.page_from || '', page_to: ch.page_to || '' });
     setModalOpen(true);
   };
 
@@ -202,7 +205,6 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
     if (!form.title.trim()) return alert('Chapter title is required.');
     setSaving(true);
     try {
-      // send PRINTED numbers; the backend converts to PDF pages
       const body = {
         title: form.title.trim(),
         page_from: form.page_from ? parseInt(form.page_from, 10) : null,
@@ -251,50 +253,61 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
       <div className="overflow-y-auto custom-scrollbar flex-1 p-2 space-y-1">
         {chapters.length === 0 ? (
           <p className="p-6 text-center text-sm text-zinc-400 font-medium">No chapters detected.</p>
-        ) : chapters.map((ch) => {
-          const label = chapterLabel(ch);
-          return (
-            <div key={ch.id}
-              className={`group rounded-md transition-all cursor-pointer ring-1 ring-inset ${
-                selectedId === ch.id
-                  ? 'bg-primary/5 ring-primary/20 shadow-sm'
-                  : 'bg-white ring-transparent hover:ring-black/5 hover:bg-zinc-50'
-              }`}
-              onClick={() => onSelect(ch.id)}>
-              <div className="p-3 flex items-start gap-3">
-                <BookMarked className={`size-4 mt-0.5 shrink-0 transition-colors ${selectedId === ch.id ? 'text-primary' : 'text-zinc-400'}`} />
-                <div className="min-w-0 flex-1">
-                  <p className={`font-semibold text-sm leading-tight transition-colors truncate ${
-                    selectedId === ch.id ? 'text-primary' : 'text-zinc-900 group-hover:text-primary'
-                  }`}>
-                    {ch.title}
-                  </p>
-                  {label && (
-                    <span className="inline-block text-[10px] font-semibold text-zinc-500 bg-zinc-100 px-1.5 py-0.5 rounded mt-1.5">
-                      {label}
-                    </span>
-                  )}
-                </div>
-                {canEdit && (
-                  <div className="flex flex-col gap-1 shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                    <button onClick={e => { e.stopPropagation(); openEdit(ch); }}
-                      className="p-1.5 text-zinc-400 hover:text-primary hover:bg-white rounded-md transition-colors shadow-sm ring-1 ring-transparent hover:ring-black/5">
-                      <Edit className="size-3.5" />
-                    </button>
-                    <button onClick={e => { e.stopPropagation(); handleDelete(ch); }}
-                      className="p-1.5 text-zinc-400 hover:text-red-600 hover:bg-white rounded-md transition-colors shadow-sm ring-1 ring-transparent hover:ring-black/5">
-                      <Trash2 className="size-3.5" />
-                    </button>
-                  </div>
+        ) : chapters.map((ch) => (
+          <div key={ch.id}
+            className={`group rounded-md transition-all cursor-pointer ring-1 ring-inset ${
+              selectedId === ch.id
+                ? 'bg-primary/5 ring-primary/20 shadow-sm'
+                : 'bg-white ring-transparent hover:ring-black/5 hover:bg-zinc-50'
+            }`}
+            onClick={() => onSelect(ch.id)}>
+            <div className="p-3 flex items-start gap-3">
+              <BookMarked className={`size-4 mt-0.5 shrink-0 transition-colors ${selectedId === ch.id ? 'text-primary' : 'text-zinc-400'}`} />
+              <div className="min-w-0 flex-1">
+                <p className={`font-semibold text-sm leading-tight transition-colors truncate ${
+                  selectedId === ch.id ? 'text-primary' : 'text-zinc-900 group-hover:text-primary'
+                }`}>
+                  {ch.title}
+                </p>
+                {pageLabel(ch.page_from, ch.page_to) && (
+                  <span className="inline-block text-[10px] font-semibold text-zinc-500 bg-zinc-100 px-1.5 py-0.5 rounded mt-1.5">
+                    {pageLabel(ch.page_from, ch.page_to)}
+                  </span>
                 )}
               </div>
+              {canEdit && (
+                <div className="flex flex-col gap-1 shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                  <button onClick={e => { e.stopPropagation(); openEdit(ch); }}
+                    className="p-1.5 text-zinc-400 hover:text-primary hover:bg-white rounded-md transition-colors shadow-sm ring-1 ring-transparent hover:ring-black/5">
+                    <Edit className="size-3.5" />
+                  </button>
+                  <button onClick={e => { e.stopPropagation(); handleDelete(ch); }}
+                    className="p-1.5 text-zinc-400 hover:text-red-600 hover:bg-white rounded-md transition-colors shadow-sm ring-1 ring-transparent hover:ring-black/5">
+                    <Trash2 className="size-3.5" />
+                  </button>
+                </div>
+              )}
             </div>
-          );
-        })}
+          </div>
+        ))}
       </div>
 
       {canEdit && (
-        <div className="p-3 border-t border-zinc-100 bg-zinc-50/50 shrink-0">
+        <div className="p-3 border-t border-zinc-100 bg-zinc-50/50 shrink-0 space-y-2">
+          <div className="flex items-center gap-2">
+            <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider shrink-0" title="If the book's printed page 1 is not the PDF's first page, set the difference here.">
+              Page offset
+            </label>
+            <input type="number" value={offset}
+              onChange={e => setOffset(e.target.value)}
+              className="h-8 w-16 bg-white border border-zinc-200 rounded-md px-2 text-xs text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm" />
+            <button onClick={saveOffset} disabled={savingOff}
+              className="h-8 px-3 bg-white ring-1 ring-black/5 shadow-sm hover:bg-zinc-50 text-zinc-700 rounded-md font-semibold text-xs flex items-center gap-1.5 transition-all">
+              {savingOff ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+              Apply
+            </button>
+          </div>
+
           <div className="flex gap-2">
             <button onClick={openCreate}
               className="h-9 flex-1 bg-white ring-1 ring-black/5 shadow-sm hover:bg-zinc-50 hover:ring-black/10 text-zinc-700 rounded-md font-semibold text-xs flex items-center justify-center gap-1.5 transition-all">
@@ -345,10 +358,6 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
                       className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
                   </div>
                 </div>
-                <p className="text-[11px] text-zinc-400 leading-relaxed">
-                  Use the page numbers printed in the book (the number at the
-                  bottom of the page). The viewer opens exactly at those pages.
-                </p>
               </div>
               <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
                 <button type="button" onClick={() => setModalOpen(false)} disabled={saving}
@@ -384,7 +393,6 @@ function DocumentPanel({ chapter }) {
 
   const url = `${API_BASE_URL}/admin/syllabus/chapter/${chapter.id}/pdf`;
   const openFull = () => window.open(url, '_blank');
-  const label = chapterLabel(chapter);
 
   return (
     <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm flex flex-col min-h-[500px] xl:min-h-[600px] flex-1 overflow-hidden">
@@ -394,9 +402,9 @@ function DocumentPanel({ chapter }) {
           <h3 className="font-semibold text-sm text-zinc-900 truncate">{chapter.title}</h3>
         </div>
         <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
-          {label && (
+          {pageLabel(chapter.page_from, chapter.page_to) && (
             <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mr-1">
-              {label}
+              {pageLabel(chapter.page_from, chapter.page_to)}
             </span>
           )}
           <button onClick={openFull} title="Open full screen"
@@ -416,7 +424,7 @@ function DocumentPanel({ chapter }) {
 
 
 // =====================================================================
-//  RIGHT - Keywords
+//  RIGHT - Keywords  (now: Term + Definition + Example)
 // =====================================================================
 function KeywordsPanel({ chapter, canEdit }) {
   const [keywords, setKeywords] = useState([]);
@@ -425,6 +433,7 @@ function KeywordsPanel({ chapter, canEdit }) {
   const [adding, setAdding]     = useState(false);
   const [newTerm, setNewTerm]   = useState('');
   const [newDef, setNewDef]     = useState('');
+  const [newExample, setNewEx]  = useState('');
 
   const load = useCallback(async () => {
     if (!chapter) { setKeywords([]); return; }
@@ -444,19 +453,26 @@ function KeywordsPanel({ chapter, canEdit }) {
     const q = query.toLowerCase();
     return keywords.filter(k =>
       (k.term || '').toLowerCase().includes(q) ||
-      (k.definition || '').toLowerCase().includes(q));
+      (k.definition || '').toLowerCase().includes(q) ||
+      (k.example || '').toLowerCase().includes(q));
   }, [keywords, query]);
+
+  const resetForm = () => { setNewTerm(''); setNewDef(''); setNewEx(''); };
 
   const handleAdd = async (e) => {
     e.preventDefault();
-    if (!newTerm.trim()) return;
+    if (!newTerm.trim() || !newDef.trim()) return;
     try {
       const res = await fetch(`${API_BASE_URL}/admin/syllabus/chapter/${chapter.id}/keywords`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ term: newTerm.trim(), definition: newDef.trim() || null })
+        body: JSON.stringify({
+          term: newTerm.trim(),
+          definition: newDef.trim(),
+          example: newExample.trim() || null
+        })
       });
       if (!res.ok) throw new Error('Could not add keyword');
-      setNewTerm(''); setNewDef(''); setAdding(false);
+      resetForm(); setAdding(false);
       load();
     } catch (e) { alert(e.message); }
   };
@@ -481,7 +497,7 @@ function KeywordsPanel({ chapter, canEdit }) {
             {keywords.length} items
           </span>
           {canEdit && chapter && (
-            <button onClick={() => setAdding(a => !a)}
+            <button onClick={() => { setAdding(a => !a); if (adding) resetForm(); }}
               className="size-7 bg-primary/10 text-primary hover:bg-primary/20 rounded-md flex items-center justify-center transition-colors">
               {adding ? <X className="size-3.5" /> : <Plus className="size-3.5" />}
             </button>
@@ -497,13 +513,34 @@ function KeywordsPanel({ chapter, canEdit }) {
         <div className="flex flex-col flex-1 p-3 overflow-hidden">
           {canEdit && adding && (
             <form onSubmit={handleAdd} className="bg-zinc-50 ring-1 ring-inset ring-black/5 rounded-md p-3 mb-4 space-y-2.5 shrink-0">
-              <input value={newTerm} onChange={e => setNewTerm(e.target.value)} required
-                placeholder="Keyword / term *"
-                className="h-8 w-full bg-white border border-zinc-200 rounded-md px-2.5 text-xs text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
-              <input value={newDef} onChange={e => setNewDef(e.target.value)}
-                placeholder="Meaning (optional)"
-                className="h-8 w-full bg-white border border-zinc-200 rounded-md px-2.5 text-xs text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
-              <button type="submit" disabled={!newTerm.trim()}
+              <div className="space-y-1">
+                <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">
+                  Keyword / Term <span className="text-red-500">*</span>
+                </label>
+                <input value={newTerm} onChange={e => setNewTerm(e.target.value)} required
+                  placeholder="e.g. Photosynthesis"
+                  className="h-8 w-full bg-white border border-zinc-200 rounded-md px-2.5 text-xs text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">
+                  Definition <span className="text-red-500">*</span>
+                </label>
+                <textarea value={newDef} onChange={e => setNewDef(e.target.value)} required rows={2}
+                  placeholder="What the term means"
+                  className="w-full bg-white border border-zinc-200 rounded-md px-2.5 py-1.5 text-xs text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors resize-y leading-relaxed" />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
+                  Example
+                </label>
+                <textarea value={newExample} onChange={e => setNewEx(e.target.value)} rows={2}
+                  placeholder="A sentence or case that illustrates it"
+                  className="w-full bg-white border border-zinc-200 rounded-md px-2.5 py-1.5 text-xs text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors resize-y leading-relaxed" />
+              </div>
+
+              <button type="submit" disabled={!newTerm.trim() || !newDef.trim()}
                 className="h-8 w-full bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md font-semibold text-xs transition-colors shadow-sm mt-1">
                 Add Keyword
               </button>
@@ -530,6 +567,12 @@ function KeywordsPanel({ chapter, canEdit }) {
                   <p className="font-semibold text-sm text-zinc-900 leading-tight">{k.term}</p>
                   {k.definition && (
                     <p className="text-xs text-zinc-500 mt-1 leading-relaxed">{k.definition}</p>
+                  )}
+                  {k.example && (
+                    <p className="text-xs text-zinc-500 mt-1.5 leading-relaxed bg-zinc-50 ring-1 ring-inset ring-black/5 rounded px-2 py-1">
+                      <span className="font-semibold text-zinc-600">Example: </span>
+                      <span className="text-zinc-500 italic">{k.example}</span>
+                    </p>
                   )}
                 </div>
                 {canEdit && (
