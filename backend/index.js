@@ -2600,84 +2600,156 @@ app.get('/api/admin/performance/teacher/:teacherId', async (req, res) => {
 // === 19. GALLERY =====================================================
 // =====================================================================
 
-// Ensure upload directory exists
-const uploadDir = 'public/uploads/gallery';
-if (!fs.existsSync(uploadDir)) { fs.mkdirSync(uploadDir, { recursive: true }); }
 
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, uploadDir),
-    filename: (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname))
+// Keep the uploaded file in memory so we can write its bytes straight
+// into the database — no disk files are created anymore.
+const galleryUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 50 * 1024 * 1024 } // 50 MB per file
 });
-const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } }); // 50MB limit
 
-// Serve static files so frontend can see images
-app.use('/public', express.static('public'));
 
-// --- 19.1 Get all albums (grouped by title) ---
+// --- 19.1 Get all albums (grouped by title) --------------------------
+//  Returns a `cover_id` (the newest item's id) instead of a file path,
+//  so the frontend can request the cover image from the media endpoint.
 app.get('/api/admin/gallery/:instId', async (req, res) => {
     try {
         const [rows] = await db.execute(
-            `SELECT title, event_date, COUNT(*) as item_count, 
-             MAX(file_path) as cover_image -- Simple logic for cover
-             FROM gallery 
-             WHERE institutionId = ? 
-             GROUP BY title, event_date 
-             ORDER BY event_date DESC`,
+            `SELECT title,
+                    event_date,
+                    COUNT(*)  AS item_count,
+                    MAX(id)   AS cover_id
+               FROM gallery
+              WHERE institutionId = ?
+              GROUP BY title, event_date
+              ORDER BY event_date DESC`,
             [req.params.instId]
         );
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 19.2 Get items in a specific album ---
+
+// --- 19.2 Get items in a specific album ------------------------------
+//  Note: we DO NOT select file_data here (it would be huge). The list
+//  only needs ids + types; the bytes are fetched per-item on demand.
 app.get('/api/admin/gallery/album/:instId/:title', async (req, res) => {
     try {
         const [rows] = await db.execute(
-            'SELECT * FROM gallery WHERE institutionId = ? AND title = ? ORDER BY created_at DESC',
+            `SELECT id, institutionId, title, file_type, mime_type,
+                    event_date, created_by, created_at
+               FROM gallery
+              WHERE institutionId = ? AND title = ?
+              ORDER BY created_at DESC`,
             [req.params.instId, req.params.title]
         );
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 19.3 Upload Media ---
-app.post('/api/admin/gallery/upload', upload.single('media'), async (req, res) => {
+
+// --- 19.3 Upload media -> store bytes in the DB ----------------------
+app.post('/api/admin/gallery/upload', galleryUpload.single('media'), async (req, res) => {
     const { title, event_date, institutionId, adminId } = req.body;
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-    const file_type = req.file.mimetype.startsWith('image') ? 'photo' : 'video';
-    const file_path = `/public/uploads/gallery/${req.file.filename}`;
+    const mime = req.file.mimetype || 'application/octet-stream';
+    const file_type = mime.startsWith('image') ? 'photo' : 'video';
 
     try {
         const [result] = await db.execute(
-            `INSERT INTO gallery (institutionId, title, file_path, file_type, event_date, created_by) 
-             VALUES (?, ?, ?, ?, ?, ?)`,
-            [institutionId, title, file_path, file_type, event_date, adminId]
+            `INSERT INTO gallery
+               (institutionId, title, file_path, file_data, mime_type, file_type, event_date, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [institutionId, title, null, req.file.buffer, mime, file_type, event_date, adminId || null]
         );
-        res.json({ success: true, insertId: result.insertId, filePath: file_path });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+        res.json({ success: true, insertId: result.insertId });
+    } catch (err) {
+        // A "max_allowed_packet" / "got a packet bigger than" error here
+        // means MySQL's max_allowed_packet is smaller than the file.
+        res.status(500).json({ error: err.message });
+    }
 });
 
-// --- 19.4 Delete Single Item ---
+
+// --- 19.4 Stream a single media item (image OR video) ----------------
+//  Supports HTTP Range requests, which browsers require to play and
+//  seek video. The frontend points <img>/<video> src at this URL.
+//    GET /api/admin/gallery/media/:id            -> inline view/play
+//    GET /api/admin/gallery/media/:id?download=1 -> force download
+app.get('/api/admin/gallery/media/:id', async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            'SELECT file_data, mime_type, file_type FROM gallery WHERE id = ?',
+            [req.params.id]
+        );
+        if (!rows.length || !rows[0].file_data) return res.status(404).send('Not found');
+
+        const data = rows[0].file_data; // Buffer (mysql2 returns LONGBLOB as Buffer)
+        const mime = rows[0].mime_type ||
+            (rows[0].file_type === 'photo' ? 'image/jpeg' : 'video/mp4');
+        const total = data.length;
+
+        // Force-download mode
+        if (req.query.download) {
+            const ext = mime.split('/')[1] || 'bin';
+            res.setHeader('Content-Disposition', `attachment; filename="media-${req.params.id}.${ext}"`);
+        }
+
+        const range = req.headers.range;
+        if (range) {
+            // e.g. "bytes=12345-" or "bytes=0-99999"
+            const m = String(range).match(/bytes=(\d*)-(\d*)/);
+            let start = m && m[1] ? parseInt(m[1], 10) : 0;
+            let end   = m && m[2] ? parseInt(m[2], 10) : total - 1;
+            if (isNaN(start)) start = 0;
+            if (isNaN(end) || end >= total) end = total - 1;
+
+            if (start > end || start >= total) {
+                res.status(416).setHeader('Content-Range', `bytes */${total}`);
+                return res.end();
+            }
+
+            const chunk = data.slice(start, end + 1);
+            res.status(206);
+            res.setHeader('Content-Range', `bytes ${start}-${end}/${total}`);
+            res.setHeader('Accept-Ranges', 'bytes');
+            res.setHeader('Content-Length', chunk.length);
+            res.setHeader('Content-Type', mime);
+            res.setHeader('Cache-Control', 'private, max-age=3600');
+            return res.end(chunk);
+        }
+
+        // No range header -> send the whole thing
+        res.setHeader('Content-Length', total);
+        res.setHeader('Content-Type', mime);
+        res.setHeader('Accept-Ranges', 'bytes');
+        res.setHeader('Cache-Control', 'private, max-age=3600');
+        return res.end(data);
+    } catch (err) {
+        res.status(500).send(err.message);
+    }
+});
+
+
+// --- 19.5 Delete single item -----------------------------------------
+//  Deleting the row removes the stored bytes too — no orphan files.
 app.delete('/api/admin/gallery/:id', async (req, res) => {
     try {
-        // In production, also delete the physical file using fs.unlink
         await db.execute('DELETE FROM gallery WHERE id = ?', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Example check for the Delete Album endpoint
+
+// --- 19.6 Delete a whole album (Super Admin only) --------------------
 app.delete('/api/admin/gallery/album/:instId/:title', async (req, res) => {
     const { role } = req.body; // Pass role from frontend
-    
-    // Simple safeguard: only Super Admin can delete whole albums
     if (role !== 'Super Admin') {
         return res.status(403).json({ error: "You don't have permission to delete albums." });
     }
-
     try {
-        await db.execute('DELETE FROM gallery WHERE institutionId = ? AND title = ?', 
+        await db.execute('DELETE FROM gallery WHERE institutionId = ? AND title = ?',
             [req.params.instId, req.params.title]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
