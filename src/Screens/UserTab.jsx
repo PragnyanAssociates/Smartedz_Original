@@ -68,7 +68,18 @@ export default function UserTab({ data, fetchData, user }) {
         (u.email || '').toLowerCase().includes(q) ||
         (u.username || '').toLowerCase().includes(q));
     }
-    return list;
+
+    // Order roll-wise: 1, 2, 3 ...  Users without a numeric roll number
+    // (e.g. staff) fall to the end, then sort alphabetically by name.
+    const rollVal = (u) => {
+      const n = parseInt(u.roll_no, 10);
+      return isNaN(n) ? Number.POSITIVE_INFINITY : n;
+    };
+    return [...list].sort((a, b) => {
+      const ra = rollVal(a), rb = rollVal(b);
+      if (ra !== rb) return ra - rb;
+      return (a.name || '').localeCompare(b.name || '');
+    });
   }, [activeUsers, activeRoleTab, activeClass, search]);
 
   // YYYY-MM-DD for <input type="date"> values
@@ -247,12 +258,12 @@ export default function UserTab({ data, fetchData, user }) {
       {/* Top action bar — responsive: stacks on mobile, row on >= sm */}
       <div className="flex flex-col sm:flex-row justify-between gap-4 sm:items-center mb-6">
         <div className="relative w-full sm:w-auto flex-1 max-w-sm">
-          <Search className="size-4 text-zinc-400 dark:text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2 shrink-0 pointer-events-none" />
+          <Search className="size-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 shrink-0 pointer-events-none" />
           <input
             placeholder="Search name, email, username..."
             value={search}
             onChange={e => setSearch(e.target.value)}
-            className="w-full text-sm bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-md pl-9 pr-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 transition-colors shadow-sm"
+            className="w-full text-sm bg-white border border-zinc-200 rounded-md pl-9 pr-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 text-zinc-900 placeholder:text-zinc-400 transition-colors shadow-sm"
           />
         </div>
         <button onClick={openAdd} className="bg-primary text-white px-4 py-2 rounded-md text-xs font-medium hover:bg-primary/90 transition-colors flex items-center justify-center gap-1.5 shadow-sm w-fit shrink-0 self-start sm:self-auto">
@@ -269,7 +280,7 @@ export default function UserTab({ data, fetchData, user }) {
             className={`px-3 py-1.5 rounded-md text-[10px] font-semibold uppercase tracking-wider transition-colors ${
               activeRoleTab === 'all'
                 ? 'bg-primary/10 text-primary ring-1 ring-primary/20'
-                : 'bg-white dark:bg-zinc-900 text-zinc-500 dark:text-zinc-400 ring-1 ring-zinc-200 dark:ring-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:text-zinc-700 dark:hover:text-zinc-200'
+                : 'bg-white text-zinc-500 ring-1 ring-zinc-200 hover:bg-zinc-50 hover:text-zinc-700'
             }`}>
             All <span className="ml-1 opacity-80 tabular-nums">{activeUsers.length}</span>
           </button>
@@ -278,7 +289,7 @@ export default function UserTab({ data, fetchData, user }) {
               className={`px-3 py-1.5 rounded-md text-[10px] font-semibold uppercase tracking-wider transition-colors ${
                 activeRoleTab === t.name
                   ? 'bg-primary/10 text-primary ring-1 ring-primary/20'
-                  : 'bg-white dark:bg-zinc-900 text-zinc-500 dark:text-zinc-400 ring-1 ring-zinc-200 dark:ring-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:text-zinc-700 dark:hover:text-zinc-200'
+                  : 'bg-white text-zinc-500 ring-1 ring-zinc-200 hover:bg-zinc-50 hover:text-zinc-700'
               }`}>
               {t.name} <span className="ml-1 opacity-80 tabular-nums">{t.count}</span>
             </button>
@@ -287,8 +298,8 @@ export default function UserTab({ data, fetchData, user }) {
 
         {/* Class filters */}
         {showClassFilter && (
-          <div className="flex items-center gap-3 flex-wrap bg-zinc-50/50 dark:bg-zinc-800/50 p-2.5 rounded-md ring-1 ring-black/5 dark:ring-white/10">
-            <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider pl-1">
+          <div className="flex items-center gap-3 flex-wrap bg-zinc-50/50 p-2.5 rounded-md ring-1 ring-black/5">
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider pl-1">
               <GraduationCap className="size-3.5 shrink-0" /> Class Filter
             </span>
 
@@ -297,13 +308,13 @@ export default function UserTab({ data, fetchData, user }) {
                 <select
                   value={activeClass}
                   onChange={e => setActiveClass(e.target.value)}
-                  className="h-8 w-full sm:w-auto appearance-none rounded border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 pl-2 pr-7 text-xs font-medium text-zinc-700 dark:text-zinc-200 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer">
+                  className="h-8 w-full sm:w-auto appearance-none rounded border border-zinc-200 bg-white pl-2 pr-7 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer">
                   <option value="all">All Classes ({classFilters.reduce((s, c) => s + c.count, 0)})</option>
                   {classFilters.map(c => (
                     <option key={c.id} value={c.id}>{c.label} ({c.count})</option>
                   ))}
                 </select>
-                <ChevronDown className="size-3.5 text-zinc-400 dark:text-zinc-500 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <ChevronDown className="size-3.5 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
             ) : (
               <div className="flex flex-wrap gap-2">
@@ -311,7 +322,7 @@ export default function UserTab({ data, fetchData, user }) {
                   className={`px-2.5 py-1.5 rounded-md text-[10px] font-semibold uppercase tracking-wider transition-colors ${
                     activeClass === 'all'
                       ? 'bg-primary/10 text-primary ring-1 ring-primary/20'
-                      : 'bg-white dark:bg-zinc-900 text-zinc-500 dark:text-zinc-400 ring-1 ring-zinc-200 dark:ring-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:text-zinc-700 dark:hover:text-zinc-200'
+                      : 'bg-white text-zinc-500 ring-1 ring-zinc-200 hover:bg-zinc-50 hover:text-zinc-700'
                   }`}>
                   All <span className="ml-1 opacity-80 tabular-nums">{classFilters.reduce((s, c) => s + c.count, 0)}</span>
                 </button>
@@ -320,7 +331,7 @@ export default function UserTab({ data, fetchData, user }) {
                     className={`px-2.5 py-1.5 rounded-md text-[10px] font-semibold uppercase tracking-wider transition-colors ${
                       String(activeClass) === String(c.id)
                         ? 'bg-primary/10 text-primary ring-1 ring-primary/20'
-                        : 'bg-white dark:bg-zinc-900 text-zinc-500 dark:text-zinc-400 ring-1 ring-zinc-200 dark:ring-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:text-zinc-700 dark:hover:text-zinc-200'
+                        : 'bg-white text-zinc-500 ring-1 ring-zinc-200 hover:bg-zinc-50 hover:text-zinc-700'
                     }`}>
                     {c.label} <span className="ml-1 opacity-80 tabular-nums">{c.count}</span>
                   </button>
@@ -332,37 +343,41 @@ export default function UserTab({ data, fetchData, user }) {
       </div>
 
       {/* Main Table — horizontal scroll on small screens keeps it responsive */}
-      <div className="ring-1 ring-black/5 dark:ring-white/10 rounded-lg bg-white dark:bg-zinc-900 overflow-x-auto custom-scrollbar">
+      <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-x-auto custom-scrollbar">
         <table className="w-full text-left border-collapse min-w-[800px]">
           <thead>
-            <tr className="bg-zinc-50/50 dark:bg-zinc-800/50">
-              <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider border-b border-zinc-100 dark:border-zinc-800">User Details</th>
-              <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider border-b border-zinc-100 dark:border-zinc-800">Role</th>
-              <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider border-b border-zinc-100 dark:border-zinc-800">Assignment</th>
-              <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider border-b border-zinc-100 dark:border-zinc-800">Status</th>
-              <th className="px-5 py-3 border-b border-zinc-100 dark:border-zinc-800"></th>
+            <tr className="bg-zinc-50/50">
+              <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100">Roll / User Details</th>
+              <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100">Role</th>
+              <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100">Assignment</th>
+              <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100">Status</th>
+              <th className="px-5 py-3 border-b border-zinc-100"></th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+          <tbody className="divide-y divide-zinc-100">
             {filteredUsers.length > 0 ? filteredUsers.map(u => {
               const cls = data.classes.find(c => c.id === u.class_id);
               const isTeacher = (u.role || '').toLowerCase().includes('teacher');
               const isStudent = (u.role || '').toLowerCase().includes('student');
               return (
-                <tr key={u.id} className="hover:bg-zinc-50/60 dark:hover:bg-zinc-800/60 transition-colors group">
+                <tr key={u.id} className="hover:bg-zinc-50/60 transition-colors group">
                   <td className="px-5 py-4">
                     <div className="flex items-center gap-3">
+                      {/* Roll number — shown first so the list reads roll-wise (1, 2, 3 ...) */}
+                      <span className="w-6 shrink-0 text-center text-xs font-semibold text-zinc-400 tabular-nums">
+                        {u.roll_no || '—'}
+                      </span>
                       {u.profile_pic ? (
-                        <img src={u.profile_pic} alt={u.name} className="size-8 rounded-full object-cover shrink-0 ring-1 ring-black/5 dark:ring-white/10" />
+                        <img src={u.profile_pic} alt={u.name} className="size-8 rounded-full object-cover shrink-0 ring-1 ring-black/5" />
                       ) : (
-                        <div className="size-8 bg-zinc-100 dark:bg-zinc-800 rounded-full flex items-center justify-center text-zinc-400 dark:text-zinc-500 shrink-0 ring-1 ring-black/5 dark:ring-white/10">
+                        <div className="size-8 bg-zinc-100 rounded-full flex items-center justify-center text-zinc-400 shrink-0 ring-1 ring-black/5">
                           <UserCircle2 className="size-4" />
                         </div>
                       )}
                       <div className="flex flex-col">
-                        <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{u.name}</span>
-                        <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
-                          {u.email}{u.username && <span className="ml-1 text-zinc-400 dark:text-zinc-500">@{u.username}</span>}
+                        <span className="text-sm font-medium text-zinc-900">{u.name}</span>
+                        <span className="text-[10px] text-zinc-500">
+                          {u.email}{u.username && <span className="ml-1 text-zinc-400">@{u.username}</span>}
                         </span>
                       </div>
                     </div>
@@ -371,28 +386,28 @@ export default function UserTab({ data, fetchData, user }) {
                     <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium ring-1 ${
                       u.role === 'Super Admin'
                         ? 'bg-primary/10 text-primary ring-primary/20'
-                        : 'bg-zinc-50 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 ring-zinc-200 dark:ring-zinc-700'
+                        : 'bg-zinc-50 text-zinc-700 ring-zinc-200'
                     }`}>{u.role}</span>
                   </td>
-                  <td className="px-5 py-4 text-xs text-zinc-700 dark:text-zinc-300">
+                  <td className="px-5 py-4 text-xs text-zinc-700">
                     {isStudent && cls ? `${cls.className}${u.section ? ` - ${u.section}` : ''}`
-                      : isTeacher ? (teacherSubjectNames(u.id) || <span className="italic text-zinc-400 dark:text-zinc-500">Unassigned</span>)
+                      : isTeacher ? (teacherSubjectNames(u.id) || <span className="italic text-zinc-400">Unassigned</span>)
                       : '—'}
                   </td>
                   <td className="px-5 py-4">
                     <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium ring-1 ${
                       u.status === 'active'
-                        ? 'bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-400 ring-green-600/10 dark:ring-green-500/20'
-                        : 'bg-zinc-50 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 ring-zinc-600/10 dark:ring-zinc-700'
+                        ? 'bg-green-50 text-green-700 ring-green-600/10'
+                        : 'bg-zinc-50 text-zinc-600 ring-zinc-600/10'
                     }`}>{u.status || 'active'}</span>
                   </td>
                   <td className="px-5 py-4 text-right">
                     {/* On touch screens hover doesn't exist, so keep actions visible on small screens */}
                     <div className="flex items-center justify-end gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                      <button onClick={() => openEdit(u)} className="p-1.5 text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 rounded transition-colors">
+                      <button onClick={() => openEdit(u)} className="p-1.5 text-zinc-400 hover:text-zinc-700 rounded transition-colors">
                         <Edit className="size-4 shrink-0" />
                       </button>
-                      <button onClick={() => handleDelete(u)} className="p-1.5 text-zinc-400 dark:text-zinc-500 hover:text-accent rounded transition-colors">
+                      <button onClick={() => handleDelete(u)} className="p-1.5 text-zinc-400 hover:text-accent rounded transition-colors">
                         <Trash2 className="size-4 shrink-0" />
                       </button>
                     </div>
@@ -400,7 +415,7 @@ export default function UserTab({ data, fetchData, user }) {
                 </tr>
               );
             }) : (
-              <tr><td colSpan="5" className="px-5 py-8 text-center text-xs text-zinc-500 dark:text-zinc-400 italic">No users found in this view.</td></tr>
+              <tr><td colSpan="5" className="px-5 py-8 text-center text-xs text-zinc-500 italic">No users found in this view.</td></tr>
             )}
           </tbody>
         </table>
@@ -408,17 +423,17 @@ export default function UserTab({ data, fetchData, user }) {
 
       {/* Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 dark:bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-zinc-900 rounded-lg ring-1 ring-black/5 dark:ring-white/10 w-full max-w-3xl p-5 sm:p-6 shadow-xl relative max-h-[90vh] overflow-y-auto custom-scrollbar">
-            <button onClick={() => setIsModalOpen(false)} className="absolute top-4 right-4 text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-3xl p-5 sm:p-6 shadow-xl relative max-h-[90vh] overflow-y-auto custom-scrollbar">
+            <button onClick={() => setIsModalOpen(false)} className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-700 transition-colors">
               <X className="size-5 shrink-0" />
             </button>
 
             <div className="mb-6">
-              <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+              <h2 className="text-lg font-semibold text-zinc-900">
                 {editingUser ? 'Edit User Record' : 'Create New User'}
               </h2>
-              <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1">Fill in the required information. Users can update personal details later.</p>
+              <p className="text-[11px] text-zinc-500 mt-1">Fill in the required information. Users can update personal details later.</p>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-6">
@@ -426,15 +441,15 @@ export default function UserTab({ data, fetchData, user }) {
               {/* Photo Upload */}
               <div className="flex items-center gap-4">
                 {form.profile_pic ? (
-                  <img src={form.profile_pic} alt="preview" className="size-16 rounded-full object-cover ring-1 ring-black/5 dark:ring-white/10" />
+                  <img src={form.profile_pic} alt="preview" className="size-16 rounded-full object-cover ring-1 ring-black/5" />
                 ) : (
-                  <div className="size-16 rounded-full bg-zinc-50 dark:bg-zinc-800 ring-1 ring-black/5 dark:ring-white/10 flex items-center justify-center text-zinc-400 dark:text-zinc-500">
+                  <div className="size-16 rounded-full bg-zinc-50 ring-1 ring-black/5 flex items-center justify-center text-zinc-400">
                     <UserCircle2 className="size-8" />
                   </div>
                 )}
                 <div className="flex flex-col items-start gap-1">
                   <div className="flex items-center gap-2">
-                    <label className="cursor-pointer inline-flex items-center gap-1.5 text-zinc-700 dark:text-zinc-200 px-3 py-1.5 border border-zinc-200 dark:border-zinc-700 rounded text-xs font-medium hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors">
+                    <label className="cursor-pointer inline-flex items-center gap-1.5 text-zinc-700 px-3 py-1.5 border border-zinc-200 rounded text-xs font-medium hover:bg-zinc-50 transition-colors">
                       <Camera className="size-3.5 shrink-0" /> Upload Photo
                       <input type="file" accept="image/*" onChange={handlePicChange} className="hidden" />
                     </label>
@@ -444,7 +459,7 @@ export default function UserTab({ data, fetchData, user }) {
                       </button>
                     )}
                   </div>
-                  <p className="text-[10px] text-zinc-400 dark:text-zinc-500">JPG/PNG · max 3 MB</p>
+                  <p className="text-[10px] text-zinc-400">JPG/PNG · max 3 MB</p>
                 </div>
               </div>
 
@@ -500,7 +515,7 @@ export default function UserTab({ data, fetchData, user }) {
               {isTeacherRole && (
                 <Section title="Teaching Assignments">
                   <div className="flex items-center justify-between mb-3">
-                    <p className="text-[11px] text-zinc-500 dark:text-zinc-400">Select all subjects this teacher is qualified to teach.</p>
+                    <p className="text-[11px] text-zinc-500">Select all subjects this teacher is qualified to teach.</p>
                     <span className="text-[10px] font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded-full tabular-nums">{form.subject_ids.length} selected</span>
                   </div>
                   {(data.subjects || []).length === 0 ? (
@@ -517,7 +532,7 @@ export default function UserTab({ data, fetchData, user }) {
                             className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
                               selected
                                 ? 'bg-primary text-white ring-1 ring-primary'
-                                : 'bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-300 ring-1 ring-zinc-200 dark:ring-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800'
+                                : 'bg-white text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-50'
                             }`}>
                             {s.name}
                           </button>
@@ -566,8 +581,8 @@ export default function UserTab({ data, fetchData, user }) {
                 </Section>
               )}
 
-              <div className="pt-4 border-t border-zinc-100 dark:border-zinc-800 flex flex-col-reverse sm:flex-row justify-end gap-3">
-                <button type="button" onClick={() => setIsModalOpen(false)} className="text-zinc-700 dark:text-zinc-200 px-4 py-2 border border-zinc-200 dark:border-zinc-700 rounded-md text-xs font-medium hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors">
+              <div className="pt-4 border-t border-zinc-100 flex flex-col-reverse sm:flex-row justify-end gap-3">
+                <button type="button" onClick={() => setIsModalOpen(false)} className="text-zinc-700 px-4 py-2 border border-zinc-200 rounded-md text-xs font-medium hover:bg-zinc-50 transition-colors">
                   Cancel
                 </button>
                 <button type="submit" className="bg-primary text-white px-6 py-2 rounded-md text-xs font-medium hover:bg-primary/90 transition-colors flex items-center justify-center gap-2">
@@ -589,8 +604,8 @@ export default function UserTab({ data, fetchData, user }) {
 
 function Section({ title, children }) {
   return (
-    <div className="ring-1 ring-black/5 dark:ring-white/10 rounded-md p-5 bg-zinc-50/30 dark:bg-zinc-800/30">
-      <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 mb-4">{title}</h3>
+    <div className="ring-1 ring-black/5 rounded-md p-5 bg-zinc-50/30">
+      <h3 className="text-sm font-semibold text-zinc-900 mb-4">{title}</h3>
       {children}
     </div>
   );
@@ -604,15 +619,15 @@ function Grid({ children }) {
 // Field now also supports: error (red message), hint (grey helper text),
 // maxLength and inputMode (better mobile keyboards for numeric fields).
 function Field({ label, value, onChange, type = 'text', options, required, placeholder, error, hint, maxLength, inputMode }) {
-  const base = "w-full rounded-md border bg-white dark:bg-zinc-900 px-3 text-sm text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none focus:ring-2 transition-colors";
+  const base = "w-full rounded-md border bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 transition-colors";
   // Border + focus ring turn red when there's a validation error
   const state = error
-    ? "border-red-400 dark:border-red-500 focus:ring-red-500/20 focus:border-red-500"
-    : "border-zinc-200 dark:border-zinc-700 focus:ring-primary/20 focus:border-primary/40";
+    ? "border-red-400 focus:ring-red-500/20 focus:border-red-500"
+    : "border-zinc-200 focus:ring-primary/20 focus:border-primary/40";
 
   return (
     <div className="flex flex-col">
-      <label className="text-xs font-medium text-zinc-600 dark:text-zinc-300 mb-1.5 flex items-center gap-1">
+      <label className="text-xs font-medium text-zinc-600 mb-1.5 flex items-center gap-1">
         {label} {required && <span className="text-accent">*</span>}
       </label>
 
@@ -621,7 +636,7 @@ function Field({ label, value, onChange, type = 'text', options, required, place
           <select value={value || ''} onChange={e => onChange(e.target.value)} className={`${base} ${state} h-9 appearance-none cursor-pointer pr-8`}>
             {(options || []).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
-          <ChevronDown className="size-4 text-zinc-400 dark:text-zinc-500 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
         </div>
       ) : type === 'textarea' ? (
         <textarea value={value || ''} onChange={e => onChange(e.target.value)} rows={3} className={`${base} ${state} py-2 resize-none`} placeholder={placeholder} />
@@ -633,8 +648,8 @@ function Field({ label, value, onChange, type = 'text', options, required, place
 
       {/* Error takes priority over the hint */}
       {error
-        ? <p className="text-[10px] text-red-500 dark:text-red-400 mt-1">{error}</p>
-        : hint ? <p className="text-[10px] text-zinc-400 dark:text-zinc-500 mt-1">{hint}</p> : null}
+        ? <p className="text-[10px] text-red-500 mt-1">{error}</p>
+        : hint ? <p className="text-[10px] text-zinc-400 mt-1">{hint}</p> : null}
     </div>
   );
 }
