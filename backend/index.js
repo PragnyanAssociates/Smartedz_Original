@@ -3825,31 +3825,19 @@ app.delete('/api/admin/study-materials/:id', async (req, res) => {
 
 
 // =====================================================================
-//  BACKEND — Section 22: SYLLABUS  (v8 — OCR, printed-number aware)
+//  BACKEND — Section 22: SYLLABUS  (v5 — fast viewer, self-contained)
 //
-//  REPLACE your whole Section 22 block with this. Self-contained.
+//  REPLACE your whole Section 22 block (v4) with this.
+//  No separate file, no require('./syllabusDetect') needed.
+//  Requires (run in backend, commit package.json):
+//      npm install pdfjs-dist@3.11.174 pdf-lib --save
 //
-//  REQUIRED:   npm install pdfjs-dist@3.11.174 pdf-lib --save
-//  OCR (now required for scanned books — you chose this):
-//              npm install tesseract.js @napi-rs/canvas --save
-//  If the OCR libs are ever missing the code still runs; it just can't
-//  read printed numbers off scanned pages (labels then show PDF pages).
-//
-//  HOW NUMBERS WORK (the fix for "reader says 2, book says 1"):
-//    • page_from / page_to are the PDF's REAL pages -> used for slicing,
-//      so a chapter always OPENS exactly at its first page.
-//    • page_offset = front-matter pages = (PDF page) - (printed page),
-//      detected from the book (page labels, page-bottom text, or OCR).
-//    • The UI shows PRINTED numbers = page_from - page_offset, i.e. the
-//      number printed on the page (the "1" at the bottom). Teachers edit
-//      in printed numbers too; the server converts back to PDF pages.
-//
-//  DETECTION LADDER (first that works wins; no "Full Document" ever):
-//    1. Bookmarks/outline                 -> exact PDF pages.
-//    2. Contents page (text, else OCR)    -> titles + printed numbers,
-//       converted to PDF pages via the detected offset.
-//    3. Nothing usable                    -> one "Index" entry; add
-//       chapters manually.
+//  What changed vs v4:
+//    • Chapters are sliced ONCE at upload and stored, so opening a
+//      chapter is instant (no re-slicing the whole book each click).
+//    • New endpoint  GET /chapter/:id/pdf  returns the chapter as a real
+//      application/pdf file — the iframe loads it directly (no giant
+//      base64 in the browser). This is what fixes the stuck spinner.
 //
 //  Reuses nowSQL() from Section 16.
 // =====================================================================
@@ -3857,192 +3845,26 @@ app.delete('/api/admin/study-materials/:id', async (req, res) => {
 const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
 const { PDFDocument } = require('pdf-lib');
 
-// ---- optional OCR libs (lazy, guarded) -------------------------------
-let _ocr = null, _canvasLib = null, _ocrTried = false, _worker = null;
-function _ensureOcr() {
-    if (_ocrTried) return _ocr && _canvasLib;
-    _ocrTried = true;
-    try { _ocr = require('tesseract.js'); _canvasLib = require('@napi-rs/canvas'); }
-    catch (_) { _ocr = null; _canvasLib = null; }
-    return _ocr && _canvasLib;
-}
-async function _worker_() { if (!_worker) _worker = await _ocr.createWorker('eng'); return _worker; }
-async function _ocrEnd() { try { if (_worker) { await _worker.terminate(); _worker = null; } } catch (_) {} }
-
-function _canvasFactory() {
-    const { createCanvas } = _canvasLib;
-    return {
-        create(w, h) { const c = createCanvas(Math.ceil(w) || 1, Math.ceil(h) || 1); return { canvas: c, context: c.getContext('2d') }; },
-        reset(co, w, h) { co.canvas.width = Math.ceil(w) || 1; co.canvas.height = Math.ceil(h) || 1; },
-        destroy(co) { try { co.canvas.width = 0; co.canvas.height = 0; } catch (_) {} co.canvas = null; co.context = null; },
-    };
-}
-
 // ---------------------------------------------------------------------
-//  Text helpers
-// ---------------------------------------------------------------------
-const _squash = (s) => (s || '').replace(/\s+/g, ' ').trim();
-const _norm   = (s) => (s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
-const _cleanTitle = (t) => (t || '').replace(/\.pdf\s*$/i, '').replace(/\s+/g, ' ').trim();
-const _titleCase  = (s) => (s || '').toLowerCase().replace(/\b([a-z])/g, (m) => m.toUpperCase());
-function _formatChapterTitle(clean, seq) {
-    const m = clean.match(/^(\d+)\s*[.)]?\s*(.*)$/);
-    if (m && m[2]) return `${m[1]}. ${_titleCase(m[2])}`;
-    if (m)         return `${m[1]}. Chapter ${m[1]}`;
-    return `${seq}. ${_titleCase(clean)}`;
-}
-function _median(arr) {
-    if (!arr.length) return null;
-    const a = [...arr].sort((x, y) => x - y);
-    return a[Math.floor(a.length / 2)];
-}
-
-async function _pageText(doc, p) {
-    const page = await doc.getPage(p);
-    const tc = await page.getTextContent();
-    return _squash(tc.items.map(i => i.str || '').join(' '));
-}
-async function _pageLines(doc, p) {
-    const page = await doc.getPage(p);
-    const tc = await page.getTextContent();
-    const buckets = [];
-    for (const it of tc.items) {
-        const s = it.str || ''; if (!s.trim()) continue;
-        const y = it.transform[5], x = it.transform[4];
-        let b = buckets.find(bk => Math.abs(bk.y - y) <= 3);
-        if (!b) { b = { y, parts: [] }; buckets.push(b); }
-        b.parts.push({ x, s });
-    }
-    buckets.sort((a, b) => b.y - a.y);
-    return buckets.map(b => _squash(b.parts.sort((p, q) => p.x - q.x).map(p => p.s).join(' ')));
-}
-
-// Render a horizontal BAND of a page to PNG. band 'bottom' | 'top' | 'full'
-async function _renderBandPng(doc, p, band = 'full', frac = 1, scale = 1.7) {
-    const page = await doc.getPage(p);
-    const vp = page.getViewport({ scale });
-    const W = Math.ceil(vp.width), H = Math.ceil(vp.height);
-    const { createCanvas } = _canvasLib;
-    const full = createCanvas(W, H);
-    const fctx = full.getContext('2d');
-    fctx.fillStyle = '#fff'; fctx.fillRect(0, 0, W, H);
-    await page.render({ canvasContext: fctx, viewport: vp }).promise;
-    if (band === 'full' || frac >= 1) return full.toBuffer('image/png');
-    const bandH = Math.max(1, Math.ceil(H * frac));
-    const srcY = band === 'bottom' ? (H - bandH) : 0;
-    const out = createCanvas(W, bandH);
-    out.getContext('2d').drawImage(full, 0, -srcY);
-    return out.toBuffer('image/png');
-}
-async function _ocrImage(buf, digitsOnly) {
-    const w = await _worker_();
-    await w.setParameters({
-        tessedit_char_whitelist: digitsOnly ? '0123456789' : '',
-        tessedit_pageseg_mode: digitsOnly ? '7' : '3',
-    });
-    const { data } = await w.recognize(buf);
-    return data.text || '';
-}
-
-// ---------------------------------------------------------------------
-//  Detect the front-matter OFFSET = (PDF page) - (printed page)
-//    Tries: PDF page labels -> page-bottom text -> OCR of page bottoms.
-// ---------------------------------------------------------------------
-async function _detectOffset(doc, total, ocrOk) {
-    // 1) embedded page labels
-    try {
-        const labels = await doc.getPageLabels();
-        if (labels && labels.length) {
-            const trivial = labels.every((l, i) => String(l) === String(i + 1));
-            if (!trivial) {
-                const diffs = [];
-                labels.forEach((l, i) => {
-                    const n = parseInt(String(l), 10);
-                    if (Number.isFinite(n) && n >= 1) diffs.push((i + 1) - n);
-                });
-                const off = _median(diffs);
-                if (off != null && off >= 0 && off < total) return off;
-            }
-        }
-    } catch (_) {}
-
-    // sample pages spread across the body
-    const start = Math.min(total, 8);
-    const step = Math.max(1, Math.floor((total - start) / 16));
-    const sample = [];
-    for (let p = start; p <= total && sample.length < 18; p += step) sample.push(p);
-
-    const readBottomNumber = (txt) => {
-        const lines = _squash(txt).split(/\s+/);
-        // also try last visual lines via regex on raw text
-        const m = (txt.match(/(?:^|\s)(\d{1,4})(?:\s*)$/m));
-        if (m) { const n = parseInt(m[1], 10); if (n >= 1 && n <= total) return n; }
-        for (let i = lines.length - 1; i >= 0 && i >= lines.length - 4; i--) {
-            if (/^\d{1,4}$/.test(lines[i])) { const n = parseInt(lines[i], 10); if (n >= 1 && n <= total) return n; }
-        }
-        return null;
-    };
-
-    // 2) page-bottom TEXT
-    let diffs = [];
-    for (const p of sample) {
-        try {
-            const lines = await _pageLines(doc, p);
-            const bottom = lines.slice(-3).join(' ');
-            const n = readBottomNumber(bottom);
-            if (n != null) diffs.push(p - n);
-        } catch (_) {}
-    }
-    let off = _median(diffs.filter(d => d >= 0 && d < total));
-    if (off != null && diffs.length >= 4) return off;
-
-    // 3) OCR page bottoms
-    if (ocrOk) {
-        diffs = [];
-        for (const p of sample) {
-            try {
-                const buf = await _renderBandPng(doc, p, 'bottom', 0.14, 2.0);
-                const txt = await _ocrImage(buf, true);
-                const nums = (txt.match(/\d{1,4}/g) || []).map(x => parseInt(x, 10)).filter(n => n >= 1 && n <= total);
-                // pick the candidate giving an offset closest to the running median
-                for (const n of nums) { const d = p - n; if (d >= 0 && d < total) diffs.push(d); }
-            } catch (_) { break; }
-        }
-        off = _median(diffs);
-        if (off != null) return off;
-    }
-    return 0;
-}
-
-// ---------------------------------------------------------------------
-//  detectChapters -> { total, chapters:[{title,page_from,page_to}], offset }
-//    page_from/page_to are PDF pages. offset is for display/edit.
+//  Detection helpers
 // ---------------------------------------------------------------------
 async function detectChapters(buffer) {
-    const ocrOk = _ensureOcr();
+    const data = new Uint8Array(buffer);
     const doc = await pdfjsLib.getDocument({
-        data: new Uint8Array(buffer), useSystemFonts: true, isEvalSupported: false,
-        ...(ocrOk ? { canvasFactory: _canvasFactory() } : {}),
+        data, useSystemFonts: true, isEvalSupported: false,
     }).promise;
+
     const total = doc.numPages;
-
-    let offset = 0;
-    try { offset = await _detectOffset(doc, total, ocrOk); } catch (_) { offset = 0; }
-
     let chapters = [];
     try { chapters = await _fromOutline(doc, total); } catch (_) { chapters = []; }
     if (!chapters.length) {
-        try { chapters = await _fromContents(doc, total, offset, ocrOk); } catch (_) { chapters = []; }
+        try { chapters = await _fromTocText(doc, total); } catch (_) { chapters = []; }
     }
-
-    await _ocrEnd();
-    if (!chapters.length) chapters = [{ title: 'Index', page_from: 1, page_to: total }];
-
+    if (!chapters.length) chapters = [{ title: 'Full Document', page_from: 1, page_to: total }];
     try { await doc.cleanup(); await doc.destroy(); } catch (_) {}
-    return { total, chapters, offset };
+    return { total, chapters };
 }
 
-// ---- Strategy 1: bookmarks ------------------------------------------
 async function _fromOutline(doc, total) {
     const outline = await doc.getOutline();
     if (!outline || !outline.length) return [];
@@ -4054,60 +3876,70 @@ async function _fromOutline(doc, total) {
     if (!items.some(i => i.start != null)) return [];
     return _assemble(items, total);
 }
+
 async function _destToPageIndex(doc, dest) {
     try {
         let d = dest;
         if (typeof d === 'string') d = await doc.getDestination(d);
-        if (!Array.isArray(d) || !d.length || d[0] == null) return null;
-        return await doc.getPageIndex(d[0]);
+        if (!Array.isArray(d) || !d.length) return null;
+        const ref = d[0];
+        if (ref == null) return null;
+        return await doc.getPageIndex(ref);
     } catch (_) { return null; }
 }
 
-// ---- Strategy 2: contents page (text, else OCR) ---------------------
-async function _fromContents(doc, total, offset, ocrOk) {
-    const scan = Math.min(total, 25);
-    let toc = [];
+async function _fromTocText(doc, total) {
+    const scan = Math.min(total, 20);
+    const candidates = [];
     for (let p = 1; p <= scan; p++) {
-        const lines = await _pageLines(doc, p);
-        _collectToc(lines, total, toc);
-    }
-    if (toc.length < 2 && ocrOk) {
-        for (let p = 1; p <= Math.min(total, 8); p++) {
-            try {
-                const buf = await _renderBandPng(doc, p, 'full', 1, 1.7);
-                const txt = await _ocrImage(buf, false);
-                _collectToc(txt.split('\n').map(_squash).filter(Boolean), total, toc);
-            } catch (_) { break; }
+        const page = await doc.getPage(p);
+        const lines = await _pageToLines(page);
+        for (const ln of lines) {
+            const parsed = _parseTocLine(ln, total);
+            if (parsed) candidates.push(parsed);
         }
     }
-    if (toc.length < 2) return [];
-
-    toc.sort((a, b) => a.printed - b.printed);
-    const seen = new Set(); const ordered = [];
-    for (const t of toc) { if (seen.has(t.printed)) continue; seen.add(t.printed); ordered.push(t); }
-
-    // printed -> PDF page using the detected offset
-    const items = ordered.map(t => {
-        let s = t.printed + (offset || 0);
-        if (s < 1) s = 1; if (s > total) s = total;
-        return { title: t.title, start: s };
-    });
+    if (candidates.length < 2) return [];
+    candidates.sort((a, b) => a.start - b.start);
+    const seen = new Set(); const items = [];
+    for (const c of candidates) {
+        if (seen.has(c.start)) continue;
+        seen.add(c.start);
+        items.push({ title: c.title, start: c.start });
+    }
     return _assemble(items, total);
 }
-function _collectToc(lines, total, out) {
-    for (const ln of lines) {
-        const m = ln.match(/^(.*?[A-Za-z].*?)[\s.·•\-_]{2,}(\d{1,4})$/);
-        if (!m) continue;
-        const title = _squash(m[1]).replace(/[\s.·•\-_]+$/, '');
-        const printed = parseInt(m[2], 10);
-        if (title.length < 3 || !/[A-Za-z]/.test(title)) continue;
-        if (!(printed >= 1 && printed <= total)) continue;
-        if (/^(page|contents|index|preface|foreword|unit)$/i.test(title)) continue;
-        out.push({ title, printed });
+
+async function _pageToLines(page) {
+    const tc = await page.getTextContent();
+    const buckets = [];
+    for (const it of tc.items) {
+        const s = it.str || '';
+        if (!s.trim()) continue;
+        const y = it.transform[5];
+        const x = it.transform[4];
+        let b = buckets.find((bk) => Math.abs(bk.y - y) <= 3);
+        if (!b) { b = { y, parts: [] }; buckets.push(b); }
+        b.parts.push({ x, s });
     }
+    buckets.sort((a, b) => b.y - a.y);
+    return buckets.map((b) =>
+        b.parts.sort((p, q) => p.x - q.x).map((p) => p.s).join(' ').replace(/\s+/g, ' ').trim()
+    );
 }
 
-// ---- shared assembler -----------------------------------------------
+function _parseTocLine(line, total) {
+    if (!line || line.length < 4) return null;
+    const m = line.match(/^(.*?[A-Za-z].*?)[\s.·•\-_]{1,}(\d{1,4})$/);
+    if (!m) return null;
+    const title = (m[1] || '').replace(/\s+/g, ' ').replace(/[\s.·•\-_]+$/, '').trim();
+    const pageNum = parseInt(m[2], 10);
+    if (!title || title.length < 3) return null;
+    if (!/[A-Za-z]/.test(title)) return null;
+    if (!(pageNum >= 1 && pageNum <= total)) return null;
+    return { title, start: pageNum };
+}
+
 function _assemble(items, total) {
     if (!items.length) return [];
     const n = items.length;
@@ -4126,7 +3958,8 @@ function _assemble(items, total) {
         const base = l >= 0 ? l : -1;
         const span = (r < n ? r : n) - base;
         let v = Math.round(lv + (rv - lv) * ((i - base) / span));
-        if (v <= lv) v = lv + 1; if (v > total) v = total;
+        if (v <= lv) v = lv + 1;
+        if (v > total) v = total;
         starts[i] = v;
     }
     const cleaned = items.map((it, i) => ({ title: _cleanTitle(it.title), start: starts[i] }));
@@ -4142,14 +3975,30 @@ function _assemble(items, total) {
     let seq = 0;
     for (let i = startIdx; i < n; i++) {
         seq++;
-        const f = cleaned[i].start;
-        const t = (i + 1 < n) ? cleaned[i + 1].start - 1 : total;
-        result.push({ title: _formatChapterTitle(cleaned[i].title, seq), page_from: f, page_to: Math.max(f, t) });
+        const from = cleaned[i].start;
+        const to = (i + 1 < n) ? cleaned[i + 1].start - 1 : total;
+        result.push({ title: _formatChapterTitle(cleaned[i].title, seq), page_from: from, page_to: Math.max(from, to) });
     }
     return result;
 }
 
-// ---- slicing (exact PDF pages) --------------------------------------
+function _cleanTitle(t) {
+    return (t || '').replace(/\.pdf\s*$/i, '').replace(/\s+/g, ' ').trim();
+}
+function _titleCase(s) {
+    return (s || '').toLowerCase().replace(/\b([a-z])/g, (m) => m.toUpperCase());
+}
+function _formatChapterTitle(clean, seq) {
+    const m = clean.match(/^(\d+)\s*[.)]?\s*(.*)$/);
+    if (m && m[2]) return `${m[1]}. ${_titleCase(m[2])}`;
+    if (m) return `${m[1]}. Chapter ${m[1]}`;
+    return `${seq}. ${_titleCase(clean)}`;
+}
+
+// ---------------------------------------------------------------------
+//  Slicing helpers
+//  sliceAll loads the source ONCE and cuts many ranges — fast at upload.
+// ---------------------------------------------------------------------
 async function sliceAll(buffer, ranges) {
     const src = await PDFDocument.load(buffer, { ignoreEncryption: true });
     const total = src.getPageCount();
@@ -4159,95 +4008,127 @@ async function sliceAll(buffer, ranges) {
         let end = Math.min(total, parseInt(to, 10) || total);
         if (end < start) end = start;
         const d = await PDFDocument.create();
-        const idx = []; for (let i = start - 1; i <= end - 1; i++) idx.push(i);
+        const idx = [];
+        for (let i = start - 1; i <= end - 1; i++) idx.push(i);
         const pages = await d.copyPages(src, idx);
-        pages.forEach(p => d.addPage(p));
+        pages.forEach((p) => d.addPage(p));
         const bytes = await d.save();
         slices.push(Buffer.from(bytes).toString('base64'));
     }
     return { total, slices };
 }
-async function slicePdf(buffer, from, to) { const { slices } = await sliceAll(buffer, [[from, to]]); return slices[0]; }
+
+async function slicePdf(buffer, from, to) {
+    const { slices } = await sliceAll(buffer, [[from, to]]);
+    return slices[0];
+}
+
+// Re-cut a single chapter's slice from its parent book (after edits)
 async function resliceChapter(chapterId) {
     const [rows] = await db.execute(
-        `SELECT c.page_from, c.page_to, s.doc_data
-           FROM syllabus_chapters c JOIN syllabus s ON s.id = c.syllabus_id WHERE c.id = ?`, [chapterId]);
+        `SELECT c.page_from, c.page_to, s.doc_data, s.page_offset
+           FROM syllabus_chapters c JOIN syllabus s ON s.id = c.syllabus_id
+          WHERE c.id = ?`, [chapterId]);
     if (!rows.length) return;
     const r = rows[0];
     if (!r.doc_data || !r.page_from) {
-        await db.execute('UPDATE syllabus_chapters SET doc_data = NULL, doc_pages = NULL WHERE id = ?', [chapterId]); return;
+        await db.execute('UPDATE syllabus_chapters SET doc_data = NULL, doc_pages = NULL WHERE id = ?', [chapterId]);
+        return;
     }
     const base64 = String(r.doc_data).replace(/^data:[^;]+;base64,/, '');
     const buffer = Buffer.from(base64, 'base64');
-    const from = r.page_from || 1, to = r.page_to || r.page_from || 1;
+    const offset = r.page_offset || 0;
+    const from = (r.page_from || 1) + offset;
+    const to = (r.page_to || r.page_from || 1) + offset;
     const b64 = await slicePdf(buffer, from, to);
     await db.execute('UPDATE syllabus_chapters SET doc_data = ?, doc_pages = ? WHERE id = ?',
-        ['data:application/pdf;base64,' + b64, Math.max(1, (to - from + 1)), chapterId]);
-}
-
-// helper: read a syllabus' offset
-async function _syllabusOffset(syllabusId) {
-    try {
-        const [r] = await db.execute('SELECT page_offset FROM syllabus WHERE id = ?', [syllabusId]);
-        return (r.length && Number.isFinite(r[0].page_offset)) ? r[0].page_offset : 0;
-    } catch (_) { return 0; }
+        ['data:application/pdf;base64,' + b64, Math.max(1, (r.page_to - r.page_from + 1)), chapterId]);
 }
 
 
-// =====================================================================
+// ---------------------------------------------------------------------
 //  ROUTES
-// =====================================================================
+// ---------------------------------------------------------------------
 
+// --- 22.1 Syllabus Management list ----------------------------------
 app.get('/api/admin/syllabus/list/:instId', async (req, res) => {
-    const { instId } = req.params; const { classId } = req.query;
+    const { instId } = req.params;
+    const { classId } = req.query;
     try {
         let sql = `
             SELECT s.id, s.class_id, s.subject_id, s.teacher_id, s.updated_at,
-                   c.className, c.section, sub.name AS subject_name, t.name AS teacher_name,
+                   c.className, c.section,
+                   sub.name AS subject_name,
+                   t.name AS teacher_name,
                    (SELECT COUNT(*) FROM syllabus_chapters ch WHERE ch.syllabus_id = s.id) AS lesson_count
               FROM syllabus s
-              LEFT JOIN classes c ON c.id = s.class_id
+              LEFT JOIN classes  c   ON c.id = s.class_id
               LEFT JOIN subjects sub ON sub.id = s.subject_id
-              LEFT JOIN users t ON t.id = s.teacher_id
+              LEFT JOIN users    t   ON t.id = s.teacher_id
              WHERE s.institutionId = ?`;
         const params = [instId];
         if (classId) { sql += ' AND s.class_id = ?'; params.push(classId); }
         sql += ' ORDER BY sub.name';
+
         const [rows] = await db.execute(sql, params);
-        res.json(rows.map(r => ({ ...r, class_group: `${r.className || ''}${r.section ? ' - ' + r.section : ''}` })));
+        const decorated = rows.map(r => ({
+            ...r,
+            class_group: `${r.className || ''}${r.section ? ' - ' + r.section : ''}`
+        }));
+        res.json(decorated);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
+// --- 22.2 Create a syllabus -----------------------------------------
 app.post('/api/admin/syllabus', async (req, res) => {
-    const { institutionId, academic_year_id, class_id, subject_id, teacher_id, created_by } = req.body;
-    if (!institutionId || !class_id || !subject_id)
+    const {
+        institutionId, academic_year_id, class_id, subject_id, teacher_id, created_by
+    } = req.body;
+    if (!institutionId || !class_id || !subject_id) {
         return res.status(400).json({ error: 'institutionId, class_id and subject_id are required.' });
+    }
     try {
         const [result] = await db.execute(
-            `INSERT INTO syllabus (institutionId, academic_year_id, class_id, subject_id, teacher_id, created_by)
+            `INSERT INTO syllabus
+               (institutionId, academic_year_id, class_id, subject_id, teacher_id, created_by)
              VALUES (?, ?, ?, ?, ?, ?)`,
-            [institutionId, academic_year_id || null, class_id, subject_id, teacher_id || null, created_by || null]);
+            [institutionId, academic_year_id || null, class_id, subject_id,
+             teacher_id || null, created_by || null]
+        );
         res.json({ success: true, id: result.insertId });
     } catch (err) {
-        if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'A syllabus for this class and subject already exists.' });
+        if (err.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({ error: 'A syllabus for this class and subject already exists.' });
+        }
         res.status(500).json({ error: err.message });
     }
 });
 
+
+// --- 22.3 Update a syllabus -----------------------------------------
 app.put('/api/admin/syllabus/:id', async (req, res) => {
     const { class_id, subject_id, teacher_id } = req.body;
     try {
-        await db.execute(`UPDATE syllabus SET class_id = ?, subject_id = ?, teacher_id = ? WHERE id = ?`,
-            [class_id, subject_id, teacher_id || null, req.params.id]);
+        await db.execute(
+            `UPDATE syllabus SET class_id = ?, subject_id = ?, teacher_id = ? WHERE id = ?`,
+            [class_id, subject_id, teacher_id || null, req.params.id]
+        );
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
+// --- 22.4 Delete a syllabus -----------------------------------------
 app.delete('/api/admin/syllabus/:id', async (req, res) => {
-    try { await db.execute('DELETE FROM syllabus WHERE id = ?', [req.params.id]); res.json({ success: true }); }
-    catch (err) { res.status(500).json({ error: err.message }); }
+    try {
+        await db.execute('DELETE FROM syllabus WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
+// --- 22.5 Resolve a syllabus by class + subject ---------------------
 app.get('/api/admin/syllabus/resolve/:instId/:classId/:subjectId', async (req, res) => {
     const { instId, classId, subjectId } = req.params;
     try {
@@ -4255,166 +4136,227 @@ app.get('/api/admin/syllabus/resolve/:instId/:classId/:subjectId', async (req, r
             `SELECT s.id, s.teacher_id, t.name AS teacher_name
                FROM syllabus s LEFT JOIN users t ON t.id = s.teacher_id
               WHERE s.institutionId = ? AND s.class_id = ? AND s.subject_id = ?`,
-            [instId, classId, subjectId]);
+            [instId, classId, subjectId]
+        );
         res.json(rows.length > 0 ? rows[0] : { id: null });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// chapters now also return printed_from / printed_to (the book's numbers)
+
+// --- 22.6 Chapters of a syllabus ------------------------------------
 app.get('/api/admin/syllabus/:syllabusId/chapters', async (req, res) => {
     try {
-        const off = await _syllabusOffset(req.params.syllabusId);
         const [rows] = await db.execute(
-            `SELECT c.id, c.syllabus_id, c.chapter_order, c.title, c.page_from, c.page_to, c.doc_pages,
+            `SELECT c.id, c.syllabus_id, c.chapter_order, c.title,
+                    c.page_from, c.page_to, c.doc_pages,
                     c.periods, c.start_date, c.end_date,
                     (c.doc_data IS NOT NULL) AS has_doc,
                     (SELECT COUNT(*) FROM syllabus_keywords k WHERE k.chapter_id = c.id) AS keyword_count
-               FROM syllabus_chapters c WHERE c.syllabus_id = ?
-              ORDER BY c.chapter_order, c.id`, [req.params.syllabusId]);
-        const out = rows.map(r => {
-            const isIndex = /^index$/i.test((r.title || '').trim());
-            const pf = isIndex ? null : (r.page_from != null ? r.page_from - off : null);
-            const pt = isIndex ? null : (r.page_to   != null ? r.page_to   - off : null);
-            return { ...r, page_offset: off,
-                     printed_from: pf != null && pf >= 1 ? pf : null,
-                     printed_to:   pt != null && pt >= 1 ? pt : null };
-        });
-        res.json(out);
+               FROM syllabus_chapters c
+              WHERE c.syllabus_id = ?
+              ORDER BY c.chapter_order, c.id`,
+            [req.params.syllabusId]
+        );
+        res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
+// --- 22.7 Textbook meta (light — no doc_data) -----------------------
 app.get('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
     try {
         const [rows] = await db.execute(
-            `SELECT doc_name, doc_pages, page_offset, (doc_data IS NOT NULL) AS has_book FROM syllabus WHERE id = ?`,
-            [req.params.syllabusId]);
-        res.json(rows[0] || { has_book: 0, page_offset: 0 });
+            `SELECT doc_name, doc_pages, page_offset, (doc_data IS NOT NULL) AS has_book
+               FROM syllabus WHERE id = ?`,
+            [req.params.syllabusId]
+        );
+        res.json(rows[0] || { has_book: 0 });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
+// --- 22.8 Upload textbook -> detect chapters -> pre-slice each ------
 app.put('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
-    const { doc_name, doc_data } = req.body;
+    const { doc_name, doc_data, page_offset } = req.body;
     const syllabusId = req.params.syllabusId;
     if (!doc_data) return res.status(400).json({ error: 'doc_data is required.' });
+
     try {
         const base64 = String(doc_data).replace(/^data:[^;]+;base64,/, '');
         const buffer = Buffer.from(base64, 'base64');
+        const offset = parseInt(page_offset, 10) || 0;
 
-        const { total, chapters, offset } = await detectChapters(buffer);
+        const { total, chapters } = await detectChapters(buffer);
 
         await db.execute(
-            `UPDATE syllabus SET doc_name = ?, doc_data = ?, doc_pages = ?, page_offset = ?, updated_at = ? WHERE id = ?`,
-            [doc_name || null, doc_data, total, offset || 0, nowSQL(), syllabusId]);
+            `UPDATE syllabus
+                SET doc_name = ?, doc_data = ?, doc_pages = ?, page_offset = ?, updated_at = ?
+              WHERE id = ?`,
+            [doc_name || null, doc_data, total, offset, nowSQL(), syllabusId]
+        );
 
         await db.execute('DELETE FROM syllabus_chapters WHERE syllabus_id = ?', [syllabusId]);
 
-        const ranges = chapters.map(c => [c.page_from, c.page_to]);
+        const ranges = chapters.map(c => [c.page_from + offset, c.page_to + offset]);
         const { slices } = await sliceAll(buffer, ranges);
 
         let order = 0;
         for (let i = 0; i < chapters.length; i++) {
             const ch = chapters[i];
+            const dataUri = 'data:application/pdf;base64,' + slices[i];
+            const pages = ranges[i][1] - ranges[i][0] + 1;
             await db.execute(
                 `INSERT INTO syllabus_chapters
                    (syllabus_id, chapter_order, title, page_from, page_to, doc_name, doc_data, doc_pages)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-                [syllabusId, order++, ch.title, ch.page_from, ch.page_to, doc_name || null,
-                 'data:application/pdf;base64,' + slices[i], ch.page_to - ch.page_from + 1]);
+                [syllabusId, order++, ch.title, ch.page_from, ch.page_to, doc_name || null, dataUri, pages]
+            );
         }
-        res.json({ success: true, total_pages: total, chapters: chapters.length, page_offset: offset || 0 });
+
+        res.json({ success: true, total_pages: total, chapters: chapters.length });
     } catch (err) {
         console.error('Textbook detection failed:', err);
         res.status(500).json({ error: 'Could not read this PDF: ' + err.message });
     }
 });
 
+
+// --- 22.9 Change page offset -> re-slice all chapters ---------------
+app.put('/api/admin/syllabus/:syllabusId/book/offset', async (req, res) => {
+    try {
+        const offset = parseInt(req.body.page_offset, 10) || 0;
+        const sid = req.params.syllabusId;
+        await db.execute('UPDATE syllabus SET page_offset = ? WHERE id = ?', [offset, sid]);
+
+        const [bookRows] = await db.execute('SELECT doc_data FROM syllabus WHERE id = ?', [sid]);
+        if (bookRows.length && bookRows[0].doc_data) {
+            const base64 = String(bookRows[0].doc_data).replace(/^data:[^;]+;base64,/, '');
+            const buffer = Buffer.from(base64, 'base64');
+            const [chs] = await db.execute(
+                'SELECT id, page_from, page_to FROM syllabus_chapters WHERE syllabus_id = ? ORDER BY chapter_order, id',
+                [sid]);
+            const ranges = chs.map(c => [(c.page_from || 1) + offset, (c.page_to || c.page_from || 1) + offset]);
+            const { slices } = await sliceAll(buffer, ranges);
+            for (let i = 0; i < chs.length; i++) {
+                await db.execute('UPDATE syllabus_chapters SET doc_data = ?, doc_pages = ? WHERE id = ?',
+                    ['data:application/pdf;base64,' + slices[i], ranges[i][1] - ranges[i][0] + 1, chs[i].id]);
+            }
+        }
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 22.10 A chapter as a real PDF file (iframe loads this) ---------
 app.get('/api/admin/syllabus/chapter/:id/pdf', async (req, res) => {
     try {
         const [rows] = await db.execute('SELECT doc_data FROM syllabus_chapters WHERE id = ?', [req.params.id]);
         if (!rows.length || !rows[0].doc_data) return res.status(404).send('No document');
         const base64 = String(rows[0].doc_data).replace(/^data:[^;]+;base64,/, '');
+        const bytes = Buffer.from(base64, 'base64');
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', 'inline; filename="chapter.pdf"');
         res.setHeader('Cache-Control', 'private, max-age=3600');
-        res.send(Buffer.from(base64, 'base64'));
+        res.send(bytes);
     } catch (err) { res.status(500).send(err.message); }
 });
 
+
+// --- 22.10b A chapter's stored slice as JSON (kept for compatibility)
 app.get('/api/admin/syllabus/chapter/:id/doc', async (req, res) => {
     try {
-        const [rows] = await db.execute('SELECT doc_name, doc_data, doc_pages FROM syllabus_chapters WHERE id = ?', [req.params.id]);
+        const [rows] = await db.execute(
+            'SELECT doc_name, doc_data, doc_pages FROM syllabus_chapters WHERE id = ?', [req.params.id]);
         if (!rows.length || !rows[0].doc_data) return res.json({});
         res.json(rows[0]);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// create/update take PRINTED numbers; we convert to PDF pages via offset
+
+// --- 22.11 Create a chapter (manual) -> slice it --------------------
 app.post('/api/admin/syllabus/chapters', async (req, res) => {
     const { syllabus_id, title, page_from, page_to } = req.body;
-    if (!syllabus_id || !title) return res.status(400).json({ error: 'syllabus_id and title are required.' });
+    if (!syllabus_id || !title) {
+        return res.status(400).json({ error: 'syllabus_id and title are required.' });
+    }
     try {
-        const off = await _syllabusOffset(syllabus_id);
-        const pf = page_from ? parseInt(page_from, 10) + off : null;
-        const pt = page_to   ? parseInt(page_to, 10)   + off : null;
         const [[{ maxOrder }]] = await db.execute(
-            `SELECT COALESCE(MAX(chapter_order), -1) + 1 AS maxOrder FROM syllabus_chapters WHERE syllabus_id = ?`, [syllabus_id]);
+            `SELECT COALESCE(MAX(chapter_order), -1) + 1 AS maxOrder
+               FROM syllabus_chapters WHERE syllabus_id = ?`, [syllabus_id]);
         const [result] = await db.execute(
             `INSERT INTO syllabus_chapters (syllabus_id, chapter_order, title, page_from, page_to)
-             VALUES (?, ?, ?, ?, ?)`, [syllabus_id, maxOrder, title, pf, pt]);
+             VALUES (?, ?, ?, ?, ?)`,
+            [syllabus_id, maxOrder, title, page_from || null, page_to || null]);
         await resliceChapter(result.insertId);
         await db.execute('UPDATE syllabus SET updated_at = ? WHERE id = ?', [nowSQL(), syllabus_id]);
         res.json({ success: true, id: result.insertId });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
+// --- 22.12 Update a chapter -> re-slice it --------------------------
 app.put('/api/admin/syllabus/chapters/:id', async (req, res) => {
     const { title, page_from, page_to } = req.body;
     try {
-        const [sr] = await db.execute('SELECT syllabus_id FROM syllabus_chapters WHERE id = ?', [req.params.id]);
-        const off = sr.length ? await _syllabusOffset(sr[0].syllabus_id) : 0;
-        const pf = page_from ? parseInt(page_from, 10) + off : null;
-        const pt = page_to   ? parseInt(page_to, 10)   + off : null;
-        await db.execute(`UPDATE syllabus_chapters SET title = ?, page_from = ?, page_to = ? WHERE id = ?`,
-            [title, pf, pt, req.params.id]);
+        await db.execute(
+            `UPDATE syllabus_chapters SET title = ?, page_from = ?, page_to = ? WHERE id = ?`,
+            [title, page_from || null, page_to || null, req.params.id]);
         await resliceChapter(req.params.id);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
+// --- 22.13 Delete a chapter -----------------------------------------
 app.delete('/api/admin/syllabus/chapters/:id', async (req, res) => {
-    try { await db.execute('DELETE FROM syllabus_chapters WHERE id = ?', [req.params.id]); res.json({ success: true }); }
-    catch (err) { res.status(500).json({ error: err.message }); }
+    try {
+        await db.execute('DELETE FROM syllabus_chapters WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
+// --- 22.14 Update lesson-period schedule ----------------------------
 app.put('/api/admin/syllabus/chapter/:id/periods', async (req, res) => {
     const { periods, start_date, end_date } = req.body;
     try {
-        await db.execute(`UPDATE syllabus_chapters SET periods = ?, start_date = ?, end_date = ? WHERE id = ?`,
+        await db.execute(
+            `UPDATE syllabus_chapters SET periods = ?, start_date = ?, end_date = ? WHERE id = ?`,
             [periods || 0, start_date || null, end_date || null, req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
+// --- 22.15 Keywords for a chapter -----------------------------------
 app.get('/api/admin/syllabus/chapter/:id/keywords', async (req, res) => {
     try {
-        const [rows] = await db.execute('SELECT * FROM syllabus_keywords WHERE chapter_id = ? ORDER BY term', [req.params.id]);
+        const [rows] = await db.execute(
+            'SELECT * FROM syllabus_keywords WHERE chapter_id = ? ORDER BY term', [req.params.id]);
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
+// --- 22.16 Add a keyword --------------------------------------------
 app.post('/api/admin/syllabus/chapter/:id/keywords', async (req, res) => {
     const { term, definition } = req.body;
     if (!term || !term.trim()) return res.status(400).json({ error: 'term is required.' });
     try {
-        const [result] = await db.execute('INSERT INTO syllabus_keywords (chapter_id, term, definition) VALUES (?, ?, ?)',
+        const [result] = await db.execute(
+            'INSERT INTO syllabus_keywords (chapter_id, term, definition) VALUES (?, ?, ?)',
             [req.params.id, term.trim(), definition || null]);
         res.json({ success: true, id: result.insertId });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
+// --- 22.17 Delete a keyword -----------------------------------------
 app.delete('/api/admin/syllabus/keywords/:keywordId', async (req, res) => {
-    try { await db.execute('DELETE FROM syllabus_keywords WHERE id = ?', [req.params.keywordId]); res.json({ success: true }); }
-    catch (err) { res.status(500).json({ error: err.message }); }
+    try {
+        await db.execute('DELETE FROM syllabus_keywords WHERE id = ?', [req.params.keywordId]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 
