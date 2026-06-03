@@ -5600,7 +5600,7 @@ app.get('/api/admin/alumni/:instId', async (req, res) => {
     try {
         let sql = `
             SELECT id, user_id, academic_year_id, passout_year, final_class,
-                   name, email, phone, current_status, roll_no,
+                   name, email, phone, current_status, occupation, roll_no,
                    (profile_pic IS NOT NULL) AS has_pic
               FROM alumni
              WHERE institutionId = ?`;
@@ -5809,6 +5809,7 @@ app.get('/api/admin/alumni/candidates/:instId/:classId', async (req, res) => {
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
 
 
 

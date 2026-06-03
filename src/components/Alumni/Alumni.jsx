@@ -13,7 +13,7 @@ import AlumniDetail from './AlumniDetail';
 //  Alumni - card list of passed-out students.
 //  • Academic-year filter (from the Academic Year module) + search bar.
 //  • Each card: photo/initials, name, phone, email, current status,
-//    passout year. Click -> full detail (AlumniDetail).
+//    occupation, passout year. Click -> full detail (AlumniDetail).
 // =====================================================================
 
 export default function Alumni() {
@@ -199,11 +199,17 @@ function AlumniCard({ a, onClick }) {
         )}
       </div>
 
-      <div className="mt-auto pt-4 border-t border-zinc-100 w-full">
-        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-semibold ${ss.bg} ${ss.text} ring-1 ring-inset ring-black/5`}>
+      {/* Footer: current status chip + occupation (right) */}
+      <div className="mt-auto pt-4 border-t border-zinc-100 w-full flex items-center justify-between gap-2">
+        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-semibold shrink-0 ${ss.bg} ${ss.text} ring-1 ring-inset ring-black/5`}>
           <Briefcase className="size-3" />
           {a.current_status || 'Status not set'}
         </span>
+        {a.occupation && (
+          <span className="text-[11px] font-medium text-zinc-500 truncate min-w-0 text-right" title={a.occupation}>
+            {a.occupation}
+          </span>
+        )}
       </div>
     </button>
   );

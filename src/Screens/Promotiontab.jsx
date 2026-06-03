@@ -29,7 +29,18 @@ export default function PromotionTab({ data, fetchData }) {
       const q = search.toLowerCase();
       list = list.filter(s => (s.name || '').toLowerCase().includes(q));
     }
-    return list;
+
+    // Order roll-wise: 1, 2, 3 ...  Students without a numeric roll fall
+    // to the end, then sort alphabetically by name.
+    const rollVal = (s) => {
+      const n = parseInt(s.roll_no, 10);
+      return isNaN(n) ? Number.POSITIVE_INFINITY : n;
+    };
+    return [...list].sort((a, b) => {
+      const ra = rollVal(a), rb = rollVal(b);
+      if (ra !== rb) return ra - rb;
+      return (a.name || '').localeCompare(b.name || '');
+    });
   }, [allStudents, sourceClassId, search]);
 
   const allVisibleIds = visibleStudents.map(s => s.id);
