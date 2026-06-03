@@ -520,16 +520,122 @@ app.put('/api/admin/users/:id', async (req, res) => {
     } finally { conn.release(); }
 });
 
-
-// ---------------------------------------------------------------------
-//  4.3  Delete user
-// ---------------------------------------------------------------------
 app.delete('/api/admin/users/:id', async (req, res) => {
     try {
         await db.execute('DELETE FROM users WHERE id = ?', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+
+
+// =====================================================================
+// === 5. ROLES — system roles cannot be renamed or deleted ============
+//
+//  PASTE THIS BLOCK BACK IN between Section 4 (Users, ends at the
+//  "4.3 Delete user" route) and Section 6 (Permissions).
+//
+//  It was accidentally removed when the Section 4 (Users) block was
+//  replaced earlier, which is why "Failed to save role" was happening
+//  (the POST /api/admin/roles route no longer existed).
+//
+//  The three system roles — Super Admin, Teacher, Student — are fixed
+//  for every institution: they cannot be renamed or deleted, and no new
+//  role may reuse their names. Every OTHER role can be freely added,
+//  renamed, deleted, and given module permissions.
+//
+//  Uses SYSTEM_ROLES / isSystemRole already defined at the top of the
+//  file, so no extra setup is needed.
+// =====================================================================
+
+// --- 5.1 Create a custom role ----------------------------------------
+app.post('/api/admin/roles', async (req, res) => {
+    const { role_name, institutionId } = req.body;
+    const trimmed = (role_name || '').trim();
+    if (!trimmed) return res.status(400).json({ error: 'Role name is required.' });
+    if (!institutionId) return res.status(400).json({ error: 'institutionId is required.' });
+
+    // Block creating a duplicate of any reserved system role name
+    if (isSystemRole(trimmed)) {
+        return res.status(400).json({ error: `"${trimmed}" is a reserved system role name.` });
+    }
+
+    try {
+        await db.execute(
+            'INSERT INTO roles (role_name, institutionId) VALUES (?, ?)',
+            [trimmed, institutionId]
+        );
+        res.json({ success: true });
+    } catch (err) {
+        if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
+            return res.status(400).json({ error: 'A role with that name already exists.' });
+        }
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// --- 5.2 Rename a role (system roles blocked) ------------------------
+app.put('/api/admin/roles/:id', async (req, res) => {
+    const { id } = req.params;
+    const { role_name, institutionId } = req.body;
+    const trimmed = (role_name || '').trim();
+    if (!trimmed) return res.status(400).json({ error: 'Role name is required.' });
+
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+
+        const [existing] = await conn.execute('SELECT role_name FROM roles WHERE id = ?', [id]);
+        if (existing.length === 0) {
+            await conn.rollback();
+            return res.status(404).json({ error: 'Role not found' });
+        }
+        const oldName = existing[0].role_name;
+
+        // Cannot rename a system role
+        if (isSystemRole(oldName)) {
+            await conn.rollback();
+            return res.status(400).json({ error: `The system role "${oldName}" cannot be renamed.` });
+        }
+        // Cannot rename INTO a reserved system role name
+        if (isSystemRole(trimmed)) {
+            await conn.rollback();
+            return res.status(400).json({ error: `"${trimmed}" is a reserved system role name.` });
+        }
+
+        await conn.execute('UPDATE roles SET role_name = ? WHERE id = ?', [trimmed, id]);
+        // Keep users in sync with the new role name
+        await conn.execute(
+            'UPDATE users SET role = ? WHERE role = ? AND institutionId = ?',
+            [trimmed, oldName, institutionId]
+        );
+
+        await conn.commit();
+        res.json({ success: true });
+    } catch (err) {
+        await conn.rollback();
+        if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
+            return res.status(400).json({ error: 'A role with that name already exists.' });
+        }
+        res.status(500).json({ error: err.message });
+    } finally { conn.release(); }
+});
+
+// --- 5.3 Delete a role (system roles blocked) ------------------------
+app.delete('/api/admin/roles/:id', async (req, res) => {
+    try {
+        const [rows] = await db.execute('SELECT role_name FROM roles WHERE id = ?', [req.params.id]);
+        if (rows.length === 0) return res.status(404).json({ error: 'Role not found' });
+
+        if (isSystemRole(rows[0].role_name)) {
+            return res.status(400).json({ error: `The system role "${rows[0].role_name}" cannot be deleted.` });
+        }
+
+        await db.execute('DELETE FROM roles WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 
 
 // =====================================================================
