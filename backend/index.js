@@ -287,12 +287,15 @@ app.get('/api/admin/data/:instId', async (req, res) => {
 //
 //  REPLACE your whole Section 4 block with this.
 //
-//  Fix in this version:
-//    Roll-number uniqueness is now checked PER CLASS, not school-wide.
-//    Roll "1" can legitimately exist in Class 9, Class 10, etc. at the
-//    same time. PEN and TC numbers remain unique across the whole school
-//    (they are permanent, one-per-person identifiers). Editing a user no
-//    longer falsely reports its own / another class's roll as taken.
+//  Fixes in this version:
+//    1) Roll number is unique PER CLASS (each class independently starts
+//       at roll 1; roll "1" can exist in Class 9 and Class 10 together).
+//    2) On EDIT, uniqueness is only checked for fields that actually
+//       CHANGED. If you edit a student and don't touch the roll number
+//       (or class), the roll check is skipped entirely — so editing
+//       other information never reports a false "roll already used".
+//    PEN and TC remain unique across the whole school (permanent IDs),
+//    and are likewise only re-checked when their value changes.
 // =====================================================================
 
 function _todayISO() {
@@ -367,34 +370,45 @@ async function _exists(conn, sql, params) {
     return rows.length > 0;
 }
 
+// Compare two values as strings (handles number vs string, null vs '').
+const _sameVal = (a, b) => String(a ?? '') === String(b ?? '');
+
 // Uniqueness rules, scoped correctly:
 //   • Roll number  -> unique WITHIN A CLASS (institutionId + class_id).
-//                     Only checked when both roll_no and class_id exist.
 //   • PEN number   -> unique across the whole school.
 //   • TC number    -> unique across the whole school.
-// In every case the user being edited is excluded via id <> excludeId,
-// so editing a record never flags its own value.
-async function checkUserUniqueness(conn, instId, body, excludeId) {
+//
+//  `current` is the existing DB row when UPDATING (null when creating).
+//  A field is only checked when it CHANGED vs `current`, so editing a
+//  user without touching these fields never triggers a conflict.
+//  The user being edited is also excluded via id <> excludeId.
+async function checkUserUniqueness(conn, instId, body, excludeId, current) {
     const exclude = excludeId || 0;
+    const cur = current || {};
+    const isCreate = !current;
 
-    // Roll number — per class
+    // --- Roll number — per class -------------------------------------
     if (body.roll_no && body.class_id) {
-        const taken = await _exists(conn,
-            'SELECT id FROM users WHERE institutionId = ? AND class_id = ? AND roll_no = ? AND id <> ?',
-            [instId, body.class_id, body.roll_no, exclude]);
-        if (taken) return `Roll number "${body.roll_no}" is already used by another student in this class.`;
+        const rollChanged  = isCreate || !_sameVal(body.roll_no, cur.roll_no);
+        const classChanged = isCreate || !_sameVal(body.class_id, cur.class_id);
+        if (rollChanged || classChanged) {
+            const taken = await _exists(conn,
+                'SELECT id FROM users WHERE institutionId = ? AND class_id = ? AND roll_no = ? AND id <> ?',
+                [instId, body.class_id, body.roll_no, exclude]);
+            if (taken) return `Roll number "${body.roll_no}" is already used by another student in this class.`;
+        }
     }
 
-    // PEN number — school-wide
-    if (body.pen_no) {
+    // --- PEN number — school-wide ------------------------------------
+    if (body.pen_no && (isCreate || !_sameVal(body.pen_no, cur.pen_no))) {
         const taken = await _exists(conn,
             'SELECT id FROM users WHERE institutionId = ? AND pen_no = ? AND id <> ?',
             [instId, body.pen_no, exclude]);
         if (taken) return `PEN number "${body.pen_no}" is already used by another user in this school.`;
     }
 
-    // TC number — school-wide
-    if (body.tc_number) {
+    // --- TC number — school-wide -------------------------------------
+    if (body.tc_number && (isCreate || !_sameVal(body.tc_number, cur.tc_number))) {
         const taken = await _exists(conn,
             'SELECT id FROM users WHERE institutionId = ? AND tc_number = ? AND id <> ?',
             [instId, body.tc_number, exclude]);
@@ -429,8 +443,8 @@ app.post('/api/admin/users', async (req, res) => {
     try {
         await conn.beginTransaction();
 
-        // 2) Uniqueness (roll per class / PEN / TC) within this school
-        const uErr = await checkUserUniqueness(conn, institutionId, body, 0);
+        // 2) Uniqueness — creating, so every relevant field is checked
+        const uErr = await checkUserUniqueness(conn, institutionId, body, 0, null);
         if (uErr) { await conn.rollback(); return res.status(400).json({ error: uErr }); }
 
         // 3) Insert
@@ -496,13 +510,18 @@ app.put('/api/admin/users/:id', async (req, res) => {
     try {
         await conn.beginTransaction();
 
-        // 2) Find this user's school so uniqueness is scoped correctly
-        const [owner] = await conn.execute('SELECT institutionId FROM users WHERE id = ?', [id]);
+        // 2) Load the CURRENT row so we know its school and which fields
+        //    actually changed (roll/class/pen/tc).
+        const [owner] = await conn.execute(
+            'SELECT institutionId, roll_no, class_id, pen_no, tc_number FROM users WHERE id = ?',
+            [id]
+        );
         if (owner.length === 0) { await conn.rollback(); return res.status(404).json({ error: 'User not found.' }); }
-        const instId = owner[0].institutionId;
+        const current = owner[0];
+        const instId = current.institutionId;
 
-        // 3) Uniqueness (excluding this same user)
-        const uErr = await checkUserUniqueness(conn, instId, body, parseInt(id, 10));
+        // 3) Uniqueness — only re-checks fields that changed; excludes self
+        const uErr = await checkUserUniqueness(conn, instId, body, parseInt(id, 10), current);
         if (uErr) { await conn.rollback(); return res.status(400).json({ error: uErr }); }
 
         // 4) Update
