@@ -3692,9 +3692,11 @@ app.delete('/api/admin/labs/:id', async (req, res) => {
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-// --- Multer config for Pre-Admissions ---
-const PRE_ADMISSIONS_DIR = 'public/uploads/preadmissions';
-if (!fs.existsSync(PRE_ADMISSIONS_DIR)) { fs.mkdirSync(PRE_ADMISSIONS_DIR, { recursive: true }); }
+// --- Pre-Admissions Storage ---
+const PRE_ADMISSIONS_DIR = path.join(__dirname, 'public/uploads/preadmissions');
+if (!fs.existsSync(PRE_ADMISSIONS_DIR)) { 
+    fs.mkdirSync(PRE_ADMISSIONS_DIR, { recursive: true }); 
+}
 const preAdmissionsStorage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, PRE_ADMISSIONS_DIR),
     filename: (req, file, cb) => {
@@ -3704,12 +3706,13 @@ const preAdmissionsStorage = multer.diskStorage({
 });
 const preAdmissionsUpload = multer({ storage: preAdmissionsStorage });
 
+
 // =====================================================================
-// === 23. ADMISSIONS / DIRECTORY (OPEN ROUTES) ========================
+// === 23. ADMISSIONS / DIRECTORY ======================================
 // =====================================================================
 
-// --- 23.1 GET all records ---
 // --- 23.1 GET all records (Secured) ---
+// FIXED: Added :instId to route
 app.get('/api/admin/preadmissions/:instId', async (req, res) => {
     const { instId } = req.params;
     const { search, year, userId } = req.query; 
@@ -3717,14 +3720,12 @@ app.get('/api/admin/preadmissions/:instId', async (req, res) => {
     if (!userId) return res.status(400).json({ error: 'userId required' });
 
     try {
-        // 1. Get user role
         const [users] = await db.execute('SELECT role FROM users WHERE id = ?', [userId]);
         if (users.length === 0) return res.status(404).json({ error: 'User not found' });
         
         const roleName = users[0].role;
         const isSystemAdmin = (roleName === 'Super Admin' || roleName === 'Developer');
 
-        // 2. Check Permission Matrix for 'PreAdmissions'
         const [perms] = await db.execute(`
             SELECT p.can_read 
               FROM permissions p
@@ -3738,7 +3739,6 @@ app.get('/api/admin/preadmissions/:instId', async (req, res) => {
             return res.status(403).json({ message: "You do not have permission to view admissions." });
         }
 
-        // 3. Build Query
         let whereClauses = ["institutionId = ?"];
         const queryParams = [instId];
 
@@ -3761,6 +3761,7 @@ app.get('/api/admin/preadmissions/:instId', async (req, res) => {
         res.status(500).json({ message: "Failed to fetch admission records." });
     }
 });
+
 // --- 23.2 POST new record ---
 app.post('/api/admin/preadmissions', preAdmissionsUpload.single('photo'), async (req, res) => {
     const fields = req.body;
@@ -3778,7 +3779,7 @@ app.post('/api/admin/preadmissions', preAdmissionsUpload.single('photo'), async 
             tc_issued_date, tc_number, address, status
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
-    
+
     const v = (val) => (val === '' || val === 'null' || val === undefined ? null : val);
 
     const params = [
@@ -3802,12 +3803,13 @@ app.post('/api/admin/preadmissions', preAdmissionsUpload.single('photo'), async 
 });
 
 // --- 23.3 PUT update record ---
+// FIXED: Added :id to route
 app.put('/api/admin/preadmissions/:id', preAdmissionsUpload.single('photo'), async (req, res) => {
     const { id } = req.params;
     const fields = req.body;
     let setClauses = [];
     let params = [];
-    
+
     const updatableFields = [
         'admission_no', 'student_name', 'dob', 'pen_no', 'phone_no', 'aadhar_no', 
         'parent_name', 'parent_phone', 'previous_institute', 'previous_grade', 
@@ -3832,7 +3834,7 @@ app.put('/api/admin/preadmissions/:id', preAdmissionsUpload.single('photo'), asy
 
     const query = `UPDATE pre_admissions SET ${setClauses.join(', ')} WHERE id = ?`;
     params.push(id);
-    
+
     try {
         const [result] = await db.query(query, params);
         if (result.affectedRows === 0) return res.status(404).json({ message: "Record not found." });
@@ -3843,6 +3845,7 @@ app.put('/api/admin/preadmissions/:id', preAdmissionsUpload.single('photo'), asy
 });
 
 // --- 23.4 DELETE record ---
+// FIXED: Added :id to route
 app.delete('/api/admin/preadmissions/:id', async (req, res) => {
     try {
         const [[record]] = await db.query("SELECT photo_url FROM pre_admissions WHERE id = ?", [req.params.id]);
@@ -3858,7 +3861,7 @@ app.delete('/api/admin/preadmissions/:id', async (req, res) => {
     } catch (error) {
         res.status(500).json({ message: "Failed to delete record." });
     }
-}); 
+});
 // --- Multer config for Study Materials ---
 const studyMatDir = 'public/uploads/study_materials';
 if (!fs.existsSync(studyMatDir)) { fs.mkdirSync(studyMatDir, { recursive: true }); }
