@@ -199,15 +199,16 @@ function AlumniCard({ a, onClick }) {
         )}
       </div>
 
-      {/* Footer: current status chip + occupation (right) */}
+      {/* Footer: current status chip (green/etc) + occupation chip (orange) */}
       <div className="mt-auto pt-4 border-t border-zinc-100 w-full flex items-center justify-between gap-2">
         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-semibold shrink-0 ${ss.bg} ${ss.text} ring-1 ring-inset ring-black/5`}>
           <Briefcase className="size-3" />
           {a.current_status || 'Status not set'}
         </span>
         {a.occupation && (
-          <span className="text-[11px] font-medium text-zinc-500 truncate min-w-0 text-right" title={a.occupation}>
-            {a.occupation}
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-semibold min-w-0 bg-orange-50 text-orange-700 ring-1 ring-inset ring-orange-600/20"
+            title={a.occupation}>
+            <span className="truncate">{a.occupation}</span>
           </span>
         )}
       </div>
