@@ -11,11 +11,9 @@ import AlumniDetail from './AlumniDetail';
 
 // =====================================================================
 //  Alumni - card list of passed-out students.
-//  • Academic-year filter + search bar.
+//  • Academic-year filter (from the Academic Year module) + search bar.
 //  • Each card: photo/initials, name, phone, email, current status,
 //    passout year. Click -> full detail (AlumniDetail).
-//  • Edit access (can('Alumni','edit')) unlocks editing extra fields
-//    and the manual "Add to Alumni" action.
 // =====================================================================
 
 export default function Alumni() {
@@ -30,7 +28,7 @@ export default function Alumni() {
   const [query, setQuery]     = useState('');
   const [openId, setOpenId]   = useState(null);    // alumni id in detail view
 
-  // load distinct years for the filter
+  // Year filter options come from the Academic Year module.
   const loadYears = useCallback(async () => {
     if (!user?.institutionId) return;
     try {
@@ -64,7 +62,10 @@ export default function Alumni() {
     return () => clearTimeout(t);
   }, [loadList]);
 
-  const yearLabel = (y) => y.passout_year || y.year_name || '-';
+  const yearLabel = (y) => {
+    const base = y.year_name || y.passout_year || '-';
+    return y.isActive ? `${base} (Active)` : base;
+  };
 
   // detail view takes over the whole module
   if (openId) {
@@ -77,7 +78,7 @@ export default function Alumni() {
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300">
-      
+
       <header className="flex flex-col mb-4 sm:mb-0">
         <h2 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
           <GraduationCap className="text-primary size-5" />
@@ -105,7 +106,7 @@ export default function Alumni() {
             <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
         </div>
-        
+
         <div className="relative w-full sm:w-72 shrink-0">
           <Search className="size-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input value={query} onChange={e => setQuery(e.target.value)}
@@ -132,8 +133,7 @@ export default function Alumni() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
           {list.map(a => (
-            <AlumniCard key={a.id} a={a} instId={user.institutionId}
-              onClick={() => setOpenId(a.id)} />
+            <AlumniCard key={a.id} a={a} onClick={() => setOpenId(a.id)} />
           ))}
         </div>
       )}
@@ -142,17 +142,37 @@ export default function Alumni() {
 }
 
 
+// --- Avatar: shows the stored photo, falls back to initials ---------
+function AlumniAvatar({ a }) {
+  const [err, setErr] = useState(false);
+  // a.has_pic comes back as 1/0 from MySQL
+  if (a.has_pic && !err) {
+    return (
+      <img
+        src={`${API_BASE_URL}/admin/alumni/pic/${a.id}`}
+        alt={a.name}
+        onError={() => setErr(true)}
+        className="size-12 rounded-md object-cover shrink-0 ring-1 ring-black/5"
+      />
+    );
+  }
+  return (
+    <div className="size-12 rounded-md bg-primary/10 text-primary flex items-center justify-center font-semibold text-lg shrink-0 ring-1 ring-primary/20">
+      {initials(a.name)}
+    </div>
+  );
+}
+
+
 // --- One alumni card -----------------------------------------------
-function AlumniCard({ a, instId, onClick }) {
+function AlumniCard({ a, onClick }) {
   const ss = statusStyle(a.current_status);
 
   return (
     <button onClick={onClick}
       className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm p-4 sm:p-5 text-left hover:ring-primary/30 hover:shadow-md transition-all group flex flex-col h-full w-full">
       <div className="flex items-start gap-3 w-full">
-        <div className="size-12 rounded-md bg-primary/10 text-primary flex items-center justify-center font-semibold text-lg shrink-0 ring-1 ring-primary/20">
-          {initials(a.name)}
-        </div>
+        <AlumniAvatar a={a} />
         <div className="min-w-0 flex-1">
           <h3 className="font-semibold text-zinc-900 truncate group-hover:text-primary transition-colors">{a.name}</h3>
           {a.passout_year && (

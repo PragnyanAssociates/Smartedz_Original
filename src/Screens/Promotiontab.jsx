@@ -13,9 +13,7 @@ export default function PromotionTab({ data, fetchData }) {
   const [selectedStudents, setSelectedStudents] = useState([]);
   const [search, setSearch]                     = useState('');
 
-  // Show only ACTIVE students — students who are role-student AND not
-  // already passed out. Alumni (status 'alumni') have left the school
-  // and must never appear in the promotion list.
+  // Show only ACTIVE students — role-student AND not already passed out.
   const allStudents = useMemo(
     () => data.users.filter(u =>
       (u.role || '').toLowerCase().includes('student') &&
@@ -53,11 +51,16 @@ export default function PromotionTab({ data, fetchData }) {
     );
   };
 
-  // Resolve the active academic year from whatever the data bundle carries.
+  // Resolve the ACTIVE academic year. The academic_years table uses
+  // `isActive` (tinyint) — earlier this looked for `is_active` and so
+  // always fell back to the newest year. Check both to be safe.
   const activeYear = useMemo(() => {
     const years = data.academicYears || data.academic_years || [];
-    return years.find(y => y.is_active) || years[0] || null;
+    return years.find(y => y.isActive || y.is_active) || years[0] || null;
   }, [data]);
+
+  // Display name for the active year (academic_years.name, e.g. "2026-2027")
+  const activeYearName = activeYear ? (activeYear.name || activeYear.year_name || '') : '';
 
   const classLabel = (c) => `${c.className}${c.section ? ` - ${c.section}` : ''}`;
 
@@ -82,10 +85,11 @@ export default function PromotionTab({ data, fetchData }) {
   };
 
   // --- Passout -> Alumni -------------------------------------------
+  // We still send the active year as a hint, but the BACKEND anchors the
+  // passout to the institution's active academic year authoritatively.
   const promoteToAlumni = async () => {
     const srcClass = data.classes.find(c => String(c.id) === String(sourceClassId));
     const finalClass = srcClass ? classLabel(srcClass) : null;
-    const passoutYear = (activeYear && (activeYear.year_name || activeYear.name)) || '';
 
     const institutionId = user?.institutionId ?? data?.institutionId ?? data?.institution?.id ?? data?.users?.[0]?.institutionId ?? null;
 
@@ -100,13 +104,13 @@ export default function PromotionTab({ data, fetchData }) {
         institutionId,
         student_ids: selectedStudents,
         academic_year_id: activeYear?.id ?? null,
-        passout_year: passoutYear || null,
+        passout_year: activeYearName || null,
         final_class: finalClass ?? null
       })
     });
     const d = await res.json().catch(() => ({}));
     if (res.ok) {
-      alert(`${d.added ?? selectedStudents.length} student(s) moved to Alumni.`);
+      alert(`${d.added ?? selectedStudents.length} student(s) moved to Alumni${d.passout_year ? ` (${d.passout_year})` : ''}.`);
       setSelectedStudents([]);
       fetchData();
     } else {
@@ -119,7 +123,10 @@ export default function PromotionTab({ data, fetchData }) {
     if (!target.classId) return alert('Select a target class.');
 
     if (isAlumniTarget) {
-      if (!window.confirm(`Move ${selectedStudents.length} student(s) to Alumni? They will be marked as passed out.`)) return;
+      if (!activeYear) {
+        return alert('No active academic year is set. Set one active in the Academics tab before moving students to Alumni.');
+      }
+      if (!window.confirm(`Move ${selectedStudents.length} student(s) to Alumni for ${activeYearName}? They will be marked as passed out.`)) return;
       return promoteToAlumni();
     }
 
@@ -139,7 +146,7 @@ export default function PromotionTab({ data, fetchData }) {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        
+
         {/* LEFT — student list */}
         <div className="ring-1 ring-black/5 rounded-lg bg-white p-6 flex flex-col h-full">
           <h4 className="text-[11px] font-semibold text-zinc-500 uppercase mb-5 tracking-wider flex items-center gap-2">
@@ -194,8 +201,8 @@ export default function PromotionTab({ data, fetchData }) {
               const isOn = selectedStudents.includes(s.id);
               return (
                 <label key={s.id} className={`flex items-center gap-3 p-3 rounded-md transition-colors cursor-pointer ring-1 ${
-                  isOn 
-                    ? 'bg-primary/5 ring-primary/20' 
+                  isOn
+                    ? 'bg-primary/5 ring-primary/20'
                     : 'bg-zinc-50/50 ring-black/5 hover:bg-zinc-50 hover:ring-zinc-200'
                 }`}>
                   <input type="checkbox"
@@ -230,7 +237,7 @@ export default function PromotionTab({ data, fetchData }) {
                 Target Class <span className="text-accent">*</span>
               </label>
               <div className="relative">
-                <select 
+                <select
                   className="h-9 w-full rounded-md border border-zinc-200 bg-white pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none transition-colors"
                   value={target.classId}
                   onChange={e => setTarget({ ...target, classId: e.target.value })}>
@@ -249,11 +256,11 @@ export default function PromotionTab({ data, fetchData }) {
                 <label className="text-xs font-medium text-zinc-600 mb-1.5 block">
                   Target Section <span className="text-zinc-400 font-normal">(Optional)</span>
                 </label>
-                <input 
+                <input
                   placeholder="e.g. A"
                   className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors"
                   value={target.section}
-                  onChange={e => setTarget({ ...target, section: e.target.value })} 
+                  onChange={e => setTarget({ ...target, section: e.target.value })}
                 />
               </div>
             )}
@@ -263,7 +270,7 @@ export default function PromotionTab({ data, fetchData }) {
                 <GraduationCap className="size-5 text-accent shrink-0 mt-0.5" />
                 <p className="text-[11px] font-medium text-zinc-700 leading-relaxed">
                   These students will be snapshotted into <strong className="font-semibold text-accent">Alumni</strong> as passed out
-                  {activeYear ? <> for <strong className="font-semibold">{activeYear.year_name || activeYear.name}</strong></> : null}
+                  {activeYearName ? <> for <strong className="font-semibold">{activeYearName}</strong> (the current academic year)</> : <> — <strong className="font-semibold text-red-600">no active academic year is set</strong></>}
                   , and removed from the active student roster. This action cannot be auto-undone.
                 </p>
               </div>
@@ -275,7 +282,7 @@ export default function PromotionTab({ data, fetchData }) {
               <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Selected Students</span>
               <span className="text-2xl font-semibold text-zinc-900 tabular-nums">{selectedStudents.length}</span>
             </div>
-            
+
             <button
               onClick={handlePromote}
               disabled={selectedStudents.length === 0 || !target.classId}

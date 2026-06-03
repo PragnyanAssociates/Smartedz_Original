@@ -5555,34 +5555,34 @@ io.on('connection', (socket) => {
 //  BACKEND — Section 23: ALUMNI
 //
 //  Append this whole block to backend/index.js, just BEFORE the final
-//  `const PORT = ...` line.
+//  `const PORT = ...` line. (Replaces your previous Section 23.)
 //
-//  ALSO add 'Alumni' to DEFAULT_MODULES at the top of index.js:
-//    const DEFAULT_MODULES = [
-//        'Overview','Manage Logins','Timetable','Academic Calendar',
-//        'Attendance','Exams','Reports','Performance','Homework',
-//        'Meals','Digital Labs','Syllabus','Alumni'
-//    ];
+//  Changes in this version:
+//    • 23.1 year filter now comes from the ACADEMIC YEAR module
+//      (the academic_years table), not from distinct rows in alumni.
+//    • New 23.3b endpoint streams an alumni's photo by id, so the cards
+//      can show the DP without bloating the list payload.
+//    • 23.5 promote now anchors passout to the institution's ACTIVE
+//      academic year (authoritative on the server).
 //
 //  Reuses nowSQL() from Section 16.
-//
-//  NOTE: 23.5 (promoteToAlumni) is the function the PROMOTION TAB calls
-//  when its destination is "Alumni (Passout)". See the wiring file for
-//  how to hook it into your existing promotion route.
 // =====================================================================
 
 
-// --- 23.1 Distinct passout years for the filter ---------------------
+// --- 23.1 Years for the filter — from the Academic Year module ------
 //   GET /api/admin/alumni/years/:instId
+//   Lists the institution's academic years (active one flagged), so the
+//   filter is consistent with the rest of the system.
 app.get('/api/admin/alumni/years/:instId', async (req, res) => {
     try {
         const [rows] = await db.execute(
-            `SELECT DISTINCT a.academic_year_id, a.passout_year,
-                    y.name AS year_name
-               FROM alumni a
-               LEFT JOIN academic_years y ON y.id = a.academic_year_id
-              WHERE a.institutionId = ?
-              ORDER BY a.passout_year DESC`,
+            `SELECT id   AS academic_year_id,
+                    name AS year_name,
+                    name AS passout_year,
+                    isActive
+               FROM academic_years
+              WHERE institutionId = ?
+              ORDER BY startDate DESC, id DESC`,
             [req.params.instId]
         );
         res.json(rows);
@@ -5592,7 +5592,8 @@ app.get('/api/admin/alumni/years/:instId', async (req, res) => {
 
 // --- 23.2 Alumni list (card data) -----------------------------------
 //   GET /api/admin/alumni/:instId?yearId=optional&q=optional
-//   Light payload for the cards — excludes the heavy profile_pic/notes.
+//   Light payload for the cards — excludes the heavy profile_pic/notes,
+//   but tells the card whether a photo exists via has_pic.
 app.get('/api/admin/alumni/:instId', async (req, res) => {
     const { instId } = req.params;
     const { yearId, q } = req.query;
@@ -5629,14 +5630,36 @@ app.get('/api/admin/alumni/detail/:id', async (req, res) => {
 });
 
 
+// --- 23.3b Alumni photo (streams the stored picture) ----------------
+//   GET /api/admin/alumni/pic/:id
+//   profile_pic is stored as a data URL (data:image/...;base64,....).
+//   We decode it and serve real image bytes so the cards can show it.
+app.get('/api/admin/alumni/pic/:id', async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            'SELECT profile_pic FROM alumni WHERE id = ?', [req.params.id]);
+        if (!rows.length || !rows[0].profile_pic) return res.status(404).send('No image');
+
+        const pic = String(rows[0].profile_pic);
+        const m = /^data:([^;]+);base64,(.+)$/s.exec(pic);
+        if (m) {
+            const mime = m[1];
+            const buf = Buffer.from(m[2], 'base64');
+            res.setHeader('Content-Type', mime);
+            res.setHeader('Cache-Control', 'private, max-age=3600');
+            return res.end(buf);
+        }
+        // Not a data URL — treat it as an external URL/path
+        return res.redirect(pic);
+    } catch (err) { res.status(500).send(err.message); }
+});
+
+
 // --- 23.4 Manually add an alumni ------------------------------------
-//   Body: either { user_id, academic_year_id, passout_year } to snapshot
-//   an existing student, OR a full manual record with name/email/etc.
 app.post('/api/admin/alumni', async (req, res) => {
     const b = req.body;
     if (!b.institutionId) return res.status(400).json({ error: 'institutionId required.' });
     try {
-        // If a user_id is supplied, snapshot from their profile first.
         let snap = {};
         if (b.user_id) {
             const [u] = await db.execute('SELECT * FROM users WHERE id = ?', [b.user_id]);
@@ -5677,9 +5700,9 @@ app.post('/api/admin/alumni', async (req, res) => {
 
 // --- 23.5 Promote a batch of students to Alumni ---------------------
 //   Called by the PROMOTION TAB when destination = "Alumni (Passout)".
-//   Body: { institutionId, student_ids: [..], academic_year_id,
-//           passout_year, final_class, created_by }
-//   Snapshots each student into `alumni` and sets users.status='alumni'.
+//   Body: { institutionId, student_ids: [..], final_class, created_by }
+//   The passout year/academic_year_id are taken from the institution's
+//   ACTIVE academic year on the server, so they are always correct.
 app.post('/api/admin/alumni/promote', async (req, res) => {
     const {
         institutionId, student_ids, academic_year_id,
@@ -5691,6 +5714,16 @@ app.post('/api/admin/alumni/promote', async (req, res) => {
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
+
+        // Anchor passout to the institution's ACTIVE academic year.
+        // Fall back to whatever the client sent only if none is active.
+        const [ay] = await conn.execute(
+            'SELECT id, name FROM academic_years WHERE institutionId = ? AND isActive = 1 LIMIT 1',
+            [institutionId]
+        );
+        const yearId   = ay.length ? ay[0].id   : (academic_year_id ?? null);
+        const yearName = ay.length ? ay[0].name : (passout_year ?? null);
+
         let added = 0;
         for (const sid of student_ids) {
             const [u] = await conn.execute('SELECT * FROM users WHERE id = ?', [sid]);
@@ -5700,7 +5733,7 @@ app.post('/api/admin/alumni/promote', async (req, res) => {
             // skip if already an alumni record for this user + year
             const [exists] = await conn.execute(
                 'SELECT id FROM alumni WHERE user_id = ? AND academic_year_id = ?',
-                [sid, academic_year_id || null]
+                [sid, yearId]
             );
             if (exists.length) continue;
 
@@ -5710,19 +5743,18 @@ app.post('/api/admin/alumni/promote', async (req, res) => {
                     name, email, phone, gender, dob, address, profile_pic,
                     roll_no, admission_no, created_by)
                  VALUES (?,?,?,?,?, ?,?,?,?,?,?,?, ?,?, ?)`,
-                [institutionId, sid, academic_year_id ?? null, passout_year ?? null,
-                 final_class ?? null,
+                [institutionId, sid, yearId, yearName, final_class ?? null,
                  s.name ?? null, s.email ?? null, s.phone ?? null, s.gender ?? null,
                  s.dob ?? null, s.address ?? null, s.profile_pic ?? null,
                  s.roll_no ?? null, s.admission_no ?? null, created_by ?? null]
             );
-            // deactivate the original account
+            // mark the original account as alumni (off the active roster)
             await conn.execute(
                 "UPDATE users SET status = 'alumni' WHERE id = ?", [sid]);
             added++;
         }
         await conn.commit();
-        res.json({ success: true, added });
+        res.json({ success: true, added, passout_year: yearName });
     } catch (err) {
         await conn.rollback();
         res.status(500).json({ error: err.message });
@@ -5731,8 +5763,6 @@ app.post('/api/admin/alumni/promote', async (req, res) => {
 
 
 // --- 23.6 Update the editable / extra fields ------------------------
-//   Body: any of current_status, occupation, organization,
-//   higher_education, location, linkedin, notes, name, email, phone.
 app.put('/api/admin/alumni/:id', async (req, res) => {
     const b = req.body;
     const fields = [
@@ -5764,8 +5794,6 @@ app.delete('/api/admin/alumni/:id', async (req, res) => {
 
 
 // --- 23.8 Candidates for manual add ---------------------------------
-//   GET /api/admin/alumni/candidates/:instId/:classId
-//   Active students of a class — for the manual "Add to Alumni" picker.
 app.get('/api/admin/alumni/candidates/:instId/:classId', async (req, res) => {
     const { instId, classId } = req.params;
     try {
