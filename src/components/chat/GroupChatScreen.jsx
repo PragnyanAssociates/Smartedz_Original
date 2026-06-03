@@ -1,6 +1,7 @@
 "use client"
 
-import React, { useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom"; 
 import { useAuth } from "../../context/AuthContext.jsx";
 import { usePermissions } from "../../Screens/PermissionsContext"; 
@@ -74,6 +75,7 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
   const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
   const [isOptionsModalVisible, setOptionsModalVisible] = useState(false);
   const [selectedMessage, setSelectedMessage] = useState(null);
+  const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 }); // ADDED FOR POSITIONING
   const [isAttachmentModalVisible, setAttachmentModalVisible] = useState(false);
   const [videoErrors, setVideoErrors] = useState({});
   const [isGroupMenuVisible, setGroupMenuVisible] = useState(false);
@@ -217,7 +219,7 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
     return processed;
   }, [messages, lastSeenTime, user?.id]);
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     if (loading) return;
     if (isPaginationLoadRef.current && messagesContainerRef.current) {
         const newScrollHeight = messagesContainerRef.current.scrollHeight;
@@ -225,9 +227,11 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
         messagesContainerRef.current.scrollTop = diff;
         isPaginationLoadRef.current = false;
     } else if (!initialLoadDone.current && processedData.length > 0) {
-        const bannerElement = document.getElementById('unread-banner');
-        if (bannerElement) bannerElement.scrollIntoView({ behavior: 'auto', block: 'center' });
-        else messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+        setTimeout(() => {
+            const bannerElement = document.getElementById('unread-banner');
+            if (bannerElement) bannerElement.scrollIntoView({ behavior: 'auto', block: 'center' });
+            else messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+        }, 150);
         initialLoadDone.current = true;
     }
   }, [messages, loading, processedData]);
@@ -276,8 +280,37 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
 
   const handleKeyPress = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } };
   
-  const onLongPressMessage = (message) => { 
+  // UPDATED onLongPressMessage
+  const onLongPressMessage = (e, message) => { 
+    e.preventDefault();
+    e.stopPropagation();
     if (!user || message.status === 'uploading' || message.is_deleted) return; 
+
+    // Capture exact mouse/touch coordinates
+    let clickX = e.clientX || (e.touches && e.touches[0].clientX);
+    let clickY = e.clientY || (e.touches && e.touches[0].clientY);
+
+    // Fallback if coordinates fail
+    if (!clickX || !clickY) {
+        const rect = e.currentTarget.getBoundingClientRect();
+        clickX = rect.left + (rect.width / 2);
+        clickY = rect.top + (rect.height / 2);
+    }
+
+    // Adjust coordinates so the menu doesn't go off-screen
+    const menuWidth = 200;
+    const menuHeight = 180;
+    let left = clickX;
+    let top = clickY;
+
+    if (left + menuWidth > window.innerWidth) {
+        left = window.innerWidth - menuWidth - 16;
+    }
+    if (top + menuHeight > window.innerHeight) {
+        top = window.innerHeight - menuHeight - 16;
+    }
+
+    setMenuPosition({ top, left });
     setSelectedMessage(message); 
     setOptionsModalVisible(true); 
   };
@@ -287,11 +320,42 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
   const downloadAndOpenFile = async (fileUrl, fileName, action) => {
     if (!fileUrl) return alert("No file available.");
     const fullUrl = SERVER_URL + fileUrl;
+    
     try {
       setOptionsModalVisible(false);
-      if (action === 'view') { const ext = fileName?.split('.').pop()?.toLowerCase(); if (['pdf', 'txt', 'jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) { window.open(fullUrl, '_blank'); return; } else { action = 'download'; } }
-      if (action === 'download') { const res = await fetch(fullUrl); const blob = await res.blob(); const url = window.URL.createObjectURL(blob); const a = document.createElement('a'); a.style.display = 'none'; a.href = url; a.download = fileName || `download-${Date.now()}`; document.body.appendChild(a); a.click(); window.URL.revokeObjectURL(url); document.body.removeChild(a); }
-    } catch (err) { alert("Error downloading file."); }
+      
+      if (action === 'view') {
+        const ext = fileName?.split('.').pop()?.toLowerCase();
+        const officeExts = ['xls', 'xlsx', 'doc', 'docx', 'ppt', 'pptx'];
+
+        if (['pdf', 'txt', 'jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
+          window.open(fullUrl, '_blank');
+          return;
+        } else if (officeExts.includes(ext)) {
+          const googleViewerUrl = `https://docs.google.com/viewer?url=${encodeURIComponent(fullUrl)}&embedded=true`;
+          window.open(googleViewerUrl, '_blank');
+          return;
+        } else {
+          action = 'download'; 
+        }
+      }
+
+      if (action === 'download') {
+        const res = await fetch(fullUrl);
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = fileName || `download-${Date.now()}`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      }
+    } catch (err) { 
+      alert("Error downloading file."); 
+    }
   };
 
   const cancelReply = () => setReplyingTo(null); const cancelEdit = () => { setEditingMessage(null); setNewMessage(""); };
@@ -357,7 +421,12 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
     return (
       <div key={key} className={`flex flex-row my-1 px-4 sm:px-6 items-start ${isMyMessage ? "justify-end" : "justify-start"}`}>
         {!isMyMessage && <img src={getProfileImageSource(item.profile_image_url)} alt="User" className="size-8 rounded-full mr-2.5 mt-0.5 bg-zinc-200 flex-shrink-0 object-cover" />}
-        <div className={`relative max-w-[85%] sm:max-w-[65%] cursor-pointer ${isMyMessage ? (isImageOrVideo ? "rounded-lg shadow-sm ring-1 ring-black/5" : `${THEME.myMessageBg} rounded-lg rounded-tr-none p-2.5`) : (isImageOrVideo ? "rounded-lg shadow-sm ring-1 ring-black/5" : `${THEME.otherMessageBg} rounded-lg rounded-tl-none p-2.5`)} ${item.is_deleted ? 'bg-zinc-50 border border-zinc-200 shadow-none' : ''}`} onContextMenu={(e) => { e.preventDefault(); onLongPressMessage(item); }} onClick={() => onLongPressMessage(item)}>
+        
+        {/* UPDATED EVENT HANDLERS */}
+        <div className={`relative max-w-[85%] sm:max-w-[65%] cursor-pointer ${isMyMessage ? (isImageOrVideo ? "rounded-lg shadow-sm ring-1 ring-black/5" : `${THEME.myMessageBg} rounded-lg rounded-tr-none p-2.5`) : (isImageOrVideo ? "rounded-lg shadow-sm ring-1 ring-black/5" : `${THEME.otherMessageBg} rounded-lg rounded-tl-none p-2.5`)} ${item.is_deleted ? 'bg-zinc-50 border border-zinc-200 shadow-none' : ''}`} 
+          onContextMenu={(e) => onLongPressMessage(e, item)} 
+          onClick={(e) => onLongPressMessage(e, item)}
+        >
           
           {!!item.is_pinned && !item.is_deleted && <div className="absolute -top-2 -right-2 bg-amber-100 text-amber-600 rounded-full p-1 shadow-sm border border-amber-200"><Pin className="size-3" /></div>}
           
@@ -377,31 +446,44 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
     );
   };
 
+  // UPDATED renderOptionsModal 
   const renderOptionsModal = () => {
     if (!selectedMessage) return null;
     const isMyMessage = selectedMessage.user_id === user?.id;
     const canDeleteThisMessage = isMyMessage || hasGlobalDelete;
 
-    return (
-      <div className={`fixed inset-0 bg-zinc-900/40 backdrop-blur-sm flex items-center justify-center z-[60] ${isOptionsModalVisible ? '' : 'hidden'}`}>
-        <div className="bg-white rounded-lg p-2 w-72 max-w-[90%] shadow-xl ring-1 ring-black/5 animate-in zoom-in-95 duration-200">
-          {canSendMessages && <button className="w-full flex items-center gap-3 p-3 hover:bg-zinc-50 rounded-md transition-colors" onClick={() => { setReplyingTo(selectedMessage); setOptionsModalVisible(false); }}><Reply className="size-4 text-zinc-500" /><span className="text-sm font-medium text-zinc-700">Reply</span></button>}
-          {isMyMessage && selectedMessage.message_type === 'text' && <button className="w-full flex items-center gap-3 p-3 hover:bg-zinc-50 rounded-md transition-colors" onClick={() => { setEditingMessage(selectedMessage); setNewMessage(selectedMessage.message_text); setOptionsModalVisible(false); }}><Edit3 className="size-4 text-zinc-500" /><span className="text-sm font-medium text-zinc-700">Edit</span></button>}
-          {canDeleteThisMessage && <button className="w-full flex items-center gap-3 p-3 hover:bg-red-50 rounded-md transition-colors" onClick={() => { if (window.confirm('Delete message?')) { handleDeleteMessage(selectedMessage.id); setOptionsModalVisible(false); } }}><Trash2 className="size-4 text-red-500" /><span className="text-sm font-medium text-red-600">Delete</span></button>}
+    return createPortal(
+      <div 
+        className={`fixed inset-0 z-[100] ${isOptionsModalVisible ? '' : 'hidden'}`} 
+        onClick={() => setOptionsModalVisible(false)}
+      >
+        <div 
+          className="absolute bg-white rounded-lg py-1 w-48 shadow-xl ring-1 ring-black/5 animate-in zoom-in-95 duration-200"
+          style={{ top: menuPosition.top, left: menuPosition.left }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {canSendMessages && <button className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-zinc-50 transition-colors" onClick={() => { setReplyingTo(selectedMessage); setOptionsModalVisible(false); }}><Reply className="size-4 text-zinc-500" /><span className="text-sm font-medium text-zinc-700">Reply</span></button>}
+          {isMyMessage && selectedMessage.message_type === 'text' && <button className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-zinc-50 transition-colors" onClick={() => { setEditingMessage(selectedMessage); setNewMessage(selectedMessage.message_text); setOptionsModalVisible(false); }}><Edit3 className="size-4 text-zinc-500" /><span className="text-sm font-medium text-zinc-700">Edit</span></button>}
+          {canDeleteThisMessage && <button className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-red-50 transition-colors" onClick={() => { if (window.confirm('Delete message?')) { handleDeleteMessage(selectedMessage.id); setOptionsModalVisible(false); } }}><Trash2 className="size-4 text-red-500" /><span className="text-sm font-medium text-red-600">Delete</span></button>}
           <div className="h-px bg-zinc-100 my-1"></div>
-          <button className="w-full flex items-center gap-3 p-3 hover:bg-zinc-50 rounded-md transition-colors" onClick={() => setOptionsModalVisible(false)}><X className="size-4 text-zinc-500" /><span className="text-sm font-medium text-zinc-700">Cancel</span></button>
+          <button className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-zinc-50 transition-colors" onClick={() => setOptionsModalVisible(false)}><X className="size-4 text-zinc-500" /><span className="text-sm font-medium text-zinc-700">Cancel</span></button>
         </div>
-      </div>
+      </div>,
+      document.body
     );
   };
 
   return (
     <div className="flex flex-col h-full w-full bg-zinc-50">
-      {fullScreenImage && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setFullScreenImage(null)}>
-          <button className="absolute top-6 right-6 p-2 text-white/70 hover:text-white transition-colors bg-white/10 rounded-full" onClick={(e) => { e.stopPropagation(); setFullScreenImage(null); }}><X className="size-6" /></button>
+      
+      {fullScreenImage && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setFullScreenImage(null)}>
+          <button className="absolute top-6 right-6 p-2 text-white/70 hover:text-white transition-colors bg-white/10 rounded-full" onClick={(e) => { e.stopPropagation(); setFullScreenImage(null); }}>
+            <X className="size-6" />
+          </button>
           <img src={fullScreenImage} className="max-w-full max-h-full object-contain p-4" alt="Full screen view" onClick={(e) => e.stopPropagation()} />
-        </div>
+        </div>,
+        document.body
       )}
 
       {renderOptionsModal()} 
