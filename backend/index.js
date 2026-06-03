@@ -36,9 +36,7 @@ const db = mysql.createPool({
 });
 
 const JWT_SECRET = process.env.JWT_SECRET || 'unified_erp_key_2025';
-// =====================================================================
-// SECURITY MIDDLEWARE: Verify JWT Token
-// =====================================================================
+
 
 // =====================================================================
 //  MODULE REGISTRY (mirror in frontend/src/Screens/Modules.js)
@@ -684,27 +682,82 @@ app.get('/api/admin/my-permissions/:userId', async (req, res) => {
 });
 
 
+
 // =====================================================================
 // === 7. ACADEMIC YEARS ===============================================
+//
+//  REPLACE your whole Section 7 block with this.
+//
+//  Design decision: the ACTIVE year is NEVER changed automatically.
+//  It anchors every module's data, and schools have different calendars
+//  (some start in April, some in June), so auto-switching is unsafe.
+//  Instead we expose the active year's status (days left / expired) so
+//  the UI can warn the admin and let them switch manually.
+//
+//  No database change is required.
 // =====================================================================
+
+// Status of an academic year relative to today (reusable for the
+// Academics screen now, and notifications / dashboard popups later).
+function computeAcademicYearStatus(startDate, endDate) {
+    const MS = 24 * 60 * 60 * 1000;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+
+    const start = startDate ? new Date(startDate) : null;
+    const end   = endDate   ? new Date(endDate)   : null;
+    if (start) start.setHours(0, 0, 0, 0);
+    if (end)   end.setHours(0, 0, 0, 0);
+
+    let daysLeft = null, expired = false, daysSinceEnd = 0, notStarted = false;
+
+    if (end && !isNaN(end.getTime())) {
+        daysLeft = Math.ceil((end - today) / MS);
+        expired = daysLeft < 0;
+        if (expired) daysSinceEnd = Math.abs(daysLeft);
+    }
+    if (start && !isNaN(start.getTime()) && today < start) notStarted = true;
+
+    return { daysLeft, expired, daysSinceEnd, notStarted };
+}
+
+
+// --- 7.1 Create academic year ----------------------------------------
 app.post('/api/admin/academics', async (req, res) => {
     const { name, startDate, endDate, institutionId } = req.body;
+    if (!name || !name.trim())  return res.status(400).json({ error: 'Name is required.' });
+    if (!institutionId)         return res.status(400).json({ error: 'institutionId is required.' });
+    if (startDate && endDate && new Date(endDate) <= new Date(startDate)) {
+        return res.status(400).json({ error: 'End date must be after the start date.' });
+    }
     try {
-        await db.execute('INSERT INTO academic_years (name, startDate, endDate, isActive, institutionId) VALUES (?, ?, ?, 0, ?)',
-            [name, startDate, endDate, institutionId]);
+        await db.execute(
+            'INSERT INTO academic_years (name, startDate, endDate, isActive, institutionId) VALUES (?, ?, ?, 0, ?)',
+            [name.trim(), startDate || null, endDate || null, institutionId]
+        );
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
+// --- 7.2 Update academic year ----------------------------------------
 app.put('/api/admin/academics/:id', async (req, res) => {
     const { id } = req.params;
     const { name, startDate, endDate } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required.' });
+    if (startDate && endDate && new Date(endDate) <= new Date(startDate)) {
+        return res.status(400).json({ error: 'End date must be after the start date.' });
+    }
     try {
-        await db.execute('UPDATE academic_years SET name=?, startDate=?, endDate=? WHERE id=?', [name, startDate, endDate, id]);
+        await db.execute(
+            'UPDATE academic_years SET name=?, startDate=?, endDate=? WHERE id=?',
+            [name.trim(), startDate || null, endDate || null, id]
+        );
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
+// --- 7.3 Set a year active (manual — the only way it changes) --------
 app.put('/api/admin/academics/set-active/:id', async (req, res) => {
     const { id } = req.params;
     const { institutionId } = req.body;
@@ -721,12 +774,56 @@ app.put('/api/admin/academics/set-active/:id', async (req, res) => {
     } finally { conn.release(); }
 });
 
+
+// --- 7.4 Delete academic year ----------------------------------------
+//  Guard: the active year cannot be deleted (set another active first).
+//  The "data gone forever" warning is shown on the frontend.
 app.delete('/api/admin/academics/:id', async (req, res) => {
     try {
+        const [rows] = await db.execute('SELECT isActive FROM academic_years WHERE id = ?', [req.params.id]);
+        if (rows.length === 0) return res.status(404).json({ error: 'Academic year not found.' });
+        if (rows[0].isActive) {
+            return res.status(400).json({ error: 'Cannot delete the active academic year. Set another year active first.' });
+        }
         await db.execute('DELETE FROM academic_years WHERE id = ?', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+
+// --- 7.5 Active-year status (for banners / notifications / dashboard)-
+//  GET /api/admin/academics/status/:instId
+//  Returns the active year plus daysLeft / expired so any screen can
+//  show the same warning without re-deriving the logic.
+app.get('/api/admin/academics/status/:instId', async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            'SELECT * FROM academic_years WHERE institutionId = ? AND isActive = 1 LIMIT 1',
+            [req.params.instId]
+        );
+        if (!rows.length) {
+            return res.json({ hasActive: false, level: 'none', message: 'No academic year is currently active.' });
+        }
+        const y = rows[0];
+        const st = computeAcademicYearStatus(y.startDate, y.endDate);
+
+        let level = 'ok';
+        let message = '';
+        if (st.expired) {
+            level = 'expired';
+            message = `The active academic year "${y.name}" ended ${st.daysSinceEnd} day(s) ago. Please set the next year as active.`;
+        } else if (st.daysLeft != null && st.daysLeft <= 30) {
+            level = 'warning';
+            message = `The active academic year "${y.name}" ends in ${st.daysLeft} day(s).`;
+        } else if (st.notStarted) {
+            level = 'info';
+            message = `The active academic year "${y.name}" has not started yet.`;
+        }
+
+        res.json({ hasActive: true, activeYear: y, ...st, level, message });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 
 
 // =====================================================================
