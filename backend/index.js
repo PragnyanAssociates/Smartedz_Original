@@ -5305,7 +5305,7 @@ app.get('/api/admin/alumni/years/:instId', async (req, res) => {
     try {
         const [rows] = await db.execute(
             `SELECT DISTINCT a.academic_year_id, a.passout_year,
-                    y.year_name
+                    y.name AS year_name
                FROM alumni a
                LEFT JOIN academic_years y ON y.id = a.academic_year_id
               WHERE a.institutionId = ?
