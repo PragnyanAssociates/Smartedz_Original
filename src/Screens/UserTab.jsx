@@ -252,6 +252,16 @@ export default function UserTab({ data, fetchData, user }) {
 
   const useDropdown = classFilters.length > 6;
 
+  // Academic year (auto-assigned by the backend on create, preserved on edit).
+  // We only DISPLAY it here so the admin can see which year the user belongs to.
+  const activeYear = (data.academicYears || []).find(y => y.isActive) || null;
+  const displayYear = (
+    editingUser && editingUser.academic_year_id
+      ? (data.academicYears || []).find(y => String(y.id) === String(editingUser.academic_year_id))
+      : activeYear
+  ) || activeYear;
+  const academicYearLabel = displayYear ? displayYear.name : 'No active academic year';
+
   return (
     <div className="space-y-6">
 
@@ -473,6 +483,9 @@ export default function UserTab({ data, fetchData, user }) {
                   <Field label="Password" required value={form.password} onChange={v => setForm({ ...form, password: v })} />
                   <Field label="Account Status" type="select" value={form.status} onChange={v => setForm({ ...form, status: v })}
                     options={[{ value: 'active', label: 'Active' }, { value: 'inactive', label: 'Inactive' }, { value: 'alumni', label: 'Alumni' }]} />
+                  {/* Academic Year — auto-assigned from the active year, read-only */}
+                  <Field label="Academic Year" readOnly value={academicYearLabel}
+                    hint="Auto-assigned · current active year" />
                 </Grid>
               </Section>
 
@@ -617,8 +630,9 @@ function Grid({ children }) {
 }
 
 // Field now also supports: error (red message), hint (grey helper text),
-// maxLength and inputMode (better mobile keyboards for numeric fields).
-function Field({ label, value, onChange, type = 'text', options, required, placeholder, error, hint, maxLength, inputMode }) {
+// maxLength and inputMode (better mobile keyboards), and readOnly (a
+// non-editable, greyed-out display — used for the auto Academic Year).
+function Field({ label, value, onChange, type = 'text', options, required, placeholder, error, hint, maxLength, inputMode, readOnly }) {
   const base = "w-full rounded-md border bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 transition-colors";
   // Border + focus ring turn red when there's a validation error
   const state = error
@@ -631,7 +645,11 @@ function Field({ label, value, onChange, type = 'text', options, required, place
         {label} {required && <span className="text-accent">*</span>}
       </label>
 
-      {type === 'select' ? (
+      {readOnly ? (
+        // Non-editable, clearly greyed out (e.g. auto-assigned Academic Year)
+        <input type="text" value={value || ''} readOnly disabled
+          className="w-full rounded-md border border-zinc-200 bg-zinc-50 px-3 text-sm text-zinc-500 h-9 cursor-not-allowed" />
+      ) : type === 'select' ? (
         <div className="relative">
           <select value={value || ''} onChange={e => onChange(e.target.value)} className={`${base} ${state} h-9 appearance-none cursor-pointer pr-8`}>
             {(options || []).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}

@@ -287,15 +287,21 @@ app.get('/api/admin/data/:instId', async (req, res) => {
 //
 //  REPLACE your whole Section 4 block with this.
 //
-//  Fixes in this version:
-//    1) Roll number is unique PER CLASS (each class independently starts
-//       at roll 1; roll "1" can exist in Class 9 and Class 10 together).
-//    2) On EDIT, uniqueness is only checked for fields that actually
-//       CHANGED. If you edit a student and don't touch the roll number
-//       (or class), the roll check is skipped entirely — so editing
-//       other information never reports a false "roll already used".
-//    PEN and TC remain unique across the whole school (permanent IDs),
-//    and are likewise only re-checked when their value changes.
+//  In this version:
+//    • Every NEW user is automatically stamped with the institution's
+//      ACTIVE academic year (academic_year_id). The backend decides it,
+//      so it can't be faked from the client. On EDIT the original year
+//      is preserved (never changed).
+//    • Roll number is unique PER CLASS; on edit, uniqueness is only
+//      re-checked for fields that actually changed (so editing other
+//      info never reports a false "roll already used").
+//
+//  Run the migration first:
+//    ALTER TABLE users
+//      ADD COLUMN academic_year_id int DEFAULT NULL AFTER class_id,
+//      ADD KEY fk_user_academic_year (academic_year_id),
+//      ADD CONSTRAINT fk_user_academic_year FOREIGN KEY (academic_year_id)
+//          REFERENCES academic_years (id) ON DELETE SET NULL;
 // =====================================================================
 
 function _todayISO() {
@@ -307,6 +313,16 @@ function _isValidDate(s) {
     if (!s) return false;
     const d = new Date(s);
     return !isNaN(d.getTime());
+}
+
+// The institution's currently-active academic year id (or null).
+// Every module now anchors to this — new users get stamped with it.
+async function getActiveAcademicYearId(conn, instId) {
+    const [rows] = await conn.execute(
+        'SELECT id FROM academic_years WHERE institutionId = ? AND isActive = 1 LIMIT 1',
+        [instId]
+    );
+    return rows.length ? rows[0].id : null;
 }
 
 // Synchronous format / range validation. Returns an error string, or
@@ -420,7 +436,7 @@ async function checkUserUniqueness(conn, instId, body, excludeId, current) {
 
 
 // ---------------------------------------------------------------------
-//  4.1  Create user
+//  4.1  Create user  (auto-stamps the active academic year)
 // ---------------------------------------------------------------------
 app.post('/api/admin/users', async (req, res) => {
     const body = req.body;
@@ -447,7 +463,10 @@ app.post('/api/admin/users', async (req, res) => {
         const uErr = await checkUserUniqueness(conn, institutionId, body, 0, null);
         if (uErr) { await conn.rollback(); return res.status(400).json({ error: uErr }); }
 
-        // 3) Insert
+        // 3) Auto-assign the institution's ACTIVE academic year
+        const academicYearId = await getActiveAcademicYearId(conn, institutionId);
+
+        // 4) Insert
         const [result] = await conn.execute(
             `INSERT INTO users
               (name, email, username, password, role, institutionId, modules,
@@ -455,9 +474,10 @@ app.post('/api/admin/users', async (req, res) => {
                dob, gender, address, profile_pic,
                aadhar_no, joining_date, prev_salary, present_salary, experience,
                pen_no, parent_name, admission_date,
-               school_joined_date, school_joined_grade, tc_number)
+               school_joined_date, school_joined_grade, tc_number,
+               academic_year_id)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [name, email, username || null, password, role, institutionId, modules || null,
              phone_no || null, roll_no || null, admission_no || null,
              class_id || null, section || null, status || 'active',
@@ -469,7 +489,9 @@ app.post('/api/admin/users', async (req, res) => {
              pen_no || null, parent_name || null, admission_date || null,
              school_joined_date || null,
              school_joined_grade ? parseInt(school_joined_grade, 10) : null,
-             tc_number || null]
+             tc_number || null,
+             // academic year (auto)
+             academicYearId]
         );
 
         await syncTeacherSubjects(conn, result.insertId, role, subject_ids);
@@ -486,7 +508,7 @@ app.post('/api/admin/users', async (req, res) => {
 
 
 // ---------------------------------------------------------------------
-//  4.2  Update user
+//  4.2  Update user  (academic_year_id is preserved, never changed)
 // ---------------------------------------------------------------------
 app.put('/api/admin/users/:id', async (req, res) => {
     const { id } = req.params;
@@ -524,7 +546,8 @@ app.put('/api/admin/users/:id', async (req, res) => {
         const uErr = await checkUserUniqueness(conn, instId, body, parseInt(id, 10), current);
         if (uErr) { await conn.rollback(); return res.status(400).json({ error: uErr }); }
 
-        // 4) Update
+        // 4) Update (academic_year_id intentionally NOT touched here so the
+        //    year the user was created under is preserved)
         await conn.execute(
             `UPDATE users SET
                 name=?, email=?, username=?, password=?, role=?, modules=?,
