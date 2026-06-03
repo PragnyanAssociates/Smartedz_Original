@@ -284,6 +284,15 @@ app.get('/api/admin/data/:instId', async (req, res) => {
 
 // =====================================================================
 // === 4. USERS — Full CRUD ============================================
+//
+//  REPLACE your whole Section 4 block with this.
+//
+//  Fix in this version:
+//    Roll-number uniqueness is now checked PER CLASS, not school-wide.
+//    Roll "1" can legitimately exist in Class 9, Class 10, etc. at the
+//    same time. PEN and TC numbers remain unique across the whole school
+//    (they are permanent, one-per-person identifiers). Editing a user no
+//    longer falsely reports its own / another class's roll as taken.
 // =====================================================================
 
 function _todayISO() {
@@ -352,31 +361,46 @@ function validateUserData(body) {
     return null;
 }
 
-// Is `value` already used by ANOTHER user in the same school?
-// `column` is always a hard-coded name from our own code (never user
-// input), so interpolating it here is safe.
-async function _isFieldTaken(conn, instId, column, value, excludeId) {
-    if (!value) return false;
-    const [rows] = await conn.execute(
-        `SELECT id FROM users WHERE institutionId = ? AND ${column} = ? AND id <> ?`,
-        [instId, value, excludeId || 0]
-    );
+// Small helper: does any OTHER row match this query?
+async function _exists(conn, sql, params) {
+    const [rows] = await conn.execute(sql, params);
     return rows.length > 0;
 }
 
-// Roll No, PEN No and TC No must each be unique within the school.
-// Returns an error string, or null when all are free.
+// Uniqueness rules, scoped correctly:
+//   • Roll number  -> unique WITHIN A CLASS (institutionId + class_id).
+//                     Only checked when both roll_no and class_id exist.
+//   • PEN number   -> unique across the whole school.
+//   • TC number    -> unique across the whole school.
+// In every case the user being edited is excluded via id <> excludeId,
+// so editing a record never flags its own value.
 async function checkUserUniqueness(conn, instId, body, excludeId) {
-    const checks = [
-        ['roll_no',   body.roll_no,   'Roll number'],
-        ['pen_no',    body.pen_no,    'PEN number'],
-        ['tc_number', body.tc_number, 'TC number'],
-    ];
-    for (const [col, val, label] of checks) {
-        if (val && await _isFieldTaken(conn, instId, col, val, excludeId)) {
-            return `${label} "${val}" is already used by another user in this school.`;
-        }
+    const exclude = excludeId || 0;
+
+    // Roll number — per class
+    if (body.roll_no && body.class_id) {
+        const taken = await _exists(conn,
+            'SELECT id FROM users WHERE institutionId = ? AND class_id = ? AND roll_no = ? AND id <> ?',
+            [instId, body.class_id, body.roll_no, exclude]);
+        if (taken) return `Roll number "${body.roll_no}" is already used by another student in this class.`;
     }
+
+    // PEN number — school-wide
+    if (body.pen_no) {
+        const taken = await _exists(conn,
+            'SELECT id FROM users WHERE institutionId = ? AND pen_no = ? AND id <> ?',
+            [instId, body.pen_no, exclude]);
+        if (taken) return `PEN number "${body.pen_no}" is already used by another user in this school.`;
+    }
+
+    // TC number — school-wide
+    if (body.tc_number) {
+        const taken = await _exists(conn,
+            'SELECT id FROM users WHERE institutionId = ? AND tc_number = ? AND id <> ?',
+            [instId, body.tc_number, exclude]);
+        if (taken) return `TC number "${body.tc_number}" is already used by another user in this school.`;
+    }
+
     return null;
 }
 
@@ -405,7 +429,7 @@ app.post('/api/admin/users', async (req, res) => {
     try {
         await conn.beginTransaction();
 
-        // 2) Uniqueness (roll / PEN / TC) within this school
+        // 2) Uniqueness (roll per class / PEN / TC) within this school
         const uErr = await checkUserUniqueness(conn, institutionId, body, 0);
         if (uErr) { await conn.rollback(); return res.status(400).json({ error: uErr }); }
 
@@ -518,6 +542,10 @@ app.put('/api/admin/users/:id', async (req, res) => {
     } finally { conn.release(); }
 });
 
+
+// ---------------------------------------------------------------------
+//  4.3  Delete user
+// ---------------------------------------------------------------------
 app.delete('/api/admin/users/:id', async (req, res) => {
     try {
         await db.execute('DELETE FROM users WHERE id = ?', [req.params.id]);
