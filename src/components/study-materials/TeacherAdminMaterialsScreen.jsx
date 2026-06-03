@@ -5,7 +5,7 @@ import { usePermissions } from "../../Screens/PermissionsContext";
 import { 
   Folder, Edit, Trash2, Download, ExternalLink, Plus, 
   Search, X, FileText, Video, MonitorPlay, FileSpreadsheet, Link,
-  Loader2, ChevronDown, BookOpen, Save
+  Loader2, ChevronDown, BookOpen, Save, Eye
 } from 'lucide-react';
 
 const getCardAesthetics = (type) => {
@@ -21,7 +21,6 @@ const getCardAesthetics = (type) => {
 export default function TeacherAdminMaterialsScreen() {
   const { user } = useAuth();
   
-  // Permissions Check
   const { can, isAllAccess } = usePermissions();
   const canEdit = can('StudyMaterials', 'edit');
   const canDelete = can('StudyMaterials', 'delete');
@@ -98,7 +97,6 @@ export default function TeacherAdminMaterialsScreen() {
             className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-4 text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors placeholder:text-zinc-400" />
         </div>
         
-        {/* Permissions Wrapper for Add Button */}
         {(canEdit || isAdmin) && (
           <button onClick={() => openModal()} className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full sm:w-auto shrink-0">
             <Plus className="size-3.5" /> Add Material
@@ -128,7 +126,6 @@ export default function TeacherAdminMaterialsScreen() {
                       {item.material_type}
                     </span>
                     <div className="absolute top-3 right-3 flex gap-1.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                      {/* Permissions Wrapper for Edit and Delete Buttons */}
                       {(canEdit || isAdmin) && (
                         <button onClick={() => openModal(item)} className="size-7 bg-white/90 hover:bg-white text-zinc-600 hover:text-primary rounded-md shadow-sm ring-1 ring-black/5 flex items-center justify-center transition-colors">
                           <Edit className="size-3.5"/>
@@ -155,12 +152,38 @@ export default function TeacherAdminMaterialsScreen() {
                     </div>
                     {item.description && <p className="text-xs text-zinc-500 line-clamp-2 mb-4 leading-relaxed">{item.description}</p>}
                     
-                    <div className="mt-auto pt-4 border-t border-zinc-100">
+                    <div className="mt-auto pt-4 border-t border-zinc-100 flex gap-2">
                       {item.file_path ? (
-                        <button onClick={() => window.open(`${SERVER_URL.replace('/api','')}${item.file_path}`, "_blank")} 
-                          className="w-full h-9 bg-zinc-50 hover:bg-zinc-100 text-zinc-700 font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 ring-1 ring-inset ring-zinc-200 transition-colors">
-                          <Download className="size-3.5" /> Download
-                        </button>
+                        <>
+                          <button 
+                            onClick={() => {
+                              const isOfficeFile = item.file_path.match(/\.(xlsx|xls|doc|docx|ppt|pptx)$/i);
+                              const fileUrl = `${SERVER_URL.replace('/api','')}${item.file_path}`;
+                              const viewUrl = isOfficeFile 
+                                ? `https://docs.google.com/viewer?url=${encodeURIComponent(fileUrl)}&embedded=true` 
+                                : fileUrl;
+                              window.open(viewUrl, "_blank");
+                            }} 
+                            className="flex-1 h-9 bg-zinc-50 hover:bg-zinc-100 text-zinc-700 font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 ring-1 ring-inset ring-zinc-200 transition-colors"
+                          >
+                            <Eye className="size-3.5" /> View
+                          </button>
+                          
+                          <button 
+                            onClick={(e) => {
+                              e.preventDefault();
+                              const link = document.createElement('a');
+                              link.href = `${SERVER_URL.replace('/api','')}${item.file_path}`;
+                              link.setAttribute('download', '');
+                              document.body.appendChild(link);
+                              link.click();
+                              document.body.removeChild(link);
+                            }} 
+                            className="flex-1 h-9 bg-primary hover:bg-primary/90 text-white font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 shadow-sm transition-colors"
+                          >
+                            <Download className="size-3.5" /> Download
+                          </button>
+                        </>
                       ) : item.external_link ? (
                         <button onClick={() => window.open(item.external_link, "_blank")} 
                           className="w-full h-9 bg-zinc-50 hover:bg-zinc-100 text-zinc-700 font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 ring-1 ring-inset ring-zinc-200 transition-colors">

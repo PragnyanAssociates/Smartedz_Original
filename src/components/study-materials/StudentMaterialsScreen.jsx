@@ -3,7 +3,7 @@ import { API_BASE_URL, SERVER_URL } from '../../apiConfig';
 import { useAuth } from '../../context/AuthContext';
 import { 
   FolderOpen, Download, ExternalLink, FlaskConical, Calculator, 
-  BookOpen, Languages, Activity, Book, Search, Loader2
+  BookOpen, Languages, Activity, Book, Search, Loader2, Eye
 } from 'lucide-react';
 
 const getSubjectIcon = (subject) => {
@@ -36,7 +36,6 @@ export default function StudentMaterialsScreen() {
     
     setIsLoading(true);
     try {
-      // Safely fetches via exact student ID, skipping class string issues entirely
       const res = await fetch(`${API_BASE_URL}/admin/study-materials/student/${user.id}`);
       const data = await res.json();
       setMaterials(Array.isArray(data) ? data : []);
@@ -110,12 +109,38 @@ export default function StudentMaterialsScreen() {
                     )}
                     {item.description && <p className="text-xs text-zinc-500 line-clamp-2 mb-4 leading-relaxed">{item.description}</p>}
                     
-                    <div className="mt-auto pt-4 border-t border-zinc-100">
+                    <div className="mt-auto pt-4 border-t border-zinc-100 flex gap-2">
                       {item.file_path ? (
-                        <button onClick={() => window.open(`${SERVER_URL.replace('/api','')}${item.file_path}`, "_blank")} 
-                          className="w-full h-9 bg-primary hover:bg-primary/90 text-white font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 shadow-sm transition-colors">
-                          <Download className="size-3.5" /> Download
-                        </button>
+                        <>
+                          <button 
+                            onClick={() => {
+                              const isOfficeFile = item.file_path.match(/\.(xlsx|xls|doc|docx|ppt|pptx)$/i);
+                              const fileUrl = `${SERVER_URL.replace('/api','')}${item.file_path}`;
+                              const viewUrl = isOfficeFile 
+                                ? `https://docs.google.com/viewer?url=${encodeURIComponent(fileUrl)}&embedded=true` 
+                                : fileUrl;
+                              window.open(viewUrl, "_blank");
+                            }} 
+                            className="flex-1 h-9 bg-zinc-50 hover:bg-zinc-100 text-zinc-700 font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 ring-1 ring-inset ring-zinc-200 transition-colors"
+                          >
+                            <Eye className="size-3.5" /> View
+                          </button>
+                          
+                          <button 
+                            onClick={(e) => {
+                              e.preventDefault();
+                              const link = document.createElement('a');
+                              link.href = `${SERVER_URL.replace('/api','')}${item.file_path}`;
+                              link.setAttribute('download', '');
+                              document.body.appendChild(link);
+                              link.click();
+                              document.body.removeChild(link);
+                            }} 
+                            className="flex-1 h-9 bg-primary hover:bg-primary/90 text-white font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 shadow-sm transition-colors"
+                          >
+                            <Download className="size-3.5" /> Download
+                          </button>
+                        </>
                       ) : item.external_link ? (
                         <button onClick={() => window.open(item.external_link, "_blank")} 
                           className="w-full h-9 bg-zinc-50 hover:bg-zinc-100 text-zinc-700 font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 ring-1 ring-inset ring-zinc-200 transition-colors">
