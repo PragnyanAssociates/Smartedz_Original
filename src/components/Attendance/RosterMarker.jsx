@@ -14,11 +14,36 @@ const STATUS_OPTIONS = [
   { code: 'L', label: 'L', full: 'Late',    cls: 'bg-amber-500 border-amber-500 text-white shadow-sm',      idle: 'bg-white border-zinc-200 text-zinc-400 hover:border-amber-300 hover:text-amber-600 hover:bg-amber-50' }
 ];
 
+// Backend (e.g. Railway) stores marked_at / updated_at in UTC as a naive
+// string. Tag it as UTC so the browser localises it correctly.
 const fmtDateTime = (s) => {
   if (!s) return '';
-  const d = new Date(s);
+  let v = String(s);
+  const hasTz = /[zZ]$/.test(v) || /[+-]\d\d:?\d\d$/.test(v);
+  if (!hasTz) v = v.replace(' ', 'T') + 'Z';
+  const d = new Date(v);
   if (isNaN(d.getTime())) return '';
   return d.toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+};
+
+// Students sort by roll number (1, 2, 3 …). Non-numeric rolls fall to the
+// end, then alphabetical. Everyone else sorts alphabetically by name.
+const sortRoster = (list, category) => {
+  const arr = [...list];
+  if (category === 'students') {
+    arr.sort((a, b) => {
+      const ra = parseInt(a.roll_no, 10);
+      const rb = parseInt(b.roll_no, 10);
+      const na = isNaN(ra), nb = isNaN(rb);
+      if (na && nb) return (a.name || '').localeCompare(b.name || '');
+      if (na) return 1;
+      if (nb) return -1;
+      return ra - rb;
+    });
+  } else {
+    arr.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  }
+  return arr;
 };
 
 export default function RosterMarker({ category }) {
@@ -90,7 +115,7 @@ export default function RosterMarker({ category }) {
       }
       if (data.warning) setWarning(data.warning);
 
-      setRoster(data.users || []);
+      setRoster(sortRoster(data.users || [], category));
       const initial = {};
       (data.users || []).forEach(u => { if (u.status) initial[u.id] = u.status; });
       setEdits(initial);
@@ -143,7 +168,7 @@ export default function RosterMarker({ category }) {
   };
 
   // -----------------------------------------------------------------
-  // Filter for search
+  // Filter for search (roster is already sorted)
   // -----------------------------------------------------------------
   const filtered = useMemo(() => {
     if (!search.trim()) return roster;
@@ -154,6 +179,14 @@ export default function RosterMarker({ category }) {
       (u.roll_no || '').toString().toLowerCase().includes(q)
     );
   }, [roster, search]);
+
+  // Running serial numbers for non-student categories (1 … N by sorted order)
+  const serialMap = useMemo(() => {
+    if (category === 'students') return {};
+    const map = {};
+    roster.forEach((u, i) => { map[u.id] = i + 1; });
+    return map;
+  }, [roster, category]);
 
   // -----------------------------------------------------------------
   // Render
@@ -291,6 +324,10 @@ export default function RosterMarker({ category }) {
             <tbody className="divide-y divide-zinc-100">
               {filtered.map(u => {
                 const status = edits[u.id];
+                // Students show their roll number; everyone else shows a serial number.
+                const idLabel = category === 'students'
+                  ? (u.roll_no ? `Roll ${u.roll_no}` : (u.username ? `@${u.username}` : u.role))
+                  : `S.No ${serialMap[u.id] || '—'}`;
                 return (
                   <tr key={u.id} className="hover:bg-zinc-50/60 transition-colors">
                     <td className="px-3 sm:px-5 py-2.5 sm:py-3">
@@ -304,9 +341,7 @@ export default function RosterMarker({ category }) {
                         )}
                         <div className="flex flex-col min-w-0">
                           <div className="font-medium text-zinc-900 text-[13px] sm:text-sm truncate">{u.name}</div>
-                          <div className="text-[10px] text-zinc-500 truncate">
-                            {u.roll_no ? `Roll ${u.roll_no}` : (u.username ? `@${u.username}` : u.role)}
-                          </div>
+                          <div className="text-[10px] text-zinc-500 truncate">{idLabel}</div>
                         </div>
                       </div>
                     </td>

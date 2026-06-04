@@ -1419,6 +1419,29 @@ app.put('/api/profile/:id', async (req, res) => {
 //   One row per user per day. Tracks marker + last editor.
 //   Granularity: daily (no period/subject linkage).
 //   Status codes: P (Present), A (Absent), L (Late).
+//
+//   NOTE ON TIME: marked_at / updated_at are stored in UTC (the server,
+//   e.g. on Railway, runs in UTC). The frontend tags these naive
+//   datetimes as UTC and localises them for display, so no server-side
+//   timezone change is needed here.
+//
+//   ACADEMIC YEAR: every attendance row carries academic_year_id, and
+//   every read/write scopes to the school's *active* academic year via
+//   the shared resolveYearId() helper (defined in the Timetable section).
+//   So when the admin switches the active year under Academics, the
+//   attendance data switches with it — exactly like the timetable. Each
+//   year keeps its own data (non-destructive); switching back restores it.
+//
+//   REQUIRES a one-time migration (run once in your DB):
+//     ALTER TABLE attendance
+//       ADD COLUMN academic_year_id INT NULL AFTER institutionId;
+//     UPDATE attendance a
+//       JOIN academic_years y
+//         ON y.institutionId = a.institutionId AND y.isActive = 1
+//       SET a.academic_year_id = y.id
+//      WHERE a.academic_year_id IS NULL;
+//     CREATE INDEX idx_attendance_year
+//       ON attendance (academic_year_id, attendance_date);
 // =====================================================================
 
 // --- 15.1 Roster for marking ---------------------------------------
@@ -1431,6 +1454,9 @@ app.get('/api/admin/attendance/roster/:instId', async (req, res) => {
     const targetDate = date || new Date().toISOString().slice(0, 10);
  
     try {
+        // Active academic year — scopes the attendance lookup below.
+        const yearId = await resolveYearId(instId, req.query.academic_year_id);
+
         // ---- Build the WHERE clause for users ------------------------
         let where = 'u.institutionId = ?';
         const params = [parseInt(instId, 10)];
@@ -1478,8 +1504,10 @@ app.get('/api/admin/attendance/roster/:instId', async (req, res) => {
                       FROM attendance a
                       LEFT JOIN users mb ON mb.id = a.marked_by
                       LEFT JOIN users ub ON ub.id = a.updated_by
-                     WHERE a.user_id IN (${placeholders}) AND a.attendance_date = ?`;
-                const [att] = await db.execute(attSql, [...ids, targetDate]);
+                     WHERE a.user_id IN (${placeholders})
+                       AND a.attendance_date = ?
+                       AND a.academic_year_id = ?`;
+                const [att] = await db.execute(attSql, [...ids, targetDate, yearId]);
                 att.forEach(r => { attMap[r.user_id] = r; });
             } catch (attErr) {
                 console.warn('[attendance roster] attendance lookup failed:', attErr.message);
@@ -1491,10 +1519,11 @@ app.get('/api/admin/attendance/roster/:instId', async (req, res) => {
         const merged = users.map(u => ({ ...u, ...(attMap[u.id] || {}) }));
  
         // Diagnostic log so backend console tells us what happened
-        console.log(`[attendance roster] inst=${instId} category=${category} class_id=${class_id || '—'} date=${targetDate} → ${merged.length} users`);
+        console.log(`[attendance roster] inst=${instId} year=${yearId} category=${category} class_id=${class_id || '—'} date=${targetDate} → ${merged.length} users`);
  
         res.json({
             date: targetDate,
+            academic_year_id: yearId,
             users: merged,
             count: merged.length,
             warning: attendanceWarning
@@ -1522,36 +1551,41 @@ app.post('/api/admin/attendance/mark', async (req, res) => {
 
     const conn = await db.getConnection();
     try {
+        // All marks are stamped with the active academic year, so the data
+        // belongs to whichever year is current when it's recorded.
+        const yearId = await resolveYearId(institutionId, req.body.academic_year_id);
+        if (!yearId) throw new Error('No active academic year. Create/activate one under Academics first.');
+
         await conn.beginTransaction();
         for (const e of entries) {
             if (!e.user_id || !['P', 'A', 'L'].includes(e.status)) continue;
 
-            // Does a row already exist?
+            // Does a row already exist for this user/date in this year?
             const [exists] = await conn.execute(
-                'SELECT id FROM attendance WHERE user_id = ? AND attendance_date = ?',
-                [e.user_id, date]
+                'SELECT id FROM attendance WHERE user_id = ? AND attendance_date = ? AND academic_year_id = ?',
+                [e.user_id, date, yearId]
             );
 
             if (exists.length === 0) {
                 // First time this user gets attendance for this date
                 await conn.execute(
                     `INSERT INTO attendance
-                       (institutionId, user_id, attendance_date, status, marked_by, marked_at)
-                     VALUES (?, ?, ?, ?, ?, ?)`,
-                    [institutionId, e.user_id, date, e.status, actor_id, now]
+                       (institutionId, academic_year_id, user_id, attendance_date, status, marked_by, marked_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                    [institutionId, yearId, e.user_id, date, e.status, actor_id, now]
                 );
             } else {
                 // Row exists — record the edit
                 await conn.execute(
                     `UPDATE attendance
                         SET status = ?, updated_by = ?, updated_at = ?
-                      WHERE user_id = ? AND attendance_date = ?`,
-                    [e.status, actor_id, now, e.user_id, date]
+                      WHERE user_id = ? AND attendance_date = ? AND academic_year_id = ?`,
+                    [e.status, actor_id, now, e.user_id, date, yearId]
                 );
             }
         }
         await conn.commit();
-        res.json({ success: true, count: entries.length });
+        res.json({ success: true, count: entries.length, academic_year_id: yearId });
     } catch (err) {
         await conn.rollback();
         res.status(500).json({ error: err.message });
@@ -1561,23 +1595,37 @@ app.post('/api/admin/attendance/mark', async (req, res) => {
 
 // --- 15.3 History for one user -------------------------------------
 //   GET /api/admin/attendance/history/:userId?from=YYYY-MM-DD&to=YYYY-MM-DD
-//   Returns each row in the range along with summary stats.
+//   Scoped to the school's active academic year. from/to are OPTIONAL:
+//   when omitted, returns the whole active year (used by the "Yearly"
+//   filter). Returns each row in range plus summary stats.
 app.get('/api/admin/attendance/history/:userId', async (req, res) => {
     const { userId } = req.params;
     const { from, to } = req.query;
-    if (!from || !to) return res.status(400).json({ error: 'from and to dates required.' });
     try {
+        // Resolve the active year from the user's institution.
+        const [uRows] = await db.execute('SELECT institutionId FROM users WHERE id = ? LIMIT 1', [userId]);
+        const instId = uRows[0]?.institutionId;
+        const yearId = await resolveYearId(instId, req.query.academic_year_id);
+
+        // Build the WHERE dynamically so date range is optional.
+        let where = 'a.user_id = ? AND a.academic_year_id = ?';
+        const params = [userId, yearId];
+        if (from && to) {
+            where += ' AND a.attendance_date BETWEEN ? AND ?';
+            params.push(from, to);
+        }
+
         const [rows] = await db.execute(
-            `SELECT a.id, a.attendance_date, a.status,
+            `SELECT a.id, DATE_FORMAT(a.attendance_date, '%Y-%m-%d') AS attendance_date, a.status,
                     a.marked_by, a.marked_at, a.updated_by, a.updated_at,
                     mb.name AS marked_by_name, mb.role AS marked_by_role,
                     ub.name AS updated_by_name, ub.role AS updated_by_role
                FROM attendance a
                LEFT JOIN users mb ON mb.id = a.marked_by
                LEFT JOIN users ub ON ub.id = a.updated_by
-              WHERE a.user_id = ? AND a.attendance_date BETWEEN ? AND ?
+              WHERE ${where}
               ORDER BY a.attendance_date DESC`,
-            [userId, from, to]
+            params
         );
         const summary = {
             total:   rows.length,
@@ -1588,7 +1636,7 @@ app.get('/api/admin/attendance/history/:userId', async (req, res) => {
         summary.percentage = summary.total > 0
             ? (((summary.present + summary.late) / summary.total) * 100).toFixed(1)
             : '0.0';
-        res.json({ rows, summary });
+        res.json({ academic_year_id: yearId, rows, summary });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -1610,6 +1658,122 @@ app.get('/api/admin/attendance/teacher-classes/:teacherId', async (req, res) => 
         );
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 15.5 Category overview + analysis series ----------------------
+//   GET /api/admin/attendance/overview/:instId
+//        ?category=students|teachers|other
+//        &from=YYYY-MM-DD&to=YYYY-MM-DD
+//        &class_id=<optional, students only>
+//
+//   Scoped to the school's active academic year. from/to are OPTIONAL
+//   (the "Yearly" filter omits them to cover the whole active year).
+//   Powers BOTH the overview summary bar and the Analysis bar graph.
+//   Returns aggregate totals for everyone in the category plus a
+//   per-day time series (present / late / absent / total).
+app.get('/api/admin/attendance/overview/:instId', async (req, res) => {
+    const { instId } = req.params;
+    const { category = 'students', from, to, class_id } = req.query;
+
+    try {
+        // Active academic year scopes every attendance query below.
+        const yearId = await resolveYearId(instId, req.query.academic_year_id);
+
+        // ---- Resolve the users in this category (mirror the roster) ----
+        let where = 'u.institutionId = ?';
+        const params = [parseInt(instId, 10)];
+        if (category === 'students') {
+            where += " AND LOWER(TRIM(u.role)) = 'student'";
+            if (class_id) { where += ' AND u.class_id = ?'; params.push(parseInt(class_id, 10)); }
+        } else if (category === 'teachers') {
+            where += " AND LOWER(TRIM(u.role)) LIKE '%teacher%'";
+        } else if (category === 'other') {
+            where += " AND LOWER(TRIM(u.role)) NOT LIKE '%teacher%' "
+                  +  " AND LOWER(TRIM(u.role)) NOT IN ('student','super admin','developer')";
+        }
+        where += " AND (u.status IS NULL OR LOWER(TRIM(u.status)) = 'active')";
+
+        const [users] = await db.execute(`SELECT u.id FROM users u WHERE ${where}`, params);
+        const userCount = users.length;
+
+        const empty = {
+            from, to, category, academic_year_id: yearId, user_count: userCount,
+            working_days: 0, present: 0, absent: 0, late: 0, total_marks: 0,
+            avg_percentage: '0.0', series: []
+        };
+        if (userCount === 0) return res.json(empty);
+
+        const ids = users.map(u => u.id);
+        const ph = ids.map(() => '?').join(',');
+
+        // Shared attendance filter: this year's rows for these users,
+        // optionally narrowed to a date range.
+        let attWhere = `user_id IN (${ph}) AND academic_year_id = ?`;
+        const attParams = [...ids, yearId];
+        if (from && to) {
+            attWhere += ' AND attendance_date BETWEEN ? AND ?';
+            attParams.push(from, to);
+        }
+
+        try {
+            // Distinct days on which attendance was recorded for this category
+            const [wd] = await db.execute(
+                `SELECT COUNT(DISTINCT attendance_date) AS d
+                   FROM attendance
+                  WHERE ${attWhere}`,
+                attParams
+            );
+            const working_days = Number(wd[0]?.d || 0);
+
+            // Aggregate status totals across the whole category
+            const [tot] = await db.execute(
+                `SELECT SUM(status = 'P') AS p, SUM(status = 'A') AS a,
+                        SUM(status = 'L') AS l, COUNT(*) AS t
+                   FROM attendance
+                  WHERE ${attWhere}`,
+                attParams
+            );
+            const present = Number(tot[0]?.p || 0);
+            const absent  = Number(tot[0]?.a || 0);
+            const late    = Number(tot[0]?.l || 0);
+            const total_marks = Number(tot[0]?.t || 0);
+
+            // Per-day series for the graph
+            const [ser] = await db.execute(
+                `SELECT DATE_FORMAT(attendance_date, '%Y-%m-%d') AS date,
+                        SUM(status = 'P') AS present, SUM(status = 'A') AS absent,
+                        SUM(status = 'L') AS late, COUNT(*) AS total
+                   FROM attendance
+                  WHERE ${attWhere}
+                  GROUP BY attendance_date
+                  ORDER BY attendance_date`,
+                attParams
+            );
+            const series = ser.map(r => ({
+                date: r.date,
+                present: Number(r.present), absent: Number(r.absent),
+                late: Number(r.late), total: Number(r.total)
+            }));
+
+            const avg_percentage = total_marks > 0
+                ? (((present + late) / total_marks) * 100).toFixed(1)
+                : '0.0';
+
+            res.json({
+                from, to, category, academic_year_id: yearId, user_count: userCount,
+                working_days, present, absent, late, total_marks,
+                avg_percentage, series
+            });
+        } catch (attErr) {
+            // Attendance table missing or query failed — degrade gracefully
+            console.warn('[attendance overview] lookup failed:', attErr.message);
+            res.json({ ...empty, warning: attErr.message });
+        }
+    } catch (err) {
+        console.error('[attendance overview] FATAL:', err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 

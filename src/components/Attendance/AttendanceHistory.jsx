@@ -1,29 +1,36 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   BarChart3, CalendarCheck, CalendarX, Clock,
-  CheckCircle2, XCircle, Loader2, Calendar as CalIcon
+  CheckCircle2, XCircle, Loader2, Calendar as CalIcon, LineChart
 } from 'lucide-react';
+import AttendanceChart from './AttendanceChart';
 
 // =====================================================================
 //  AttendanceHistory
-//  Shows: summary cards + a list of daily entries with marker/editor info.
+//  Shows: summary cards + an optional bar graph + a list of daily
+//  entries with marker/editor info.
 //  Filters: Daily | Monthly | Yearly | Custom range.
 // =====================================================================
 
+// Date-only formatter — parsed without timezone so it never drifts a day.
 const fmtDate = (s) => {
   if (!s) return '—';
-  const d = new Date(s);
-  if (isNaN(d.getTime())) return '—';
-  const dd = String(d.getDate()).padStart(2, '0');
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  return `${dd}/${mm}/${d.getFullYear()}`;
+  const str = String(s).slice(0, 10);
+  const [y, m, d] = str.split('-').map(Number);
+  if (!y || !m || !d) return '—';
+  return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
 };
 
+// Datetime formatter — the backend (Railway) stores UTC as a naive string,
+// so tag it as UTC and let the browser localise it.
 const fmtDateTime = (s) => {
   if (!s) return '';
-  const d = new Date(s);
+  let v = String(s);
+  const hasTz = /[zZ]$/.test(v) || /[+-]\d\d:?\d\d$/.test(v);
+  if (!hasTz) v = v.replace(' ', 'T') + 'Z';
+  const d = new Date(v);
   if (isNaN(d.getTime())) return '';
   return d.toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 };
@@ -34,11 +41,10 @@ const STATUS_META = {
   L: { label: 'Late',    text: 'text-amber-600',   bg: 'bg-amber-50',   ring: 'ring-amber-600/20',   icon: Clock }
 };
 
-export default function AttendanceHistory({ userId, userName, selfOnly = false }) {
+export default function AttendanceHistory({ userId, userName, selfOnly = false, yearName = '' }) {
   const { user: me } = useAuth();
   const [mode, setMode] = useState('monthly');
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
-  const [year, setYear]   = useState(() => new Date().getFullYear());
   const [from, setFrom]   = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 30);
     return d.toISOString().slice(0, 10);
@@ -49,9 +55,11 @@ export default function AttendanceHistory({ userId, userName, selfOnly = false }
   const [rows, setRows]       = useState([]);
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [showChart, setShowChart] = useState(true);
 
   // -----------------------------------------------------------------
-  // Resolve range based on mode
+  // Resolve range based on mode. "Yearly" returns no date bound — the
+  // backend scopes to the whole active academic year.
   // -----------------------------------------------------------------
   const resolveRange = () => {
     if (mode === 'daily') return { from: day, to: day };
@@ -60,7 +68,7 @@ export default function AttendanceHistory({ userId, userName, selfOnly = false }
       const last = new Date(y, m, 0).getDate();
       return { from: `${month}-01`, to: `${month}-${String(last).padStart(2, '0')}` };
     }
-    if (mode === 'yearly') return { from: `${year}-01-01`, to: `${year}-12-31` };
+    if (mode === 'yearly') return { from: null, to: null };
     return { from, to };
   };
 
@@ -72,7 +80,8 @@ export default function AttendanceHistory({ userId, userName, selfOnly = false }
     setLoading(true);
     try {
       const r = resolveRange();
-      const url = `${API_BASE_URL}/admin/attendance/history/${userId}?from=${r.from}&to=${r.to}`;
+      let url = `${API_BASE_URL}/admin/attendance/history/${userId}?`;
+      if (r.from && r.to) url += `from=${r.from}&to=${r.to}`;
       const res = await fetch(url);
       const data = await res.json();
       setRows(data.rows || []);
@@ -80,9 +89,22 @@ export default function AttendanceHistory({ userId, userName, selfOnly = false }
     } catch (e) { console.error(e); }
     setLoading(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId, mode, day, month, year, from, to]);
+  }, [userId, mode, day, month, from, to]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Build a per-day series (oldest → newest) for the graph from the rows.
+  const series = useMemo(() => {
+    const asc = [...rows].sort((a, b) =>
+      String(a.attendance_date).localeCompare(String(b.attendance_date)));
+    return asc.map(r => ({
+      date: String(r.attendance_date).slice(0, 10),
+      present: r.status === 'P' ? 1 : 0,
+      late:    r.status === 'L' ? 1 : 0,
+      absent:  r.status === 'A' ? 1 : 0,
+      total: 1
+    }));
+  }, [rows]);
 
   // -----------------------------------------------------------------
   // Render
@@ -130,9 +152,9 @@ export default function AttendanceHistory({ userId, userName, selfOnly = false }
               className="h-9 w-full sm:w-auto rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors" />
           )}
           {mode === 'yearly' && (
-            <input type="number" min="2000" max="2099" value={year}
-              onChange={e => setYear(parseInt(e.target.value, 10) || year)}
-              className="h-9 w-full sm:w-28 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors" />
+            <span className="h-9 inline-flex items-center rounded-md border border-zinc-200 bg-zinc-50 px-3 text-xs font-medium text-zinc-600 whitespace-nowrap">
+              {yearName || 'Active academic year'}
+            </span>
           )}
           {mode === 'custom' && (
             <div className="flex items-center gap-2 w-full sm:w-auto">
@@ -150,10 +172,35 @@ export default function AttendanceHistory({ userId, userName, selfOnly = false }
       {/* Summary cards */}
       {summary && summary.total > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
-          <SumCard icon={BarChart3}     label="Attendance %" value={`${summary.percentage}%`} color="blue" />
-          <SumCard icon={CalendarCheck} label="Present"      value={summary.present} color="emerald" />
-          <SumCard icon={CalendarX}     label="Absent"       value={summary.absent}  color="red" />
-          <SumCard icon={Clock}         label="Late"         value={summary.late}    color="amber" />
+          <SumCard icon={BarChart3}     label="Attendance %"  value={`${summary.percentage}%`} color="blue" />
+          <SumCard icon={CalendarCheck} label="Present"       value={summary.present} color="emerald" />
+          <SumCard icon={CalendarX}     label="Absent"        value={summary.absent}  color="red" />
+          <SumCard icon={Clock}         label="Late"          value={summary.late}    color="amber" />
+        </div>
+      )}
+
+      {/* Working-days vs present-days line for this person */}
+      {summary && summary.total > 0 && (
+        <div className="text-[11px] text-zinc-500">
+          <span className="font-medium text-zinc-700">{summary.total}</span> working day{summary.total !== 1 ? 's' : ''} in this period ·
+          {' '}<span className="font-medium text-emerald-700">{summary.present + summary.late}</span> present
+          {' '}(<span className="font-medium text-red-600">{summary.absent}</span> absent)
+        </div>
+      )}
+
+      {/* Graph (for ranges, not the single-day view) */}
+      {mode !== 'daily' && !loading && series.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-semibold text-zinc-700 flex items-center gap-1.5">
+              <LineChart className="size-3.5 text-primary" /> Attendance Graph
+            </h3>
+            <button onClick={() => setShowChart(v => !v)}
+              className="text-[11px] font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
+              {showChart ? 'Hide' : 'Show'}
+            </button>
+          </div>
+          {showChart && <AttendanceChart series={series} />}
         </div>
       )}
 

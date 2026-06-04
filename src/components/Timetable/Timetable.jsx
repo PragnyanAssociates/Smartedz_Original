@@ -622,7 +622,7 @@ function GridTab({ data, fetchData, user, canEdit }) {
                         {clashClass && (
                           <p className="text-[10px] font-medium text-red-600 leading-snug flex items-start gap-1">
                             <AlertCircle className="size-3 shrink-0 mt-0.5" />
-                            <span>This teacher is already teaching <strong className="font-semibold">{clashClass}</strong> during this period. Pick a different teacher, or move that class to another slot.</span>
+                            <span>This teacher is already Assined <strong className="font-semibold">{clashClass}</strong> during this period. Pick a different teacher, or move that class to another slot.</span>
                           </p>
                         )}
                         <input

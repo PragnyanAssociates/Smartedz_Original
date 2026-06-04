@@ -1,15 +1,20 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { GraduationCap, Users as UsersIcon, UserCog, ClipboardCheck, History, Search, ChevronLeft } from 'lucide-react';
+import {
+  GraduationCap, Users as UsersIcon, UserCog, ClipboardCheck, History,
+  Search, ChevronLeft, BarChart3, CalendarCheck, CalendarX,
+  Clock, CalendarRange, List, PieChart
+} from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import RosterMarker from './RosterMarker';
 import AttendanceHistory from './AttendanceHistory';
+import AttendanceChart from './AttendanceChart';
 import { API_BASE_URL } from '../../apiConfig';
 
 // =====================================================================
 //  Attendance — Top-level container
 //  Three category tabs (Students / Teachers / Other) × two action
-//  sub-tabs (Mark / History).
+//  sub-tabs (Mark / History), plus an Academic Year filter on top.
 //
 //  Access rules:
 //    • Super Admin           -> full access everywhere
@@ -31,12 +36,32 @@ export default function Attendance() {
 
   const canMark = isSuper || isTeacher || can('Attendance', 'edit');
 
+  // ---- Active academic year (read-only context) -------------------
+  // Attendance data is tied to the school's ACTIVE academic year (the
+  // backend scopes every query by it). There is no year picker — when the
+  // admin switches the active year under Academics, the attendance data
+  // switches with it automatically. We fetch the active year only to show
+  // its name as context.
+  const [activeYearName, setActiveYearName] = useState('');
+
+  useEffect(() => {
+    if (!user?.institutionId) return;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/admin/data/${user.institutionId}`);
+        const data = await res.json();
+        const list = data.academicYears || [];
+        const active = list.find(y => y.isActive) || list[0];
+        if (active) setActiveYearName(active.name || '');
+      } catch (e) { console.error('academic year load:', e); }
+    })();
+  }, [user]);
+
   // Which category tabs are visible to this user?
   const categories = useMemo(() => {
     if (isSuper)   return ['students', 'teachers', 'other'];
     if (isTeacher) return ['students', 'teachers']; // teacher marks students, views own
     if (isStudent) return ['students'];             // sees only their history
-    // Custom roles — show everything they have any kind of access to
     return ['students', 'teachers', 'other'];
   }, [isSuper, isTeacher, isStudent]);
 
@@ -57,21 +82,36 @@ export default function Attendance() {
     other:    { label: 'Other',    icon: UserCog }
   };
 
+  // Read-only badge showing which academic year the attendance belongs to.
+  const YearBadge = () => (
+    activeYearName ? (
+      <div className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-primary/5 ring-1 ring-primary/15 text-primary text-xs font-semibold whitespace-nowrap self-start sm:self-auto">
+        <CalendarRange className="size-3.5" /> Academic Year: {activeYearName}
+      </div>
+    ) : null
+  );
+
   // -----------------------------------------------------------------
   // Render
   // -----------------------------------------------------------------
   if (forceSelfHistory) {
     return (
       <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-500">
-        <Header subtitle="Your attendance history" />
-        <AttendanceHistory userId={user.id} userName={user.name} selfOnly />
+        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+          <Header subtitle="Your attendance history" />
+          <YearBadge />
+        </div>
+        <AttendanceHistory userId={user.id} userName={user.name} selfOnly yearName={activeYearName} />
       </div>
     );
   }
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-3 sm:space-y-6 animate-in fade-in duration-500">
-      <Header subtitle="Mark and review daily attendance" />
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+        <Header subtitle="Mark and review daily attendance" />
+        <YearBadge />
+      </div>
 
       {/* Navigation Controls Wrapper - Tighter spacing on mobile */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -121,7 +161,7 @@ export default function Attendance() {
       {mode === 'mark' ? (
         <RosterMarker category={category} />
       ) : (
-        <HistoryPicker category={category} />
+        <HistoryPicker category={category} yearName={activeYearName} />
       )}
     </div>
   );
@@ -138,11 +178,15 @@ function Header({ subtitle }) {
 }
 
 // =====================================================================
-//  HistoryPicker — for Super Admin/teacher/custom-role looking at
-//  someone *else's* history. Lets them pick a user from a category.
+//  HistoryPicker — category overview + Analysis + person list.
+//  • Overview bar (below search): working days + present/absent/late for
+//    the chosen Daily/Monthly/Yearly/Custom range, across the whole
+//    category.
+//  • "Analysis" button toggles a bar graph of the same data.
+//  • Picking a person opens their individual history (with its own graph).
 // =====================================================================
 
-function HistoryPicker({ category }) {
+function HistoryPicker({ category, yearName }) {
   const { user } = useAuth();
   const { isAllAccess } = usePermissions();
   const role = (user?.role || '').toLowerCase();
@@ -153,9 +197,37 @@ function HistoryPicker({ category }) {
   const [picked, setPicked] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // Overview filter state
+  const [mode, setMode] = useState('monthly'); // daily | monthly | yearly | custom
+  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [day, setDay]     = useState(() => new Date().toISOString().slice(0, 10));
+  const [from, setFrom]   = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 30);
+    return d.toISOString().slice(0, 10);
+  });
+  const [to, setTo]       = useState(() => new Date().toISOString().slice(0, 10));
+
+  const [overview, setOverview] = useState(null);
+  const [ovLoading, setOvLoading] = useState(true);
+  const [view, setView] = useState('list'); // 'list' | 'analysis'
+
   // Teacher in "teachers" tab -> just shortcut to their own history
   const teacherViewingTeachers = !isAllAccess && isTeacher && category === 'teachers';
 
+  // ---- Range resolution. "Yearly" returns no date bound — the backend
+  //      scopes to the whole active academic year. ------------------
+  const resolveRange = useCallback(() => {
+    if (mode === 'daily') return { from: day, to: day };
+    if (mode === 'monthly') {
+      const [y, m] = month.split('-').map(Number);
+      const last = new Date(y, m, 0).getDate();
+      return { from: `${month}-01`, to: `${month}-${String(last).padStart(2, '0')}` };
+    }
+    if (mode === 'yearly') return { from: null, to: null };
+    return { from, to };
+  }, [mode, day, month, from, to]);
+
+  // ---- Load the roster of people to pick from ----------------------
   const loadRoster = useCallback(async () => {
     setLoading(true);
     try {
@@ -173,8 +245,60 @@ function HistoryPicker({ category }) {
     else setLoading(false);
   }, [loadRoster, teacherViewingTeachers]);
 
+  // ---- Load the category overview / analysis series ----------------
+  const loadOverview = useCallback(async () => {
+    if (teacherViewingTeachers) { setOvLoading(false); return; }
+    setOvLoading(true);
+    try {
+      const r = resolveRange();
+      let url = `${API_BASE_URL}/admin/attendance/overview/${user.institutionId}?category=${category}`;
+      if (r.from && r.to) url += `&from=${r.from}&to=${r.to}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      setOverview(data);
+    } catch (e) { console.error(e); setOverview(null); }
+    setOvLoading(false);
+  }, [user, category, resolveRange, teacherViewingTeachers]);
+
+  useEffect(() => { loadOverview(); }, [loadOverview]);
+
+  // ---- Sorting: students by roll, others alphabetical + S.No -------
+  const sortedAll = useMemo(() => {
+    const arr = [...users];
+    if (category === 'students') {
+      arr.sort((a, b) => {
+        const ra = parseInt(a.roll_no, 10), rb = parseInt(b.roll_no, 10);
+        const na = isNaN(ra), nb = isNaN(rb);
+        if (na && nb) return (a.name || '').localeCompare(b.name || '');
+        if (na) return 1; if (nb) return -1;
+        return ra - rb;
+      });
+    } else {
+      arr.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    }
+    return arr;
+  }, [users, category]);
+
+  const serialMap = useMemo(() => {
+    if (category === 'students') return {};
+    const map = {};
+    sortedAll.forEach((u, i) => { map[u.id] = i + 1; });
+    return map;
+  }, [sortedAll, category]);
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return sortedAll;
+    const q = search.toLowerCase();
+    return sortedAll.filter(u =>
+      (u.name || '').toLowerCase().includes(q) ||
+      (u.username || '').toLowerCase().includes(q) ||
+      (u.roll_no || '').toString().toLowerCase().includes(q)
+    );
+  }, [sortedAll, search]);
+
+  // ---- Early outs --------------------------------------------------
   if (teacherViewingTeachers) {
-    return <AttendanceHistory userId={user.id} userName={user.name} selfOnly />;
+    return <AttendanceHistory userId={user.id} userName={user.name} selfOnly yearName={yearName} />;
   }
 
   if (picked) {
@@ -184,19 +308,66 @@ function HistoryPicker({ category }) {
           className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
           <ChevronLeft className="size-4" /> Back to {category} list
         </button>
-        <AttendanceHistory userId={picked.id} userName={picked.name} />
+        <AttendanceHistory userId={picked.id} userName={picked.name} yearName={yearName} />
       </div>
     );
   }
 
-  const filtered = users.filter(u =>
-    (u.name || '').toLowerCase().includes(search.toLowerCase()) ||
-    (u.username || '').toLowerCase().includes(search.toLowerCase())
-  );
-
   return (
     <div className="space-y-4">
-      {/* Search Input */}
+
+      {/* Filter row: Daily/Monthly/Yearly/Custom + pickers + Analysis toggle */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+        <div className="inline-flex bg-zinc-100/80 p-1 rounded-md overflow-x-auto custom-scrollbar shrink-0 max-w-full">
+          {['daily', 'monthly', 'yearly', 'custom'].map(m => (
+            <button key={m} onClick={() => setMode(m)}
+              className={`px-3 py-1.5 rounded text-[11px] font-semibold uppercase tracking-wider transition-colors whitespace-nowrap ${
+                mode === m ? 'bg-white text-zinc-900 shadow-sm ring-1 ring-black/5' : 'text-zinc-500 hover:text-zinc-700'
+              }`}>
+              {m}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex items-center flex-wrap gap-2">
+          {/* Range pickers */}
+          {mode === 'daily' && (
+            <input type="date" value={day} onChange={e => setDay(e.target.value)}
+              className="h-9 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors" />
+          )}
+          {mode === 'monthly' && (
+            <input type="month" value={month} onChange={e => setMonth(e.target.value)}
+              className="h-9 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors" />
+          )}
+          {mode === 'yearly' && (
+            <span className="h-9 inline-flex items-center rounded-md border border-zinc-200 bg-zinc-50 px-3 text-xs font-medium text-zinc-600 whitespace-nowrap">
+              {yearName || 'Active academic year'}
+            </span>
+          )}
+          {mode === 'custom' && (
+            <div className="flex items-center gap-2">
+              <input type="date" value={from} onChange={e => setFrom(e.target.value)}
+                className="h-9 rounded-md border border-zinc-200 bg-white px-2 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors" />
+              <span className="text-[10px] font-semibold text-zinc-400 uppercase">to</span>
+              <input type="date" value={to} onChange={e => setTo(e.target.value)}
+                className="h-9 rounded-md border border-zinc-200 bg-white px-2 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors" />
+            </div>
+          )}
+
+          {/* Analysis toggle */}
+          <button onClick={() => setView(v => (v === 'analysis' ? 'list' : 'analysis'))}
+            className={`h-9 px-3 rounded-md text-xs font-semibold inline-flex items-center gap-1.5 transition-colors shrink-0 ${
+              view === 'analysis'
+                ? 'bg-primary text-white shadow-sm'
+                : 'bg-white text-zinc-700 border border-zinc-200 hover:bg-zinc-50'
+            }`}>
+            {view === 'analysis' ? <List className="size-3.5" /> : <PieChart className="size-3.5" />}
+            {view === 'analysis' ? 'Show List' : 'Analysis'}
+          </button>
+        </div>
+      </div>
+
+      {/* Search */}
       <div className="relative w-full sm:w-80">
         <Search className="size-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
         <input
@@ -207,55 +378,136 @@ function HistoryPicker({ category }) {
         />
       </div>
 
-      {loading ? (
-        <div className="h-64 flex items-center justify-center">
-          <div className="size-8 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" />
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center">
-          <p className="text-zinc-500 text-sm font-medium">No {category} found.</p>
-        </div>
+      {/* Overview bar (below the search) */}
+      <OverviewBar overview={overview} loading={ovLoading} category={category} />
+
+      {/* Body: Analysis graph OR person list */}
+      {view === 'analysis' ? (
+        ovLoading ? (
+          <div className="h-64 flex items-center justify-center">
+            <div className="size-8 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" />
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <h3 className="text-xs font-semibold text-zinc-700 flex items-center gap-1.5">
+              <BarChart3 className="size-3.5 text-primary" /> Daily attendance — {category}
+            </h3>
+            <AttendanceChart series={overview?.series || []} />
+          </div>
+        )
       ) : (
-        <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-x-auto custom-scrollbar">
-          <table className="w-full text-left border-collapse min-w-[600px]">
-            <thead>
-              <tr className="bg-zinc-50/50">
-                <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 whitespace-nowrap">Name</th>
-                <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 whitespace-nowrap">Role</th>
-                <th className="px-5 py-3 border-b border-zinc-100"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {filtered.map(u => (
-                <tr key={u.id} className="hover:bg-zinc-50/60 transition-colors cursor-pointer group" onClick={() => setPicked(u)}>
-                  <td className="px-5 py-4 flex items-center gap-3">
-                    {u.profile_pic ? (
-                      <img src={u.profile_pic} alt="" className="size-8 rounded-full object-cover shrink-0 ring-1 ring-black/5" />
-                    ) : (
-                      <div className="size-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-xs shrink-0 ring-1 ring-primary/20">
-                        {(u.name || '?').charAt(0).toUpperCase()}
-                      </div>
-                    )}
-                    <div className="flex flex-col min-w-0">
-                      <span className="font-medium text-zinc-900 text-sm truncate">{u.name}</span>
-                      {u.username && <span className="text-[10px] text-zinc-500 truncate">@{u.username}</span>}
-                    </div>
-                  </td>
-                  <td className="px-5 py-4">
-                    <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-zinc-100 text-zinc-700 ring-1 ring-zinc-200 whitespace-nowrap">
-                      {u.role}
-                    </span>
-                  </td>
-                  <td className="px-5 py-4 text-right">
-                    <span className="text-xs font-semibold text-primary opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                      View Details
-                    </span>
-                  </td>
+        loading ? (
+          <div className="h-64 flex items-center justify-center">
+            <div className="size-8 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" />
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center">
+            <p className="text-zinc-500 text-sm font-medium">No {category} found.</p>
+          </div>
+        ) : (
+          <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-x-auto custom-scrollbar">
+            <table className="w-full text-left border-collapse min-w-[600px]">
+              <thead>
+                <tr className="bg-zinc-50/50">
+                  <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 whitespace-nowrap">
+                    {category === 'students' ? 'Roll' : 'S.No'} / Name
+                  </th>
+                  <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 whitespace-nowrap">Role</th>
+                  <th className="px-5 py-3 border-b border-zinc-100"></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="divide-y divide-zinc-100">
+                {filtered.map(u => {
+                  const idLabel = category === 'students'
+                    ? (u.roll_no ? `Roll ${u.roll_no}` : '—')
+                    : `S.No ${serialMap[u.id] || '—'}`;
+                  return (
+                    <tr key={u.id} className="hover:bg-zinc-50/60 transition-colors cursor-pointer group" onClick={() => setPicked(u)}>
+                      <td className="px-5 py-4 flex items-center gap-3">
+                        {u.profile_pic ? (
+                          <img src={u.profile_pic} alt="" className="size-8 rounded-full object-cover shrink-0 ring-1 ring-black/5" />
+                        ) : (
+                          <div className="size-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-xs shrink-0 ring-1 ring-primary/20">
+                            {(u.name || '?').charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                        <div className="flex flex-col min-w-0">
+                          <span className="font-medium text-zinc-900 text-sm truncate">{u.name}</span>
+                          <span className="text-[10px] text-zinc-500 truncate">{idLabel}</span>
+                        </div>
+                      </td>
+                      <td className="px-5 py-4">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-zinc-100 text-zinc-700 ring-1 ring-zinc-200 whitespace-nowrap">
+                          {u.role}
+                        </span>
+                      </td>
+                      <td className="px-5 py-4 text-right">
+                        <span className="text-xs font-semibold text-primary opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                          View Details
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
+// =====================================================================
+//  OverviewBar — aggregate summary for the whole category
+// =====================================================================
+function OverviewBar({ overview, loading, category }) {
+  if (loading) {
+    return (
+      <div className="bg-white rounded-lg ring-1 ring-black/5 p-4 flex items-center justify-center h-20">
+        <div className="size-5 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" />
+      </div>
+    );
+  }
+  if (!overview) return null;
+
+  const cards = [
+    { icon: CalendarRange,  label: 'Working Days', value: overview.working_days ?? 0, color: 'blue' },
+    { icon: BarChart3,      label: 'Avg %',        value: `${overview.avg_percentage ?? '0.0'}%`, color: 'blue' },
+    { icon: CalendarCheck,  label: 'Present',      value: overview.present ?? 0, color: 'emerald' },
+    { icon: CalendarX,      label: 'Absent',       value: overview.absent ?? 0, color: 'red' },
+    { icon: Clock,          label: 'Late',         value: overview.late ?? 0, color: 'amber' },
+    { icon: GraduationCap,  label: category === 'students' ? 'Students' : (category === 'teachers' ? 'Teachers' : 'People'), value: overview.user_count ?? 0, color: 'zinc' }
+  ];
+
+  const map = {
+    blue:    'bg-primary/10 text-primary ring-primary/20',
+    emerald: 'bg-emerald-50 text-emerald-600 ring-emerald-600/20',
+    red:     'bg-red-50 text-red-600 ring-red-600/20',
+    amber:   'bg-amber-50 text-amber-600 ring-amber-600/20',
+    zinc:    'bg-zinc-100 text-zinc-600 ring-zinc-200'
+  };
+
+  return (
+    <div className="bg-white rounded-lg ring-1 ring-black/5 p-3 sm:p-4">
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 sm:gap-3">
+        {cards.map((c, i) => {
+          const Icon = c.icon;
+          return (
+            <div key={i} className="flex items-center gap-2 sm:gap-2.5 rounded-md bg-zinc-50/60 ring-1 ring-black/5 px-2.5 py-2">
+              <div className={`size-7 sm:size-8 rounded-md ring-1 flex items-center justify-center shrink-0 ${map[c.color]}`}>
+                <Icon className="size-3.5 sm:size-4" />
+              </div>
+              <div className="flex flex-col min-w-0">
+                <span className="text-sm sm:text-base font-semibold text-zinc-900 leading-none tabular-nums truncate">{c.value}</span>
+                <span className="text-[9px] sm:text-[10px] font-semibold text-zinc-500 uppercase tracking-wider truncate mt-0.5">{c.label}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {overview.total_marks === 0 && (
+        <p className="text-[11px] text-zinc-400 italic mt-2">No attendance recorded for this range yet.</p>
       )}
     </div>
   );
