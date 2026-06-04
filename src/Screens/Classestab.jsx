@@ -287,7 +287,7 @@ export default function ClassesTab({ data, fetchData, user }) {
 
                   <div className="flex justify-between items-center text-[10px] mt-0.5">
                     <span className="text-zinc-500">
-                      Press <kbd className="px-1 py-0.5 bg-zinc-100 rounded border border-zinc-200 font-mono">Enter</kbd> or <kbd className="px-1 py-0.5 bg-zinc-100 rounded border border-zinc-200 font-mono">,</kbd> after each.
+                      Press <kbd className="px-1 py-0.5 bg-zinc-100 rounded border border-zinc-200 font-mono">Enter</kbd> or <kbd className="px-1 py-0.5 bg-zinc-100 rounded border border-zinc-200 font-mono">,</kbd> to add the extra section at once.
                     </span>
                     <span className="text-zinc-500 font-medium">
                       {form.sections.length} section{form.sections.length === 1 ? '' : 's'}
