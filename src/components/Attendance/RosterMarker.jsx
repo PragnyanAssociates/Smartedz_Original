@@ -173,11 +173,11 @@ export default function RosterMarker({ category }) {
   const lateCount    = Object.values(edits).filter(s => s === 'L').length;
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
+    <div className="space-y-4 sm:space-y-6 animate-in fade-in duration-500">
       
       {/* Error banner */}
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-md p-4 flex items-start gap-3">
+        <div className="bg-red-50 border border-red-200 rounded-md p-3 sm:p-4 flex items-start gap-3">
           <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
           <div className="flex-1">
             <div className="font-semibold text-red-800 text-sm">Server Error</div>
@@ -192,7 +192,7 @@ export default function RosterMarker({ category }) {
 
       {/* Warning banner */}
       {warning && !error && (
-        <div className="bg-amber-50 border border-amber-200 rounded-md p-4 flex items-start gap-3">
+        <div className="bg-amber-50 border border-amber-200 rounded-md p-3 sm:p-4 flex items-start gap-3">
           <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
           <div className="flex-1">
             <div className="font-semibold text-amber-800 text-sm">History Unavailable</div>
@@ -204,21 +204,21 @@ export default function RosterMarker({ category }) {
         </div>
       )}
 
-      {/* Filter bar */}
-      <div className="bg-white border border-zinc-200 rounded-lg p-4 sm:p-5 shadow-sm">
-        <div className="flex flex-col sm:flex-row flex-wrap lg:flex-nowrap gap-4 items-stretch lg:items-end">
+      {/* Filter bar - Optimized for Mobile Grid */}
+      <div className="bg-white border border-zinc-200 rounded-lg p-3 sm:p-5 shadow-sm">
+        <div className="grid grid-cols-2 sm:flex sm:flex-row lg:flex-nowrap gap-3 sm:gap-4 items-end">
           
-          <Field label="Date" icon={Calendar}>
+          <Field label="Date" icon={Calendar} className={category === 'students' ? 'col-span-1' : 'col-span-2 sm:col-span-1'}>
             <input type="date" value={date} max={today}
               onChange={e => setDate(e.target.value)}
-              className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors" />
+              className="h-9 w-full rounded-md border border-zinc-200 bg-white px-2 sm:px-3 text-xs sm:text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors" />
           </Field>
 
           {category === 'students' && (
-            <Field label="Class">
+            <Field label="Class" className="col-span-1">
               <div className="relative w-full">
                 <select value={classId} onChange={e => setClassId(e.target.value)}
-                  className="h-9 w-full rounded-md border border-zinc-200 bg-white pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none transition-colors">
+                  className="h-9 w-full rounded-md border border-zinc-200 bg-white pl-2 sm:pl-3 pr-6 text-xs sm:text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none transition-colors">
                   <option value="">All classes</option>
                   {classes.map(c => (
                     <option key={c.id} value={c.id}>
@@ -226,28 +226,34 @@ export default function RosterMarker({ category }) {
                     </option>
                   ))}
                 </select>
-                <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <ChevronDown className="size-3.5 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
             </Field>
           )}
 
-          <Field label="Search">
-            <div className="relative w-full">
-              <Search className="size-4 text-zinc-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-              <input placeholder="Name, username, roll no..." value={search}
-                onChange={e => setSearch(e.target.value)}
-                className="h-9 w-full rounded-md border border-zinc-200 bg-white pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors" />
-            </div>
-          </Field>
+          {/* Search and Action Button share a row on mobile */}
+          <div className="col-span-2 sm:flex-1 flex gap-2 items-end">
+            <Field label="Search" className="flex-1">
+              <div className="relative w-full">
+                <Search className="size-4 text-zinc-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input placeholder="Search..." value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  className="h-9 w-full rounded-md border border-zinc-200 bg-white pl-8 pr-2 text-xs sm:text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors" />
+              </div>
+            </Field>
 
-          <button onClick={markAllPresent}
-            disabled={filtered.length === 0}
-            className="h-9 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40 text-emerald-700 px-4 rounded-md text-xs font-semibold uppercase tracking-wider flex items-center justify-center gap-1.5 shrink-0 transition-colors">
-            <CheckCheck className="size-4" /> All Present
-          </button>
+            <button onClick={markAllPresent}
+              disabled={filtered.length === 0}
+              className="h-9 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40 text-emerald-700 px-3 sm:px-4 rounded-md text-[10px] sm:text-xs font-semibold uppercase tracking-wider flex items-center justify-center gap-1.5 shrink-0 transition-colors">
+              <CheckCheck className="size-3.5 sm:size-4" />
+              <span className="hidden sm:inline">All Present</span>
+              <span className="sm:hidden">All</span>
+            </button>
+          </div>
         </div>
 
-        <div className="mt-5 pt-4 border-t border-zinc-100 flex flex-wrap gap-2 sm:gap-3 text-xs font-medium">
+        {/* Tighter Stats Bar */}
+        <div className="mt-4 pt-3 border-t border-zinc-100 flex flex-wrap gap-1.5 sm:gap-3 text-[10px] sm:text-xs font-medium">
           <Stat color="emerald" label="Present"  value={presentCount} />
           <Stat color="red"     label="Absent"   value={absentCount} />
           <Stat color="amber"   label="Late"     value={lateCount} />
@@ -256,16 +262,16 @@ export default function RosterMarker({ category }) {
         </div>
       </div>
 
-      {/* Roster Table */}
+      {/* Roster Table - Reduced padding on mobile */}
       {loading ? (
         <div className="h-48 flex items-center justify-center">
           <Loader2 className="animate-spin size-6 text-primary" />
         </div>
       ) : filtered.length === 0 ? (
-        <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
+        <div className="bg-white p-8 sm:p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
           <p className="text-zinc-500 text-sm font-medium">No users to mark.</p>
           {roster.length === 0 && !error && (
-            <p className="text-xs text-zinc-400 mt-1">
+            <p className="text-[11px] sm:text-xs text-zinc-400 mt-1">
               {category === 'students' && classId
                 ? 'No students assigned to this class.'
                 : `No ${category} in this institution. Add some in Manage Logins → Users.`}
@@ -274,12 +280,12 @@ export default function RosterMarker({ category }) {
         </div>
       ) : (
         <div className="bg-white rounded-lg ring-1 ring-black/5 overflow-x-auto custom-scrollbar">
-          <table className="w-full text-left border-collapse min-w-[700px]">
+          <table className="w-full text-left border-collapse min-w-[600px]">
             <thead className="bg-zinc-50/50">
               <tr>
-                <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 whitespace-nowrap">Person</th>
-                <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 whitespace-nowrap">Marked By</th>
-                <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 text-center whitespace-nowrap">Status</th>
+                <th className="px-3 sm:px-5 py-2 sm:py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 whitespace-nowrap">Person</th>
+                <th className="px-3 sm:px-5 py-2 sm:py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 whitespace-nowrap">Marked By</th>
+                <th className="px-3 sm:px-5 py-2 sm:py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 text-center whitespace-nowrap">Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100">
@@ -287,24 +293,24 @@ export default function RosterMarker({ category }) {
                 const status = edits[u.id];
                 return (
                   <tr key={u.id} className="hover:bg-zinc-50/60 transition-colors">
-                    <td className="px-5 py-3">
-                      <div className="flex items-center gap-3">
+                    <td className="px-3 sm:px-5 py-2.5 sm:py-3">
+                      <div className="flex items-center gap-2 sm:gap-3">
                         {u.profile_pic ? (
-                          <img src={u.profile_pic} alt="" className="size-8 rounded-full object-cover shrink-0 ring-1 ring-black/5" />
+                          <img src={u.profile_pic} alt="" className="size-7 sm:size-8 rounded-full object-cover shrink-0 ring-1 ring-black/5" />
                         ) : (
-                          <div className="size-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-xs shrink-0 ring-1 ring-primary/20">
+                          <div className="size-7 sm:size-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-[10px] sm:text-xs shrink-0 ring-1 ring-primary/20">
                             {(u.name || '?').charAt(0).toUpperCase()}
                           </div>
                         )}
                         <div className="flex flex-col min-w-0">
-                          <div className="font-medium text-zinc-900 text-sm truncate">{u.name}</div>
+                          <div className="font-medium text-zinc-900 text-[13px] sm:text-sm truncate">{u.name}</div>
                           <div className="text-[10px] text-zinc-500 truncate">
                             {u.roll_no ? `Roll ${u.roll_no}` : (u.username ? `@${u.username}` : u.role)}
                           </div>
                         </div>
                       </div>
                     </td>
-                    <td className="px-5 py-3 text-[11px]">
+                    <td className="px-3 sm:px-5 py-2.5 sm:py-3 text-[10px] sm:text-[11px]">
                       {u.marked_by_name ? (
                         <div className="flex flex-col gap-0.5">
                           <div className="text-zinc-600 truncate">
@@ -313,7 +319,7 @@ export default function RosterMarker({ category }) {
                           </div>
                           <div className="text-zinc-400 whitespace-nowrap">{fmtDateTime(u.marked_at)}</div>
                           {u.updated_by_name && (
-                            <div className="text-amber-600/90 truncate mt-1">
+                            <div className="text-amber-600/90 truncate mt-0.5 sm:mt-1">
                               Updated by <span className="font-medium">{u.updated_by_name}</span>
                               <span className="whitespace-nowrap"> · {fmtDateTime(u.updated_at)}</span>
                             </div>
@@ -323,15 +329,15 @@ export default function RosterMarker({ category }) {
                         <span className="text-zinc-300 italic">Not yet marked</span>
                       )}
                     </td>
-                    <td className="px-5 py-3">
-                      <div className="flex justify-center gap-2">
+                    <td className="px-3 sm:px-5 py-2.5 sm:py-3">
+                      <div className="flex justify-center gap-1.5 sm:gap-2">
                         {STATUS_OPTIONS.map(opt => {
                           const active = status === opt.code;
                           return (
                             <button key={opt.code} type="button"
                               onClick={() => setStatus(u.id, opt.code)}
                               title={opt.full}
-                              className={`size-8 rounded border flex items-center justify-center font-semibold text-xs transition-all ${
+                              className={`size-7 sm:size-8 rounded border flex items-center justify-center font-semibold text-[10px] sm:text-xs transition-all ${
                                 active ? opt.cls : opt.idle
                               }`}>
                               {opt.label}
@@ -350,9 +356,9 @@ export default function RosterMarker({ category }) {
 
       {/* Submit Button */}
       {filtered.length > 0 && (
-        <div className="flex justify-end pt-2">
+        <div className="flex justify-end pt-2 pb-6">
           <button onClick={handleSubmit} disabled={saving}
-            className="w-full sm:w-auto h-10 px-6 bg-primary hover:bg-primary/90 disabled:bg-zinc-200 disabled:text-zinc-400 text-white rounded-md text-xs font-semibold transition-colors flex items-center justify-center gap-2 shadow-sm">
+            className="w-full sm:w-auto h-10 px-6 bg-primary hover:bg-primary/90 disabled:bg-zinc-200 disabled:text-zinc-400 text-white rounded-md text-[11px] sm:text-xs font-semibold transition-colors flex items-center justify-center gap-2 shadow-sm">
             {saving ? <Loader2 className="size-4 animate-spin shrink-0" /> : <Save className="size-4 shrink-0" />}
             {saving ? 'Saving...' : 'Submit Attendance'}
           </button>
@@ -366,9 +372,9 @@ export default function RosterMarker({ category }) {
 // Subcomponents
 // -----------------------------------------------------------------
 
-function Field({ label, icon: Icon, children }) {
+function Field({ label, icon: Icon, children, className = '' }) {
   return (
-    <div className="flex flex-col w-full lg:w-auto lg:min-w-[160px] flex-1">
+    <div className={`flex flex-col w-full lg:w-auto lg:min-w-[160px] ${className}`}>
       <div className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
         {Icon && <Icon className="size-3.5" />} {label}
       </div>
@@ -385,7 +391,7 @@ function Stat({ color, label, value }) {
     zinc:    'bg-zinc-50 text-zinc-600 ring-zinc-200'
   };
   return (
-    <div className={`ring-1 rounded px-2.5 py-1 ${map[color]}`}>
+    <div className={`ring-1 rounded px-1.5 sm:px-2.5 py-0.5 sm:py-1 ${map[color]}`}>
       <span className="opacity-80">{label}:</span> <span className="font-semibold ml-0.5">{value}</span>
     </div>
   );

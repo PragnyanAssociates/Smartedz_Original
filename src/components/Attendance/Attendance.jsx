@@ -62,7 +62,7 @@ export default function Attendance() {
   // -----------------------------------------------------------------
   if (forceSelfHistory) {
     return (
-      <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-6 animate-in fade-in duration-500">
+      <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-500">
         <Header subtitle="Your attendance history" />
         <AttendanceHistory userId={user.id} userName={user.name} selfOnly />
       </div>
@@ -70,14 +70,14 @@ export default function Attendance() {
   }
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-6 animate-in fade-in duration-500">
+    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-3 sm:space-y-6 animate-in fade-in duration-500">
       <Header subtitle="Mark and review daily attendance" />
 
-      {/* Navigation Controls Wrapper */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      {/* Navigation Controls Wrapper - Tighter spacing on mobile */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         
         {/* Category Tabs (Students / Teachers / Other) */}
-        <div className="flex items-center gap-2 overflow-x-auto custom-scrollbar w-full sm:w-auto pb-2 sm:pb-0">
+        <div className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar w-full sm:w-auto pb-1 sm:pb-0">
           {categories.map(key => {
             const cfg = categoryConfig[key];
             const Icon = cfg.icon;
@@ -96,12 +96,12 @@ export default function Attendance() {
           })}
         </div>
 
-        {/* Mode toggle (Mark / History) */}
-        <div className="inline-flex bg-zinc-100/80 p-1 rounded-md shrink-0 self-start sm:self-auto">
+        {/* Mode toggle (Mark / History) - Spans full width evenly on mobile */}
+        <div className="flex sm:inline-flex bg-zinc-100/80 p-1 rounded-md shrink-0 w-full sm:w-auto">
           {canMark && (
             <button
               onClick={() => setMode('mark')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition-colors ${
+              className={`flex-1 sm:flex-none flex justify-center items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition-colors ${
                 mode === 'mark' ? 'bg-white text-zinc-900 shadow-sm ring-1 ring-black/5' : 'text-zinc-500 hover:text-zinc-700'
               }`}>
               <ClipboardCheck className="size-3.5" /> Mark
@@ -109,7 +109,7 @@ export default function Attendance() {
           )}
           <button
             onClick={() => setMode('history')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition-colors ${
+            className={`flex-1 sm:flex-none flex justify-center items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition-colors ${
               mode === 'history' ? 'bg-white text-zinc-900 shadow-sm ring-1 ring-black/5' : 'text-zinc-500 hover:text-zinc-700'
             }`}>
             <History className="size-3.5" /> History
@@ -127,11 +127,12 @@ export default function Attendance() {
   );
 }
 
+// Reduced bottom margin on mobile to save vertical space
 function Header({ subtitle }) {
   return (
-    <header className="flex flex-col mb-2 sm:mb-6">
+    <header className="flex flex-col mb-1 sm:mb-4">
       <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Attendance</h1>
-      <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">{subtitle}</p>
+      <p className="text-sm text-zinc-500 mt-0.5 max-w-[56ch]">{subtitle}</p>
     </header>
   );
 }

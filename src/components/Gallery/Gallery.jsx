@@ -12,9 +12,6 @@ import {
 // =====================================================================
 
 // Media is now served from the database through the API by id.
-// This works from any device that can reach the API (the same base URL
-// that already loads your data), so images & videos no longer depend on
-// the uploading computer's local disk.
 const mediaUrl = (id, download = false) =>
   `${API_BASE_URL}/admin/gallery/media/${id}${download ? '?download=1' : ''}`;
 
@@ -110,8 +107,9 @@ export default function Gallery() {
           <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">Memories and events captured in time.</p>
         </div>
 
-        <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
-          <div className="relative w-full sm:w-64">
+        {/* Search and Action Button - optimized for mobile horizontal space */}
+        <div className="flex flex-row items-center gap-2 w-full sm:w-auto">
+          <div className="relative flex-1 sm:w-64">
             <Search className="size-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               placeholder="Search albums..."
@@ -124,12 +122,13 @@ export default function Gallery() {
         </div>
       </header>
 
-      {/* Period filter — by month and year (from each album's event date) */}
-      <div className="flex flex-col sm:flex-row sm:items-center gap-3 bg-zinc-50/50 p-2.5 rounded-md ring-1 ring-black/5">
-        <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider pl-1 shrink-0">
+      {/* Period filter - optimized for mobile with grid-cols-2 */}
+      <div className="flex flex-col sm:flex-row sm:items-center gap-2 bg-zinc-50/50 p-2 sm:p-2.5 rounded-md ring-1 ring-black/5 mb-4">
+        <span className="hidden sm:inline-flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider pl-1 shrink-0">
           <Calendar className="size-3.5" /> Filter by Period
         </span>
-        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+        
+        <div className="grid grid-cols-2 sm:flex sm:flex-row gap-2 w-full sm:w-auto">
           <select
             value={monthFilter}
             onChange={(e) => setMonthFilter(e.target.value)}
@@ -147,7 +146,7 @@ export default function Gallery() {
           {(monthFilter !== 'all' || yearFilter !== 'all') && (
             <button
               onClick={() => { setMonthFilter('all'); setYearFilter('all'); }}
-              className="h-9 px-3 rounded-md border border-zinc-200 bg-white text-xs font-semibold text-zinc-600 hover:bg-zinc-50 transition-colors shrink-0">
+              className="col-span-2 sm:col-span-1 h-9 px-3 rounded-md border border-zinc-200 bg-white text-xs font-semibold text-zinc-600 hover:bg-zinc-50 transition-colors shrink-0">
               Clear
             </button>
           )}
@@ -382,8 +381,10 @@ function CreateAlbumModal({ onCreated }) {
 
   return (
     <>
-      <button onClick={() => setOpen(true)} className="h-9 w-full sm:w-auto bg-primary hover:bg-primary/90 text-white px-4 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors shrink-0">
-        <Plus className="size-4" /> New Album
+      <button onClick={() => setOpen(true)} className="h-9 w-auto bg-primary hover:bg-primary/90 text-white px-3 sm:px-4 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors shrink-0">
+        <Plus className="size-4" />
+        <span className="hidden sm:inline">New Album</span>
+        <span className="sm:hidden">New</span>
       </button>
 
       {open && (
