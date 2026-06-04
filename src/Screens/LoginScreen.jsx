@@ -45,18 +45,10 @@ export default function LoginScreen() {
         <div className="absolute -bottom-24 -right-24 w-80 h-80 bg-blue-400/10 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '2s' }}></div>
       </div>
 
-      <style>{`
-        @keyframes reveal {
-          from { opacity: 0; transform: translateY(20px) scale(0.99); }
-          to { opacity: 1; transform: translateY(0) scale(1); }
-        }
-        .animate-reveal { animation: reveal 0.6s cubic-bezier(0.19, 1, 0.22, 1) forwards; }
-      `}</style>
-
       <div className="flex-1 w-full flex flex-col items-center justify-center px-4 sm:px-6 lg:px-8 py-12 z-10">
         
         {/* Main Card */}
-        <div className="w-full max-w-5xl bg-white rounded-lg ring-1 ring-black/5 shadow-xl flex flex-col md:flex-row overflow-hidden animate-reveal">
+        <div className="w-full max-w-5xl bg-white rounded-lg ring-1 ring-black/5 shadow-xl flex flex-col md:flex-row overflow-hidden animate-in fade-in slide-in-from-bottom-4 zoom-in-[0.99] duration-500 ease-out">
           
           {/* Left Panel */}
           <div className="w-full md:w-5/12 bg-zinc-100/50 p-8 md:p-12 flex flex-col justify-center relative border-b md:border-b-0 md:border-r border-zinc-100">

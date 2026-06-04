@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { usePermissions } from './PermissionsContext';
 import { MODULES } from './Modules';
-import { Search, LogOut, X } from 'lucide-react';
+import { Search, LogOut, X, Bell, Calendar } from 'lucide-react';
 
 export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMobileOpen }) {
   const { user, logout } = useAuth();
@@ -41,23 +41,46 @@ export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMo
           isMobileOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        <div className="p-6 pb-2 flex items-start justify-between">
-          <div>
-            <h2 className="text-xl font-semibold text-zinc-900 tracking-tight leading-none">
+        <div className="p-6 pb-2">
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-xl font-semibold text-zinc-900 tracking-tight leading-none truncate pr-2">
               {user?.role || 'Super Admin'}
             </h2>
-            <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mt-2">
-              Administrative Control
-            </p>
+            
+            {/* Quick Actions (Calendar & Notifications) */}
+            <div className="flex items-center gap-1 shrink-0">
+              
+              {/* LINKED EXACTLY LIKE PROFILE: Passes 'academic-calendar' to DashboardShell */}
+              <button 
+                onClick={() => handleTabClick('academic-calendar')}
+                className={`p-1.5 rounded-md transition-colors ${activeTab === 'academic-calendar' ? 'bg-primary/10 text-primary' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`}
+                title="Academic Calendar"
+              >
+                <Calendar className="size-4" />
+              </button>
+              
+              <button 
+                onClick={() => handleTabClick('notifications')}
+                className={`p-1.5 rounded-md transition-colors ${activeTab === 'notifications' ? 'bg-primary/10 text-primary' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'} relative`}
+                title="Notifications"
+              >
+                <Bell className="size-4" />
+                <span className="absolute top-1.5 right-1.5 size-1.5 bg-red-500 rounded-full ring-2 ring-white"></span>
+              </button>
+
+              {/* Mobile Close Button */}
+              <button 
+                onClick={() => setIsMobileOpen(false)}
+                className="md:hidden p-1.5 text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 rounded-md transition-colors ml-1"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
           </div>
           
-          {/* Mobile Close Button */}
-          <button 
-            onClick={() => setIsMobileOpen(false)}
-            className="md:hidden p-1 text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 rounded-md transition-colors"
-          >
-            <X className="size-5" />
-          </button>
+          <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
+            Administrative Control
+          </p>
         </div>
 
         <div className="px-5 mt-4 mb-6">
@@ -113,6 +136,7 @@ export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMo
 
         {/* User Profile Card */}
         <div className="p-4 border-t border-zinc-200 bg-zinc-50/50 shrink-0">
+          
           <button 
             onClick={() => handleTabClick('profile')}
             className={`w-full flex items-center gap-3 p-3 rounded-lg ring-1 transition-all ${
@@ -140,9 +164,16 @@ export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMo
                  {user?.role || 'Admin'}
               </p>
             </div>
+            
+            {/* UPDATED LOGOUT BUTTON */}
             <div 
-              onClick={(e) => { e.stopPropagation(); logout(); }} 
-              className="p-1.5 text-zinc-400 hover:text-accent hover:bg-accent/10 rounded transition-colors group"
+              onClick={(e) => { 
+                e.stopPropagation(); 
+                if (window.confirm('Are you sure you want to logout?')) {
+                  logout(); 
+                }
+              }} 
+              className="p-1.5 text-zinc-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors group"
               title="Logout"
             >
               <LogOut className="size-4 shrink-0 transition-transform group-hover:scale-110" />

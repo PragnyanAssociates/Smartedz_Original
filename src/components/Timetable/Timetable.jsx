@@ -131,7 +131,7 @@ function AdminTimetable({ user, canEdit, canDelete, isManager }) {
   const tabProps = { data, fetchData, user, canEdit };
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto animate-in fade-in duration-700">
+   <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto">
       {/* 1. Page Header */}
       <header className="mb-6 flex flex-col gap-2">
         <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Timetable</h1>
@@ -1039,7 +1039,7 @@ function PersonalTimetable({ user, mode }) {
   }
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto animate-in fade-in duration-700">
+   <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto">
       <header className="mb-6 flex flex-col gap-2">
         <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
           <GraduationCap className="size-5 text-primary" /> My Timetable

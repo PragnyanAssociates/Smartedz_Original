@@ -31,7 +31,6 @@ const WhatsAppLayout = () => {
 
     const socketRef = useRef(null);
 
-    // Your fetchGroups and user.id logic left completely untouched
     const fetchGroups = useCallback(async () => {
         if (!hasReadAccess || !user?.id || !user?.institutionId) return;
         try {
@@ -72,13 +71,13 @@ const WhatsAppLayout = () => {
     const handleSelectGroup = (group) => {
         setSelectedGroup(group);
         setIsCreatingGroup(false);
-        setIsViewingSettings(false); // -- Close settings if picking a new group
+        setIsViewingSettings(false);
     };
 
     const handleBackToList = () => {
         setSelectedGroup(null);
         setIsCreatingGroup(false);
-        setIsViewingSettings(false); // -- Reset settings state
+        setIsViewingSettings(false);
         window.history.replaceState({}, document.title);
         fetchGroups();
     };
@@ -99,71 +98,81 @@ const WhatsAppLayout = () => {
         );
     }
 
-    const isMobile = window.innerWidth < 768;
-    const showSidebar = !isMobile || (!selectedGroup && !isCreatingGroup);
-    const showMainArea = !isMobile || selectedGroup || isCreatingGroup;
+    // Determine if ANY secondary screen is active (Chat, Settings, or Create)
+    const isActivityActive = selectedGroup || isCreatingGroup || isViewingSettings;
 
     return (
         <div className="flex h-[calc(100vh-64px)] w-full bg-zinc-50 overflow-hidden animate-in fade-in duration-300">
-            {showSidebar && (
-                <div className={`${isMobile ? 'w-full' : 'w-80 lg:w-96'} h-full flex-shrink-0 z-10 bg-white border-r border-zinc-200`}>
-                    <GroupListScreen
-                        groups={groups}
-                        onSelectGroup={handleSelectGroup}
-                        selectedGroup={selectedGroup}
-                        onCreateGroup={() => {
-                            setIsCreatingGroup(true);
-                            setSelectedGroup(null);
-                            setIsViewingSettings(false);
-                        }}
-                        loading={loading}
-                    />
-                </div>
-            )}
+            
+            {/* LEFT PANEL: Group List
+                Visible by default. 
+                Hidden on small/medium screens ONLY IF an activity (chat/settings/create) is active.
+                Forced to flex on lg screens (1024px+) to allow side-by-side.
+            */}
+            <div className={`
+                ${isActivityActive ? 'hidden lg:flex' : 'flex'} 
+                w-full lg:w-80 xl:w-96 flex-col flex-shrink-0 z-10 bg-white border-r border-zinc-200
+            `}>
+                <GroupListScreen
+                    groups={groups}
+                    onSelectGroup={handleSelectGroup}
+                    selectedGroup={selectedGroup}
+                    onCreateGroup={() => {
+                        setIsCreatingGroup(true);
+                        setSelectedGroup(null);
+                        setIsViewingSettings(false);
+                    }}
+                    loading={loading}
+                />
+            </div>
 
-            {showMainArea && (
-                <div className="flex-1 h-full w-full relative z-0 bg-zinc-50">
-                    {isCreatingGroup ? (
-                        <CreateGroupScreen
-                            onBack={handleBackToList}
-                            isEmbedded={true}
-                            onGroupCreated={() => {
-                                setIsCreatingGroup(false);
-                                fetchGroups();
-                            }}
-                        />
-                    ) : isViewingSettings && selectedGroup ? (
-                        // -- Renders Settings seamlessly in the right panel
-                        <GroupSettingsScreen 
-                            group={selectedGroup}
-                            isEmbedded={true}
-                            onBack={() => setIsViewingSettings(false)}
-                            onGroupDeleted={() => {
-                                setIsViewingSettings(false);
-                                setSelectedGroup(null);
-                                fetchGroups();
-                            }}
-                        />
-                    ) : selectedGroup ? (
-                        <GroupChatScreen
-                            providedGroup={selectedGroup}
-                            onBack={handleBackToList}
-                            isEmbedded={true}
-                            onOpenSettings={() => setIsViewingSettings(true)} // -- THIS STOPS THE URL REDIRECT
-                        />
-                    ) : (
-                        <div className="hidden md:flex flex-col items-center justify-center h-full bg-zinc-50 border-b-[6px] border-primary">
-                            <div className="w-48 mb-8 opacity-20">
-                                <MessageSquare className="w-full h-full text-zinc-400" strokeWidth={1} />
-                            </div>
-                            <h2 className="text-2xl font-medium text-zinc-800 mb-3 tracking-tight">SmartEdz Web Chat</h2>
-                            <p className="text-zinc-500 text-sm text-center max-w-md leading-relaxed">
-                                Send and receive messages, files, and updates seamlessly across your institution.
-                            </p>
+            {/* RIGHT PANEL: Main Area (Chat, Settings, Create, or Empty State)
+                Hidden on small/medium screens IF NO activity is active.
+                Forced to flex on lg screens (1024px+) to allow side-by-side.
+            */}
+            <div className={`
+                ${!isActivityActive ? 'hidden lg:flex' : 'flex'} 
+                flex-1 flex-col h-full min-w-0 relative z-0 bg-zinc-50
+            `}>
+                {isCreatingGroup ? (
+                    <CreateGroupScreen
+                        onBack={handleBackToList}
+                        isEmbedded={true}
+                        onGroupCreated={() => {
+                            setIsCreatingGroup(false);
+                            fetchGroups();
+                        }}
+                    />
+                ) : isViewingSettings && selectedGroup ? (
+                    <GroupSettingsScreen 
+                        group={selectedGroup}
+                        isEmbedded={true}
+                        onBack={() => setIsViewingSettings(false)}
+                        onGroupDeleted={() => {
+                            setIsViewingSettings(false);
+                            setSelectedGroup(null);
+                            fetchGroups();
+                        }}
+                    />
+                ) : selectedGroup ? (
+                    <GroupChatScreen
+                        providedGroup={selectedGroup}
+                        onBack={handleBackToList}
+                        isEmbedded={true}
+                        onOpenSettings={() => setIsViewingSettings(true)}
+                    />
+                ) : (
+                    <div className="hidden lg:flex flex-col items-center justify-center h-full bg-zinc-50 border-b-[6px] border-primary">
+                        <div className="w-48 mb-8 opacity-20">
+                            <MessageSquare className="w-full h-full text-zinc-400" strokeWidth={1} />
                         </div>
-                    )}
-                </div>
-            )}
+                        <h2 className="text-2xl font-medium text-zinc-800 mb-3 tracking-tight">SmartEdz Web Chat</h2>
+                        <p className="text-zinc-500 text-sm text-center max-w-md leading-relaxed">
+                            Send and receive messages, files, and updates seamlessly across your institution.
+                        </p>
+                    </div>
+                )}
+            </div>
         </div>
     );
 };

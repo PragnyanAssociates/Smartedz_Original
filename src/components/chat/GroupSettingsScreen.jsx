@@ -231,14 +231,14 @@ const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDele
       </div>
 
       {/* Action Footer */}
-      <div className="p-4 border-t border-zinc-200 bg-zinc-50 shrink-0 flex flex-col sm:flex-row gap-3">
+      <div className="p-4 pb-[max(1rem,env(safe-area-inset-bottom))] border-t border-zinc-200 bg-zinc-50 shrink-0 flex flex-col sm:flex-row gap-3">
         {hasEditRights && (
           <button
             onClick={handleSaveChanges}
             disabled={isSaving || !groupName.trim() || (groupName === group.name && isReadOnly === (group.is_read_only === 1 || group.is_read_only === true))}
-            className="flex-1 h-10 flex items-center justify-center gap-2 bg-primary hover:bg-primary/90 text-white rounded-md font-semibold text-sm shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full sm:flex-1 h-12 sm:h-10 flex items-center justify-center gap-2 bg-primary hover:bg-primary/90 text-white rounded-lg sm:rounded-md font-semibold text-[15px] sm:text-sm shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isSaving ? <Loader2 className="size-4 animate-spin shrink-0" /> : <Save className="size-4 shrink-0" />}
+            {isSaving ? <Loader2 className="size-[18px] sm:size-4 animate-spin shrink-0" /> : <Save className="size-[18px] sm:size-4 shrink-0" />}
             <span>{isSaving ? 'Saving...' : 'Save Changes'}</span>
           </button>
         )}
@@ -247,9 +247,9 @@ const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDele
           <button
             onClick={handleDeleteGroup}
             disabled={isSaving}
-            className="flex-1 sm:flex-none h-10 px-6 flex items-center justify-center gap-2 bg-white text-red-600 hover:bg-red-50 ring-1 ring-inset ring-red-200 hover:ring-red-300 rounded-md font-semibold text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+            className="w-full sm:flex-1 h-12 sm:h-10 px-6 flex items-center justify-center gap-2 bg-white text-red-600 hover:bg-red-50 ring-1 ring-inset ring-red-200 hover:ring-red-300 rounded-lg sm:rounded-md font-semibold text-[15px] sm:text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
           >
-            <Trash2 className="size-4 shrink-0" />
+            <Trash2 className="size-[18px] sm:size-4 shrink-0" />
             <span>Delete Group</span>
           </button>
         )}

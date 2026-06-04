@@ -37,14 +37,28 @@ function DashboardShell() {
     return first?.id || 'overview';
   }, [isVisible]);
 
-  const [activeTab, setActiveTab] = useState(firstAllowedTab);
+  // 1. Initialize state from localStorage, fallback to firstAllowedTab
+  const [activeTab, setActiveTab] = useState(() => {
+    const savedTab = localStorage.getItem('dashboard_active_tab');
+    return savedTab || firstAllowedTab;
+  });
 
+  // 2. Save to localStorage whenever the user changes the tab
+  useEffect(() => {
+    localStorage.setItem('dashboard_active_tab', activeTab);
+  }, [activeTab]);
+
+  // 3. Fallback security check (already in your code, works perfectly with localStorage)
   useEffect(() => {
     if (loading) return;
     const currentMod = MODULES.find(m => m.id === activeTab);
     if (!currentMod) return;
     if (currentMod.alwaysVisible) return;
-    if (!isVisible(currentMod.module_name)) setActiveTab(firstAllowedTab);
+    
+    // If they saved a tab in localStorage but lost permission, kick them to default
+    if (!isVisible(currentMod.module_name)) {
+      setActiveTab(firstAllowedTab);
+    }
   }, [activeTab, isVisible, loading, firstAllowedTab]);
 
   const renderContent = () => {
@@ -105,8 +119,6 @@ function DashboardShell() {
       <div className="h-[2px] w-full bg-gradient-brand shrink-0 z-50" />
       
       <div className="flex flex-1 overflow-hidden relative">
-        
-        {/* Pass the mobile state into the Sidebar */}
         <Sidebar 
           activeTab={activeTab} 
           setActiveTab={setActiveTab} 
@@ -115,10 +127,7 @@ function DashboardShell() {
         />
         
         <div className="flex flex-col flex-1 min-w-0">
-          
-          {/* Pass the toggle function into the Header */}
           <DashboardHeader onMenuClick={() => setIsMobileMenuOpen(true)} />
-          
           <main className="flex-1 overflow-y-auto custom-scrollbar relative">
             {renderContent()}
           </main>

@@ -78,7 +78,7 @@ export default function Meals() {
   const tabProps = { data, fetchData, user, canEdit };
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-6 animate-in fade-in duration-500">
+   <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-6">
       
       <header className="flex flex-col mb-4">
         <h2 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
