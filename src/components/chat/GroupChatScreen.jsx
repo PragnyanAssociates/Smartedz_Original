@@ -458,15 +458,14 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
       <div key={key} className={`flex flex-row my-1 px-4 sm:px-6 items-start ${isMyMessage ? "justify-end" : "justify-start"}`}>
         {!isMyMessage && <img src={getProfileImageSource(item.profile_image_url)} alt="User" className="size-8 rounded-full mr-2.5 mt-0.5 bg-zinc-200 flex-shrink-0 object-cover" />}
         
-        <div className={`relative max-w-[85%] sm:max-w-[65%] cursor-pointer ${isMyMessage ? (isImageOrVideo ? "rounded-lg shadow-sm ring-1 ring-black/5" : `${THEME.myMessageBg} rounded-lg rounded-tr-none p-2.5`) : (isImageOrVideo ? "rounded-lg shadow-sm ring-1 ring-black/5" : `${THEME.otherMessageBg} rounded-lg rounded-tl-none p-2.5`)} ${item.is_deleted ? 'bg-zinc-50 border border-zinc-200 shadow-none' : ''}`} 
+<div className={`relative max-w-[85%] sm:max-w-[65%] cursor-pointer ${isMyMessage ? (isImageOrVideo ? "bg-white rounded-lg shadow-sm ring-1 ring-black/5" : `${THEME.myMessageBg} rounded-lg rounded-tr-none p-2.5`) : (isImageOrVideo ? "bg-white rounded-lg shadow-sm ring-1 ring-black/5" : `${THEME.otherMessageBg} rounded-lg rounded-tl-none p-2.5`)} ${item.is_deleted ? 'bg-zinc-50 border border-zinc-200 shadow-none' : ''}`}
           onContextMenu={(e) => onLongPressMessage(e, item)} 
           onClick={(e) => onLongPressMessage(e, item)}
         >
           
           {!!item.is_pinned && !item.is_deleted && <div className="absolute -top-2 -right-2 bg-amber-100 text-amber-600 rounded-full p-1 shadow-sm border border-amber-200"><Pin className="size-3" /></div>}
           
-          {!isMyMessage && !isImageOrVideo && !isFile && !item.is_deleted && <div className="text-[11px] font-semibold text-zinc-500 mb-1">{item.full_name}</div>}
-          
+        {!isMyMessage && !item.is_deleted && <div className={`text-[11px] font-semibold text-zinc-500 mb-1 ${isImageOrVideo || isFile ? 'px-2 pt-1.5' : ''}`}>{item.full_name}</div>}
           {!!item.reply_to_message_id && !isImageOrVideo && !item.is_deleted && <div className="mb-2 p-2 rounded-md border-l-4 bg-black/5 border-primary"><div className="text-[11px] font-semibold text-primary mb-0.5">{item.reply_sender_name}</div><div className="text-xs text-zinc-600 truncate">{item.reply_type === 'text' ? item.reply_text : 'Media'}</div></div>}
           
           {renderContent()}

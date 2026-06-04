@@ -5440,6 +5440,24 @@ app.get('/api/groups/:groupId/details', async (req, res) => {
         res.status(500).json({ message: 'Error fetching group details.' });
     }
 });
+// --- 5.1 Get Group Members ---
+app.get('/api/groups/:groupId/members', async (req, res) => {
+    const { groupId } = req.params;
+    try {
+        const [members] = await db.execute(`
+            SELECT u.id, u.name, u.role, u.profile_pic
+              FROM users u
+              JOIN group_members gm ON u.id = gm.user_id
+             WHERE gm.group_id = ?
+             ORDER BY u.name ASC
+        `, [groupId]);
+        
+        res.json(members);
+    } catch (error) {
+        console.error('Error fetching group members:', error);
+        res.status(500).json({ message: 'Error fetching members.' });
+    }
+});
 
 // --- 6. Mark Group as Seen ---
 app.post('/api/groups/:groupId/seen', async (req, res) => {

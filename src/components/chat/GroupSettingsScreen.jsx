@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { usePermissions } from "../../Screens/PermissionsContext"; 
@@ -26,9 +26,28 @@ const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDele
   
   const [isSaving, setIsSaving] = useState(false);
   const [isViewerVisible, setViewerVisible] = useState(false);
+  
+  const [members, setMembers] = useState([]);
+  const [isLoadingMembers, setIsLoadingMembers] = useState(true);
 
   const hasEditRights = (user?.id === group.created_by) || canEdit || isAllAccess;
   const hasDeleteRights = (user?.id === group.created_by) || canDelete || isAllAccess;
+
+  useEffect(() => {
+    const fetchMembers = async () => {
+      try {
+        const res = await apiClient.get(`/groups/${group.id}/members`);
+        setMembers(res.data);
+      } catch (error) {
+        console.error("Failed to fetch members", error);
+      } finally {
+        setIsLoadingMembers(false);
+      }
+    };
+    if (group.id) {
+        fetchMembers();
+    }
+  }, [group.id]);
 
   const handlePickImage = async (e) => {
     if (!hasEditRights) return;
@@ -42,7 +61,6 @@ const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDele
       return;
     }
 
-    // 3MB Strict Size Limit
     const MAX_SIZE = 3 * 1024 * 1024;
     if (file.size > MAX_SIZE) {
         alert('Image is too large! Please select a file under 3MB.');
@@ -236,6 +254,40 @@ const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDele
               </label>
             </div>
           )}
+
+          {/* Members Section */}
+          <div className="space-y-4 pt-6 mt-6 border-t border-zinc-100">
+            <h3 className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">
+              Group Members ({members.length})
+            </h3>
+            
+            {isLoadingMembers ? (
+              <div className="flex justify-center p-4">
+                <Loader2 className="size-5 animate-spin text-zinc-400" />
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar pr-2">
+                {members.map(member => (
+                  <div key={member.id} className="flex items-center gap-3 bg-white border border-zinc-100 p-2.5 rounded-lg shadow-sm">
+                    <img 
+                      src={getProfileImageSource(member.profile_pic)} 
+                      alt={member.name} 
+                      className="size-9 rounded-full bg-zinc-100 object-cover shrink-0 border border-zinc-200"
+                    />
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-sm font-semibold text-zinc-900 truncate">
+                        {member.name} {member.id === group.created_by && <span className="text-[10px] text-primary ml-1 bg-primary/10 px-1.5 py-0.5 rounded-full">Admin</span>}
+                      </span>
+                      <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">
+                        {member.role}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          
         </div>
       </div>
 
