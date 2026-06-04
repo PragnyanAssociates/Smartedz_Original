@@ -123,11 +123,19 @@ export default function PreAdmissionsScreen() {
 
   const handleChoosePhoto = (e) => {
     const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (ev) => setSelectedImage({ uri: ev.target.result, file });
-      reader.readAsDataURL(file);
-    }
+    if (!file) return;
+    
+    // Optional: Add file size validation (e.g., max 3MB) to prevent database bloat
+    if (file.size > 3 * 1024 * 1024) return alert('Picture must be under 3 MB.');
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      // Save the base64 string directly into our formData
+      setFormData(prev => ({ ...prev, photo_url: reader.result }));
+      // Keep this for immediate UI preview
+      setSelectedImage({ uri: reader.result }); 
+    };
+    reader.readAsDataURL(file);
   };
 
   // --- Strict Validation Logic ---
@@ -168,34 +176,44 @@ export default function PreAdmissionsScreen() {
     setIsSaving(true);
     
     try {
-      const body = new FormData();
-      body.append('institutionId', user.institutionId);
+      // 1. Create a standard JavaScript object instead of FormData
+      const payload = {
+        institutionId: user.institutionId
+      };
       
+      // 2. Add photo_url to the allowed fields list
       const allowedFields = [
         'admission_no', 'student_name', 'joining_grade', 'dob', 'phone_no', 'previous_institute', 
         'previous_grade', 'pen_no', 'aadhar_no', 'parent_name', 'parent_phone', 'address', 'status', 
         'school_joined_date', 'school_joined_grade', 'school_outgoing_date', 'school_outgoing_grade', 
-        'tc_issued_date', 'tc_number'
+        'tc_issued_date', 'tc_number', 'photo_url' 
       ];
 
       allowedFields.forEach(key => {
         const val = formData[key];
-        if (val !== null && val !== undefined && val !== '') body.append(key, String(val));
+        if (val !== null && val !== undefined && val !== '') {
+            payload[key] = val;
+        }
       });
-      
-      if (selectedImage?.file) body.append('photo', selectedImage.file);
 
       const url = isEditing ? `${API_BASE_URL}/admin/preadmissions/${currentItem.id}` : `${API_BASE_URL}/admin/preadmissions`;
+      
+      // 3. Send as application/json
       const res = await fetch(url, {
         method: isEditing ? 'PUT' : 'POST',
-        body
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
       });
 
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.message || 'Save failed');
       }
+      
       setModalVisible(false);
+      setSelectedItem(null); // Fixes the right-panel bug
       fetchData();
     } catch (error) {
       alert(error.message);
@@ -267,7 +285,7 @@ export default function PreAdmissionsScreen() {
               ) : (
                 data.map(item => (
                   <div key={item.id} onClick={() => setSelectedItem(item)} className={`p-4 flex items-center cursor-pointer transition-colors ${selectedItem?.id === item.id ? 'bg-primary/5' : 'hover:bg-zinc-50/80'}`}>
-                    <img src={item.photo_url ? `${API_BASE_URL.replace('/api','')}${item.photo_url}` : '/default-avatar.png'} alt="" className="size-10 rounded-md object-cover bg-zinc-100 mr-3 ring-1 ring-black/5 shadow-sm" />
+<img src={item.photo_url || '/default-avatar.png'} alt="" className="size-10 rounded-md object-cover bg-zinc-100 mr-3 ring-1 ring-black/5 shadow-sm" />
                     <div className="flex-1 min-w-0 pr-2">
                       <h4 className={`font-semibold text-sm truncate ${selectedItem?.id === item.id ? 'text-primary' : 'text-zinc-900'}`}>{item.student_name}</h4>
                       <p className="text-xs text-zinc-500 font-medium mt-0.5">ID: {item.admission_no}</p>
@@ -294,7 +312,7 @@ export default function PreAdmissionsScreen() {
                 <button onClick={() => setSelectedItem(null)} className="lg:hidden p-1.5 bg-white rounded-md shadow-sm ring-1 ring-black/5 text-zinc-500 hover:text-zinc-900 transition-colors mt-1 sm:mt-0">
                   <X className="size-4" />
                 </button>
-                <img src={selectedItem.photo_url ? `${API_BASE_URL.replace('/api','')}${selectedItem.photo_url}` : '/default-avatar.png'} alt="" className="size-16 rounded-lg object-cover bg-zinc-100 ring-1 ring-black/5 shadow-sm shrink-0" />
+              <img src={selectedItem.photo_url || '/default-avatar.png'} alt="" className="size-16 rounded-lg object-cover bg-zinc-100 ring-1 ring-black/5 shadow-sm shrink-0" />
                 <div className="flex-1 min-w-0 mt-1 sm:mt-0">
                   <h3 className="text-lg font-semibold text-zinc-900 truncate">{selectedItem.student_name}</h3>
                   <p className="text-xs font-medium text-zinc-500 mt-1 truncate">Grade: {selectedItem.joining_grade} - ID: {selectedItem.admission_no}</p>

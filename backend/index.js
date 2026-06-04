@@ -4139,26 +4139,11 @@ app.delete('/api/admin/labs/:id', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 // --- Pre-Admissions Storage ---
-const PRE_ADMISSIONS_DIR = path.join(__dirname, 'public/uploads/preadmissions');
-if (!fs.existsSync(PRE_ADMISSIONS_DIR)) { 
-    fs.mkdirSync(PRE_ADMISSIONS_DIR, { recursive: true }); 
-}
-const preAdmissionsStorage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, PRE_ADMISSIONS_DIR),
-    filename: (req, file, cb) => {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, `preadmission-${uniqueSuffix}${path.extname(file.originalname)}`);
-    }
-});
-const preAdmissionsUpload = multer({ storage: preAdmissionsStorage });
-
-
 // =====================================================================
 // === 23. ADMISSIONS / DIRECTORY ======================================
 // =====================================================================
 
 // --- 23.1 GET all records (Secured) ---
-// FIXED: Added :instId to route
 app.get('/api/admin/preadmissions/:instId', async (req, res) => {
     const { instId } = req.params;
     const { search, year, userId } = req.query; 
@@ -4209,9 +4194,8 @@ app.get('/api/admin/preadmissions/:instId', async (req, res) => {
 });
 
 // --- 23.2 POST new record ---
-app.post('/api/admin/preadmissions', preAdmissionsUpload.single('photo'), async (req, res) => {
+app.post('/api/admin/preadmissions', async (req, res) => {
     const fields = req.body;
-    const photo_url = req.file ? `/public/uploads/preadmissions/${req.file.filename}` : null; 
 
     if (!fields.institutionId || !fields.admission_no || !fields.student_name || !fields.joining_grade) {
         return res.status(400).json({ message: "Institution ID, Admission No, Name, and Grade are required." });
@@ -4229,12 +4213,27 @@ app.post('/api/admin/preadmissions', preAdmissionsUpload.single('photo'), async 
     const v = (val) => (val === '' || val === 'null' || val === undefined ? null : val);
 
     const params = [
-        fields.institutionId, fields.admission_no, fields.student_name, photo_url, v(fields.dob), v(fields.pen_no), 
-        v(fields.phone_no), v(fields.aadhar_no), v(fields.parent_name), v(fields.parent_phone), 
-        v(fields.previous_institute), v(fields.previous_grade), fields.joining_grade,
-        v(fields.school_joined_date), v(fields.school_joined_grade), v(fields.school_outgoing_date), 
-        v(fields.school_outgoing_grade), v(fields.tc_issued_date), v(fields.tc_number),
-        v(fields.address), fields.status || 'Pending'
+        fields.institutionId, 
+        fields.admission_no, 
+        fields.student_name, 
+        fields.photo_url || null, // Directly using Base64 string from body
+        v(fields.dob), 
+        v(fields.pen_no), 
+        v(fields.phone_no), 
+        v(fields.aadhar_no), 
+        v(fields.parent_name), 
+        v(fields.parent_phone), 
+        v(fields.previous_institute), 
+        v(fields.previous_grade), 
+        fields.joining_grade,
+        v(fields.school_joined_date), 
+        v(fields.school_joined_grade), 
+        v(fields.school_outgoing_date), 
+        v(fields.school_outgoing_grade), 
+        v(fields.tc_issued_date), 
+        v(fields.tc_number),
+        v(fields.address), 
+        fields.status || 'Pending'
     ];
 
     try {
@@ -4249,15 +4248,15 @@ app.post('/api/admin/preadmissions', preAdmissionsUpload.single('photo'), async 
 });
 
 // --- 23.3 PUT update record ---
-// FIXED: Added :id to route
-app.put('/api/admin/preadmissions/:id', preAdmissionsUpload.single('photo'), async (req, res) => {
+app.put('/api/admin/preadmissions/:id', async (req, res) => {
     const { id } = req.params;
     const fields = req.body;
     let setClauses = [];
     let params = [];
 
+    // Added 'photo_url' to updatable fields so it updates naturally
     const updatableFields = [
-        'admission_no', 'student_name', 'dob', 'pen_no', 'phone_no', 'aadhar_no', 
+        'admission_no', 'student_name', 'photo_url', 'dob', 'pen_no', 'phone_no', 'aadhar_no', 
         'parent_name', 'parent_phone', 'previous_institute', 'previous_grade', 
         'joining_grade', 'school_joined_date', 'school_joined_grade', 
         'school_outgoing_date', 'school_outgoing_grade', 'tc_issued_date', 'tc_number',
@@ -4270,11 +4269,6 @@ app.put('/api/admin/preadmissions/:id', preAdmissionsUpload.single('photo'), asy
             params.push(fields[field] === '' || fields[field] === 'null' ? null : fields[field]);
         }
     });
-
-    if (req.file) {
-        setClauses.push('photo_url = ?');
-        params.push(`/public/uploads/preadmissions/${req.file.filename}`);
-    }
 
     if (setClauses.length === 0) return res.status(400).json({ message: "No fields to update." });
 
@@ -4291,23 +4285,19 @@ app.put('/api/admin/preadmissions/:id', preAdmissionsUpload.single('photo'), asy
 });
 
 // --- 23.4 DELETE record ---
-// FIXED: Added :id to route
 app.delete('/api/admin/preadmissions/:id', async (req, res) => {
     try {
-        const [[record]] = await db.query("SELECT photo_url FROM pre_admissions WHERE id = ?", [req.params.id]);
+        // Because the photo is now LONGTEXT in MySQL, deleting the row deletes the photo data entirely.
         const [result] = await db.query("DELETE FROM pre_admissions WHERE id = ?", [req.params.id]);
         
         if (result.affectedRows === 0) return res.status(404).json({ message: "Record not found." });
 
-        if (record && record.photo_url) {
-            const oldPath = path.join(__dirname, '..', record.photo_url);
-            if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
-        }
         res.status(200).json({ message: "Deleted successfully." });
     } catch (error) {
         res.status(500).json({ message: "Failed to delete record." });
     }
 });
+
 // --- Multer config for Study Materials ---
 const studyMatDir = 'public/uploads/study_materials';
 if (!fs.existsSync(studyMatDir)) { fs.mkdirSync(studyMatDir, { recursive: true }); }
