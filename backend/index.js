@@ -5458,6 +5458,81 @@ app.get('/api/groups/:groupId/members', async (req, res) => {
         res.status(500).json({ message: 'Error fetching members.' });
     }
 });
+// --- 5.2 Add Members to Group ---
+app.post('/api/groups/:groupId/members', async (req, res) => {
+    const { groupId } = req.params;
+    const { institutionId, selectedCategories } = req.body;
+
+    if (!institutionId || !Array.isArray(selectedCategories) || selectedCategories.length === 0) {
+        return res.status(400).json({ message: 'Invalid data provided.' });
+    }
+
+    try {
+        let whereClauses = [];
+        let queryParams = [];
+
+        selectedCategories.forEach(category => {
+            if (category === 'All') {
+                whereClauses.push('u.institutionId = ?');
+                queryParams.push(institutionId);
+            } else {
+                whereClauses.push(`(
+                    u.role = ?
+                    OR (c.section IS NOT NULL AND c.section != '' AND CONCAT(c.className, ' - ', c.section) = ?)
+                    OR ((c.section IS NULL OR c.section = '') AND c.className = ?)
+                ) AND u.institutionId = ?`);
+                queryParams.push(category, category, category, institutionId);
+            }
+        });
+
+        const finalWhereClause = whereClauses.join(' OR ');
+        const [usersToAdd] = await db.execute(`
+            SELECT DISTINCT u.id FROM users u 
+            LEFT JOIN classes c ON u.class_id = c.id 
+            WHERE ${finalWhereClause}
+        `, queryParams);
+
+        if (usersToAdd.length === 0) {
+            return res.status(400).json({ message: 'No users found for selected categories.' });
+        }
+
+        const conn = await db.getConnection();
+        try {
+            await conn.beginTransaction();
+            for (const user of usersToAdd) {
+                await conn.execute(
+                    'INSERT IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)',
+                    [groupId, user.id]
+                );
+            }
+            await conn.commit();
+            res.json({ message: 'Members added successfully!' });
+        } catch (err) {
+            await conn.rollback();
+            throw err;
+        } finally {
+            conn.release();
+        }
+    } catch (error) {
+        console.error('Error adding members:', error);
+        res.status(500).json({ message: 'Error adding members.' });
+    }
+});
+
+// --- 5.3 Remove Member from Group ---
+app.delete('/api/groups/:groupId/members/:memberId', async (req, res) => {
+    const { groupId, memberId } = req.params;
+    try {
+        await db.execute(
+            'DELETE FROM group_members WHERE group_id = ? AND user_id = ?',
+            [groupId, memberId]
+        );
+        res.json({ message: 'Member removed successfully.' });
+    } catch (error) {
+        console.error('Error removing member:', error);
+        res.status(500).json({ message: 'Error removing member.' });
+    }
+});
 
 // --- 6. Mark Group as Seen ---
 app.post('/api/groups/:groupId/seen', async (req, res) => {
