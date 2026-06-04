@@ -610,9 +610,9 @@ function GridTab({ data, fetchData, user, canEdit }) {
                           <ChevronDown className="size-3 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
                         </div>
                         {clashClass && (
-                          <p className="text-[9px] font-medium text-red-600 leading-snug flex items-start gap-1">
-                            <AlertCircle className="size-3 shrink-0 mt-px" />
-                            This teacher already has the class <strong className="font-semibold">{clashClass}</strong> assigned in this period.
+                          <p className="text-[10px] font-medium text-red-600 leading-snug flex items-start gap-1">
+                            <AlertCircle className="size-3 shrink-0 mt-0.5" />
+                            <span>This teacher is already teaching <strong className="font-semibold">{clashClass}</strong> during this period. Pick a different teacher, or move that class to another slot.</span>
                           </p>
                         )}
                         <input
@@ -635,7 +635,7 @@ function GridTab({ data, fetchData, user, canEdit }) {
       <div className="bg-blue-50/50 border border-blue-100 rounded-md p-4 flex gap-3 text-[11px] text-blue-700 leading-relaxed">
         <AlertCircle className="size-4 shrink-0 text-blue-500 mt-0.5" />
         <p>
-          <strong className="font-semibold text-blue-900">Tip:</strong> Pick a subject first — the teacher dropdown will filter to show only teachers who are assigned to that subject. A red note warns you when a teacher is already teaching another class in the same period. Manage subjects in <em>Manage Logins → Subjects</em>.
+          <strong className="font-semibold text-blue-900">Tip:</strong> Pick a subject first — the teacher dropdown then shows only teachers assigned to that subject. If a teacher is already teaching another class at the same time, a red note appears so you can resolve the clash. Manage subjects in <em>Manage Logins → Subjects</em>.
         </p>
       </div>
     </div>
@@ -744,10 +744,10 @@ function TeachersTimetableTab({ data, fetchData, user, canEdit }) {
     const clashLines = [];
     for (const e of entries) {
       const c = classSlotClash(e.day_id, e.period_id, e.class_id);
-      if (c) clashLines.push(`• ${c.teacher}${c.subject ? ` (${c.subject})` : ''}`);
+      if (c) clashLines.push(`• ${c.teacher}${c.subject ? ` (teaching ${c.subject})` : ''}`);
     }
     if (clashLines.length) {
-      return alert('Cannot save — some periods are already assigned to another teacher:\n\n' + clashLines.join('\n'));
+      return alert('This timetable cannot be saved yet. The following periods are already taken by another teacher:\n\n' + clashLines.join('\n') + '\n\nPlease choose a different period or class, then save again.');
     }
 
     setSaving(true);
@@ -765,8 +765,8 @@ function TeachersTimetableTab({ data, fetchData, user, canEdit }) {
       const d = await res.json().catch(() => ({}));
       if (res.ok) { alert('Teacher timetable saved.'); fetchData(); }
       else if (res.status === 409 && Array.isArray(d.conflicts)) {
-        const lines = d.conflicts.map(c => `• ${c.teacher_name || 'Another teacher'}${c.subject_name ? ` (${c.subject_name})` : ''}`);
-        alert((d.error || 'Some periods are already assigned to another teacher.') + '\n\n' + lines.join('\n'));
+        const lines = d.conflicts.map(c => `• ${c.teacher_name || 'Another teacher'}${c.subject_name ? ` (teaching ${c.subject_name})` : ''}`);
+        alert((d.error || 'Some periods are already taken by another teacher.') + '\n\n' + lines.join('\n') + '\n\nPlease choose a different period or class, then save again.');
       } else alert(d.error || 'Failed to save.');
     } catch (e) { alert('Network error.'); }
     setSaving(false);
@@ -935,9 +935,9 @@ function TeachersTimetableTab({ data, fetchData, user, canEdit }) {
                           )}
 
                           {clash && (
-                            <p className="text-[9px] font-medium text-red-600 leading-snug flex items-start gap-1">
-                              <AlertCircle className="size-3 shrink-0 mt-px" />
-                              This period is already assigned by another teacher: <strong className="font-semibold">{clash.teacher}</strong>{clash.subject ? <> ({clash.subject})</> : null}.
+                            <p className="text-[10px] font-medium text-red-600 leading-snug flex items-start gap-1">
+                              <AlertCircle className="size-3 shrink-0 mt-0.5" />
+                              <span>This period is already taken by <strong className="font-semibold">{clash.teacher}</strong>{clash.subject ? <> (teaching <strong className="font-semibold">{clash.subject}</strong>)</> : null}. Choose another period or class.</span>
                             </p>
                           )}
 
