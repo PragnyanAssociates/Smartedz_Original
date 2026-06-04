@@ -14,8 +14,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 
 const app = express();
-
-const server = http.createServer(app);
+const server = http.createServer({ maxHeaderSize: 81920 }, app);
 
 const io = new Server(server, {
     cors: {
@@ -5361,7 +5360,8 @@ app.get('/api/groups', async (req, res) => {
                 g.description,
                 g.created_at,
                 g.created_by,
-                g.group_dp_url,
+                CASE WHEN g.group_dp_url IS NOT NULL THEN 1 ELSE 0 END AS has_dp,
+LEFT(g.group_dp_url, 100) AS group_dp_preview  -- just enough to detect base64
                 g.background_color,
                 g.status,
                 g.is_read_only,

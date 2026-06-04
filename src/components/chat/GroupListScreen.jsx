@@ -75,7 +75,10 @@ const GroupListScreen = ({ groups, onSelectGroup, selectedGroup, onCreateGroup, 
                                 className={`flex items-center px-4 py-3 cursor-pointer transition-colors border-b border-zinc-50 ${isSelected ? 'bg-primary/5' : 'hover:bg-zinc-50'}`}
                             >
                                 <img 
-                                    src={getProfileImageSource(group.group_dp_url)} 
+                                   src={group.group_dp_url 
+  ? getProfileImageSource(group.group_dp_url) 
+  : getProfileImageSource(null)  // your default avatar
+}
                                     alt="Group DP" 
                                     className="size-12 rounded-full object-cover bg-zinc-100 border border-zinc-200 shrink-0" 
                                 />
