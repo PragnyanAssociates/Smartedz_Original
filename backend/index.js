@@ -5341,6 +5341,7 @@ app.post('/api/groups', checkGroupPermission('edit'), async (req, res) => {
 });
 
 // --- 4. List Groups for a User ---
+// --- 4. List Groups for a User ---
 app.get('/api/groups', async (req, res) => {
     const { userId, instId } = req.query;
     if (!userId || !instId) return res.status(400).json({ error: 'userId and instId are required' });
@@ -5360,7 +5361,7 @@ app.get('/api/groups', async (req, res) => {
                 g.description,
                 g.created_at,
                 g.created_by,
-                NULL AS group_dp_url,
+                g.group_dp_url,
                 g.background_color,
                 g.status,
                 g.is_read_only,
@@ -5368,9 +5369,9 @@ app.get('/api/groups', async (req, res) => {
                 COALESCE(
                     lm.message_text, 
                     CASE 
-                        WHEN lm.message_type = 'image' THEN '📷 Photo'
-                        WHEN lm.message_type = 'video' THEN '🎥 Video'
-                        WHEN lm.message_type = 'file' THEN CONCAT('📁 ', COALESCE(lm.file_name, 'Document'))
+                        WHEN lm.message_type = 'image' THEN ' Photo'
+                        WHEN lm.message_type = 'video' THEN ' Video'
+                        WHEN lm.message_type = 'file' THEN CONCAT(' ', COALESCE(lm.file_name, 'Document'))
                         ELSE NULL 
                     END
                 ) AS last_message_text,
@@ -5402,7 +5403,6 @@ app.get('/api/groups', async (req, res) => {
         res.status(500).json({ message: 'Error fetching groups.' });
     }
 });
-
 // --- 5. Get Group Details ---
 app.get('/api/groups/:groupId/details', async (req, res) => {
     const { groupId } = req.params;
