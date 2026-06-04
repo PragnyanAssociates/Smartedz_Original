@@ -69,18 +69,52 @@ export default function UserTab({ data, fetchData, user }) {
         (u.username || '').toLowerCase().includes(q));
     }
 
-    // Order roll-wise: 1, 2, 3 ...  Users without a numeric roll number
-    // (e.g. staff) fall to the end, then sort alphabetically by name.
+    // Sorting:
+    //  • Students  -> roll-number-wise (1, 2, 3 ...). A missing / non-numeric
+    //    roll falls to the end of the student block, then alphabetical by name.
+    //  • Everyone else (Teacher, Principal, Super Admin ...) -> alphabetical
+    //    by name. They are given a running serial number (see `serialMap`)
+    //    instead of a roll number.
+    // In a mixed view (the "All" tab) students are listed first, followed by
+    // the non-student users in alphabetical order.
+    const isStudentRow = (u) => (u.role || '').toLowerCase().includes('student');
     const rollVal = (u) => {
       const n = parseInt(u.roll_no, 10);
       return isNaN(n) ? Number.POSITIVE_INFINITY : n;
     };
     return [...list].sort((a, b) => {
-      const ra = rollVal(a), rb = rollVal(b);
-      if (ra !== rb) return ra - rb;
+      const aStu = isStudentRow(a), bStu = isStudentRow(b);
+
+      // Students come before non-students in a mixed list
+      if (aStu !== bStu) return aStu ? -1 : 1;
+
+      if (aStu && bStu) {
+        // Both students -> roll-wise, then alphabetical as a tie-breaker
+        const ra = rollVal(a), rb = rollVal(b);
+        if (ra !== rb) return ra - rb;
+        return (a.name || '').localeCompare(b.name || '');
+      }
+
+      // Both non-students -> purely alphabetical by name
       return (a.name || '').localeCompare(b.name || '');
     });
   }, [activeUsers, activeRoleTab, activeClass, search]);
+
+  // Running serial number (1 → N) for NON-student rows, in their displayed
+  // (alphabetical) order. Students are skipped here because they show their
+  // roll number instead. Used for the first column of the table.
+  const serialMap = useMemo(() => {
+    const map = {};
+    let n = 0;
+    filteredUsers.forEach(u => {
+      const isStudent = (u.role || '').toLowerCase().includes('student');
+      if (!isStudent) {
+        n += 1;
+        map[u.id] = n;
+      }
+    });
+    return map;
+  }, [filteredUsers]);
 
   // YYYY-MM-DD for <input type="date"> values
   const isoDate = (v) => {
@@ -252,6 +286,17 @@ export default function UserTab({ data, fetchData, user }) {
 
   const useDropdown = classFilters.length > 6;
 
+  // First-column header text:
+  //  • Student tab          -> "Roll"  (rows show roll numbers)
+  //  • Other role tabs       -> "S.No"  (rows show running serial numbers)
+  //  • All tab (mixed)       -> "Roll / S.No"
+  const firstColHeader = useMemo(() => {
+    const tab = (activeRoleTab || '').toLowerCase();
+    if (tab === 'all') return 'Roll / S.No';
+    if (tab.includes('student')) return 'Roll';
+    return 'S.No';
+  }, [activeRoleTab]);
+
   // Academic year (auto-assigned by the backend on create, preserved on edit).
   // We only DISPLAY it here so the admin can see which year the user belongs to.
   const activeYear = (data.academicYears || []).find(y => y.isActive) || null;
@@ -357,7 +402,7 @@ export default function UserTab({ data, fetchData, user }) {
         <table className="w-full text-left border-collapse min-w-[800px]">
           <thead>
             <tr className="bg-zinc-50/50">
-              <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100">Roll / User Details</th>
+              <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100">{firstColHeader} / User Details</th>
               <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100">Role</th>
               <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100">Assignment</th>
               <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100">Status</th>
@@ -373,9 +418,11 @@ export default function UserTab({ data, fetchData, user }) {
                 <tr key={u.id} className="hover:bg-zinc-50/60 transition-colors group">
                   <td className="px-5 py-4">
                     <div className="flex items-center gap-3">
-                      {/* Roll number — shown first so the list reads roll-wise (1, 2, 3 ...) */}
+                      {/* First column:
+                          • Students    -> roll number (list reads roll-wise: 1, 2, 3 ...)
+                          • Other users -> running serial number (1 → N), alphabetical */}
                       <span className="w-6 shrink-0 text-center text-xs font-semibold text-zinc-400 tabular-nums">
-                        {u.roll_no || '—'}
+                        {isStudent ? (u.roll_no || '—') : (serialMap[u.id] || '—')}
                       </span>
                       {u.profile_pic ? (
                         <img src={u.profile_pic} alt={u.name} className="size-8 rounded-full object-cover shrink-0 ring-1 ring-black/5" />

@@ -129,21 +129,27 @@ export default function PromotionTab({ data, fetchData }) {
     }
   };
 
-  const handlePromote = async () => {
-    if (selectedStudents.length === 0) return alert('Select at least one student.');
-    if (!target.classId) return alert('Select a target class.');
+const handlePromote = async () => {
+  if (selectedStudents.length === 0) return alert('Select at least one student.');
+  if (!target.classId) return alert('Select a target class.');
 
-    if (isAlumniTarget) {
-      if (!activeYear) {
-        return alert('No active academic year is set. Set one active in the Academics tab before moving students to Alumni.');
-      }
-      if (!window.confirm(`Move ${selectedStudents.length} student(s) to Alumni for ${activeYearName}? They will be marked as passed out.`)) return;
-      return promoteToAlumni();
+  if (isAlumniTarget) {
+    if (!activeYear) {
+      return alert('No active academic year is set. Set one active in the Academics tab before moving students to Alumni.');
     }
+    if (!window.confirm(`Move ${selectedStudents.length} student(s) to Alumni for ${activeYearName}? They will be marked as passed out.`)) return;
+    return promoteToAlumni();
+  }
 
-    if (!window.confirm(`Promote ${selectedStudents.length} student(s) to the selected class?`)) return;
-    return promoteToClass();
-  };
+  // Warning for normal class promotion
+  const warningMsg =
+    `⚠️ Warning: Once promoted, the student will NOT come back to the same class. ` +
+    `This action is final and cannot be undone.\n\n` +
+    `Are you sure you want to promote ${selectedStudents.length} student(s) to the selected class?`;
+
+  if (!window.confirm(warningMsg)) return;
+  return promoteToClass();
+};
 
   return (
     <div className="space-y-6">
@@ -274,6 +280,14 @@ export default function PromotionTab({ data, fetchData }) {
                   onChange={e => setTarget({ ...target, section: e.target.value })}
                 />
               </div>
+            )}
+
+            {/* NOTE :- shown for normal class promotion */}
+            {!isAlumniTarget && (
+              <p className="text-[11px] font-medium text-red-600 leading-relaxed">
+                <span className="font-semibold uppercase tracking-wider">Note:</span>{' '}
+               Once promoted, the student will NOT come back to the same class.This action is final and cannot be undone. 
+              </p>
             )}
 
             {isAlumniTarget && (
