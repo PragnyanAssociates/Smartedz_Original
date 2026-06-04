@@ -131,7 +131,7 @@ function AdminTimetable({ user, canEdit, canDelete, isManager }) {
   const tabProps = { data, fetchData, user, canEdit };
 
   return (
-   <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto">
+    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto animate-in fade-in duration-700">
       {/* 1. Page Header */}
       <header className="mb-6 flex flex-col gap-2">
         <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Timetable</h1>
@@ -578,7 +578,17 @@ function GridTab({ data, fetchData, user, canEdit }) {
                     );
                   }
 
-                  const eligibleTeachers = teachersForSubject(cell.subject_id);
+                  // Teachers eligible for the chosen subject...
+                  let teacherOptions = teachersForSubject(cell.subject_id);
+                  // ...but ALWAYS keep the already-assigned teacher in the list, even if
+                  // they were assigned from the Teachers Timetable tab or teach a different
+                  // subject. Without this the teacher would silently vanish from the
+                  // dropdown, making the two tabs look out of sync (and risking the
+                  // assignment being lost on the next save).
+                  if (cell.teacher_id && !teacherOptions.some(t => String(t.id) === String(cell.teacher_id))) {
+                    const assigned = data.teachers.find(t => String(t.id) === String(cell.teacher_id));
+                    if (assigned) teacherOptions = [assigned, ...teacherOptions];
+                  }
                   const clashClass = teacherClash(d.id, p.id, cell.teacher_id);
                   return (
                     <td key={p.id} className="p-2 sm:p-3 border-r border-zinc-100 align-top">
@@ -603,16 +613,16 @@ function GridTab({ data, fetchData, user, canEdit }) {
                               clashClass ? 'border-red-300 bg-red-50/40' : 'border-zinc-200'
                             }`}>
                             <option value="">
-                              {cell.subject_id ? (eligibleTeachers.length ? 'Select Teacher' : 'No teacher') : 'Select Teacher'}
+                              {cell.subject_id ? (teacherOptions.length ? 'Select Teacher' : 'No teacher') : 'Select Teacher'}
                             </option>
-                            {eligibleTeachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                            {teacherOptions.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                           </select>
                           <ChevronDown className="size-3 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
                         </div>
                         {clashClass && (
                           <p className="text-[10px] font-medium text-red-600 leading-snug flex items-start gap-1">
                             <AlertCircle className="size-3 shrink-0 mt-0.5" />
-                            <span>This teacher is already Assigned <strong className="font-semibold">{clashClass}</strong> during this period. Pick a different teacher, or move that class to another slot.</span>
+                            <span>This teacher is already teaching <strong className="font-semibold">{clashClass}</strong> during this period. Pick a different teacher, or move that class to another slot.</span>
                           </p>
                         )}
                         <input
@@ -1039,7 +1049,7 @@ function PersonalTimetable({ user, mode }) {
   }
 
   return (
-   <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto">
+    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto animate-in fade-in duration-700">
       <header className="mb-6 flex flex-col gap-2">
         <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
           <GraduationCap className="size-5 text-primary" /> My Timetable
