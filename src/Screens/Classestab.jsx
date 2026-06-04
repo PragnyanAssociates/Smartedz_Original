@@ -2,6 +2,10 @@ import React, { useState, useMemo } from 'react';
 import { Plus, Edit, Trash2, X, Layers } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
 
+// Passed-out students (status 'alumni') have left the school, so they are
+// not counted in a class's live student tally — matches the Users screen.
+const isAlumni = (u) => (u.status || '').toLowerCase() === 'alumni';
+
 export default function ClassesTab({ data, fetchData, user }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editing, setEditing]         = useState(null);
@@ -17,6 +21,10 @@ export default function ClassesTab({ data, fetchData, user }) {
     section: ''           // single section used only in Edit mode
   };
   const [form, setForm] = useState(emptyForm);
+
+  // Count active (non-alumni) students assigned to a given class row.
+  const studentsInClass = (classId) =>
+    data.users.filter(u => u.class_id === classId && !isAlumni(u)).length;
 
   // Group rows by className so multiple sections of the same class appear together.
   const grouped = useMemo(() => {
@@ -132,7 +140,7 @@ export default function ClassesTab({ data, fetchData, user }) {
   };
 
   const handleDelete = async (c) => {
-    const studentsHere = data.users.filter(u => u.class_id === c.id).length;
+    const studentsHere = studentsInClass(c.id);
     const msg = studentsHere > 0
       ? `${studentsHere} student(s) are in this class. Deleting will unassign them. Continue?`
       : `Delete "${c.className}${c.section ? ' - ' + c.section : ''}"?`;
@@ -143,7 +151,7 @@ export default function ClassesTab({ data, fetchData, user }) {
 
   return (
     <div className="space-y-6">
-      
+
       {/* Header - Fixed for Mobile */}
       <div className="flex flex-col sm:flex-row justify-between gap-4 sm:items-start mb-6">
         <div>
@@ -153,7 +161,7 @@ export default function ClassesTab({ data, fetchData, user }) {
             and add as many sections as you need in one go &mdash; A, B, C, D...
           </p>
         </div>
-        <button onClick={openAdd} 
+        <button onClick={openAdd}
           className="bg-primary text-white px-4 py-2 rounded-md text-xs font-medium hover:bg-primary/90 transition-colors flex items-center gap-1.5 shadow-sm shrink-0 w-fit self-start sm:self-auto">
           <Plus className="size-3.5 shrink-0" /> Add Class
         </button>
@@ -168,7 +176,7 @@ export default function ClassesTab({ data, fetchData, user }) {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {grouped.map(g => (
             <div key={g.className} className="bg-white rounded-lg ring-1 ring-black/5 p-5 flex flex-col hover:ring-zinc-200 transition-colors">
-              
+
               {/* Card Header */}
               <div className="flex items-center gap-3 mb-4">
                 <div className="size-10 bg-zinc-50 ring-1 ring-black/5 rounded-md flex items-center justify-center text-primary shrink-0">
@@ -185,7 +193,7 @@ export default function ClassesTab({ data, fetchData, user }) {
               {/* Rows */}
               <div className="space-y-2 mt-auto">
                 {g.rows.map(c => {
-                  const studentCount = data.users.filter(u => u.class_id === c.id).length;
+                  const studentCount = studentsInClass(c.id);
                   return (
                     <div key={c.id} className="group flex items-center justify-between bg-zinc-50/50 rounded-md px-3 py-2 ring-1 ring-black/5 hover:bg-zinc-50 transition-colors">
                       <div className="min-w-0 pr-2">
@@ -220,7 +228,7 @@ export default function ClassesTab({ data, fetchData, user }) {
             <button onClick={() => setIsModalOpen(false)} className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-700 transition-colors">
               <X className="size-5 shrink-0" />
             </button>
-            
+
             <div className="mb-5">
               <h2 className="text-lg font-semibold text-zinc-900 mb-1">
                 {editing ? 'Edit Class' : 'Create Class'}

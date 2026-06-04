@@ -5,6 +5,10 @@ import { API_BASE_URL } from '../apiConfig';
 const SYSTEM_ROLES = ['Super Admin', 'Student', 'Teacher'];
 const isSystem = (name) => SYSTEM_ROLES.includes(name);
 
+// Passed-out students (status 'alumni') have left the school. They are
+// excluded from the live user counts so Roles matches the Users screen.
+const isAlumni = (u) => (u.status || '').toLowerCase() === 'alumni';
+
 export default function RolesTab({ data, fetchData, user }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingRole, setEditingRole] = useState(null);
@@ -26,9 +30,13 @@ export default function RolesTab({ data, fetchData, user }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.roles]);
 
+  // Count only ACTIVE users per role — alumni are not on the roster.
   const userCount = useMemo(() => {
     const map = {};
-    (data.users || []).forEach(u => { map[u.role] = (map[u.role] || 0) + 1; });
+    (data.users || []).forEach(u => {
+      if (isAlumni(u)) return;
+      map[u.role] = (map[u.role] || 0) + 1;
+    });
     return map;
   }, [data.users]);
 
@@ -88,7 +96,7 @@ export default function RolesTab({ data, fetchData, user }) {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
-      
+
       {/* Header - Fixed for Mobile */}
       <div className="flex flex-col sm:flex-row justify-between gap-4 sm:items-start mb-6 shrink-0">
         <div>
@@ -112,7 +120,7 @@ export default function RolesTab({ data, fetchData, user }) {
             const count  = userCount[r.role_name] || 0;
             return (
               <div key={r.id} className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm p-5 flex flex-col relative group hover:ring-black/10 transition-all duration-200 overflow-hidden">
-                
+
                 {/* Header Row: Icon & Actions */}
                 <div className="flex justify-between items-start mb-4">
                   <div className={`size-10 rounded-md flex items-center justify-center shrink-0 ring-1 ring-inset ${locked ? 'bg-zinc-50 text-zinc-400 ring-black/5' : 'bg-primary/5 text-primary ring-primary/20'}`}>
@@ -159,7 +167,7 @@ export default function RolesTab({ data, fetchData, user }) {
                       Custom Role
                     </span>
                   )}
-                  
+
                   <div className="flex items-center gap-1.5 text-xs font-semibold text-zinc-500 tabular-nums whitespace-nowrap">
                     <Users className="size-4 text-zinc-400" />
                     <span>{count} User{count !== 1 ? 's' : ''}</span>
@@ -185,7 +193,7 @@ export default function RolesTab({ data, fetchData, user }) {
               className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-700 transition-colors p-1 rounded-md hover:bg-zinc-100">
               <X className="size-5 shrink-0" />
             </button>
-            
+
             <div className="mb-5">
               <h2 className="text-lg font-semibold text-zinc-900 mb-1 tracking-tight">
                 {editingRole ? 'Rename Role' : 'Add New Role'}
@@ -227,7 +235,7 @@ export default function RolesTab({ data, fetchData, user }) {
               </div>
 
               <div className="pt-2 flex justify-end gap-3">
-                <button type="button" onClick={() => setIsModalOpen(false)} 
+                <button type="button" onClick={() => setIsModalOpen(false)}
                   className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 rounded-md text-xs font-semibold hover:bg-zinc-50 transition-colors w-full sm:w-auto shadow-sm">
                   Cancel
                 </button>
