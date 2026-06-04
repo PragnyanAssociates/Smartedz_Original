@@ -5360,8 +5360,7 @@ app.get('/api/groups', async (req, res) => {
                 g.description,
                 g.created_at,
                 g.created_by,
-                CASE WHEN g.group_dp_url IS NOT NULL THEN 1 ELSE 0 END AS has_dp,
-LEFT(g.group_dp_url, 100) AS group_dp_preview  -- just enough to detect base64
+                NULL AS group_dp_url,
                 g.background_color,
                 g.status,
                 g.is_read_only,
