@@ -75,7 +75,7 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
   const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
   const [isOptionsModalVisible, setOptionsModalVisible] = useState(false);
   const [selectedMessage, setSelectedMessage] = useState(null);
-  const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 }); // ADDED FOR POSITIONING
+  const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
   const [isAttachmentModalVisible, setAttachmentModalVisible] = useState(false);
   const [videoErrors, setVideoErrors] = useState({});
   const [isGroupMenuVisible, setGroupMenuVisible] = useState(false);
@@ -256,16 +256,43 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
 
   const uploadFile = async (file, type) => {
     if (!user || !canSendMessages) return;
+
+    // Strict 3MB limit
+    const MAX_SIZE = 3 * 1024 * 1024;
+    if (file.size > MAX_SIZE) {
+        alert("This file is too large! Please select a file under 3MB.");
+        return;
+    }
+
     const clientMessageId = uuidv4();
     setMessages(prev => [...prev, { id: clientMessageId, clientMessageId: clientMessageId, user_id: user.id, full_name: user.fullName, profile_image_url: user.profileImageUrl, group_id: group.id, message_type: type, file_url: null, localUri: URL.createObjectURL(file), file_name: file.name, file_size: file.size, message_text: null, timestamp: getLocalISOString(), status: 'uploading', progress: 0 }]);
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    const formData = new FormData();
-    formData.append('media', file);
-    formData.append('userId', user.id); 
-    try {
-      const res = await apiClient.post('/groups/media', formData, { headers: { 'Content-Type': 'multipart/form-data' }, onUploadProgress: (pe) => { if (pe.total) setMessages(prev => prev.map(msg => msg.clientMessageId === clientMessageId ? { ...msg, progress: Math.round((pe.loaded * 100) / pe.total) } : msg)); } });
-      sendMessage(type, null, res.data.fileUrl, clientMessageId, file.name, res.data.fileSize, res.data.fileMimeType);
-    } catch (error) { alert("Upload Failed."); setMessages(prev => prev.map(msg => msg.clientMessageId === clientMessageId ? { ...msg, status: 'failed' } : msg)); }
+
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+        const payload = {
+            userId: user.id,
+            media: reader.result,
+            fileName: file.name,
+            fileSize: file.size,
+            fileMimeType: file.type
+        };
+
+        try {
+            const res = await apiClient.post('/groups/media', payload, { 
+                onUploadProgress: (pe) => { 
+                    if (pe.total) {
+                        setMessages(prev => prev.map(msg => msg.clientMessageId === clientMessageId ? { ...msg, progress: Math.round((pe.loaded * 100) / pe.total) } : msg)); 
+                    }
+                } 
+            });
+            sendMessage(type, null, res.data.fileUrl, clientMessageId, file.name, res.data.fileSize, res.data.fileMimeType);
+        } catch (error) { 
+            alert("Upload Failed. " + (error.response?.data?.message || "")); 
+            setMessages(prev => prev.map(msg => msg.clientMessageId === clientMessageId ? { ...msg, status: 'failed' } : msg)); 
+        }
+    };
+    reader.readAsDataURL(file);
   };
 
   const handlePickImageVideo = (e) => { const file = e.target.files[0]; if (!file) return; const type = file.type.startsWith("video") ? "video" : "image"; uploadFile(file, type); e.target.value = ""; setAttachmentModalVisible(false); };
@@ -280,24 +307,20 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
 
   const handleKeyPress = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } };
   
-  // UPDATED onLongPressMessage
   const onLongPressMessage = (e, message) => { 
     e.preventDefault();
     e.stopPropagation();
     if (!user || message.status === 'uploading' || message.is_deleted) return; 
 
-    // Capture exact mouse/touch coordinates
     let clickX = e.clientX || (e.touches && e.touches[0].clientX);
     let clickY = e.clientY || (e.touches && e.touches[0].clientY);
 
-    // Fallback if coordinates fail
     if (!clickX || !clickY) {
         const rect = e.currentTarget.getBoundingClientRect();
         clickX = rect.left + (rect.width / 2);
         clickY = rect.top + (rect.height / 2);
     }
 
-    // Adjust coordinates so the menu doesn't go off-screen
     const menuWidth = 200;
     const menuHeight = 180;
     let left = clickX;
@@ -319,7 +342,11 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
 
   const downloadAndOpenFile = async (fileUrl, fileName, action) => {
     if (!fileUrl) return alert("No file available.");
-    const fullUrl = SERVER_URL + fileUrl;
+    
+    // In Base64 storage, fileUrl IS the base64 string, not a relative path.
+    // If it's a URL starting with HTTP or /, append SERVER_URL. Otherwise it's Base64.
+    const isBase64 = fileUrl.startsWith('data:');
+    const fullUrl = isBase64 ? fileUrl : SERVER_URL + fileUrl;
     
     try {
       setOptionsModalVisible(false);
@@ -329,9 +356,15 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
         const officeExts = ['xls', 'xlsx', 'doc', 'docx', 'ppt', 'pptx'];
 
         if (['pdf', 'txt', 'jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
-          window.open(fullUrl, '_blank');
-          return;
-        } else if (officeExts.includes(ext)) {
+            // For Base64, we can directly open it in a new tab if it's an image/pdf
+            if (isBase64) {
+                const win = window.open();
+                if(win) win.document.write(`<iframe src="${fullUrl}" frameborder="0" style="border:0; top:0px; left:0px; bottom:0px; right:0px; width:100%; height:100%;" allowfullscreen></iframe>`);
+                return;
+            }
+            window.open(fullUrl, '_blank');
+            return;
+        } else if (!isBase64 && officeExts.includes(ext)) {
           const googleViewerUrl = `https://docs.google.com/viewer?url=${encodeURIComponent(fullUrl)}&embedded=true`;
           window.open(googleViewerUrl, '_blank');
           return;
@@ -387,7 +420,10 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
           );
       }
 
-      const sourceUri = item.localUri || (item.file_url ? SERVER_URL + item.file_url : null);
+      // Updated Source URI logic to handle Base64 strings correctly
+      const isBase64 = item.file_url && item.file_url.startsWith('data:');
+      const sourceUri = item.localUri || (item.file_url ? (isBase64 ? item.file_url : SERVER_URL + item.file_url) : null);
+      
       if (!sourceUri && (isImageOrVideo || isFile)) return <div className="flex items-center gap-2 p-3 text-red-600 bg-red-50 rounded-md"><AlertCircle className="size-4" /><span className="text-sm">Media not available</span></div>;
       
       const renderUploadOverlay = () => { if (item.status !== 'uploading' && item.status !== 'failed') return null; return <div className="absolute inset-0 bg-black bg-opacity-60 flex flex-col items-center justify-center rounded-lg">{item.status === 'uploading' && <><div className="animate-spin rounded-full size-8 border-b-2 border-white" /><span className="text-white mt-2 font-bold text-sm">{item.progress || 0}%</span></>}{item.status === 'failed' && <><AlertCircle className="size-8 text-white" /><span className="text-white mt-2 font-bold text-sm">Failed</span></>}</div>; };
@@ -422,7 +458,6 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
       <div key={key} className={`flex flex-row my-1 px-4 sm:px-6 items-start ${isMyMessage ? "justify-end" : "justify-start"}`}>
         {!isMyMessage && <img src={getProfileImageSource(item.profile_image_url)} alt="User" className="size-8 rounded-full mr-2.5 mt-0.5 bg-zinc-200 flex-shrink-0 object-cover" />}
         
-        {/* UPDATED EVENT HANDLERS */}
         <div className={`relative max-w-[85%] sm:max-w-[65%] cursor-pointer ${isMyMessage ? (isImageOrVideo ? "rounded-lg shadow-sm ring-1 ring-black/5" : `${THEME.myMessageBg} rounded-lg rounded-tr-none p-2.5`) : (isImageOrVideo ? "rounded-lg shadow-sm ring-1 ring-black/5" : `${THEME.otherMessageBg} rounded-lg rounded-tl-none p-2.5`)} ${item.is_deleted ? 'bg-zinc-50 border border-zinc-200 shadow-none' : ''}`} 
           onContextMenu={(e) => onLongPressMessage(e, item)} 
           onClick={(e) => onLongPressMessage(e, item)}
@@ -446,7 +481,6 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
     );
   };
 
-  // UPDATED renderOptionsModal 
   const renderOptionsModal = () => {
     if (!selectedMessage) return null;
     const isMyMessage = selectedMessage.user_id === user?.id;

@@ -5150,43 +5150,11 @@ app.delete('/api/admin/syllabus/keywords/:keywordId', async (req, res) => {
 });
 
 
-
 // ====================================================================
 // === GROUP CHAT MODULE (UNIFIED PERMISSIONS & MULTI-TENANT) ========
 // =====================================================================
 
-// --- 1. Multer Configuration for Chat Media ---
-const chatUploadDir = 'public/uploads/chat_media';
-if (!fs.existsSync(chatUploadDir)) { fs.mkdirSync(chatUploadDir, { recursive: true }); }
-
-function generateUniqueFilename(originalName, prefix = 'file') {
-    const ext = path.extname(originalName);
-    return `${prefix}-${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
-}
-
-const chatStorage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, chatUploadDir);
-    },
-    filename: (req, file, cb) => {
-        cb(null, generateUniqueFilename(file.originalname, 'chat-media'));
-    }
-});
-
-const chatUpload = multer({
-    storage: chatStorage,
-    fileFilter: (req, file, cb) => {
-        const allowedTypes = /jpeg|jpg|png|gif|mp4|mov|mkv|mp3|m4a|wav|aac|pdf|doc|docx|xls|xlsx|ppt|pptx|txt|zip|rar/;
-        const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-        if (extname) {
-            return cb(null, true);
-        }
-        cb(new Error('File type not supported: ' + file.originalname));
-    }
-});
-
-
-// --- 2. Unified Helper for Group Permissions ---
+// --- 1. Unified Helper for Group Permissions ---
 const checkGroupPermission = (action) => async (req, res, next) => {
     try {
         const userId = req.body.userId || req.query.userId;
@@ -5242,9 +5210,7 @@ const checkGroupPermission = (action) => async (req, res, next) => {
     }
 };
 
-
-// --- 3. Group Options (classes + roles for group creation UI) ---
-// GET /api/groups/options?userId=xxx&instId=xxx
+// --- 2. Group Options (classes + roles for group creation UI) ---
 app.get('/api/groups/options', async (req, res) => {
     const { userId, instId } = req.query;
     if (!userId || !instId) return res.status(400).json({ error: 'userId and instId are required' });
@@ -5284,10 +5250,7 @@ app.get('/api/groups/options', async (req, res) => {
     }
 });
 
-
-// --- 4. Create Group ---
-// POST /api/groups
-// Body: { userId, institutionId, name, description, selectedCategories, backgroundColor, isReadOnly }
+// --- 3. Create Group ---
 app.post('/api/groups', checkGroupPermission('edit'), async (req, res) => {
     try {
         const {
@@ -5378,9 +5341,7 @@ app.post('/api/groups', checkGroupPermission('edit'), async (req, res) => {
     }
 });
 
-
-// --- 5. List Groups for a User ---
-// GET /api/groups?userId=xxx&instId=xxx
+// --- 4. List Groups for a User ---
 app.get('/api/groups', async (req, res) => {
     const { userId, instId } = req.query;
     if (!userId || !instId) return res.status(400).json({ error: 'userId and instId are required' });
@@ -5405,7 +5366,6 @@ app.get('/api/groups', async (req, res) => {
                 g.status,
                 g.is_read_only,
                 
-                /* THE FIX: Generate text for media files instead of returning NULL */
                 COALESCE(
                     lm.message_text, 
                     CASE 
@@ -5428,7 +5388,6 @@ app.get('/api/groups', async (req, res) => {
               LEFT JOIN group_members gm ON g.id = gm.group_id AND gm.user_id = ?
               LEFT JOIN group_last_seen gls ON g.id = gls.group_id AND gls.user_id = ?
               LEFT JOIN (
-                  /* THE FIX: Added message_type and file_name to the SELECT here */
                   SELECT group_id, message_text, message_type, file_name, timestamp,
                          ROW_NUMBER() OVER (PARTITION BY group_id ORDER BY timestamp DESC) AS rn
                     FROM group_chat_messages
@@ -5445,9 +5404,7 @@ app.get('/api/groups', async (req, res) => {
     }
 });
 
-
-// --- 6. Get Group Details ---
-// GET /api/groups/:groupId/details?userId=xxx
+// --- 5. Get Group Details ---
 app.get('/api/groups/:groupId/details', async (req, res) => {
     const { groupId } = req.params;
     const { userId } = req.query;
@@ -5485,10 +5442,7 @@ app.get('/api/groups/:groupId/details', async (req, res) => {
     }
 });
 
-
-// --- 7. Mark Group as Seen ---
-// POST /api/groups/:groupId/seen
-// Body: { userId }
+// --- 6. Mark Group as Seen ---
 app.post('/api/groups/:groupId/seen', async (req, res) => {
     const { groupId } = req.params;
     const { userId } = req.body;
@@ -5507,10 +5461,7 @@ app.post('/api/groups/:groupId/seen', async (req, res) => {
     }
 });
 
-
-// --- 8. Update Group ---
-// PUT /api/groups/:groupId
-// Body: { userId, name, backgroundColor, isReadOnly }
+// --- 7. Update Group ---
 app.put('/api/groups/:groupId', checkGroupPermission('edit'), async (req, res) => {
     const { groupId } = req.params;
     const { name, backgroundColor, isReadOnly } = req.body;
@@ -5527,29 +5478,26 @@ app.put('/api/groups/:groupId', checkGroupPermission('edit'), async (req, res) =
     }
 });
 
-
-// --- 9. Update Group Display Picture ---
-// POST /api/groups/:groupId/dp
-// Form data: { userId, group_dp (file) }
-app.post('/api/groups/:groupId/dp', chatUpload.single('group_dp'), checkGroupPermission('edit'), async (req, res) => {
-    if (!req.file) return res.status(400).json({ message: 'No file uploaded.' });
+// --- 8. Update Group Display Picture ---
+app.put('/api/groups/:groupId/dp', checkGroupPermission('edit'), async (req, res) => {
     const { groupId } = req.params;
-    const fileUrl = `/public/uploads/chat_media/${req.file.filename}`;
+    const { group_dp } = req.body; 
+
+    if (!group_dp) return res.status(400).json({ message: 'No image data provided.' });
 
     try {
         await db.execute(
             'UPDATE `groups` SET group_dp_url = ? WHERE id = ?',
-            [fileUrl, groupId]
+            [group_dp, groupId]
         );
-        res.json({ message: 'Group DP updated successfully.', group_dp_url: fileUrl });
+        res.json({ message: 'Group DP updated successfully.', group_dp_url: group_dp });
     } catch (error) {
         console.error('Error updating group DP:', error);
         res.status(500).json({ message: 'Failed to update group DP.' });
     }
 });
-// --- 10. Delete Group ---
-// DELETE /api/groups/:groupId
-// Body: { userId }
+
+// --- 9. Delete Group ---
 app.delete('/api/groups/:groupId', checkGroupPermission('delete'), async (req, res) => {
     const { groupId } = req.params;
     const conn = await db.getConnection();
@@ -5567,9 +5515,7 @@ app.delete('/api/groups/:groupId', checkGroupPermission('delete'), async (req, r
     }
 });
 
-
-// --- 11. Get Chat History ---
-// GET /api/groups/:groupId/history?userId=xxx&page=1&limit=20
+// --- 10. Get Chat History ---
 app.get('/api/groups/:groupId/history', async (req, res) => {
     const { groupId } = req.params;
  const { userId, page = 1, limit = 20 } = req.query;
@@ -5648,23 +5594,34 @@ const groupIdInt = parseInt(groupId, 10);
     }
 });
 
-
-// --- 12. Upload Chat Media ---
-// POST /api/groups/media
-// Form data: { userId, media (file) }
-app.post('/api/groups/media', chatUpload.single('media'), async (req, res) => {
-    if (!req.file) return res.status(400).json({ message: 'No file uploaded.' });
-    const { userId } = req.body;
+// --- 11. Upload Chat Media (Base64) ---
+app.post('/api/groups/media', async (req, res) => {
+    const { userId, media, fileName, fileSize, fileMimeType } = req.body;
+    
     if (!userId) return res.status(400).json({ error: 'userId is required' });
+    if (!media) return res.status(400).json({ message: 'No media data provided.' });
 
+    const MAX_SIZE_BYTES = 3 * 1024 * 1024; // 3MB limit
+
+    // Strict Size Validation
+    if (fileSize && fileSize > MAX_SIZE_BYTES) {
+        return res.status(413).json({ message: 'File exceeds the 3MB limit.' });
+    }
+    
+    // A base64 string length * 0.75 roughly equals the file size in bytes
+    const estimatedSize = media.length * 0.75; 
+    if (estimatedSize > (MAX_SIZE_BYTES * 1.1)) {
+         return res.status(413).json({ message: 'Payload is too large. Limit is 3MB.' });
+    }
+
+    // Immediately return the Base64 string so Socket.io can broadcast it
     res.status(201).json({
-        fileUrl: `/public/uploads/chat_media/${req.file.filename}`,
-        fileSize: req.file.size,
-        fileMimeType: req.file.mimetype,
-        fileName: req.file.originalname
+        fileUrl: media, 
+        fileSize: fileSize || null,
+        fileMimeType: fileMimeType || 'unknown',
+        fileName: fileName || 'file'
     });
 });
-
 
 // =====================================================================
 // === SOCKET.IO — Real-Time Chat ======================================
@@ -5875,8 +5832,6 @@ io.on('connection', (socket) => {
         console.log(`User disconnected: ${socket.id}`);
     });
 });
-
-
 
 // =====================================================================
 //  BACKEND — Section 23: ALUMNI

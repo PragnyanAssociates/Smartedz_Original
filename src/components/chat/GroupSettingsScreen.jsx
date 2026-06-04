@@ -27,7 +27,6 @@ const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDele
   const [isSaving, setIsSaving] = useState(false);
   const [isViewerVisible, setViewerVisible] = useState(false);
 
-  // Unified Permissions Check
   const hasEditRights = (user?.id === group.created_by) || canEdit || isAllAccess;
   const hasDeleteRights = (user?.id === group.created_by) || canDelete || isAllAccess;
 
@@ -39,29 +38,39 @@ const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDele
 
     if (!file.type.startsWith('image/')) {
       alert('Please select a valid image file.');
+      e.target.value = '';
       return;
     }
 
-    setIsSaving(true);
-    const formData = new FormData();
-    formData.append('group_dp', file);
-    
-    // Add fallback in case user is not fully loaded
-    if (user?.id) {
-      formData.append('userId', user.id); 
+    // 3MB Strict Size Limit
+    const MAX_SIZE = 3 * 1024 * 1024;
+    if (file.size > MAX_SIZE) {
+        alert('Image is too large! Please select a file under 3MB.');
+        e.target.value = '';
+        return;
     }
 
-    try {
-      // FIX: Removed the manual Content-Type header so the browser can set the boundary automatically
-      const res = await apiClient.post(`/groups/${group.id}/dp`, formData);
-      setGroup({ ...group, group_dp_url: res.data.group_dp_url });
-      alert('Success: Group DP updated.');
-    } catch (error) {
-      alert('Upload Failed: ' + (error.response?.data?.message || 'An error occurred.'));
-    } finally {
-      setIsSaving(false);
-      e.target.value = ''; 
-    }
+    setIsSaving(true);
+
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+        try {
+            const payload = {
+                userId: user?.id,
+                group_dp: reader.result
+            };
+
+            const res = await apiClient.put(`/groups/${group.id}/dp`, payload);
+            setGroup({ ...group, group_dp_url: res.data.group_dp_url });
+            alert('Success: Group DP updated.');
+        } catch (error) {
+            alert('Upload Failed: ' + (error.response?.data?.message || 'An error occurred.'));
+        } finally {
+            setIsSaving(false);
+            e.target.value = ''; 
+        }
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleSaveChanges = async () => {
