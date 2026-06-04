@@ -1009,6 +1009,76 @@ app.get('/api/admin/timetable/:instId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ---------------------------------------------------------------------
+//  11.b  PERSONAL TIMETABLE  ->  GET /api/timetable/my/:userId
+//
+//  Used by the read-only "My Timetable" screen for students & teachers.
+//   • Student -> the full timetable of THEIR class (subject + teacher).
+//   • Teacher -> the periods assigned to THEM (class + subject + room).
+//  Always anchored to the institution's ACTIVE academic year, so it
+//  follows the same year-switching rules as everything else.
+// ---------------------------------------------------------------------
+app.get('/api/timetable/my/:userId', async (req, res) => {
+    try {
+        const [users] = await db.execute(
+            'SELECT id, name, role, class_id, section, institutionId FROM users WHERE id = ? LIMIT 1',
+            [req.params.userId]
+        );
+        if (users.length === 0) return res.status(404).json({ error: 'User not found.' });
+        const me = users[0];
+
+        const role = (me.role || '').toLowerCase();
+        const mode = role.includes('teacher') ? 'teacher' : 'student';
+
+        const yearId = await resolveYearId(me.institutionId, req.query.yearId);
+        if (!yearId) {
+            return res.json({ mode, academic_year_id: null, days: [], periods: [], entries: [], class_label: null });
+        }
+
+        const [days]    = await db.execute('SELECT * FROM timetable_days WHERE institutionId = ? AND academic_year_id = ? ORDER BY day_index', [me.institutionId, yearId]);
+        const [periods] = await db.execute('SELECT * FROM timetable_periods WHERE institutionId = ? AND academic_year_id = ? ORDER BY period_index', [me.institutionId, yearId]);
+
+        let entries = [];
+        let class_label = null;
+
+        if (mode === 'teacher') {
+            // Periods assigned to this teacher, with class + subject names.
+            const [rows] = await db.execute(
+                `SELECT e.day_id, e.period_id, e.room_no, e.class_id, e.subject_id,
+                        c.className, c.section,
+                        s.name AS subject_name
+                   FROM timetable_entries e
+                   LEFT JOIN classes  c ON c.id = e.class_id
+                   LEFT JOIN subjects s ON s.id = e.subject_id
+                  WHERE e.institutionId = ? AND e.academic_year_id = ? AND e.teacher_id = ?`,
+                [me.institutionId, yearId, me.id]
+            );
+            entries = rows;
+        } else {
+            // Student: the timetable of their assigned class, with subject + teacher names.
+            if (me.class_id) {
+                const [crows] = await db.execute('SELECT className, section FROM classes WHERE id = ? LIMIT 1', [me.class_id]);
+                if (crows.length) {
+                    class_label = `${crows[0].className}${crows[0].section ? ' - ' + crows[0].section : ''}`;
+                }
+                const [rows] = await db.execute(
+                    `SELECT e.day_id, e.period_id, e.room_no, e.subject_id, e.teacher_id,
+                            s.name AS subject_name,
+                            t.name AS teacher_name
+                       FROM timetable_entries e
+                       LEFT JOIN subjects s ON s.id = e.subject_id
+                       LEFT JOIN users    t ON t.id = e.teacher_id
+                      WHERE e.institutionId = ? AND e.academic_year_id = ? AND e.class_id = ?`,
+                    [me.institutionId, yearId, me.class_id]
+                );
+                entries = rows;
+            }
+        }
+
+        res.json({ mode, academic_year_id: yearId, days, periods, entries, class_label });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.post('/api/admin/timetable/days', async (req, res) => {
     const { institutionId, days } = req.body;
     const conn = await db.getConnection();
@@ -1084,6 +1154,109 @@ app.post('/api/admin/timetable/entries/bulk', async (req, res) => {
         }
         await conn.commit();
         res.json({ success: true });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally { conn.release(); }
+});
+
+// ---------------------------------------------------------------------
+//  11.c  TEACHER TIMETABLE SAVE  ->  POST /api/admin/timetable/teacher-entries/bulk
+//
+//  Saves ONE teacher's whole weekly grid. Body:
+//    { institutionId, academic_year_id, teacher_id,
+//      entries: [{ class_id, day_id, period_id, subject_id, room_no }] }
+//
+//  Conflict rules (both reported back as HTTP 409):
+//    1. The teacher cannot be put in two classes in the same day/period
+//       (checked within the submitted set).
+//    2. A target class period already held by ANOTHER teacher is rejected,
+//       and we return who holds it + which subject.
+//
+//  Save strategy: clear this teacher from every slot they currently hold
+//  (then drop rows that became empty), validate, then upsert the new set.
+//  Keyed on (class_id, day_id, period_id) like the single-entry route.
+// ---------------------------------------------------------------------
+app.post('/api/admin/timetable/teacher-entries/bulk', async (req, res) => {
+    const { institutionId, teacher_id, entries } = req.body;
+    if (!teacher_id) return res.status(400).json({ error: 'teacher_id is required.' });
+
+    const conn = await db.getConnection();
+    try {
+        const yearId = await resolveYearId(institutionId, req.body.academic_year_id);
+        if (!yearId) throw new Error('No academic year. Create one first.');
+
+        const list = Array.isArray(entries)
+            ? entries.filter(e => e.class_id && e.day_id && e.period_id)
+            : [];
+
+        // Rule 1 — no double-booking of the teacher within the submitted set.
+        const seenSlots = new Set();
+        for (const e of list) {
+            const slot = `${e.day_id}-${e.period_id}`;
+            if (seenSlots.has(slot)) {
+                return res.status(409).json({
+                    error: 'This teacher is assigned to two classes in the same period. Please fix the clash and try again.'
+                });
+            }
+            seenSlots.add(slot);
+        }
+
+        await conn.beginTransaction();
+
+        // Release this teacher from every slot they currently hold for the year,
+        // then delete rows that are now completely empty.
+        await conn.execute(
+            'UPDATE timetable_entries SET teacher_id = NULL WHERE institutionId = ? AND academic_year_id = ? AND teacher_id = ?',
+            [institutionId, yearId, teacher_id]
+        );
+        await conn.execute(
+            `DELETE FROM timetable_entries
+              WHERE institutionId = ? AND academic_year_id = ?
+                AND teacher_id IS NULL AND subject_id IS NULL AND (room_no IS NULL OR room_no = '')`,
+            [institutionId, yearId]
+        );
+
+        // Rule 2 — target class period already taken by another teacher?
+        const conflicts = [];
+        for (const e of list) {
+            const [rows] = await conn.execute(
+                `SELECT te.teacher_id, u.name AS teacher_name, s.name AS subject_name
+                   FROM timetable_entries te
+                   LEFT JOIN users    u ON u.id = te.teacher_id
+                   LEFT JOIN subjects s ON s.id = te.subject_id
+                  WHERE te.institutionId = ? AND te.academic_year_id = ?
+                    AND te.class_id = ? AND te.day_id = ? AND te.period_id = ?`,
+                [institutionId, yearId, e.class_id, e.day_id, e.period_id]
+            );
+            const occ = rows[0];
+            if (occ && occ.teacher_id && String(occ.teacher_id) !== String(teacher_id)) {
+                conflicts.push({
+                    class_id: e.class_id, day_id: e.day_id, period_id: e.period_id,
+                    teacher_name: occ.teacher_name, subject_name: occ.subject_name
+                });
+            }
+        }
+        if (conflicts.length > 0) {
+            await conn.rollback();
+            return res.status(409).json({
+                error: 'Some periods are already assigned to another teacher.',
+                conflicts
+            });
+        }
+
+        // Upsert each assignment for this teacher.
+        for (const e of list) {
+            await conn.execute(
+                `INSERT INTO timetable_entries (institutionId, academic_year_id, class_id, day_id, period_id, subject_id, teacher_id, room_no)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE subject_id = VALUES(subject_id), teacher_id = VALUES(teacher_id), room_no = VALUES(room_no)`,
+                [institutionId, yearId, e.class_id, e.day_id, e.period_id, e.subject_id || null, teacher_id, e.room_no || null]
+            );
+        }
+
+        await conn.commit();
+        res.json({ success: true, saved: list.length });
     } catch (err) {
         await conn.rollback();
         res.status(500).json({ error: err.message });

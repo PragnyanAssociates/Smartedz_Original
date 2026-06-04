@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Plus, Edit, Trash2, X, Calendar, CheckCircle2, Circle, AlertTriangle, Clock } from 'lucide-react';
+import { Plus, Edit, Trash2, X, Calendar, CheckCircle2, Circle, AlertTriangle, Clock, Info } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
 
 // --- Date helpers ----------------------------------------------------
@@ -131,6 +131,19 @@ export default function AcademicsTab({ data, fetchData, user }) {
           className="bg-primary text-white px-4 py-2 rounded-md text-xs font-medium hover:bg-primary/90 transition-colors flex items-center justify-center gap-1.5 shadow-sm shrink-0 w-fit self-start sm:self-auto">
           <Plus className="size-3.5 shrink-0" /> Add Year
         </button>
+      </div>
+
+      {/* ---- How the active year affects your data (always shown) -----
+           Explains that data (timetable, attendance, fees…) is anchored
+           to the active year, that switching is non-destructive, and that
+           deleting a year wipes its data permanently. */}
+      <div className="rounded-lg ring-1 ring-inset ring-blue-500/15 bg-blue-50/60 px-4 py-3 flex items-start gap-3">
+        <Info className="size-4 text-blue-600 shrink-0 mt-0.5" />
+        <div className="text-[11px] text-blue-800 leading-relaxed">
+          <span className="font-semibold">Note — how academic years work:</span> Every module (the <strong>Timetable</strong>, Attendance, Fees, Reports, etc.) always runs on the <strong>active</strong> academic year.
+          When you switch the active year, those screens start <strong>empty</strong> for the new year. If you switch back to a previous year, its earlier data reappears exactly as you left it — nothing is lost by simply changing the active year.
+          <span className="block mt-1 font-semibold text-red-700">However, if you DELETE an academic year, every record linked to it (timetable, attendance, fees and more) is gone forever and cannot be recovered.</span>
+        </div>
       </div>
 
       {/* ---- Active-year warning banner -------------------------------

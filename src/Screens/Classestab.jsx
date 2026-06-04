@@ -236,7 +236,7 @@ export default function ClassesTab({ data, fetchData, user }) {
               <p className="text-[11px] text-zinc-500">
                 {editing
                   ? 'Editing a single row. To add more sections, close this and click "Add Class" again.'
-                  : 'Tick "Has Sections" and type each section. Press Enter or comma to add it as a chip.'}
+                  : 'Tick to add Sections and type each section. Press Enter or comma to add Sections.'}
               </p>
             </div>
 

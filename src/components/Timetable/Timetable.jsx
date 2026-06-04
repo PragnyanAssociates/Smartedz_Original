@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import { API_BASE_URL } from '../../apiConfig';
-import { CalendarDays, Clock, LayoutGrid, Plus, Trash2, Save, Coffee, AlertCircle, ChevronDown } from 'lucide-react';
+import { CalendarDays, Clock, LayoutGrid, Plus, Trash2, Save, Coffee, AlertCircle, ChevronDown, Users, Search, GraduationCap } from 'lucide-react';
 
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -16,11 +16,61 @@ const fmtTime = (t) => {
   return `${h12}:${mm} ${ampm}`;
 };
 
+// =====================================================================
+//  ENTRY POINT — routes the user to the right view based on role +
+//  Timetable module permissions.
+//
+//   • Student / Teacher  -> read-only "My Timetable" (their own schedule)
+//   • Edit OR Delete perm -> full manager view:
+//        [ Days & Periods ] [ Class Timetable ] [ Teachers Timetable ]
+//   • Read-only (no edit/delete) -> "Class Timetable" tab only (read-only)
+// =====================================================================
 export default function Timetable() {
   const { user } = useAuth();
-  const { can } = usePermissions();
-  const canEdit = can('Timetable', 'edit');
+  const { can, loading: permsLoading } = usePermissions();
 
+  const role = (user?.role || '').toLowerCase();
+  const isStudent = role.includes('student');
+  const isTeacher = role.includes('teacher');
+
+  const canEdit   = can('Timetable', 'edit');
+  const canDelete = can('Timetable', 'delete');
+  const canRead   = can('Timetable', 'read');
+  const isManager = canEdit || canDelete;   // edit OR delete => can configure
+
+  if (permsLoading) {
+    return (
+      <div className="h-96 flex items-center justify-center">
+        <div className="size-8 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  // Students and teachers always get their own personal, read-only timetable.
+  if (isStudent || isTeacher) {
+    return <PersonalTimetable user={user} mode={isStudent ? 'student' : 'teacher'} />;
+  }
+
+  // Everyone else needs at least read access to view anything.
+  if (!isManager && !canRead) {
+    return (
+      <div className="p-4 sm:p-8 max-w-[1440px] w-full mx-auto">
+        <div className="ring-1 ring-black/5 bg-white rounded-lg p-6 sm:p-10 text-center max-w-2xl mx-auto flex flex-col items-center">
+          <AlertCircle className="text-accent mb-3 size-10 shrink-0" />
+          <h2 className="text-lg font-semibold text-zinc-900">No Access</h2>
+          <p className="text-sm text-zinc-500 mt-1">You don't have permission to view the timetable.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return <AdminTimetable user={user} canEdit={canEdit} canDelete={canDelete} isManager={isManager} />;
+}
+
+// =====================================================================
+//  ADMIN / MANAGER + READ-ONLY VIEWER VIEW
+// =====================================================================
+function AdminTimetable({ user, canEdit, canDelete, isManager }) {
   const [data, setData] = useState({
     academic_year_id: null,
     days: [], periods: [], entries: [],
@@ -28,7 +78,7 @@ export default function Timetable() {
     teacherSubjects: {}
   });
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('setup');
+  const [activeTab, setActiveTab] = useState(isManager ? 'setup' : 'grid');
 
   const fetchData = useCallback(async () => {
     if (!user?.institutionId) return;
@@ -66,10 +116,17 @@ export default function Timetable() {
     );
   }
 
-  const tabs = [
-    { id: 'setup', label: 'Days & Periods',  icon: Clock },
-    { id: 'grid',  label: 'Class Timetable', icon: LayoutGrid }
-  ];
+  // Build the tab set from permissions.
+  //  • Days & Periods    -> managers only (edit/delete)
+  //  • Class Timetable   -> everyone with view access (read-only sees disabled inputs)
+  //  • Teachers Timetable-> managers only (edit/delete)
+  const tabs = [];
+  if (isManager) tabs.push({ id: 'setup',    label: 'Days & Periods',     icon: Clock });
+  tabs.push({ id: 'grid', label: 'Class Timetable', icon: LayoutGrid });
+  if (isManager) tabs.push({ id: 'teachers', label: 'Teachers Timetable', icon: Users });
+
+  const tabIds = tabs.map(t => t.id);
+  const current = tabIds.includes(activeTab) ? activeTab : tabIds[0];
 
   const tabProps = { data, fetchData, user, canEdit };
 
@@ -90,8 +147,8 @@ export default function Timetable() {
             key={t.id}
             onClick={() => setActiveTab(t.id)}
             className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors whitespace-nowrap ${
-              activeTab === t.id 
-                ? 'bg-primary text-white' 
+              current === t.id
+                ? 'bg-primary text-white'
                 : 'text-zinc-600 hover:bg-zinc-50 border border-zinc-200'
             }`}
           >
@@ -101,8 +158,9 @@ export default function Timetable() {
       </div>
 
       <div className="min-h-[500px]">
-        {activeTab === 'setup' && <SetupTab {...tabProps} />}
-        {activeTab === 'grid'  && <GridTab  {...tabProps} />}
+        {current === 'setup'    && isManager && <SetupTab    {...tabProps} />}
+        {current === 'grid'     &&              <GridTab     {...tabProps} />}
+        {current === 'teachers' && isManager && <TeachersTimetableTab {...tabProps} />}
       </div>
     </div>
   );
@@ -186,7 +244,7 @@ function SetupTab({ data, fetchData, user, canEdit }) {
     }
     if (periods.length === 0) return alert('Add at least one period.');
     if (!window.confirm('Saving periods will clear all timetable entries that do not match the new period IDs. Continue?')) return;
-    
+
     setSavingPeriods(true);
     const res = await fetch(`${API_BASE_URL}/admin/timetable/periods`, {
       method: 'POST',
@@ -204,7 +262,7 @@ function SetupTab({ data, fetchData, user, canEdit }) {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start">
-      
+
       {/* Column 1: Working Days */}
       <div className="lg:col-span-5 ring-1 ring-black/5 bg-white rounded-lg flex flex-col">
         <div className="px-5 py-4 border-b border-zinc-100 flex items-center gap-2">
@@ -221,18 +279,18 @@ function SetupTab({ data, fetchData, user, canEdit }) {
               className={`flex items-center gap-3 p-3 rounded-md ring-1 transition-all cursor-pointer ${
                 d.is_working ? 'bg-primary/5 ring-primary/30' : 'bg-zinc-50 ring-black/5 hover:ring-zinc-200'
               } ${!canEdit ? 'opacity-60 cursor-not-allowed' : ''}`}>
-              <input 
-                type="checkbox" 
+              <input
+                type="checkbox"
                 checked={d.is_working}
                 onChange={() => toggleDay(d.day_index)}
                 disabled={!canEdit}
-                className="size-4 accent-primary cursor-pointer rounded border-zinc-300 text-primary focus:ring-primary" 
+                className="size-4 accent-primary cursor-pointer rounded border-zinc-300 text-primary focus:ring-primary"
               />
               <span className="text-sm font-medium text-zinc-700">{d.day_name}</span>
               {d.is_working && <span className="ml-auto text-[10px] font-semibold text-primary uppercase tracking-wider">Working</span>}
             </label>
           ))}
-          
+
           {canEdit && (
             <button onClick={saveDays} disabled={savingDays}
               className="mt-4 w-full bg-zinc-50 text-zinc-700 border border-zinc-200 hover:bg-zinc-100 py-2.5 rounded-md text-xs font-medium transition-colors flex items-center justify-center gap-1.5">
@@ -271,26 +329,26 @@ function SetupTab({ data, fetchData, user, canEdit }) {
                     </button>
                   )}
                 </div>
-                
+
                 <div className="flex flex-col sm:flex-row gap-2 w-full flex-1">
-                  <input 
+                  <input
                     placeholder="Name" disabled={!canEdit}
                     value={p.name}
                     onChange={e => updatePeriod(idx, 'name', e.target.value)}
-                    className="h-9 w-full rounded border border-zinc-200 bg-white px-3 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:opacity-60" 
+                    className="h-9 w-full rounded border border-zinc-200 bg-white px-3 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:opacity-60"
                   />
                   <div className="flex gap-2 w-full sm:w-auto shrink-0">
-                    <input 
+                    <input
                       type="time" disabled={!canEdit}
                       value={p.start_time}
                       onChange={e => updatePeriod(idx, 'start_time', e.target.value)}
-                      className="h-9 w-full sm:w-32 rounded border border-zinc-200 bg-white px-3 text-sm tabular-nums text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:opacity-60" 
+                      className="h-9 w-full sm:w-32 rounded border border-zinc-200 bg-white px-3 text-sm tabular-nums text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:opacity-60"
                     />
-                    <input 
+                    <input
                       type="time" disabled={!canEdit}
                       value={p.end_time}
                       onChange={e => updatePeriod(idx, 'end_time', e.target.value)}
-                      className="h-9 w-full sm:w-32 rounded border border-zinc-200 bg-white px-3 text-sm tabular-nums text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:opacity-60" 
+                      className="h-9 w-full sm:w-32 rounded border border-zinc-200 bg-white px-3 text-sm tabular-nums text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:opacity-60"
                     />
                   </div>
                 </div>
@@ -324,13 +382,15 @@ function SetupTab({ data, fetchData, user, canEdit }) {
           )}
         </div>
       </div>
-      
+
     </div>
   );
 }
 
 // =====================================================================
-//  SUB-COMPONENT 2: GridTab — teacher dropdown filtered by subject
+//  SUB-COMPONENT 2: GridTab — Class Timetable (teacher dropdown
+//  filtered by subject). Now also warns if a chosen teacher is already
+//  teaching ANOTHER class in the same day/period.
 // =====================================================================
 function GridTab({ data, fetchData, user, canEdit }) {
   const workingDays = useMemo(
@@ -371,6 +431,22 @@ function GridTab({ data, fetchData, user, canEdit }) {
       return subs.includes(sid);
     });
   }, [data.teachers, data.teacherSubjects]);
+
+  // Does this teacher already teach a DIFFERENT class at this day/period?
+  // (Reads the saved entries of all OTHER classes.) Returns the clashing
+  // class label, or null.
+  const teacherClash = useCallback((dayId, periodId, teacherId) => {
+    if (!teacherId) return null;
+    const hit = data.entries.find(e =>
+      String(e.day_id) === String(dayId) &&
+      String(e.period_id) === String(periodId) &&
+      String(e.teacher_id) === String(teacherId) &&
+      String(e.class_id) !== String(selectedClassId)
+    );
+    if (!hit) return null;
+    const cls = data.classes.find(c => String(c.id) === String(hit.class_id));
+    return cls ? `${cls.className}${cls.section ? ' - ' + cls.section : ''}` : 'another class';
+  }, [data.entries, data.classes, selectedClassId]);
 
   const updateCell = (dayId, periodId, key, val) => {
     if (!canEdit) return;
@@ -437,7 +513,7 @@ function GridTab({ data, fetchData, user, canEdit }) {
 
   return (
     <div className="space-y-6">
-      
+
       {/* Top action bar */}
       <div className="flex flex-col sm:flex-row gap-4 justify-between sm:items-end">
         <div className="flex flex-col gap-1.5 w-full sm:w-auto">
@@ -454,7 +530,7 @@ function GridTab({ data, fetchData, user, canEdit }) {
             <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
         </div>
-        
+
         {canEdit && (
           <button onClick={handleSave} disabled={saving}
             className="bg-primary text-white h-9 px-6 rounded-md text-xs font-medium hover:bg-primary/90 transition-colors flex items-center justify-center gap-1.5 w-full sm:w-auto shadow-sm">
@@ -491,7 +567,7 @@ function GridTab({ data, fetchData, user, canEdit }) {
                 {sortedPeriods.map(p => {
                   const key = `${d.id}-${p.id}`;
                   const cell = cells[key] || { subject_id: '', teacher_id: '', room_no: '' };
-                  
+
                   if (p.is_break) {
                     return (
                       <td key={p.id} className="p-4 bg-amber-50/50 text-center border-r border-zinc-100">
@@ -503,6 +579,7 @@ function GridTab({ data, fetchData, user, canEdit }) {
                   }
 
                   const eligibleTeachers = teachersForSubject(cell.subject_id);
+                  const clashClass = teacherClash(d.id, p.id, cell.teacher_id);
                   return (
                     <td key={p.id} className="p-2 sm:p-3 border-r border-zinc-100 align-top">
                       <div className="flex flex-col gap-1.5">
@@ -522,7 +599,9 @@ function GridTab({ data, fetchData, user, canEdit }) {
                             disabled={!canEdit}
                             value={cell.teacher_id}
                             onChange={e => updateCell(d.id, p.id, 'teacher_id', e.target.value)}
-                            className="h-8 w-full rounded border border-zinc-200 bg-zinc-50 pl-2 pr-6 text-[11px] text-zinc-900 focus:outline-none focus:ring-1 focus:ring-primary/40 focus:border-primary/40 disabled:opacity-60 appearance-none cursor-pointer">
+                            className={`h-8 w-full rounded border bg-zinc-50 pl-2 pr-6 text-[11px] text-zinc-900 focus:outline-none focus:ring-1 focus:ring-primary/40 focus:border-primary/40 disabled:opacity-60 appearance-none cursor-pointer ${
+                              clashClass ? 'border-red-300 bg-red-50/40' : 'border-zinc-200'
+                            }`}>
                             <option value="">
                               {cell.subject_id ? (eligibleTeachers.length ? 'Select Teacher' : 'No teacher') : 'Select Teacher'}
                             </option>
@@ -530,12 +609,18 @@ function GridTab({ data, fetchData, user, canEdit }) {
                           </select>
                           <ChevronDown className="size-3 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
                         </div>
+                        {clashClass && (
+                          <p className="text-[9px] font-medium text-red-600 leading-snug flex items-start gap-1">
+                            <AlertCircle className="size-3 shrink-0 mt-px" />
+                            This teacher already has the class <strong className="font-semibold">{clashClass}</strong> assigned in this period.
+                          </p>
+                        )}
                         <input
                           disabled={!canEdit}
                           placeholder="Room (e.g. 101)"
                           value={cell.room_no}
                           onChange={e => updateCell(d.id, p.id, 'room_no', e.target.value)}
-                          className="h-8 w-full rounded border border-zinc-200 bg-white px-2 text-[11px] text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-primary/40 focus:border-primary/40 disabled:opacity-60" 
+                          className="h-8 w-full rounded border border-zinc-200 bg-white px-2 text-[11px] text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-primary/40 focus:border-primary/40 disabled:opacity-60"
                         />
                       </div>
                     </td>
@@ -550,8 +635,491 @@ function GridTab({ data, fetchData, user, canEdit }) {
       <div className="bg-blue-50/50 border border-blue-100 rounded-md p-4 flex gap-3 text-[11px] text-blue-700 leading-relaxed">
         <AlertCircle className="size-4 shrink-0 text-blue-500 mt-0.5" />
         <p>
-          <strong className="font-semibold text-blue-900">Tip:</strong> Pick a subject first — the teacher dropdown will filter to show only teachers who are assigned to that subject. Manage subjects in <em>Manage Logins → Subjects</em>.
+          <strong className="font-semibold text-blue-900">Tip:</strong> Pick a subject first — the teacher dropdown will filter to show only teachers who are assigned to that subject. A red note warns you when a teacher is already teaching another class in the same period. Manage subjects in <em>Manage Logins → Subjects</em>.
         </p>
+      </div>
+    </div>
+  );
+}
+
+// =====================================================================
+//  SUB-COMPONENT 3: TeachersTimetableTab — managers only
+//  Left: searchable teacher list (name + tiny email under it).
+//  Right: the selected teacher's weekly grid; admin assigns the
+//  class + subject (+ room) the teacher takes each period.
+//  Warns when a target class period is already taken by another teacher.
+// =====================================================================
+function TeachersTimetableTab({ data, fetchData, user, canEdit }) {
+  const workingDays = useMemo(
+    () => data.days.filter(d => d.is_working).sort((a, b) => a.day_index - b.day_index),
+    [data.days]
+  );
+  const sortedPeriods = useMemo(
+    () => [...data.periods].sort((a, b) => a.period_index - b.period_index),
+    [data.periods]
+  );
+
+  const teachers = data.teachers || [];
+  const [search, setSearch] = useState('');
+  const [selectedTeacherId, setSelectedTeacherId] = useState(teachers[0]?.id || '');
+  const [saving, setSaving] = useState(false);
+
+  const visibleTeachers = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const list = !q ? teachers : teachers.filter(t =>
+      (t.name || '').toLowerCase().includes(q) || (t.email || '').toLowerCase().includes(q));
+    return [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  }, [teachers, search]);
+
+  // Prefill the grid from this teacher's existing entries.
+  const initialCells = useMemo(() => {
+    const map = {};
+    data.entries
+      .filter(e => String(e.teacher_id) === String(selectedTeacherId))
+      .forEach(e => {
+        map[`${e.day_id}-${e.period_id}`] = {
+          class_id: e.class_id || '',
+          subject_id: e.subject_id || '',
+          room_no: e.room_no || ''
+        };
+      });
+    return map;
+  }, [data.entries, selectedTeacherId]);
+
+  const [cells, setCells] = useState(initialCells);
+  useEffect(() => { setCells(initialCells); }, [initialCells]);
+
+  const classLabel = (c) => `${c.className}${c.section ? ' - ' + c.section : ''}`;
+
+  // Subjects this teacher is qualified for (falls back to all if none set).
+  const eligibleSubjects = useMemo(() => {
+    const ids = (data.teacherSubjects?.[selectedTeacherId] || []).map(String);
+    if (!ids.length) return data.subjects;
+    return data.subjects.filter(s => ids.includes(String(s.id)));
+  }, [data.subjects, data.teacherSubjects, selectedTeacherId]);
+
+  const updateCell = (dayId, periodId, key, val) => {
+    if (!canEdit) return;
+    const k = `${dayId}-${periodId}`;
+    setCells(prev => {
+      const cur = prev[k] || { class_id: '', subject_id: '', room_no: '' };
+      const next = { ...cur, [key]: val };
+      // Clearing the class empties the whole cell.
+      if (key === 'class_id' && !val) { next.subject_id = ''; next.room_no = ''; }
+      return { ...prev, [k]: next };
+    });
+  };
+
+  // Is the chosen class+period already taken by ANOTHER teacher?
+  const classSlotClash = useCallback((dayId, periodId, classId) => {
+    if (!classId) return null;
+    const hit = data.entries.find(e =>
+      String(e.day_id) === String(dayId) &&
+      String(e.period_id) === String(periodId) &&
+      String(e.class_id) === String(classId) &&
+      e.teacher_id && String(e.teacher_id) !== String(selectedTeacherId)
+    );
+    if (!hit) return null;
+    const t = data.teachers.find(x => String(x.id) === String(hit.teacher_id));
+    const s = data.subjects.find(x => String(x.id) === String(hit.subject_id));
+    return { teacher: t?.name || 'another teacher', subject: s?.name || '' };
+  }, [data.entries, data.teachers, data.subjects, selectedTeacherId]);
+
+  const handleSave = async () => {
+    if (!selectedTeacherId) return;
+
+    const entries = Object.entries(cells)
+      .filter(([, v]) => v.class_id)
+      .map(([k, v]) => {
+        const [day_id, period_id] = k.split('-').map(Number);
+        return {
+          class_id: Number(v.class_id),
+          day_id, period_id,
+          subject_id: v.subject_id || null,
+          room_no: v.room_no || null
+        };
+      });
+
+    // Client-side pre-check so the admin sees clashes before the round-trip.
+    const clashLines = [];
+    for (const e of entries) {
+      const c = classSlotClash(e.day_id, e.period_id, e.class_id);
+      if (c) clashLines.push(`• ${c.teacher}${c.subject ? ` (${c.subject})` : ''}`);
+    }
+    if (clashLines.length) {
+      return alert('Cannot save — some periods are already assigned to another teacher:\n\n' + clashLines.join('\n'));
+    }
+
+    setSaving(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/timetable/teacher-entries/bulk`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          institutionId: user.institutionId,
+          academic_year_id: data.academic_year_id,
+          teacher_id: selectedTeacherId,
+          entries
+        })
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok) { alert('Teacher timetable saved.'); fetchData(); }
+      else if (res.status === 409 && Array.isArray(d.conflicts)) {
+        const lines = d.conflicts.map(c => `• ${c.teacher_name || 'Another teacher'}${c.subject_name ? ` (${c.subject_name})` : ''}`);
+        alert((d.error || 'Some periods are already assigned to another teacher.') + '\n\n' + lines.join('\n'));
+      } else alert(d.error || 'Failed to save.');
+    } catch (e) { alert('Network error.'); }
+    setSaving(false);
+  };
+
+  if (workingDays.length === 0 || sortedPeriods.length === 0) {
+    return (
+      <div className="ring-1 ring-black/5 bg-white rounded-lg p-6 sm:p-10 text-center flex flex-col items-center">
+        <AlertCircle className="text-accent mb-3 size-10 shrink-0" />
+        <h2 className="text-sm font-semibold text-zinc-900">Set Up the Schedule First</h2>
+        <p className="text-xs text-zinc-500 mt-1 max-w-[50ch]">
+          Configure <strong>Days & Periods</strong> before assigning teacher timetables.
+        </p>
+      </div>
+    );
+  }
+
+  if (teachers.length === 0) {
+    return (
+      <div className="ring-1 ring-black/5 bg-white rounded-lg p-6 sm:p-10 text-center flex flex-col items-center">
+        <AlertCircle className="text-accent mb-3 size-10 shrink-0" />
+        <h2 className="text-sm font-semibold text-zinc-900">No Teachers Found</h2>
+        <p className="text-xs text-zinc-500 mt-1 max-w-[50ch]">
+          Add teacher users in <strong>Manage Logins → Users</strong>, then return here.
+        </p>
+      </div>
+    );
+  }
+
+  const selectedTeacher = teachers.find(t => String(t.id) === String(selectedTeacherId));
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+
+      {/* LEFT — teacher list */}
+      <div className="lg:col-span-3 ring-1 ring-black/5 rounded-lg bg-white flex flex-col">
+        <div className="px-4 py-4 border-b border-zinc-100 flex items-center gap-2">
+          <Users className="size-4 text-primary shrink-0" />
+          <h2 className="text-sm font-semibold text-zinc-900">Teachers</h2>
+        </div>
+
+        <div className="p-3 border-b border-zinc-100">
+          <div className="relative">
+            <Search className="size-4 text-zinc-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              placeholder="Search name or email..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="h-9 w-full rounded-md border border-zinc-200 bg-white pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors"
+            />
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto max-h-[520px] p-2 space-y-1 custom-scrollbar">
+          {visibleTeachers.length > 0 ? visibleTeachers.map(t => {
+            const isOn = String(t.id) === String(selectedTeacherId);
+            return (
+              <button
+                key={t.id}
+                onClick={() => setSelectedTeacherId(t.id)}
+                className={`w-full text-left px-3 py-2.5 rounded-md ring-1 transition-colors ${
+                  isOn
+                    ? 'bg-primary/5 ring-primary/20'
+                    : 'bg-white ring-transparent hover:bg-zinc-50 hover:ring-zinc-200'
+                }`}>
+                <div className={`text-sm font-semibold leading-tight ${isOn ? 'text-primary' : 'text-zinc-900'}`}>
+                  {t.name}
+                </div>
+                {/* Email — intentionally very small, sits under the name */}
+                <div className="text-[9px] text-zinc-400 mt-0.5 truncate">{t.email || '—'}</div>
+              </button>
+            );
+          }) : (
+            <p className="text-zinc-400 italic text-center py-10 text-xs">No teachers match this search.</p>
+          )}
+        </div>
+      </div>
+
+      {/* RIGHT — selected teacher's grid */}
+      <div className="lg:col-span-9 space-y-4">
+        <div className="flex flex-col sm:flex-row gap-3 justify-between sm:items-center">
+          <div>
+            <p className="text-[10px] font-semibold uppercase text-zinc-500 tracking-wider">Assigning Timetable For</p>
+            <p className="text-sm font-semibold text-zinc-900 mt-0.5">
+              {selectedTeacher?.name || '—'}
+              {selectedTeacher?.email && <span className="ml-2 text-[10px] font-normal text-zinc-400">{selectedTeacher.email}</span>}
+            </p>
+          </div>
+          {canEdit && (
+            <button onClick={handleSave} disabled={saving}
+              className="bg-primary text-white h-9 px-6 rounded-md text-xs font-medium hover:bg-primary/90 transition-colors flex items-center justify-center gap-1.5 w-full sm:w-auto shadow-sm shrink-0">
+              <Save className="size-3.5 shrink-0" /> {saving ? 'Saving...' : 'Save Teacher Timetable'}
+            </button>
+          )}
+        </div>
+
+        <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-x-auto custom-scrollbar flex flex-col">
+          <table className="w-full text-left border-collapse min-w-[880px]">
+            <thead>
+              <tr className="bg-white">
+                <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-r border-zinc-100 sticky left-0 bg-white z-20 w-32 shadow-[1px_0_0_0_rgba(0,0,0,0.05)]">
+                  Day / Period
+                </th>
+                {sortedPeriods.map(p => (
+                  <th key={p.id} className="px-3 py-3 border-b border-r border-zinc-100 text-center min-w-[170px] bg-zinc-50/50">
+                    <div className={`text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap ${p.is_break ? 'text-amber-600' : 'text-zinc-700'}`}>
+                      {p.name}
+                    </div>
+                    <div className="text-[9px] font-medium text-zinc-400 mt-0.5 tabular-nums whitespace-nowrap">
+                      {fmtTime(p.start_time)} – {fmtTime(p.end_time)}
+                    </div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100">
+              {workingDays.map(d => (
+                <tr key={d.id} className="hover:bg-zinc-50/60 transition-colors">
+                  <td className="px-5 py-4 text-sm font-medium text-zinc-900 sticky left-0 bg-white z-10 border-r border-zinc-100 shadow-[1px_0_0_0_rgba(0,0,0,0.05)]">
+                    {d.day_name}
+                  </td>
+                  {sortedPeriods.map(p => {
+                    const key = `${d.id}-${p.id}`;
+                    const cell = cells[key] || { class_id: '', subject_id: '', room_no: '' };
+
+                    if (p.is_break) {
+                      return (
+                        <td key={p.id} className="p-4 bg-amber-50/50 text-center border-r border-zinc-100">
+                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700 ring-1 ring-amber-600/10 whitespace-nowrap">
+                            <Coffee className="size-3 shrink-0" /> Break
+                          </span>
+                        </td>
+                      );
+                    }
+
+                    const clash = classSlotClash(d.id, p.id, cell.class_id);
+                    return (
+                      <td key={p.id} className="p-2 sm:p-3 border-r border-zinc-100 align-top">
+                        <div className="flex flex-col gap-1.5">
+                          <div className="relative">
+                            <select
+                              disabled={!canEdit}
+                              value={cell.class_id}
+                              onChange={e => updateCell(d.id, p.id, 'class_id', e.target.value)}
+                              className={`h-8 w-full rounded border bg-zinc-50 pl-2 pr-6 text-[11px] text-zinc-900 focus:outline-none focus:ring-1 focus:ring-primary/40 focus:border-primary/40 disabled:opacity-60 appearance-none cursor-pointer ${
+                                clash ? 'border-red-300 bg-red-50/40' : 'border-zinc-200'
+                              }`}>
+                              <option value="">Free / No Class</option>
+                              {data.classes.map(c => <option key={c.id} value={c.id}>{classLabel(c)}</option>)}
+                            </select>
+                            <ChevronDown className="size-3 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                          </div>
+
+                          {cell.class_id && (
+                            <div className="relative">
+                              <select
+                                disabled={!canEdit}
+                                value={cell.subject_id}
+                                onChange={e => updateCell(d.id, p.id, 'subject_id', e.target.value)}
+                                className="h-8 w-full rounded border border-zinc-200 bg-zinc-50 pl-2 pr-6 text-[11px] text-zinc-900 focus:outline-none focus:ring-1 focus:ring-primary/40 focus:border-primary/40 disabled:opacity-60 appearance-none cursor-pointer">
+                                <option value="">Select Subject</option>
+                                {eligibleSubjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                              </select>
+                              <ChevronDown className="size-3 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                            </div>
+                          )}
+
+                          {clash && (
+                            <p className="text-[9px] font-medium text-red-600 leading-snug flex items-start gap-1">
+                              <AlertCircle className="size-3 shrink-0 mt-px" />
+                              This period is already assigned by another teacher: <strong className="font-semibold">{clash.teacher}</strong>{clash.subject ? <> ({clash.subject})</> : null}.
+                            </p>
+                          )}
+
+                          {cell.class_id && (
+                            <input
+                              disabled={!canEdit}
+                              placeholder="Room (e.g. 101)"
+                              value={cell.room_no}
+                              onChange={e => updateCell(d.id, p.id, 'room_no', e.target.value)}
+                              className="h-8 w-full rounded border border-zinc-200 bg-white px-2 text-[11px] text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-primary/40 focus:border-primary/40 disabled:opacity-60"
+                            />
+                          )}
+                        </div>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="bg-blue-50/50 border border-blue-100 rounded-md p-4 flex gap-3 text-[11px] text-blue-700 leading-relaxed">
+          <AlertCircle className="size-4 shrink-0 text-blue-500 mt-0.5" />
+          <p>
+            <strong className="font-semibold text-blue-900">How this works:</strong> Pick the class (and subject) this teacher takes each period.
+            If a class period is already taken by another teacher, a red note appears and the save is blocked until you resolve it.
+            Saving here updates the same shared timetable used by the Class Timetable tab.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =====================================================================
+//  SUB-COMPONENT 4: PersonalTimetable — read-only "My Timetable"
+//  Student  -> their class's full timetable (subject + teacher)
+//  Teacher  -> their own teaching schedule (class + subject)
+// =====================================================================
+function PersonalTimetable({ user, mode }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const fetchMine = useCallback(async () => {
+    if (!user?.id) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/timetable/my/${user.id}`);
+      const json = await res.json();
+      setData(json);
+    } catch (e) { console.error('My timetable fetch error:', e); }
+    setLoading(false);
+  }, [user]);
+
+  useEffect(() => { fetchMine(); }, [fetchMine]);
+
+  if (loading) {
+    return (
+      <div className="h-96 flex items-center justify-center">
+        <div className="size-8 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!data || !data.academic_year_id) {
+    return (
+      <div className="p-4 sm:p-8 max-w-[1440px] w-full mx-auto">
+        <div className="ring-1 ring-black/5 bg-white rounded-lg p-6 sm:p-10 text-center max-w-2xl mx-auto flex flex-col items-center">
+          <AlertCircle className="text-accent mb-3 size-10 shrink-0" />
+          <h2 className="text-lg font-semibold text-zinc-900">No Timetable Yet</h2>
+          <p className="text-sm text-zinc-500 mt-1 max-w-[50ch]">
+            Your timetable hasn't been published yet. Please check back once the school sets it up.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const workingDays = [...(data.days || [])].filter(d => d.is_working).sort((a, b) => a.day_index - b.day_index);
+  const sortedPeriods = [...(data.periods || [])].sort((a, b) => a.period_index - b.period_index);
+
+  // Map entries by day-period for quick cell lookup.
+  const cellMap = {};
+  (data.entries || []).forEach(e => { cellMap[`${e.day_id}-${e.period_id}`] = e; });
+
+  if (workingDays.length === 0 || sortedPeriods.length === 0) {
+    return (
+      <div className="p-4 sm:p-8 max-w-[1440px] w-full mx-auto">
+        <div className="ring-1 ring-black/5 bg-white rounded-lg p-6 sm:p-10 text-center max-w-2xl mx-auto flex flex-col items-center">
+          <AlertCircle className="text-accent mb-3 size-10 shrink-0" />
+          <h2 className="text-lg font-semibold text-zinc-900">No Timetable Yet</h2>
+          <p className="text-sm text-zinc-500 mt-1 max-w-[50ch]">
+            The weekly schedule hasn't been configured yet. Please check back later.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto animate-in fade-in duration-700">
+      <header className="mb-6 flex flex-col gap-2">
+        <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
+          <GraduationCap className="size-5 text-primary" /> My Timetable
+        </h1>
+        <p className="text-sm text-zinc-500">
+          {mode === 'student'
+            ? <>Your class schedule{data.class_label ? <> for <strong className="text-zinc-700">{data.class_label}</strong></> : ''}.</>
+            : <>Your weekly teaching schedule across all your classes.</>}
+        </p>
+      </header>
+
+      <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-x-auto custom-scrollbar flex flex-col">
+        <table className="w-full text-left border-collapse min-w-[880px]">
+          <thead>
+            <tr className="bg-white">
+              <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-r border-zinc-100 sticky left-0 bg-white z-20 w-32 shadow-[1px_0_0_0_rgba(0,0,0,0.05)]">
+                Day / Period
+              </th>
+              {sortedPeriods.map(p => (
+                <th key={p.id} className="px-3 py-3 border-b border-r border-zinc-100 text-center min-w-[150px] bg-zinc-50/50">
+                  <div className={`text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap ${p.is_break ? 'text-amber-600' : 'text-zinc-700'}`}>
+                    {p.name}
+                  </div>
+                  <div className="text-[9px] font-medium text-zinc-400 mt-0.5 tabular-nums whitespace-nowrap">
+                    {fmtTime(p.start_time)} – {fmtTime(p.end_time)}
+                  </div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-zinc-100">
+            {workingDays.map(d => (
+              <tr key={d.id} className="hover:bg-zinc-50/60 transition-colors">
+                <td className="px-5 py-4 text-sm font-medium text-zinc-900 sticky left-0 bg-white z-10 border-r border-zinc-100 shadow-[1px_0_0_0_rgba(0,0,0,0.05)]">
+                  {d.day_name}
+                </td>
+                {sortedPeriods.map(p => {
+                  if (p.is_break) {
+                    return (
+                      <td key={p.id} className="p-4 bg-amber-50/50 text-center border-r border-zinc-100">
+                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700 ring-1 ring-amber-600/10 whitespace-nowrap">
+                          <Coffee className="size-3 shrink-0" /> Break
+                        </span>
+                      </td>
+                    );
+                  }
+
+                  const cell = cellMap[`${d.id}-${p.id}`];
+                  if (!cell) {
+                    return (
+                      <td key={p.id} className="p-3 border-r border-zinc-100 text-center text-[11px] text-zinc-300">—</td>
+                    );
+                  }
+
+                  return (
+                    <td key={p.id} className="p-3 border-r border-zinc-100 align-top">
+                      <div className="flex flex-col gap-0.5">
+                        {/* Primary line: subject (student) or class (teacher) */}
+                        <span className="text-xs font-semibold text-zinc-900 leading-tight">
+                          {mode === 'student'
+                            ? (cell.subject_name || '—')
+                            : (cell.className ? `${cell.className}${cell.section ? ' - ' + cell.section : ''}` : '—')}
+                        </span>
+                        {/* Secondary line: teacher (student) or subject (teacher) */}
+                        <span className="text-[10px] text-zinc-500 leading-tight">
+                          {mode === 'student'
+                            ? (cell.teacher_name || '')
+                            : (cell.subject_name || '')}
+                        </span>
+                        {cell.room_no && (
+                          <span className="text-[9px] font-medium text-zinc-400 mt-0.5">Room {cell.room_no}</span>
+                        )}
+                      </div>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );
