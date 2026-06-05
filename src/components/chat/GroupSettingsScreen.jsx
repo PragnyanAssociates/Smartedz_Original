@@ -34,7 +34,11 @@ const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDele
   // Add Member Modal State
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [options, setOptions] = useState({ classes: [], roles: [] });
+  const [usersList, setUsersList] = useState([]); // NEW: Available individual users
+  
   const [selectedCategories, setSelectedCategories] = useState([]);
+  const [selectedUserIds, setSelectedUserIds] = useState([]); // NEW: Selected specific users
+  
   const [isAddingMembers, setIsAddingMembers] = useState(false);
 
   const hasEditRights = (user?.id === group.created_by) || canEdit || isAllAccess;
@@ -63,10 +67,13 @@ const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDele
     if (isAddModalOpen && options.classes.length === 0) {
       const fetchOptions = async () => {
         try {
-          const res = await apiClient.get('/groups/options', {
-              params: { userId: user.id, instId: user.institutionId }
-          });
-          setOptions(res.data);
+          // Fetch both Categories and Specific Users simultaneously
+          const [resOptions, resUsers] = await Promise.all([
+             apiClient.get('/groups/options', { params: { userId: user.id, instId: user.institutionId } }),
+             apiClient.get('/groups/users-options', { params: { instId: user.institutionId } })
+          ]);
+          setOptions(resOptions.data);
+          setUsersList(resUsers.data);
         } catch (error) {
           console.error("Failed to fetch group options");
         }
@@ -144,17 +151,25 @@ const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDele
     setSelectedCategories(prev => prev.includes(category) ? prev.filter(c => c !== category) : [...prev, category]);
   };
 
+  const toggleUser = (userId) => {
+    setSelectedUserIds(prev => prev.includes(userId) ? prev.filter(id => id !== userId) : [...prev, userId]);
+  };
+
   const handleAddMembersSubmit = async () => {
-    if (selectedCategories.length === 0) return alert("Select at least one class or role");
+    if (selectedCategories.length === 0 && selectedUserIds.length === 0) {
+        return alert("Select at least one class, role, or specific individual");
+    }
     setIsAddingMembers(true);
     try {
       await apiClient.post(`/groups/${group.id}/members`, {
         institutionId: user.institutionId,
-        selectedCategories
+        selectedCategories,
+        selectedUserIds // Send explicit IDs
       });
       alert('Members added successfully!');
       setIsAddModalOpen(false);
       setSelectedCategories([]);
+      setSelectedUserIds([]); // Clear specific users
       fetchMembers(); 
     } catch (error) {
       alert('Error: ' + (error.response?.data?.message || 'Failed to add members'));
@@ -225,12 +240,38 @@ const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDele
                     </div>
                 </div>
               )}
+              {/* NEW: Specific Individuals Block in Modal */}
+              {usersList.length > 0 && (
+                <div className="space-y-2.5 mt-2 pt-2 border-t border-zinc-100">
+                    <h3 className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Specific Individuals</h3>
+                    <div className="flex flex-wrap gap-2">
+                        {usersList.map(u => (
+                            <button
+                                key={`user-${u.id}`}
+                                onClick={() => toggleUser(u.id)}
+                                className={`px-3 py-1.5 rounded-full text-xs font-semibold ring-1 ring-inset transition-all flex items-center gap-1.5 ${
+                                    selectedUserIds.includes(u.id) 
+                                    ? 'bg-blue-600 text-white ring-blue-600 shadow-sm' 
+                                    : 'bg-white text-zinc-700 ring-zinc-200 hover:bg-zinc-50'
+                                }`}
+                            >
+                                {u.name} <span className="opacity-60 font-normal">({u.role})</span>
+                                {selectedUserIds.includes(u.id) && <Check className="size-3" />}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+              )}
             </div>
             
             <div className="px-5 py-4 border-t border-zinc-100 bg-zinc-50">
-              <button onClick={handleAddMembersSubmit} disabled={isAddingMembers || selectedCategories.length === 0} className="w-full h-10 bg-primary hover:bg-primary/90 text-white rounded-md font-semibold text-sm transition-colors flex items-center justify-center gap-2 disabled:bg-zinc-300 disabled:cursor-not-allowed">
+              <button 
+                onClick={handleAddMembersSubmit} 
+                disabled={isAddingMembers || (selectedCategories.length === 0 && selectedUserIds.length === 0)} 
+                className="w-full h-10 bg-primary hover:bg-primary/90 text-white rounded-md font-semibold text-sm transition-colors flex items-center justify-center gap-2 disabled:bg-zinc-300 disabled:cursor-not-allowed"
+              >
                 {isAddingMembers ? <Loader2 className="size-4 animate-spin" /> : <UserPlus className="size-4" />}
-                {isAddingMembers ? 'Adding...' : 'Add Selected Categories'}
+                {isAddingMembers ? 'Adding...' : 'Add Selected Members'}
               </button>
             </div>
           </div>

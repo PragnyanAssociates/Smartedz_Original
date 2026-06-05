@@ -5150,7 +5150,7 @@ app.delete('/api/admin/syllabus/keywords/:keywordId', async (req, res) => {
 
 // ====================================================================
 // === GROUP CHAT MODULE (UNIFIED PERMISSIONS & MULTI-TENANT) ========
-// =====================================================================
+// ====================================================================
 
 // --- 1. Unified Helper for Group Permissions ---
 const checkGroupPermission = (action) => async (req, res, next) => {
@@ -5248,61 +5248,90 @@ app.get('/api/groups/options', async (req, res) => {
     }
 });
 
+// --- 2.1 Get Users for Specific Selection ---
+app.get('/api/groups/users-options', async (req, res) => {
+    const { instId } = req.query;
+    if (!instId) return res.status(400).json({ error: 'instId is required' });
+
+    try {
+        const [users] = await db.execute(`
+            SELECT id, name, role, profile_pic 
+            FROM users 
+            WHERE institutionId = ?
+            ORDER BY name ASC
+        `, [instId]);
+        
+        res.json(users);
+    } catch (error) {
+        console.error('Error fetching users for group options:', error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // --- 3. Create Group ---
 app.post('/api/groups', checkGroupPermission('edit'), async (req, res) => {
     try {
         const {
             userId, institutionId, name, description,
-            selectedCategories, backgroundColor, isReadOnly
+            selectedCategories = [], selectedUserIds = [], backgroundColor, isReadOnly
         } = req.body;
 
-        if (!userId || !institutionId || !name || !Array.isArray(selectedCategories) || selectedCategories.length === 0) {
-            return res.status(400).json({ message: 'userId, institutionId, name and selectedCategories are required.' });
+        if (!userId || !institutionId || !name || (selectedCategories.length === 0 && selectedUserIds.length === 0)) {
+            return res.status(400).json({ message: 'userId, institutionId, name and at least one member or category are required.' });
         }
 
-        let finalCategories = selectedCategories;
+        let memberIds = [];
 
-        if (!req.isAdminEquivalent) {
-            finalCategories = selectedCategories.filter(cat =>
-                cat !== 'All' && cat !== 'Super Admin' && cat !== 'Developer' && cat !== 'Teacher'
-            );
-            if (finalCategories.length === 0) {
-                return res.status(403).json({ message: 'You can only create groups for specific classes.' });
+        // --- STEP 1: Process Categories (Roles/Classes) if any ---
+        if (selectedCategories.length > 0) {
+            let finalCategories = selectedCategories;
+
+            if (!req.isAdminEquivalent) {
+                finalCategories = selectedCategories.filter(cat =>
+                    cat !== 'All' && cat !== 'Super Admin' && cat !== 'Developer' && cat !== 'Teacher'
+                );
+            }
+
+            if (finalCategories.length > 0) {
+                let whereClauses = [];
+                let queryParams = [];
+
+                finalCategories.forEach(category => {
+                    if (category === 'All' && req.isAdminEquivalent) {
+                        whereClauses.push('u.institutionId = ?');
+                        queryParams.push(institutionId);
+                    } else {
+                        whereClauses.push(`(
+                            u.role = ?
+                            OR (c.section IS NOT NULL AND c.section != '' AND CONCAT(c.className, ' - ', c.section) = ?)
+                            OR ((c.section IS NULL OR c.section = '') AND c.className = ?)
+                        ) AND u.institutionId = ?`);
+                        queryParams.push(category, category, category, institutionId);
+                    }
+                });
+
+                const finalWhereClause = whereClauses.join(' OR ');
+
+                const getUsersQuery = `
+                    SELECT DISTINCT u.id
+                      FROM users u
+                      LEFT JOIN classes c ON u.class_id = c.id
+                     WHERE ${finalWhereClause}
+                `;
+
+                const [usersToAdd] = await db.execute(getUsersQuery, queryParams);
+                memberIds = usersToAdd.map(u => u.id);
             }
         }
 
-        let whereClauses = [];
-        let queryParams = [];
+        // --- STEP 2: Process Explicit User IDs ---
+        const explicitUserIds = Array.isArray(selectedUserIds) ? selectedUserIds.map(id => parseInt(id, 10)) : [];
 
-        finalCategories.forEach(category => {
-            if (category === 'All' && req.isAdminEquivalent) {
-                whereClauses.push('u.institutionId = ?');
-                queryParams.push(institutionId);
-            } else {
-                whereClauses.push(`(
-                    u.role = ?
-                    OR (c.section IS NOT NULL AND c.section != '' AND CONCAT(c.className, ' - ', c.section) = ?)
-                    OR ((c.section IS NULL OR c.section = '') AND c.className = ?)
-                ) AND u.institutionId = ?`);
-                queryParams.push(category, category, category, institutionId);
-            }
-        });
-
-        const finalWhereClause = whereClauses.join(' OR ');
-
-        const getUsersQuery = `
-            SELECT DISTINCT u.id
-              FROM users u
-              LEFT JOIN classes c ON u.class_id = c.id
-             WHERE ${finalWhereClause}
-        `;
-
-        const [usersToAdd] = await db.execute(getUsersQuery, queryParams);
-        const memberIds = usersToAdd.map(u => u.id);
-        const allMemberIds = [...new Set([parseInt(userId, 10), ...memberIds])];
+        // --- STEP 3: Combine and Deduplicate ---
+        const allMemberIds = [...new Set([parseInt(userId, 10), ...memberIds, ...explicitUserIds])];
 
         if (allMemberIds.length === 0) {
-            return res.status(400).json({ message: 'No members found for the selected categories.' });
+            return res.status(400).json({ message: 'No valid members found to add.' });
         }
 
         const conn = await db.getConnection();
@@ -5462,48 +5491,61 @@ app.get('/api/groups/:groupId/members', async (req, res) => {
 // --- 5.2 Add Members to Group ---
 app.post('/api/groups/:groupId/members', async (req, res) => {
     const { groupId } = req.params;
-    const { institutionId, selectedCategories } = req.body;
+    const { institutionId, selectedCategories = [], selectedUserIds = [] } = req.body;
 
-    if (!institutionId || !Array.isArray(selectedCategories) || selectedCategories.length === 0) {
-        return res.status(400).json({ message: 'Invalid data provided.' });
+    if (!institutionId || (selectedCategories.length === 0 && selectedUserIds.length === 0)) {
+        return res.status(400).json({ message: 'Invalid data provided. Select at least one category or user.' });
     }
 
     try {
-        let whereClauses = [];
-        let queryParams = [];
+        let memberIds = [];
 
-        selectedCategories.forEach(category => {
-            if (category === 'All') {
-                whereClauses.push('u.institutionId = ?');
-                queryParams.push(institutionId);
-            } else {
-                whereClauses.push(`(
-                    u.role = ?
-                    OR (c.section IS NOT NULL AND c.section != '' AND CONCAT(c.className, ' - ', c.section) = ?)
-                    OR ((c.section IS NULL OR c.section = '') AND c.className = ?)
-                ) AND u.institutionId = ?`);
-                queryParams.push(category, category, category, institutionId);
-            }
-        });
+        // --- STEP 1: Process Categories ---
+        if (selectedCategories.length > 0) {
+            let whereClauses = [];
+            let queryParams = [];
 
-        const finalWhereClause = whereClauses.join(' OR ');
-        const [usersToAdd] = await db.execute(`
-            SELECT DISTINCT u.id FROM users u 
-            LEFT JOIN classes c ON u.class_id = c.id 
-            WHERE ${finalWhereClause}
-        `, queryParams);
+            selectedCategories.forEach(category => {
+                if (category === 'All') {
+                    whereClauses.push('u.institutionId = ?');
+                    queryParams.push(institutionId);
+                } else {
+                    whereClauses.push(`(
+                        u.role = ?
+                        OR (c.section IS NOT NULL AND c.section != '' AND CONCAT(c.className, ' - ', c.section) = ?)
+                        OR ((c.section IS NULL OR c.section = '') AND c.className = ?)
+                    ) AND u.institutionId = ?`);
+                    queryParams.push(category, category, category, institutionId);
+                }
+            });
 
-        if (usersToAdd.length === 0) {
-            return res.status(400).json({ message: 'No users found for selected categories.' });
+            const finalWhereClause = whereClauses.join(' OR ');
+            const [usersToAdd] = await db.execute(`
+                SELECT DISTINCT u.id FROM users u 
+                LEFT JOIN classes c ON u.class_id = c.id 
+                WHERE ${finalWhereClause}
+            `, queryParams);
+            
+            memberIds = usersToAdd.map(u => u.id);
+        }
+
+        // --- STEP 2: Process Explicit User IDs ---
+        const explicitUserIds = Array.isArray(selectedUserIds) ? selectedUserIds.map(id => parseInt(id, 10)) : [];
+
+        // --- STEP 3: Combine and Deduplicate ---
+        const allMemberIds = [...new Set([...memberIds, ...explicitUserIds])];
+
+        if (allMemberIds.length === 0) {
+            return res.status(400).json({ message: 'No valid users found to add.' });
         }
 
         const conn = await db.getConnection();
         try {
             await conn.beginTransaction();
-            for (const user of usersToAdd) {
+            for (const memberId of allMemberIds) {
                 await conn.execute(
                     'INSERT IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)',
-                    [groupId, user.id]
+                    [groupId, memberId]
                 );
             }
             await conn.commit();
@@ -5716,9 +5758,9 @@ app.post('/api/groups/media', async (req, res) => {
     });
 });
 
-// =====================================================================
-// === SOCKET.IO — Real-Time Chat ======================================
-// =====================================================================
+// ====================================================================
+// === SOCKET.IO --- Real-Time Chat ===================================
+// ====================================================================
 
 io.on('connection', (socket) => {
     console.log(`User connected: ${socket.id}`);
@@ -5746,7 +5788,7 @@ io.on('connection', (socket) => {
             await conn.beginTransaction();
 
             const [result] = await conn.execute(
-                `INSERT INTO group_chat_messages
+                `INSERT INTO \`group_chat_messages\`
                    (user_id, group_id, message_type, message_text,
                     file_url, file_name, file_size, file_mime_type, reply_to_message_id)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -5924,7 +5966,8 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => {
         console.log(`User disconnected: ${socket.id}`);
     });
-});
+}); 
+
 // =====================================================================
 //  BACKEND — Section 23: ALUMNI
 //
