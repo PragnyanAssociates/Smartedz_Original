@@ -3,14 +3,14 @@ import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   BarChart3, CalendarCheck, CalendarX, Clock,
-  CheckCircle2, XCircle, Loader2, Calendar as CalIcon, LineChart
+  CheckCircle2, XCircle, Loader2, Calendar as CalIcon
 } from 'lucide-react';
-import AttendanceChart from './AttendanceChart';
+import AttendanceCalendar from './AttendanceCalendar';
 
 // =====================================================================
 //  AttendanceHistory
-//  Shows: summary cards + an optional bar graph + a list of daily
-//  entries with marker/editor info.
+//  Shows: summary cards + a per-person attendance CALENDAR + a list of
+//  daily entries with marker/editor info.
 //  Filters: Daily | Monthly | Yearly | Custom range.
 // =====================================================================
 
@@ -55,7 +55,7 @@ export default function AttendanceHistory({ userId, userName, selfOnly = false, 
   const [rows, setRows]       = useState([]);
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [showChart, setShowChart] = useState(true);
+  const [showCalendar, setShowCalendar] = useState(true);
 
   // -----------------------------------------------------------------
   // Resolve range based on mode. "Yearly" returns no date bound — the
@@ -93,25 +93,41 @@ export default function AttendanceHistory({ userId, userName, selfOnly = false, 
 
   useEffect(() => { load(); }, [load]);
 
-  // Build a per-day series (oldest → newest) for the graph from the rows.
-  const series = useMemo(() => {
-    const asc = [...rows].sort((a, b) =>
-      String(a.attendance_date).localeCompare(String(b.attendance_date)));
-    return asc.map(r => ({
-      date: String(r.attendance_date).slice(0, 10),
-      present: r.status === 'P' ? 1 : 0,
-      late:    r.status === 'L' ? 1 : 0,
-      absent:  r.status === 'A' ? 1 : 0,
-      total: 1
-    }));
-  }, [rows]);
+  // -----------------------------------------------------------------
+  // Which month(s) the calendar should render.
+  //   • daily   → none (the single-day card is shown instead)
+  //   • monthly → the selected month (even if empty)
+  //   • custom  → every month spanned by the from–to range
+  //   • yearly  → every month covered by the returned records
+  // -----------------------------------------------------------------
+  const calendarMonths = useMemo(() => {
+    const span = (startYM, endYM) => {
+      const out = [];
+      let [y, m] = startYM.split('-').map(Number);
+      const [ey, em] = endYM.split('-').map(Number);
+      while (y < ey || (y === ey && m <= em)) {
+        out.push(`${y}-${String(m).padStart(2, '0')}`);
+        m++; if (m > 12) { m = 1; y++; }
+        if (out.length > 24) break; // safety cap
+      }
+      return out;
+    };
+
+    if (mode === 'daily') return [];
+    if (mode === 'monthly') return [month];
+    if (mode === 'custom') return span(from.slice(0, 7), to.slice(0, 7));
+    // yearly → derive from the records we got back
+    if (rows.length === 0) return [];
+    const yms = Array.from(new Set(rows.map(r => String(r.attendance_date).slice(0, 7)))).sort();
+    return span(yms[0], yms[yms.length - 1]);
+  }, [mode, month, from, to, rows]);
 
   // -----------------------------------------------------------------
   // Render
   // -----------------------------------------------------------------
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
-      
+
       {/* Header Info */}
       {(selfOnly || userName) && (
         <div className="text-center sm:text-left flex flex-col mb-2">
@@ -124,14 +140,14 @@ export default function AttendanceHistory({ userId, userName, selfOnly = false, 
 
       {/* Controls Container: Tabs and Date Pickers */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        
+
         {/* Mode tabs */}
         <div className="inline-flex bg-zinc-100/80 p-1 rounded-md overflow-x-auto custom-scrollbar shrink-0 max-w-full">
           {['daily', 'monthly', 'yearly', 'custom'].map(m => (
             <button key={m} onClick={() => setMode(m)}
               className={`px-3 py-1.5 rounded text-[11px] font-semibold uppercase tracking-wider transition-colors whitespace-nowrap ${
-                mode === m 
-                  ? 'bg-white text-zinc-900 shadow-sm ring-1 ring-black/5' 
+                mode === m
+                  ? 'bg-white text-zinc-900 shadow-sm ring-1 ring-black/5'
                   : 'text-zinc-500 hover:text-zinc-700'
               }`}>
               {m}
@@ -142,7 +158,7 @@ export default function AttendanceHistory({ userId, userName, selfOnly = false, 
         {/* Range pickers */}
         <div className="flex items-center flex-wrap sm:flex-nowrap gap-2 w-full sm:w-auto">
           <CalIcon className="size-4 text-zinc-400 shrink-0 hidden sm:block" />
-          
+
           {mode === 'daily' && (
             <input type="date" value={day} onChange={e => setDay(e.target.value)}
               className="h-9 w-full sm:w-auto rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors" />
@@ -188,19 +204,19 @@ export default function AttendanceHistory({ userId, userName, selfOnly = false, 
         </div>
       )}
 
-      {/* Graph (for ranges, not the single-day view) */}
-      {mode !== 'daily' && !loading && series.length > 0 && (
+      {/* Calendar (for ranges, not the single-day view) */}
+      {mode !== 'daily' && !loading && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-semibold text-zinc-700 flex items-center gap-1.5">
-              <LineChart className="size-3.5 text-primary" /> Attendance Graph
+              <CalIcon className="size-3.5 text-primary" /> Attendance Calendar
             </h3>
-            <button onClick={() => setShowChart(v => !v)}
+            <button onClick={() => setShowCalendar(v => !v)}
               className="text-[11px] font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
-              {showChart ? 'Hide' : 'Show'}
+              {showCalendar ? 'Hide' : 'Show'}
             </button>
           </div>
-          {showChart && <AttendanceChart series={series} />}
+          {showCalendar && <AttendanceCalendar rows={rows} months={calendarMonths} />}
         </div>
       )}
 
@@ -254,7 +270,7 @@ function SumCard({ icon: Icon, label, value, color }) {
 function HistoryRow({ row }) {
   const meta = STATUS_META[row.status] || { label: 'Unknown', text: 'text-zinc-500', bg: 'bg-zinc-50', ring: 'ring-black/5', icon: Clock };
   const Icon = meta.icon;
-  
+
   return (
     <div className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-zinc-50/50 transition-colors">
       <div className="flex items-center gap-3">
@@ -266,7 +282,7 @@ function HistoryRow({ row }) {
           <div className={`text-[10px] font-semibold uppercase tracking-wider ${meta.text}`}>{meta.label}</div>
         </div>
       </div>
-      
+
       <div className="text-[11px] text-zinc-500 flex flex-col text-left sm:text-right pl-12 sm:pl-0">
         {row.marked_by_name && (
           <div className="truncate">
@@ -296,10 +312,10 @@ function DailyBigCard({ row, date }) {
       </div>
     );
   }
-  
+
   const meta = STATUS_META[row.status];
   const Icon = meta.icon;
-  
+
   return (
     <div className={`rounded-lg p-8 text-center max-w-sm mx-auto shadow-sm ring-1 flex flex-col items-center ${meta.bg} ${meta.ring}`}>
       <div className={`size-14 rounded-full bg-white flex items-center justify-center ${meta.text} shadow-sm mb-4`}>
@@ -307,9 +323,9 @@ function DailyBigCard({ row, date }) {
       </div>
       <div className={`text-xl font-bold uppercase tracking-widest ${meta.text}`}>{meta.label}</div>
       <div className={`text-xs font-medium mt-1 ${meta.text} opacity-80`}>{fmtDate(row.attendance_date)}</div>
-      
+
       <div className="w-full h-px bg-black/5 my-4" />
-      
+
       <div className="flex flex-col gap-1.5 text-[11px] text-zinc-700 w-full">
         <div className="bg-white/60 rounded px-3 py-2 text-center ring-1 ring-black/5">
           <span className="text-zinc-500">Marked by</span> <span className="font-semibold">{row.marked_by_name}</span> ({row.marked_by_role})
