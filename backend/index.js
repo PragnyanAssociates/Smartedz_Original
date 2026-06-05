@@ -4461,18 +4461,12 @@ app.delete('/api/admin/preadmissions/:id', async (req, res) => {
     }
 });
 
-// --- Multer config for Study Materials ---
-const studyMatDir = 'public/uploads/study_materials';
-if (!fs.existsSync(studyMatDir)) { fs.mkdirSync(studyMatDir, { recursive: true }); }
-const studyMatStorage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, studyMatDir),
-    filename: (req, file, cb) => cb(null, 'mat_' + Date.now() + path.extname(file.originalname))
-});
-const studyMatUpload = multer({ storage: studyMatStorage, limits: { fileSize: 100 * 1024 * 1024 } }); // 100MB
-
 // =====================================================================
 // === 24. STUDY MATERIALS =============================================
 // =====================================================================
+
+// Note: Multer and fs logic have been completely removed. Files are now 
+// accepted as Base64 text strings directly in the JSON payload.
 
 // --- 24.1 List Materials (Admin/Teacher) ---
 app.get('/api/admin/study-materials/:instId', async (req, res) => {
@@ -4482,14 +4476,12 @@ app.get('/api/admin/study-materials/:instId', async (req, res) => {
     if (!userId) return res.status(400).json({ error: 'userId is required' });
 
     try {
-        // 1. Get user role
         const [users] = await db.execute('SELECT role, institutionId FROM users WHERE id = ?', [userId]);
         if (users.length === 0) return res.status(404).json({ error: 'User not found' });
         
         const roleName = users[0].role;
         const isSystemAdmin = (roleName === 'Super Admin' || roleName === 'Developer');
 
-        // 2. Check Permission Matrix
         const [perms] = await db.execute(`
             SELECT p.can_read 
               FROM permissions p
@@ -4503,7 +4495,6 @@ app.get('/api/admin/study-materials/:instId', async (req, res) => {
             return res.status(403).json({ message: "You do not have permission to view study materials." });
         }
 
-        // 3. Build Query
         let query = `
             SELECT m.*, c.className, c.section, s.name AS subject_name, u.name AS uploaded_by_name
               FROM study_materials m
@@ -4514,7 +4505,6 @@ app.get('/api/admin/study-materials/:instId', async (req, res) => {
         `;
         let params = [instId];
 
-        // 4. Data Isolation (Teachers only see their own uploads)
         if (!isSystemAdmin) {
             query += ` AND m.uploaded_by = ?`;
             params.push(userId);
@@ -4527,6 +4517,7 @@ app.get('/api/admin/study-materials/:instId', async (req, res) => {
         res.status(500).json({ error: err.message }); 
     }
 });
+
 // --- 24.2 List Materials (Student) ---
 app.get('/api/admin/study-materials/student/:studentId', async (req, res) => {
     try {
@@ -4548,9 +4539,11 @@ app.get('/api/admin/study-materials/student/:studentId', async (req, res) => {
 });
 
 // --- 24.3 Create Material ---
-app.post('/api/admin/study-materials', studyMatUpload.single('materialFile'), async (req, res) => {
-    const { institutionId, title, description, class_id, subject_id, material_type, external_link, uploaded_by } = req.body;
-    const file_path = req.file ? `/public/uploads/study_materials/${req.file.filename}` : null;
+app.post('/api/admin/study-materials', async (req, res) => {
+    const { 
+        institutionId, title, description, class_id, subject_id, 
+        material_type, external_link, uploaded_by, materialFile 
+    } = req.body;
 
     try {
         const [result] = await db.execute(
@@ -4559,7 +4552,7 @@ app.post('/api/admin/study-materials', studyMatUpload.single('materialFile'), as
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 institutionId, title, description || null, class_id, subject_id || null, 
-                material_type || 'Notes', file_path, external_link || null, uploaded_by
+                material_type || 'Notes', materialFile || null, external_link || null, uploaded_by
             ]
         );
         res.json({ success: true, id: result.insertId });
@@ -4567,26 +4560,32 @@ app.post('/api/admin/study-materials', studyMatUpload.single('materialFile'), as
 });
 
 // --- 24.4 Update Material ---
-app.put('/api/admin/study-materials/:id', studyMatUpload.single('materialFile'), async (req, res) => {
-    const { title, description, class_id, subject_id, material_type, external_link } = req.body;
+app.put('/api/admin/study-materials/:id', async (req, res) => {
+    const { 
+        title, description, class_id, subject_id, 
+        material_type, external_link, materialFile 
+    } = req.body;
+    
     try {
-        const [[existing]] = await db.execute('SELECT file_path FROM study_materials WHERE id = ?', [req.params.id]);
-        let file_path = existing.file_path;
+        let updateQuery = `
+            UPDATE study_materials 
+               SET title=?, description=?, class_id=?, subject_id=?, material_type=?, external_link=?
+        `;
+        let params = [
+            title, description || null, class_id, subject_id || null, 
+            material_type || 'Notes', external_link || null
+        ];
 
-        if (req.file) {
-            if (file_path) {
-                const oldPath = path.join(__dirname, '..', file_path);
-                if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
-            }
-            file_path = `/public/uploads/study_materials/${req.file.filename}`;
+        // Only update the file if a new Base64 string was sent
+        if (materialFile !== undefined) {
+            updateQuery += `, file_path=?`;
+            params.push(materialFile || null);
         }
 
-        await db.execute(
-            `UPDATE study_materials 
-                SET title=?, description=?, class_id=?, subject_id=?, material_type=?, file_path=?, external_link=?
-              WHERE id=?`,
-            [title, description || null, class_id, subject_id || null, material_type || 'Notes', file_path, external_link || null, req.params.id]
-        );
+        updateQuery += ` WHERE id=?`;
+        params.push(req.params.id);
+
+        await db.execute(updateQuery, params);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -4594,17 +4593,11 @@ app.put('/api/admin/study-materials/:id', studyMatUpload.single('materialFile'),
 // --- 24.5 Delete Material ---
 app.delete('/api/admin/study-materials/:id', async (req, res) => {
     try {
-        const [[existing]] = await db.execute('SELECT file_path FROM study_materials WHERE id = ?', [req.params.id]);
-        if (existing && existing.file_path) {
-            const oldPath = path.join(__dirname, '..', existing.file_path);
-            if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
-        }
+        // Because the file is stored as LONGTEXT, deleting the row deletes the file data automatically.
         await db.execute('DELETE FROM study_materials WHERE id = ?', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-
-
 
 // =====================================================================
 //  BACKEND — Section 22: SYLLABUS  (v5 — fast viewer, self-contained)

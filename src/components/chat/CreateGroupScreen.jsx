@@ -6,7 +6,7 @@ import apiClient from '../../api/client';
 import { MdArrowBack } from 'react-icons/md';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
-import { Users, Loader2, Check, Megaphone, ChevronDown, ChevronRight } from 'lucide-react';
+import { Users, Loader2, Check, Megaphone, ChevronDown, ChevronRight, Camera } from 'lucide-react';
 
 const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
     const { user } = useAuth();
@@ -16,9 +16,11 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
     const canEdit = can('GroupChat', 'edit');
     const hasCreateRights = isAllAccess || canEdit;
 
+    // Form States
     const [groupName, setGroupName] = useState('');
     const [description, setDescription] = useState('');
     const [isReadOnly, setIsReadOnly] = useState(false);
+    const [groupDp, setGroupDp] = useState(null); // NEW: State for Group DP
     
     // Selection States
     const [selectedCategories, setSelectedCategories] = useState([]);
@@ -53,6 +55,31 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
         fetchOptions();
     }, [user?.id, user?.institutionId]);
 
+    // --- Image Handling ---
+    const handlePickImage = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        if (!file.type.startsWith('image/')) {
+            alert('Please select a valid image file.');
+            e.target.value = ''; 
+            return;
+        }
+
+        const MAX_SIZE = 3 * 1024 * 1024; // 3MB
+        if (file.size > MAX_SIZE) {
+            alert('Image is too large! Please select a file under 3MB.');
+            e.target.value = ''; 
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            setGroupDp(reader.result); // Save Base64 to state
+        };
+        reader.readAsDataURL(file);
+    };
+
     const toggleCategory = (category) => {
         setSelectedCategories(prev =>
             prev.includes(category)
@@ -81,7 +108,8 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
 
         setIsCreating(true);
         try {
-            const res = await apiClient.post('/groups', {
+            // 1. Create the Group
+            const createRes = await apiClient.post('/groups', {
                 userId: user.id,
                 institutionId: user.institutionId,
                 name: groupName.trim(),
@@ -91,9 +119,24 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
                 isReadOnly
             });
 
+            const newGroupId = createRes.data.groupId;
+
+            // 2. If a DP was selected, upload it immediately
+            if (groupDp) {
+                try {
+                    await apiClient.put(`/groups/${newGroupId}/dp`, { 
+                        userId: user.id, 
+                        group_dp: groupDp 
+                    });
+                } catch (dpError) {
+                    console.error("Failed to upload DP during creation:", dpError);
+                    alert("Group created, but failed to upload display picture.");
+                }
+            }
+
             alert("Success: Group created");
             if (isEmbedded && onGroupCreated) {
-                onGroupCreated(res.data.groupId);
+                onGroupCreated(newGroupId);
             } else {
                 navigate('/WhatsAppLayout');
             }
@@ -104,7 +147,6 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
         }
     };
 
-    // Helper to render accordion lists
     const renderAccordionSection = (title, items, isClass = false) => {
         if (!items || items.length === 0) return null;
 
@@ -116,15 +158,12 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
                         const isExpanded = expandedSection === categoryName;
                         const isCategorySelected = selectedCategories.includes(categoryName);
                         
-                        // Filter users for this specific role or class
                         const categoryUsers = usersList.filter(u => 
                             isClass ? u.class_name === categoryName : u.role === categoryName
                         );
 
                         return (
                             <div key={categoryName} className="border border-zinc-200 rounded-lg overflow-hidden bg-white shadow-sm transition-all">
-                                
-                                {/* Accordion Header */}
                                 <div className="flex items-center justify-between p-3 cursor-pointer hover:bg-zinc-50 transition-colors" onClick={() => toggleSection(categoryName)}>
                                     <div className="flex items-center gap-2">
                                         <div className="text-zinc-400">
@@ -133,8 +172,6 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
                                         <span className="text-sm font-semibold text-zinc-800">{categoryName}</span>
                                         <span className="text-xs text-zinc-500 bg-zinc-100 px-2 py-0.5 rounded-full font-medium">{categoryUsers.length}</span>
                                     </div>
-                                    
-                                    {/* Select Entire Category Button */}
                                     <button
                                         onClick={(e) => { e.stopPropagation(); toggleCategory(categoryName); }}
                                         className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide transition-all ${
@@ -147,7 +184,6 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
                                     </button>
                                 </div>
 
-                                {/* Expanded Individual Users List */}
                                 {isExpanded && categoryUsers.length > 0 && (
                                     <div className="p-3 bg-zinc-50/50 border-t border-zinc-100 flex flex-wrap gap-2">
                                         {categoryUsers.map(u => {
@@ -204,7 +240,25 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
 
             <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-6">
 
-                <div className="space-y-4">
+                {/* --- IMAGE UPLOAD SECTION --- */}
+                <div className="flex flex-col items-center justify-center space-y-3">
+                    <div className="relative group">
+                        <div className="size-28 rounded-full bg-zinc-100 border-2 border-dashed border-zinc-300 flex items-center justify-center overflow-hidden">
+                            {groupDp ? (
+                                <img src={groupDp} alt="Group DP Preview" className="w-full h-full object-cover" />
+                            ) : (
+                                <Camera className="size-8 text-zinc-400" />
+                            )}
+                        </div>
+                        <input type="file" accept="image/*" className="hidden" id="group-dp-upload" onChange={handlePickImage} disabled={isCreating} />
+                        <label htmlFor="group-dp-upload" className="absolute bottom-0 right-0 flex items-center justify-center size-9 bg-primary hover:bg-primary/90 text-white rounded-full cursor-pointer shadow-lg transition-colors ring-4 ring-white">
+                            <Camera className="size-4" />
+                        </label>
+                    </div>
+                    <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Group Icon (Optional)</p>
+                </div>
+
+                <div className="space-y-4 pt-2 border-t border-zinc-100">
                     <div className="space-y-1.5">
                         <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">
                             Group Name <span className="text-red-500">*</span>

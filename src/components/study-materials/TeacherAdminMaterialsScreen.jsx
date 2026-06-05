@@ -118,6 +118,11 @@ export default function TeacherAdminMaterialsScreen() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
             {filteredMaterials.map((item) => {
               const aesthetics = getCardAesthetics(item.material_type);
+              
+              // Base64 Safe Handlers
+              const isBase64 = item.file_path && String(item.file_path).startsWith('data:');
+              const fileUrl = isBase64 ? item.file_path : `${SERVER_URL.replace('/api','')}${item.file_path}`;
+
               return (
                 <div key={item.id} className="group bg-white rounded-lg ring-1 ring-black/5 shadow-sm flex flex-col hover:ring-primary/30 hover:shadow-md transition-all overflow-hidden">
                   <div className={`h-32 ${aesthetics.bg} border-b border-zinc-100 flex items-center justify-center relative`}>
@@ -157,12 +162,17 @@ export default function TeacherAdminMaterialsScreen() {
                         <>
                           <button 
                             onClick={() => {
-                              const isOfficeFile = item.file_path.match(/\.(xlsx|xls|doc|docx|ppt|pptx)$/i);
-                              const fileUrl = `${SERVER_URL.replace('/api','')}${item.file_path}`;
-                              const viewUrl = isOfficeFile 
-                                ? `https://docs.google.com/viewer?url=${encodeURIComponent(fileUrl)}&embedded=true` 
-                                : fileUrl;
-                              window.open(viewUrl, "_blank");
+                              if (isBase64) {
+                                // Open Base64 string directly in an iframe
+                                const win = window.open();
+                                if(win) win.document.write(`<iframe src="${fileUrl}" frameborder="0" style="border:0; top:0px; left:0px; bottom:0px; right:0px; width:100%; height:100%;" allowfullscreen></iframe>`);
+                              } else {
+                                const isOfficeFile = item.file_path.match(/\.(xlsx|xls|doc|docx|ppt|pptx)$/i);
+                                const viewUrl = isOfficeFile 
+                                  ? `https://docs.google.com/viewer?url=${encodeURIComponent(fileUrl)}&embedded=true` 
+                                  : fileUrl;
+                                window.open(viewUrl, "_blank");
+                              }
                             }} 
                             className="flex-1 h-9 bg-zinc-50 hover:bg-zinc-100 text-zinc-700 font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 ring-1 ring-inset ring-zinc-200 transition-colors"
                           >
@@ -173,8 +183,8 @@ export default function TeacherAdminMaterialsScreen() {
                             onClick={(e) => {
                               e.preventDefault();
                               const link = document.createElement('a');
-                              link.href = `${SERVER_URL.replace('/api','')}${item.file_path}`;
-                              link.setAttribute('download', '');
+                              link.href = fileUrl;
+                              link.setAttribute('download', item.title || 'download');
                               document.body.appendChild(link);
                               link.click();
                               document.body.removeChild(link);
@@ -228,28 +238,64 @@ const MaterialFormModal = ({ material, onClose, onSave, dbClasses, dbSubjects })
     material_type: isEditMode ? material.material_type : "Notes",
     external_link: isEditMode ? material.external_link || "" : ""
   });
+  
   const [file, setFile] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
 
   const handleSave = async (e) => {
     e.preventDefault();
     if (!formData.title || !formData.class_id) return alert("Title and Class are required.");
+
+    // Strict Size Limit for Base64 Database Storage (10MB)
+    const MAX_SIZE = 10 * 1024 * 1024;
+    if (file && file.size > MAX_SIZE) {
+        alert("This file is too large. Please select a file under 10MB.");
+        return;
+    }
+
     setIsSaving(true);
 
-    const body = new FormData();
-    body.append("institutionId", user.institutionId);
-    body.append("uploaded_by", user.id);
-    Object.keys(formData).forEach(key => body.append(key, formData[key]));
-    
-    if (file) body.append("materialFile", file);
+    const payload = {
+        institutionId: user.institutionId,
+        uploaded_by: user.id,
+        ...formData
+    };
 
-    try {
-      const url = isEditMode ? `${API_BASE_URL}/admin/study-materials/${material.id}` : `${API_BASE_URL}/admin/study-materials`;
-      await fetch(url, { method: isEditMode ? 'PUT' : 'POST', body });
-      onSave(); 
-      onClose();
-    } catch (error) { alert("Save failed."); }
-    setIsSaving(false);
+    const sendRequest = async (finalPayload) => {
+        try {
+            const url = isEditMode ? `${API_BASE_URL}/admin/study-materials/${material.id}` : `${API_BASE_URL}/admin/study-materials`;
+            
+            // Replaced FormData with JSON
+            const res = await fetch(url, { 
+                method: isEditMode ? 'PUT' : 'POST', 
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(finalPayload) 
+            });
+
+            if (!res.ok) throw new Error('Save failed');
+
+            onSave(); 
+            onClose();
+        } catch (error) { 
+            alert("Save failed."); 
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    // If file exists, convert to Base64, else send as is
+    if (file) {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            payload.materialFile = reader.result;
+            sendRequest(payload);
+        };
+        reader.readAsDataURL(file);
+    } else {
+        sendRequest(payload);
+    }
   };
 
   return (
@@ -311,7 +357,7 @@ const MaterialFormModal = ({ material, onClose, onSave, dbClasses, dbSubjects })
               </div>
               
               <div className="md:col-span-2 space-y-1.5">
-                <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">File Upload</label>
+                <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">File Upload (Max 10MB)</label>
                 <input type="file" onChange={e => setFile(e.target.files[0])} 
                   className="block w-full text-sm text-zinc-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-zinc-100 file:text-zinc-700 hover:file:bg-zinc-200 cursor-pointer border border-zinc-200 rounded-md bg-white shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 h-9 leading-9" />
               </div>

@@ -91,6 +91,11 @@ export default function StudentMaterialsScreen() {
             {filteredMaterials.map((item) => {
               const Icon = getSubjectIcon(item.subject_name);
               const aesthetics = getSubjectAesthetics(item.subject_name);
+              
+              // Base64 Safe Handlers
+              const isBase64 = item.file_path && String(item.file_path).startsWith('data:');
+              const fileUrl = isBase64 ? item.file_path : `${SERVER_URL.replace('/api','')}${item.file_path}`;
+
               return (
                 <div key={item.id} className="group bg-white rounded-lg ring-1 ring-black/5 shadow-sm flex flex-col hover:ring-primary/30 hover:shadow-md transition-all overflow-hidden">
                   <div className={`h-32 ${aesthetics.bg} border-b border-zinc-100 flex items-center justify-center relative`}>
@@ -114,12 +119,17 @@ export default function StudentMaterialsScreen() {
                         <>
                           <button 
                             onClick={() => {
-                              const isOfficeFile = item.file_path.match(/\.(xlsx|xls|doc|docx|ppt|pptx)$/i);
-                              const fileUrl = `${SERVER_URL.replace('/api','')}${item.file_path}`;
-                              const viewUrl = isOfficeFile 
-                                ? `https://docs.google.com/viewer?url=${encodeURIComponent(fileUrl)}&embedded=true` 
-                                : fileUrl;
-                              window.open(viewUrl, "_blank");
+                              if (isBase64) {
+                                // Open Base64 string directly in an iframe
+                                const win = window.open();
+                                if(win) win.document.write(`<iframe src="${fileUrl}" frameborder="0" style="border:0; top:0px; left:0px; bottom:0px; right:0px; width:100%; height:100%;" allowfullscreen></iframe>`);
+                              } else {
+                                const isOfficeFile = item.file_path.match(/\.(xlsx|xls|doc|docx|ppt|pptx)$/i);
+                                const viewUrl = isOfficeFile 
+                                  ? `https://docs.google.com/viewer?url=${encodeURIComponent(fileUrl)}&embedded=true` 
+                                  : fileUrl;
+                                window.open(viewUrl, "_blank");
+                              }
                             }} 
                             className="flex-1 h-9 bg-zinc-50 hover:bg-zinc-100 text-zinc-700 font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 ring-1 ring-inset ring-zinc-200 transition-colors"
                           >
@@ -130,8 +140,8 @@ export default function StudentMaterialsScreen() {
                             onClick={(e) => {
                               e.preventDefault();
                               const link = document.createElement('a');
-                              link.href = `${SERVER_URL.replace('/api','')}${item.file_path}`;
-                              link.setAttribute('download', '');
+                              link.href = fileUrl;
+                              link.setAttribute('download', item.title || 'download');
                               document.body.appendChild(link);
                               link.click();
                               document.body.removeChild(link);
