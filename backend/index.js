@@ -3042,7 +3042,7 @@ app.get('/api/admin/performance/class/:classId', async (req, res) => {
 });
 
 
-// --- 18.3 One student's own performance bundle ----------------------
+// --- 18.3 One student's own performance bundle --------------------
 //   GET /api/admin/performance/student/:studentId
 //   Returns the student's class dataset + which student is "me".
 //   Used by the student-facing My Performance view.
