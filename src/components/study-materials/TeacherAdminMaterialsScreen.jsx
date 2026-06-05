@@ -163,10 +163,25 @@ export default function TeacherAdminMaterialsScreen() {
                           <button 
                             onClick={() => {
                               if (isBase64) {
-                                // Open Base64 string directly in an iframe
-                                const win = window.open();
-                                if(win) win.document.write(`<iframe src="${fileUrl}" frameborder="0" style="border:0; top:0px; left:0px; bottom:0px; right:0px; width:100%; height:100%;" allowfullscreen></iframe>`);
+                                // 1. Open the new tab immediately to bypass popup blockers
+                                const win = window.open('', '_blank');
+                                if (win) {
+                                  win.document.body.innerHTML = '<div style="font-family: sans-serif; padding: 20px; text-align: center;">Loading document...</div>';
+                                  
+                                  // 2. Safely convert the massive Base64 string into a Browser Blob
+                                  fetch(fileUrl)
+                                    .then(res => res.blob())
+                                    .then(blob => {
+                                      // 3. Create a temporary URL and redirect the new tab to it
+                                      const blobUrl = URL.createObjectURL(blob);
+                                      win.location.href = blobUrl;
+                                    })
+                                    .catch(() => {
+                                      win.document.body.innerHTML = '<div style="font-family: sans-serif; padding: 20px; color: red; text-align: center;">Failed to load document.</div>';
+                                    });
+                                }
                               } else {
+                                // Old file system logic
                                 const isOfficeFile = item.file_path.match(/\.(xlsx|xls|doc|docx|ppt|pptx)$/i);
                                 const viewUrl = isOfficeFile 
                                   ? `https://docs.google.com/viewer?url=${encodeURIComponent(fileUrl)}&embedded=true` 
@@ -182,12 +197,32 @@ export default function TeacherAdminMaterialsScreen() {
                           <button 
                             onClick={(e) => {
                               e.preventDefault();
-                              const link = document.createElement('a');
-                              link.href = fileUrl;
-                              link.setAttribute('download', item.title || 'download');
-                              document.body.appendChild(link);
-                              link.click();
-                              document.body.removeChild(link);
+                              if (isBase64) {
+                                // 1. Convert massive Base64 string to a physical Blob file first
+                                fetch(fileUrl)
+                                  .then(res => res.blob())
+                                  .then(blob => {
+                                    // 2. Create a tiny, safe temporary URL for the download
+                                    const blobUrl = URL.createObjectURL(blob);
+                                    const link = document.createElement('a');
+                                    link.href = blobUrl;
+                                    link.setAttribute('download', item.title || 'download');
+                                    document.body.appendChild(link);
+                                    link.click();
+                                    document.body.removeChild(link);
+                                    // 3. Clean up browser memory
+                                    URL.revokeObjectURL(blobUrl); 
+                                  })
+                                  .catch(() => alert("Failed to prepare file for download."));
+                              } else {
+                                // Standard download logic for old/normal files
+                                const link = document.createElement('a');
+                                link.href = fileUrl;
+                                link.setAttribute('download', item.title || 'download');
+                                document.body.appendChild(link);
+                                link.click();
+                                document.body.removeChild(link);
+                              }
                             }} 
                             className="flex-1 h-9 bg-primary hover:bg-primary/90 text-white font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 shadow-sm transition-colors"
                           >
