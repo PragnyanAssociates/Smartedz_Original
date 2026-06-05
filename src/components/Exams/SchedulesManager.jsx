@@ -12,6 +12,10 @@ import {
 //  An "Internal" schedule has rows: { date, subject, time, room }
 //  An "External" (Govt) schedule has rows: { examName, fromDate, toDate }
 //  A "special" row breaks the table with a banner: { type, mainText, subText }
+//
+//  Academic year: new schedules are saved against the school's active
+//  academic year (handled server-side). The Subtitle defaults to the
+//  active year's name so it no longer has to be typed in by hand.
 // =====================================================================
 
 const emptyInternalRow = () => ({ date: '', subject: '', time_from: '09:00', time_to: '12:00', room: '' });
@@ -24,7 +28,7 @@ const fmtDDMMYYYY = (iso) => {
   return d && m && y ? `${d}/${m}/${y}` : iso;
 };
 
-export default function SchedulesManager({ canManage }) {
+export default function SchedulesManager({ canManage, activeYearName = '' }) {
   const { user } = useAuth();
 
   // ------------ data state ----------------
@@ -85,7 +89,9 @@ export default function SchedulesManager({ canManage }) {
   const openAdd = () => {
     setEditing(null);
     setForm({
-      title: '', subtitle: '', exam_type: 'Internal',
+      title: '',
+      subtitle: activeYearName || '',   // default to the active academic year
+      exam_type: 'Internal',
       class_id: '', section: '',
       rows: [emptyInternalRow()]
     });
@@ -229,7 +235,7 @@ export default function SchedulesManager({ canManage }) {
     <div className="space-y-6 animate-in fade-in duration-500">
       {/* Filter bar */}
       <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
-        
+
         {/* Toggle Internal/External */}
         <div className="inline-flex bg-zinc-100/80 p-1 rounded-md shrink-0 w-full sm:w-auto overflow-x-auto custom-scrollbar">
           {['Internal', 'External'].map(t => (
@@ -255,7 +261,7 @@ export default function SchedulesManager({ canManage }) {
             </select>
             <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
-          
+
           {canManage && (
             <button onClick={openAdd}
               className="h-9 bg-primary hover:bg-primary/90 text-white px-4 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full sm:w-auto shrink-0">
@@ -328,7 +334,7 @@ export default function SchedulesManager({ canManage }) {
       {showModal && (
         <div className="fixed inset-0 z-50 bg-zinc-900/40 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-4xl max-h-[92vh] flex flex-col shadow-xl">
-            
+
             <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50">
               <h2 className="text-lg font-semibold text-zinc-900">
                 {editing ? 'Edit Schedule' : 'Create Schedule'}
@@ -339,19 +345,19 @@ export default function SchedulesManager({ canManage }) {
             </div>
 
             <div className="p-5 sm:p-6 overflow-y-auto flex-1 space-y-6 custom-scrollbar">
-              
+
               {/* Top form */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <FormField label="Title" required>
                   <input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })}
                     placeholder="e.g. Final Term Exam" className={inputCls} />
                 </FormField>
-                
+
                 <FormField label="Subtitle">
                   <input value={form.subtitle} onChange={e => setForm({ ...form, subtitle: e.target.value })}
                     placeholder="e.g. 2025-2026" className={inputCls} />
                 </FormField>
-                
+
                 <FormField label="Schedule Type">
                   <div className="relative">
                     <select value={form.exam_type} onChange={e => handleTypeChange(e.target.value)}
@@ -362,7 +368,7 @@ export default function SchedulesManager({ canManage }) {
                     <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                   </div>
                 </FormField>
-                
+
                 <FormField label="Class" required>
                   <div className="relative">
                     <select value={form.class_id}
@@ -378,7 +384,7 @@ export default function SchedulesManager({ canManage }) {
                     <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                   </div>
                 </FormField>
-                
+
                 <FormField label="Section (optional)">
                   <input value={form.section} onChange={e => setForm({ ...form, section: e.target.value })}
                     placeholder="Leave blank for all sections" className={inputCls} />
@@ -408,7 +414,7 @@ export default function SchedulesManager({ canManage }) {
                         className="absolute top-2 right-2 p-1.5 text-zinc-400 hover:text-red-500 rounded-md transition-colors sm:opacity-0 sm:group-hover:opacity-100" title="Remove">
                         <X className="size-4 shrink-0" />
                       </button>
-                      
+
                       {r.type === 'special' ? (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pr-6">
                           <FormField label="Main text">
@@ -441,12 +447,12 @@ export default function SchedulesManager({ canManage }) {
                             <input type="date" value={r.date}
                               onChange={e => updateRow(i, 'date', e.target.value)} className={inputCls} />
                           </FormField>
-                          
+
                           <FormField label="Subject" className="lg:col-span-3">
                             <input value={r.subject} onChange={e => updateRow(i, 'subject', e.target.value)}
                               placeholder="Maths" className={inputCls} />
                           </FormField>
-                          
+
                           <FormField label="Time" className="lg:col-span-4">
                             <div className="flex gap-2 items-center">
                               <input type="time" value={r.time_from}
@@ -456,7 +462,7 @@ export default function SchedulesManager({ canManage }) {
                                 onChange={e => updateRow(i, 'time_to', e.target.value)} className={`${inputCls} px-2 tabular-nums w-full min-w-0`} />
                             </div>
                           </FormField>
-                          
+
                           <FormField label="Room" className="lg:col-span-2">
                             <input value={r.room} onChange={e => updateRow(i, 'room', e.target.value)}
                               placeholder="e.g. 5" className={inputCls} />
@@ -465,7 +471,7 @@ export default function SchedulesManager({ canManage }) {
                       )}
                     </div>
                   ))}
-                  
+
                   {form.rows.length === 0 && (
                     <div className="border border-dashed border-zinc-300 rounded-lg p-8 text-center text-zinc-400 text-sm font-medium bg-zinc-50/50">
                       Empty schedule - click "Add Row" above.
@@ -486,7 +492,7 @@ export default function SchedulesManager({ canManage }) {
                 {saving ? 'Saving...' : (editing ? 'Save Changes' : 'Create Schedule')}
               </button>
             </div>
-            
+
           </div>
         </div>
       )}
@@ -518,7 +524,7 @@ export function ScheduleDetailView({ schedule }) {
           <CalendarDays className="text-primary size-6" />
         </div>
         <h2 className="text-xl font-semibold text-zinc-900">{schedule.title}</h2>
-        
+
         <div className="mt-2.5">
           <span className={`text-[10px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-md ring-1 ${
             isExternal ? 'bg-purple-50 text-purple-700 ring-purple-600/20' : 'bg-rose-50 text-rose-700 ring-rose-600/20'
@@ -526,7 +532,7 @@ export function ScheduleDetailView({ schedule }) {
             {isExternal ? 'Govt Schedule' : 'School Exam'}
           </span>
         </div>
-        
+
         <div className="mt-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-xs text-zinc-600">
           {schedule.className && (
             <span className="font-medium bg-white ring-1 ring-zinc-200 px-2 py-0.5 rounded text-zinc-700">

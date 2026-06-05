@@ -1800,6 +1800,34 @@ app.get('/api/admin/attendance/overview/:instId', async (req, res) => {
 //   Two related features:
 //     • exam_schedules: printable exam timetables (date/subject/time/room)
 //     • online_exams:   actual assessments students attempt in-browser
+//
+//   ACADEMIC YEAR: exam_schedules and online_exams now carry
+//   academic_year_id, and every read/write scopes to the school's
+//   *active* academic year via the shared resolveYearId() helper
+//   (defined in the Timetable section). So when the admin switches the
+//   active year under Academics, exams & schedules switch with it —
+//   exactly like the timetable and attendance. Each year keeps its own
+//   data (non-destructive); switching back restores it.
+//
+//   REQUIRES a one-time migration (run once in your DB):
+//     ALTER TABLE exam_schedules
+//       ADD COLUMN academic_year_id INT NULL AFTER institutionId;
+//     ALTER TABLE online_exams
+//       ADD COLUMN academic_year_id INT NULL AFTER institutionId;
+//
+//     UPDATE exam_schedules s
+//       JOIN academic_years y
+//         ON y.institutionId = s.institutionId AND y.isActive = 1
+//       SET s.academic_year_id = y.id
+//      WHERE s.academic_year_id IS NULL;
+//     UPDATE online_exams e
+//       JOIN academic_years y
+//         ON y.institutionId = e.institutionId AND y.isActive = 1
+//       SET e.academic_year_id = y.id
+//      WHERE e.academic_year_id IS NULL;
+//
+//     CREATE INDEX idx_examsched_year  ON exam_schedules (academic_year_id);
+//     CREATE INDEX idx_onlineexam_year ON online_exams (academic_year_id);
 // =====================================================================
 
 // Helper — does a JSON column have content? schedule_data comes back as
@@ -1819,16 +1847,18 @@ const nowSQL = () => new Date().toISOString().slice(0, 19).replace('T', ' ');
 
 // --- 16.A.1 List all schedules for a school -----------------------
 //   GET /api/admin/exam-schedules/:instId
+//   Scoped to the active academic year.
 app.get('/api/admin/exam-schedules/:instId', async (req, res) => {
     try {
+        const yearId = await resolveYearId(req.params.instId, req.query.academic_year_id);
         const [rows] = await db.execute(
             `SELECT s.*, c.className, u.name AS created_by_name
                FROM exam_schedules s
                LEFT JOIN classes c ON c.id = s.class_id
                LEFT JOIN users u ON u.id = s.created_by
-              WHERE s.institutionId = ?
+              WHERE s.institutionId = ? AND s.academic_year_id = ?
               ORDER BY s.created_at DESC`,
-            [req.params.instId]
+            [req.params.instId, yearId]
         );
         const decorated = rows.map(r => ({
             ...r,
@@ -1841,12 +1871,14 @@ app.get('/api/admin/exam-schedules/:instId', async (req, res) => {
 // --- 16.A.2 List schedules visible to a student -------------------
 //   GET /api/admin/exam-schedules/student/:studentId
 //   Returns schedules where (class_id = student.class_id OR class_id IS NULL)
-//   AND (section = student.section OR section IS NULL).
+//   AND (section = student.section OR section IS NULL), scoped to the
+//   active academic year.
 app.get('/api/admin/exam-schedules/student/:studentId', async (req, res) => {
     try {
         const [u] = await db.execute('SELECT institutionId, class_id, section FROM users WHERE id = ?', [req.params.studentId]);
         if (u.length === 0) return res.status(404).json({ error: 'Student not found' });
         const { institutionId, class_id, section } = u[0];
+        const yearId = await resolveYearId(institutionId, req.query.academic_year_id);
 
         const [rows] = await db.execute(
             `SELECT s.*, c.className, usr.name AS created_by_name
@@ -1854,10 +1886,11 @@ app.get('/api/admin/exam-schedules/student/:studentId', async (req, res) => {
                LEFT JOIN classes c   ON c.id = s.class_id
                LEFT JOIN users usr   ON usr.id = s.created_by
               WHERE s.institutionId = ?
+                AND s.academic_year_id = ?
                 AND (s.class_id IS NULL OR s.class_id = ?)
                 AND (s.section  IS NULL OR s.section = ?)
               ORDER BY s.created_at DESC`,
-            [institutionId, class_id || 0, section || '']
+            [institutionId, yearId, class_id || 0, section || '']
         );
         const decorated = rows.map(r => ({
             ...r,
@@ -1887,6 +1920,7 @@ app.get('/api/admin/exam-schedules/single/:id', async (req, res) => {
 // --- 16.A.4 Create schedule ---------------------------------------
 //   class_id = null means "All classes"
 //   section  = null means "all sections in the class"
+//   Stamped with the active academic year.
 app.post('/api/admin/exam-schedules', async (req, res) => {
     const {
         institutionId, title, subtitle, exam_type,
@@ -1894,18 +1928,21 @@ app.post('/api/admin/exam-schedules', async (req, res) => {
     } = req.body;
     if (!institutionId || !title) return res.status(400).json({ error: 'institutionId and title required.' });
     try {
+        const yearId = await resolveYearId(institutionId, req.body.academic_year_id);
         const [result] = await db.execute(
             `INSERT INTO exam_schedules
-               (institutionId, title, subtitle, exam_type, class_id, section, schedule_data, created_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [institutionId, title, subtitle || null, exam_type || 'Internal',
+               (institutionId, academic_year_id, title, subtitle, exam_type, class_id, section, schedule_data, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [institutionId, yearId, title, subtitle || null, exam_type || 'Internal',
              class_id || null, section || null, JSON.stringify(schedule_data || []), created_by || null]
         );
-        res.json({ success: true, id: result.insertId });
+        res.json({ success: true, id: result.insertId, academic_year_id: yearId });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // --- 16.A.5 Update schedule ---------------------------------------
+//   academic_year_id is left untouched — a schedule stays in the year
+//   it was created in.
 app.put('/api/admin/exam-schedules/:id', async (req, res) => {
     const { title, subtitle, exam_type, class_id, section, schedule_data } = req.body;
     try {
@@ -1936,6 +1973,7 @@ app.delete('/api/admin/exam-schedules/:id', async (req, res) => {
 // --- 16.B.1 List exams created by/visible to a teacher ------------
 //   GET /api/admin/exams/teacher/:teacherId?instId=...
 //   Super Admin gets ALL exams in the school; teachers get only their own.
+//   Both scoped to the active academic year.
 app.get('/api/admin/exams/teacher/:teacherId', async (req, res) => {
     const { teacherId } = req.params;
     try {
@@ -1943,6 +1981,7 @@ app.get('/api/admin/exams/teacher/:teacherId', async (req, res) => {
         if (users.length === 0) return res.status(404).json({ error: 'User not found' });
         const me = users[0];
         const isAdmin = me.role === 'Super Admin' || me.role === 'Developer';
+        const yearId = await resolveYearId(me.institutionId, req.query.academic_year_id);
 
         let sql, params;
         if (isAdmin) {
@@ -1953,9 +1992,9 @@ app.get('/api/admin/exams/teacher/:teacherId', async (req, res) => {
                      LEFT JOIN classes c   ON c.id = e.class_id
                      LEFT JOIN subjects sub ON sub.id = e.subject_id
                      LEFT JOIN users u     ON u.id = e.created_by
-                    WHERE e.institutionId = ?
+                    WHERE e.institutionId = ? AND e.academic_year_id = ?
                     ORDER BY e.created_at DESC`;
-            params = [me.institutionId];
+            params = [me.institutionId, yearId];
         } else {
             sql = `SELECT e.*, c.className, sub.name AS subject_name, u.name AS created_by_name,
                           (SELECT COUNT(*) FROM online_exam_attempts a WHERE a.exam_id = e.id) AS submission_count,
@@ -1964,9 +2003,9 @@ app.get('/api/admin/exams/teacher/:teacherId', async (req, res) => {
                      LEFT JOIN classes c   ON c.id = e.class_id
                      LEFT JOIN subjects sub ON sub.id = e.subject_id
                      LEFT JOIN users u     ON u.id = e.created_by
-                    WHERE e.created_by = ?
+                    WHERE e.created_by = ? AND e.academic_year_id = ?
                     ORDER BY e.created_at DESC`;
-            params = [teacherId];
+            params = [teacherId, yearId];
         }
         const [rows] = await db.execute(sql, params);
         res.json(rows);
@@ -1975,13 +2014,15 @@ app.get('/api/admin/exams/teacher/:teacherId', async (req, res) => {
 
 // --- 16.B.2 List exams for a student to take ----------------------
 //   GET /api/admin/exams/student/:studentId
-//   Returns exams where the student's class+section match, with attempt status.
+//   Returns exams where the student's class+section match, with attempt
+//   status, scoped to the active academic year.
 app.get('/api/admin/exams/student/:studentId', async (req, res) => {
     const { studentId } = req.params;
     try {
         const [u] = await db.execute('SELECT institutionId, class_id, section FROM users WHERE id = ?', [studentId]);
         if (u.length === 0) return res.status(404).json({ error: 'Student not found' });
         const { institutionId, class_id, section } = u[0];
+        const yearId = await resolveYearId(institutionId, req.query.academic_year_id);
 
         const [rows] = await db.execute(
             `SELECT e.id AS exam_id, e.title, e.description, e.time_limit_mins, e.total_marks,
@@ -1994,11 +2035,12 @@ app.get('/api/admin/exams/student/:studentId', async (req, res) => {
                LEFT JOIN subjects sub ON sub.id = e.subject_id
                LEFT JOIN online_exam_attempts a ON a.exam_id = e.id AND a.student_id = ?
               WHERE e.institutionId = ?
+                AND e.academic_year_id = ?
                 AND e.class_id = ?
                 AND (e.section IS NULL OR e.section = ?)
                 AND e.status = 'published'
               ORDER BY e.created_at DESC`,
-            [studentId, institutionId, class_id || 0, section || '']
+            [studentId, institutionId, yearId, class_id || 0, section || '']
         );
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -2030,6 +2072,7 @@ app.get('/api/admin/exams/:examId', async (req, res) => {
 // --- 16.B.4 Create or update exam --------------------------------
 //   Body: { institutionId, title, description, class_id, section, subject_id,
 //           time_limit_mins, status, created_by, questions: [...] }
+//   New exams are stamped with the active academic year.
 app.post('/api/admin/exams', async (req, res) => {
     const {
         institutionId, title, description, class_id, section, subject_id,
@@ -2040,14 +2083,15 @@ app.post('/api/admin/exams', async (req, res) => {
     }
     const conn = await db.getConnection();
     try {
+        const yearId = await resolveYearId(institutionId, req.body.academic_year_id);
         await conn.beginTransaction();
         const totalMarks = questions.reduce((sum, q) => sum + (parseInt(q.marks, 10) || 0), 0);
         const [result] = await conn.execute(
             `INSERT INTO online_exams
-              (institutionId, title, description, class_id, section, subject_id,
+              (institutionId, academic_year_id, title, description, class_id, section, subject_id,
                time_limit_mins, total_marks, created_by, status)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [institutionId, title, description || null, class_id, section || null,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [institutionId, yearId, title, description || null, class_id, section || null,
              subject_id || null, parseInt(time_limit_mins, 10) || 0, totalMarks,
              created_by, status || 'published']
         );
@@ -2065,7 +2109,7 @@ app.post('/api/admin/exams', async (req, res) => {
             );
         }
         await conn.commit();
-        res.json({ success: true, id: examId });
+        res.json({ success: true, id: examId, academic_year_id: yearId });
     } catch (err) {
         await conn.rollback();
         res.status(500).json({ error: err.message });
@@ -2082,6 +2126,7 @@ app.put('/api/admin/exams/:examId', async (req, res) => {
         await conn.beginTransaction();
         const totalMarks = questions.reduce((sum, q) => sum + (parseInt(q.marks, 10) || 0), 0);
 
+        // academic_year_id left untouched — an exam stays in the year it was created in.
         await conn.execute(
             `UPDATE online_exams
                 SET title = ?, description = ?, class_id = ?, section = ?, subject_id = ?,
@@ -2125,6 +2170,8 @@ app.delete('/api/admin/exams/:examId', async (req, res) => {
 
 // =====================================================================
 // === 16.C ATTEMPTS (student takes the exam) ==========================
+//   Attempts belong to an exam, which is already year-scoped, so no
+//   academic_year_id is needed on the attempt rows themselves.
 // =====================================================================
 
 // --- 16.C.1 Get questions without answers (for student to take) ---
