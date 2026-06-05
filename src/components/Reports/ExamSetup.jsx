@@ -373,18 +373,23 @@ function TeacherAssignPanel() {
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState(null);
 
-  // Bootstrap classes/subjects/teachers
+  // Bootstrap classes/subjects/teachers, then default to the first class
   useEffect(() => {
     (async () => {
       setLoading(true);
       try {
         const res = await fetch(`${API_BASE_URL}/admin/data/${user.institutionId}`);
         const agg = await res.json();
-        setClasses(agg.classes || []);
+        const cls = agg.classes || [];
+        setClasses(cls);
         setSubjects(agg.subjects || []);
         setTeachers((agg.users || []).filter(u =>
           (u.role || '').toLowerCase().includes('teacher')
         ));
+        // Default-select the first class so subjects show immediately
+        if (cls.length > 0) {
+          setPickedClass(prev => (prev ? prev : String(cls[0].id)));
+        }
       } catch (e) { console.error(e); }
       setLoading(false);
     })();
