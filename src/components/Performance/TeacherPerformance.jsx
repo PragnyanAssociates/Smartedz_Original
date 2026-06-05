@@ -432,7 +432,7 @@ function TeacherAnalysisModal({ teachers, examTypes, classOptions, initialExam, 
     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pb-4">
       <Selector label="Exam Wise" value={examTypeId} onChange={setExamTypeId}
         options={[
-          ...(examTypes.length ? [] : [{ value: 'all', label: 'All Exams' }]),
+          { value: 'all', label: 'All Exams' },
           ...examTypes.map(t => ({ value: String(t.id), label: t.name }))
         ]} />
       <Selector label="Class Filter" value={classId} onChange={setClassId}
