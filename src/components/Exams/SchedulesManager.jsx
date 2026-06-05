@@ -116,7 +116,7 @@ export default function SchedulesManager({ canManage, activeYearName = '' }) {
     });
     setForm({
       title: s.title || '',
-      subtitle: s.subtitle || '',
+      subtitle: activeYearName || s.subtitle || '',
       exam_type: s.exam_type || 'Internal',
       class_id: s.class_id ? String(s.class_id) : '',
       section: s.section || '',
@@ -353,9 +353,11 @@ export default function SchedulesManager({ canManage, activeYearName = '' }) {
                     placeholder="e.g. Final Term Exam" className={inputCls} />
                 </FormField>
 
-                <FormField label="Subtitle">
-                  <input value={form.subtitle} onChange={e => setForm({ ...form, subtitle: e.target.value })}
-                    placeholder="e.g. 2025-2026" className={inputCls} />
+                <FormField label="Academic Year">
+                  <input value={form.subtitle} readOnly tabIndex={-1}
+                    placeholder="Set an active academic year under Academics"
+                    className={`${inputCls} bg-zinc-50 text-zinc-600 cursor-not-allowed`} />
+                  <p className="text-[10px] text-zinc-400 mt-1">Filled automatically from the active academic year.</p>
                 </FormField>
 
                 <FormField label="Schedule Type">

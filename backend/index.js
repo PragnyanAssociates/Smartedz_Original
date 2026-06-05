@@ -1986,7 +1986,10 @@ app.get('/api/admin/exams/teacher/:teacherId', async (req, res) => {
         let sql, params;
         if (isAdmin) {
             sql = `SELECT e.*, c.className, sub.name AS subject_name, u.name AS created_by_name,
-                          (SELECT COUNT(*) FROM online_exam_attempts a WHERE a.exam_id = e.id) AS submission_count,
+                          (SELECT COUNT(*) FROM online_exam_attempts a
+                             JOIN users su ON su.id = a.student_id
+                            WHERE a.exam_id = e.id
+                              AND (su.status IS NULL OR LOWER(TRIM(su.status)) <> 'alumni')) AS submission_count,
                           (SELECT COUNT(*) FROM online_exam_questions q WHERE q.exam_id = e.id) AS question_count
                      FROM online_exams e
                      LEFT JOIN classes c   ON c.id = e.class_id
@@ -1997,7 +2000,10 @@ app.get('/api/admin/exams/teacher/:teacherId', async (req, res) => {
             params = [me.institutionId, yearId];
         } else {
             sql = `SELECT e.*, c.className, sub.name AS subject_name, u.name AS created_by_name,
-                          (SELECT COUNT(*) FROM online_exam_attempts a WHERE a.exam_id = e.id) AS submission_count,
+                          (SELECT COUNT(*) FROM online_exam_attempts a
+                             JOIN users su ON su.id = a.student_id
+                            WHERE a.exam_id = e.id
+                              AND (su.status IS NULL OR LOWER(TRIM(su.status)) <> 'alumni')) AS submission_count,
                           (SELECT COUNT(*) FROM online_exam_questions q WHERE q.exam_id = e.id) AS question_count
                      FROM online_exams e
                      LEFT JOIN classes c   ON c.id = e.class_id
@@ -2019,8 +2025,10 @@ app.get('/api/admin/exams/teacher/:teacherId', async (req, res) => {
 app.get('/api/admin/exams/student/:studentId', async (req, res) => {
     const { studentId } = req.params;
     try {
-        const [u] = await db.execute('SELECT institutionId, class_id, section FROM users WHERE id = ?', [studentId]);
+        const [u] = await db.execute('SELECT institutionId, class_id, section, status FROM users WHERE id = ?', [studentId]);
         if (u.length === 0) return res.status(404).json({ error: 'Student not found' });
+        // Alumni (passed-out) students no longer receive exams.
+        if ((u[0].status || '').toLowerCase() === 'alumni') return res.json([]);
         const { institutionId, class_id, section } = u[0];
         const yearId = await resolveYearId(institutionId, req.query.academic_year_id);
 
@@ -2289,6 +2297,7 @@ app.get('/api/admin/exams/:examId/submissions', async (req, res) => {
                FROM online_exam_attempts a
                JOIN users u ON u.id = a.student_id
               WHERE a.exam_id = ?
+                AND (u.status IS NULL OR LOWER(TRIM(u.status)) <> 'alumni')
               ORDER BY u.name`,
             [req.params.examId]
         );
