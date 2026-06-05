@@ -8,8 +8,17 @@ import ReportCards from './ReportCards';
 // =====================================================================
 //  ClassList - overview table of classes with performance summaries.
 //  Clicking a class drills into MarksEntry or ReportCards depending
-//  on `mode`.
+//  on `mode`. Summaries are scoped to the active academic year and
+//  exclude alumni students (handled by the backend).
 // =====================================================================
+
+// Format a numeric mark without trailing decimals: 20.00 -> 20, 19.50 -> 19.5
+const fmtNum = (v) => {
+  if (v === null || v === undefined || v === '') return '0';
+  const n = Number(v);
+  if (isNaN(n)) return v;
+  return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(2)));
+};
 
 export default function ClassList({ mode, canManage }) {
   const { user } = useAuth();
@@ -44,7 +53,7 @@ export default function ClassList({ mode, canManage }) {
 
   return (
     <div className="space-y-4 sm:space-y-6 animate-in fade-in duration-300">
-      
+
       {/* Control Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <p className="text-sm text-zinc-500 font-medium">
@@ -54,11 +63,11 @@ export default function ClassList({ mode, canManage }) {
         </p>
         <div className="relative w-full sm:w-72 shrink-0">
           <Search className="size-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-          <input 
-            value={query} 
+          <input
+            value={query}
             onChange={e => setQuery(e.target.value)}
             placeholder="Search classes..."
-            className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" 
+            className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm"
           />
         </div>
       </div>
@@ -91,15 +100,15 @@ export default function ClassList({ mode, canManage }) {
                 <tr key={s.class_id}
                   onClick={() => setPicked({ class_id: s.class_id, class_group: s.class_group })}
                   className="hover:bg-zinc-50/60 transition-colors cursor-pointer group">
-                  
+
                   <td className="px-5 py-4 font-semibold text-zinc-900 whitespace-nowrap">
                     {s.class_group}
                   </td>
-                  
+
                   <td className="px-5 py-4 font-semibold text-primary tabular-nums whitespace-nowrap">
-                    {s.totalClassMarks}
+                    {fmtNum(s.totalClassMarks)}
                   </td>
-                  
+
                   <td className="px-5 py-4 whitespace-nowrap">
                     <div className="flex items-center gap-2.5">
                       <div className="size-6 rounded-md bg-amber-50 ring-1 ring-amber-500/20 flex items-center justify-center shrink-0">
@@ -107,11 +116,11 @@ export default function ClassList({ mode, canManage }) {
                       </div>
                       <div className="flex flex-col">
                         <span className="text-sm font-semibold text-zinc-800 leading-tight">{s.topStudent.name}</span>
-                        <span className="text-[11px] font-medium text-zinc-500">{s.topStudent.marks} marks</span>
+                        <span className="text-[11px] font-medium text-zinc-500">{fmtNum(s.topStudent.marks)} marks</span>
                       </div>
                     </div>
                   </td>
-                  
+
                   <td className="px-5 py-4 whitespace-nowrap">
                     <div className="flex items-center gap-2.5">
                       <div className="size-6 rounded-md bg-indigo-50 ring-1 ring-indigo-500/20 flex items-center justify-center shrink-0">
@@ -119,11 +128,11 @@ export default function ClassList({ mode, canManage }) {
                       </div>
                       <div className="flex flex-col">
                         <span className="text-sm font-semibold text-zinc-800 leading-tight">{s.topSubject.name}</span>
-                        <span className="text-[11px] font-medium text-zinc-500">{s.topSubject.marks} marks</span>
+                        <span className="text-[11px] font-medium text-zinc-500">{fmtNum(s.topSubject.marks)} marks</span>
                       </div>
                     </div>
                   </td>
-                  
+
                   <td className="px-5 py-4 text-right">
                     <ChevronRight className="size-4 text-zinc-300 group-hover:text-primary transition-colors ml-auto" />
                   </td>

@@ -2379,12 +2379,50 @@ app.post('/api/admin/attempts/:attemptId/grade', async (req, res) => {
 //
 //   Distinct from Section 16 (online quizzes). This covers the
 //   traditional paper-exam workflow:
-//     • exam_types          — admin defines AT1, UT1, SA1...
-//     • exam_max_marks      — per exam-type + class max marks
+//     • exam_types          — admin defines AT1, UT1, SA1...   (config)
+//     • exam_max_marks      — per exam-type + class max marks  (config)
 //     • subject_teacher_map — who enters marks for a class+subject
-//     • student_marks       — the actual entered marks
+//     • student_marks       — the actual entered marks  (per academic year)
 //   Report-card attendance is auto-computed from the daily `attendance`
 //   table built in Section 15 — no separate W/P entry.
+//
+//   ACADEMIC YEAR: student_marks now carry academic_year_id, and marks
+//   reads/writes scope to the school's ACTIVE academic year via the
+//   shared resolveYearId() helper (defined in the Timetable section).
+//   Exam types & max marks stay global config (reused across years),
+//   like the timetable's days/periods setup. So when the admin switches
+//   the active year, the entered marks switch with it.
+//
+//   ALUMNI: passed-out students (users.status = 'alumni') are excluded
+//   from class summaries and the marks grid, so they no longer inflate
+//   totals or appear as "top student".
+//
+//   REQUIRES a one-time migration (run once in your DB). This also
+//   removes any duplicate mark rows that were doubling totals and swaps
+//   the unique key to include the year:
+//     ALTER TABLE student_marks
+//       ADD COLUMN academic_year_id INT NULL AFTER class_id;
+//
+//     UPDATE student_marks sm
+//       JOIN academic_years y
+//         ON y.institutionId = sm.institutionId AND y.isActive = 1
+//       SET sm.academic_year_id = y.id
+//      WHERE sm.id > 0 AND sm.academic_year_id IS NULL;
+//
+//     -- de-duplicate (keep the newest row per student/subject/exam/year)
+//     DELETE s1 FROM student_marks s1
+//       JOIN student_marks s2
+//         ON s1.student_id  = s2.student_id
+//        AND s1.subject_id  = s2.subject_id
+//        AND s1.exam_type_id = s2.exam_type_id
+//        AND COALESCE(s1.academic_year_id,0) = COALESCE(s2.academic_year_id,0)
+//        AND s1.id < s2.id;
+//
+//     ALTER TABLE student_marks DROP INDEX uniq_student_subject_exam;
+//     ALTER TABLE student_marks
+//       ADD UNIQUE KEY uniq_student_subject_exam_year
+//         (student_id, subject_id, exam_type_id, academic_year_id);
+//     CREATE INDEX idx_marks_year ON student_marks (academic_year_id);
 // =====================================================================
 
 // --- Month boundaries helper for attendance roll-up ----------------
@@ -2402,7 +2440,6 @@ function buildMonthBuckets(startDateStr, endDateStr) {
     while (cur <= end) {
         const y = cur.getFullYear();
         const m = cur.getMonth();
-        const first = new Date(y, m, 1);
         const last  = new Date(y, m + 1, 0);
         buckets.push({
             key:   `${y}-${String(m + 1).padStart(2, '0')}`,
@@ -2480,7 +2517,6 @@ app.delete('/api/admin/exam-types/:id', async (req, res) => {
 // =====================================================================
 
 // --- 17.B.1 Get the full max-marks matrix for a school ------------
-//   Returns one row per (exam_type, class) that HAS a configured max.
 app.get('/api/admin/exam-max-marks/:instId', async (req, res) => {
     try {
         const [rows] = await db.execute(
@@ -2497,8 +2533,6 @@ app.get('/api/admin/exam-max-marks/:instId', async (req, res) => {
 });
 
 // --- 17.B.2 Bulk upsert max marks ---------------------------------
-//   Body: { entries: [{ exam_type_id, class_id, max_marks }] }
-//   max_marks = null/'' removes the row (class won't show that exam).
 app.post('/api/admin/exam-max-marks', async (req, res) => {
     const { entries = [] } = req.body;
     const conn = await db.getConnection();
@@ -2582,18 +2616,17 @@ app.delete('/api/admin/subject-teachers/:id', async (req, res) => {
 // =====================================================================
 
 // --- 17.D.1 Class data bundle for the marks grid ------------------
-//   GET /api/admin/reports/class-data/:classId
-//   Returns everything the grid needs: students, subjects (with the
-//   assigned teacher), exam types (with this class's max marks), and
-//   every existing mark.
+//   Marks are scoped to the active academic year. Alumni students are
+//   excluded from the roster (status filter).
 app.get('/api/admin/reports/class-data/:classId', async (req, res) => {
     const { classId } = req.params;
     try {
         const [cls] = await db.execute('SELECT * FROM classes WHERE id = ?', [classId]);
         if (cls.length === 0) return res.status(404).json({ error: 'Class not found' });
         const instId = cls[0].institutionId;
- 
-        // Students in this class
+        const yearId = await resolveYearId(instId, req.query.academic_year_id);
+
+        // Students in this class (active only — excludes alumni/inactive)
         const [students] = await db.execute(
             `SELECT id, name, roll_no, section
                FROM users
@@ -2602,31 +2635,29 @@ app.get('/api/admin/reports/class-data/:classId', async (req, res) => {
               ORDER BY roll_no, name`,
             [classId]
         );
- 
+
         // All subjects in the school
         const [allSubjects] = await db.execute(
             'SELECT id, name FROM subjects WHERE institutionId = ? ORDER BY name',
             [instId]
         );
- 
+
         // Subject → class links
         const [scRows] = await db.execute(
             `SELECT sc.subject_id, sc.class_id FROM subject_classes sc
                JOIN subjects s ON s.id = sc.subject_id WHERE s.institutionId = ?`, [instId]);
-        const linkMap = {};   // subjectId → Set(classIds)
+        const linkMap = {};
         scRows.forEach(r => {
             if (!linkMap[r.subject_id]) linkMap[r.subject_id] = new Set();
             linkMap[r.subject_id].add(r.class_id);
         });
- 
-        // Keep only subjects linked to THIS class.
-        // A subject with no links at all → shown everywhere (legacy safety).
+
         const subjects = allSubjects.filter(s => {
             const links = linkMap[s.id];
             if (!links || links.size === 0) return true;
             return links.has(parseInt(classId, 10));
         });
- 
+
         // Teacher assignment for this class
         const [assignments] = await db.execute(
             `SELECT stm.subject_id, stm.teacher_id, u.name AS teacher_name
@@ -2637,7 +2668,7 @@ app.get('/api/admin/reports/class-data/:classId', async (req, res) => {
         );
         const assignMap = {};
         assignments.forEach(a => { assignMap[a.subject_id] = a; });
- 
+
         // Exam types + this class's max marks
         const [examTypes] = await db.execute(
             'SELECT * FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id',
@@ -2651,26 +2682,28 @@ app.get('/api/admin/reports/class-data/:classId', async (req, res) => {
         );
         const maxMap = {};
         maxRows.forEach(r => { maxMap[r.exam_type_id] = r.max_marks; });
- 
+
         const examTypesForClass = examTypes
             .filter(t => maxMap[t.id] !== undefined)
             .map(t => ({ ...t, max_marks: maxMap[t.id] }));
- 
+
         const subjectsForClass = subjects.map(s => ({
             ...s,
             teacher_id:   assignMap[s.id]?.teacher_id || null,
             teacher_name: assignMap[s.id]?.teacher_name || null
         }));
- 
+
+        // Marks for the ACTIVE academic year only
         const [marks] = await db.execute(
             `SELECT student_id, subject_id, exam_type_id, marks_obtained
                FROM student_marks
-              WHERE class_id = ?`,
-            [classId]
+              WHERE class_id = ? AND academic_year_id = ?`,
+            [classId, yearId]
         );
- 
+
         res.json({
             class: cls[0],
+            academic_year_id: yearId,
             students,
             subjects: subjectsForClass,
             examTypes: examTypesForClass,
@@ -2680,8 +2713,7 @@ app.get('/api/admin/reports/class-data/:classId', async (req, res) => {
 });
 
 // --- 17.D.2 Bulk save marks ---------------------------------------
-//   Body: { institutionId, class_id, actor_id, entries: [
-//             { student_id, subject_id, exam_type_id, marks_obtained } ] }
+//   Marks are stamped with the active academic year.
 app.post('/api/admin/reports/marks/bulk', async (req, res) => {
     const { institutionId, class_id, actor_id, entries = [] } = req.body;
     if (!institutionId || !class_id || !Array.isArray(entries)) {
@@ -2689,6 +2721,8 @@ app.post('/api/admin/reports/marks/bulk', async (req, res) => {
     }
     const conn = await db.getConnection();
     try {
+        const yearId = await resolveYearId(institutionId, req.body.academic_year_id);
+        if (!yearId) throw new Error('No active academic year. Activate one under Academics first.');
         await conn.beginTransaction();
         for (const e of entries) {
             if (!e.student_id || !e.subject_id || !e.exam_type_id) continue;
@@ -2696,16 +2730,16 @@ app.post('/api/admin/reports/marks/bulk', async (req, res) => {
                 ? null : parseFloat(e.marks_obtained);
             await conn.execute(
                 `INSERT INTO student_marks
-                   (institutionId, student_id, class_id, subject_id, exam_type_id, marks_obtained, entered_by)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)
+                   (institutionId, academic_year_id, student_id, class_id, subject_id, exam_type_id, marks_obtained, entered_by)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                  ON DUPLICATE KEY UPDATE marks_obtained = VALUES(marks_obtained),
                                          entered_by = VALUES(entered_by)`,
-                [institutionId, e.student_id, class_id, e.subject_id, e.exam_type_id,
+                [institutionId, yearId, e.student_id, class_id, e.subject_id, e.exam_type_id,
                  val, actor_id || null]
             );
         }
         await conn.commit();
-        res.json({ success: true, count: entries.length });
+        res.json({ success: true, count: entries.length, academic_year_id: yearId });
     } catch (err) {
         await conn.rollback();
         res.status(500).json({ error: err.message });
@@ -2718,10 +2752,11 @@ app.post('/api/admin/reports/marks/bulk', async (req, res) => {
 // =====================================================================
 
 // --- 17.E.1 Class summaries (overview table) ----------------------
-//   For each class: total marks entered, top student, top subject.
+//   Scoped to the active academic year; alumni students excluded.
 app.get('/api/admin/reports/class-summaries/:instId', async (req, res) => {
     const { instId } = req.params;
     try {
+        const yearId = await resolveYearId(instId, req.query.academic_year_id);
         const [classes] = await db.execute(
             'SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section',
             [instId]
@@ -2729,34 +2764,42 @@ app.get('/api/admin/reports/class-summaries/:instId', async (req, res) => {
 
         const summaries = [];
         for (const c of classes) {
-            // Total marks across the class
+            // Total marks across the class (active year, non-alumni)
             const [totalRow] = await db.execute(
-                'SELECT COALESCE(SUM(marks_obtained), 0) AS total FROM student_marks WHERE class_id = ?',
-                [c.id]
+                `SELECT COALESCE(SUM(sm.marks_obtained), 0) AS total
+                   FROM student_marks sm
+                   JOIN users u ON u.id = sm.student_id
+                  WHERE sm.class_id = ? AND sm.academic_year_id = ?
+                    AND (u.status IS NULL OR LOWER(TRIM(u.status)) <> 'alumni')`,
+                [c.id, yearId]
             );
 
-            // Top student by summed marks
+            // Top student by summed marks (active year, non-alumni)
             const [topStudent] = await db.execute(
                 `SELECT u.name, COALESCE(SUM(sm.marks_obtained), 0) AS marks
                    FROM users u
-                   LEFT JOIN student_marks sm ON sm.student_id = u.id
+                   LEFT JOIN student_marks sm
+                     ON sm.student_id = u.id AND sm.class_id = ? AND sm.academic_year_id = ?
                   WHERE u.class_id = ? AND LOWER(TRIM(u.role)) = 'student'
+                    AND (u.status IS NULL OR LOWER(TRIM(u.status)) <> 'alumni')
                   GROUP BY u.id, u.name
                   ORDER BY marks DESC
                   LIMIT 1`,
-                [c.id]
+                [c.id, yearId, c.id]
             );
 
-            // Top subject by summed marks
+            // Top subject by summed marks (active year, non-alumni)
             const [topSubject] = await db.execute(
                 `SELECT sub.name, COALESCE(SUM(sm.marks_obtained), 0) AS marks
                    FROM student_marks sm
                    JOIN subjects sub ON sub.id = sm.subject_id
-                  WHERE sm.class_id = ?
+                   JOIN users u ON u.id = sm.student_id
+                  WHERE sm.class_id = ? AND sm.academic_year_id = ?
+                    AND (u.status IS NULL OR LOWER(TRIM(u.status)) <> 'alumni')
                   GROUP BY sub.id, sub.name
                   ORDER BY marks DESC
                   LIMIT 1`,
-                [c.id]
+                [c.id, yearId]
             );
 
             summaries.push({
@@ -2802,7 +2845,7 @@ async function buildReportCard(studentId) {
     );
     const institution = instRows[0] || null;
 
-    // Active academic year (for month buckets + year label)
+    // Active academic year (for month buckets + year label + marks scope)
     const [yearRows] = await db.execute(
         `SELECT * FROM academic_years
           WHERE institutionId = ? AND isActive = 1 LIMIT 1`,
@@ -2810,27 +2853,27 @@ async function buildReportCard(studentId) {
     );
     const academicYear = yearRows[0] || null;
 
-     // Subjects — filtered to this student's class
-        const [allSubjectsRC] = await db.execute(
-            'SELECT id, name FROM subjects WHERE institutionId = ? ORDER BY name',
-            [student.institutionId]
-        );
-        const [scRowsRC] = await db.execute(
-            `SELECT sc.subject_id, sc.class_id FROM subject_classes sc
-               JOIN subjects s ON s.id = sc.subject_id WHERE s.institutionId = ?`,
-            [student.institutionId]
-        );
-        const linkMapRC = {};
-        scRowsRC.forEach(r => {
-            if (!linkMapRC[r.subject_id]) linkMapRC[r.subject_id] = new Set();
-            linkMapRC[r.subject_id].add(r.class_id);
-        });
-        const subjects = allSubjectsRC.filter(s => {
-            const links = linkMapRC[s.id];
-            if (!links || links.size === 0) return true;
-            return links.has(student.class_id);
-        });
-        
+    // Subjects — filtered to this student's class
+    const [allSubjectsRC] = await db.execute(
+        'SELECT id, name FROM subjects WHERE institutionId = ? ORDER BY name',
+        [student.institutionId]
+    );
+    const [scRowsRC] = await db.execute(
+        `SELECT sc.subject_id, sc.class_id FROM subject_classes sc
+           JOIN subjects s ON s.id = sc.subject_id WHERE s.institutionId = ?`,
+        [student.institutionId]
+    );
+    const linkMapRC = {};
+    scRowsRC.forEach(r => {
+        if (!linkMapRC[r.subject_id]) linkMapRC[r.subject_id] = new Set();
+        linkMapRC[r.subject_id].add(r.class_id);
+    });
+    const subjects = allSubjectsRC.filter(s => {
+        const links = linkMapRC[s.id];
+        if (!links || links.size === 0) return true;
+        return links.has(student.class_id);
+    });
+
     const [examTypes] = await db.execute(
         'SELECT * FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id',
         [student.institutionId]
@@ -2845,36 +2888,47 @@ async function buildReportCard(studentId) {
         .filter(t => maxMap[t.id] !== undefined)
         .map(t => ({ ...t, max_marks: maxMap[t.id] }));
 
-    // This student's marks
-    const [marks] = await db.execute(
-        `SELECT subject_id, exam_type_id, marks_obtained
-           FROM student_marks
-          WHERE student_id = ?`,
-        [studentId]
-    );
+    // This student's marks for the ACTIVE academic year only
+    let marks = [];
+    if (academicYear) {
+        const [mRows] = await db.execute(
+            `SELECT subject_id, exam_type_id, marks_obtained
+               FROM student_marks
+              WHERE student_id = ? AND academic_year_id = ?`,
+            [studentId, academicYear.id]
+        );
+        marks = mRows;
+    }
 
-    // ---- Attendance: auto-compute monthly W/P from daily rows -----
+    // ---- Attendance: pulled from the Attendance module (Section 15) ----
+    //   working_days = distinct dates the student's CLASS had attendance
+    //   taken that month; present_days = this student's Present + Late.
     let attendance = [];
     if (academicYear) {
         const buckets = buildMonthBuckets(academicYear.startDate, academicYear.endDate);
         for (const b of buckets) {
+            let working = 0, present = 0;
             try {
-                const [aRows] = await db.execute(
-                    `SELECT status, COUNT(*) AS cnt
+                const [wRows] = await db.execute(
+                    `SELECT COUNT(DISTINCT a.attendance_date) AS working
+                       FROM attendance a
+                       JOIN users u ON u.id = a.user_id
+                      WHERE u.class_id = ? AND a.attendance_date BETWEEN ? AND ?`,
+                    [student.class_id, b.from, b.to]
+                );
+                working = Number(wRows[0]?.working || 0);
+                const [pRows] = await db.execute(
+                    `SELECT COUNT(*) AS present
                        FROM attendance
-                      WHERE user_id = ? AND attendance_date BETWEEN ? AND ?
-                      GROUP BY status`,
+                      WHERE user_id = ? AND status IN ('P','L')
+                        AND attendance_date BETWEEN ? AND ?`,
                     [studentId, b.from, b.to]
                 );
-                let present = 0, working = 0;
-                aRows.forEach(r => {
-                    working += r.cnt;
-                    if (r.status === 'P' || r.status === 'L') present += r.cnt;
-                });
-                attendance.push({ month: b.label, working_days: working, present_days: present });
+                present = Number(pRows[0]?.present || 0);
             } catch {
-                attendance.push({ month: b.label, working_days: 0, present_days: 0 });
+                working = 0; present = 0;
             }
+            attendance.push({ month: b.label, working_days: working, present_days: present });
         }
     }
 

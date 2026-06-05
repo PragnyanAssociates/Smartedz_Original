@@ -9,8 +9,17 @@ import { GraduationCap } from 'lucide-react';
 //    { student, institution, academicYear, subjects, examTypes, marks, attendance }
 //
 //  School logo + name + contact come from `institution` (multi-tenant -
-//  no hardcoded school). Attendance is the auto-computed monthly W/P.
+//  no hardcoded school). Attendance is the auto-computed monthly W/P,
+//  pulled from the Attendance module.
 // =====================================================================
+
+// Format a numeric mark without trailing decimals: 20.00 -> 20, 19.50 -> 19.5
+const fmtNum = (v) => {
+  if (v === null || v === undefined || v === '') return '';
+  const n = Number(v);
+  if (isNaN(n)) return v;
+  return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(2)));
+};
 
 export default function ReportCardView({ card }) {
   const { student, institution, academicYear, subjects, examTypes, marks, attendance } = card;
@@ -61,7 +70,7 @@ export default function ReportCardView({ card }) {
 
   return (
     <div className="report-card bg-white p-6 sm:p-8 max-w-4xl mx-auto" id="report-card-printable">
-      
+
       {/* ---- School header ---- */}
       <div className="text-center border-b-2 border-zinc-200 pb-5 mb-6">
         {institution?.logo ? (
@@ -110,7 +119,7 @@ export default function ReportCardView({ card }) {
                 <th className="border border-zinc-300 px-3 py-2.5 text-left font-semibold text-zinc-700">Subject</th>
                 {examTypes.map(t => (
                   <th key={t.id} className="border border-zinc-300 px-3 py-2.5 text-center font-semibold text-zinc-700 whitespace-nowrap">
-                    {t.name}<br/><span className="text-[10px] font-medium text-zinc-500">({t.max_marks})</span>
+                    {t.name}<br/><span className="text-[10px] font-medium text-zinc-500">({fmtNum(t.max_marks)})</span>
                   </th>
                 ))}
                 <th className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-primary">Total</th>
@@ -124,12 +133,12 @@ export default function ReportCardView({ card }) {
                     const v = getMark(s.id, t.id);
                     return (
                       <td key={t.id} className="border border-zinc-300 px-3 py-2.5 text-center text-zinc-700 tabular-nums">
-                        {v != null ? v : '-'}
+                        {v != null ? fmtNum(v) : '-'}
                       </td>
                     );
                   })}
                   <td className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-primary tabular-nums">
-                    {subjectRowTotal(s.id) || '-'}
+                    {fmtNum(subjectRowTotal(s.id)) || '-'}
                   </td>
                 </tr>
               ))}
@@ -138,11 +147,11 @@ export default function ReportCardView({ card }) {
                 <td className="border border-zinc-300 px-3 py-2.5 font-bold text-zinc-800">Total</td>
                 {examTypes.map(t => (
                   <td key={t.id} className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-zinc-800 tabular-nums">
-                    {examColumnTotal(t.id) || '-'}
+                    {fmtNum(examColumnTotal(t.id)) || '-'}
                   </td>
                 ))}
                 <td className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-primary tabular-nums">
-                  {grandTotal || '-'}
+                  {fmtNum(grandTotal) || '-'}
                 </td>
               </tr>
             </tbody>
@@ -155,8 +164,8 @@ export default function ReportCardView({ card }) {
         <div className="flex justify-end mb-10">
           <div className="bg-primary/5 rounded-md px-4 py-2.5 text-sm ring-1 ring-primary/20 flex items-center gap-1.5">
             <span className="font-semibold text-zinc-700">Grand Total: </span>
-            <span className="font-bold text-primary tabular-nums">{grandTotal}</span>
-            <span className="text-zinc-500 tabular-nums">/ {grandMax}</span>
+            <span className="font-bold text-primary tabular-nums">{fmtNum(grandTotal)}</span>
+            <span className="text-zinc-500 tabular-nums">/ {fmtNum(grandMax)}</span>
           </div>
         </div>
       )}

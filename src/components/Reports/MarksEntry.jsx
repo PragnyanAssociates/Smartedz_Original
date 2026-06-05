@@ -3,7 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
-  ArrowLeft, Loader2, Save, Lock, RefreshCw, AlertTriangle, Info, Search, ChevronDown
+  ArrowLeft, Loader2, Save, Lock, RefreshCw, AlertTriangle, Info, Search, ChevronDown, ArrowUpDown
 } from 'lucide-react';
 
 // =====================================================================
@@ -15,7 +15,25 @@ import {
 //                                   assigned teacher for this class
 //  "Overall" view shows the per-subject sum across all exam types and
 //  is always read-only.
+//
+//  Marks are scoped to the active academic year by the backend.
+//  Students are shown roll-wise by default, with an optional sort by
+//  total (High -> Low / Low -> High) that recalculates live.
 // =====================================================================
+
+// Format a numeric mark without trailing decimals: 20.00 -> 20, 19.50 -> 19.5
+const fmtNum = (v) => {
+  if (v === null || v === undefined || v === '') return '';
+  const n = Number(v);
+  if (isNaN(n)) return v;
+  return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(2)));
+};
+
+// Numeric roll for ordering (non-numeric rolls sort last)
+const rollNum = (s) => {
+  const n = parseInt(s.roll_no, 10);
+  return isNaN(n) ? Number.POSITIVE_INFINITY : n;
+};
 
 export default function MarksEntry({ classInfo, canManage, onBack }) {
   const { user } = useAuth();
@@ -28,6 +46,7 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving]   = useState(false);
   const [query, setQuery]     = useState('');
+  const [sortMode, setSortMode] = useState('roll');   // 'roll' | 'high' | 'low'
 
   // -----------------------------------------------------------------
   const load = useCallback(async () => {
@@ -38,11 +57,11 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
       if (!res.ok) throw new Error(d.error || 'Failed to load');
       setData(d);
 
-      // Seed marks map
+      // Seed marks map (strip trailing decimals so 19.00 shows as 19)
       const m = {};
       (d.marks || []).forEach(row => {
         m[`${row.student_id}:${row.subject_id}:${row.exam_type_id}`] =
-          row.marks_obtained != null ? String(row.marks_obtained) : '';
+          row.marks_obtained != null ? fmtNum(row.marks_obtained) : '';
       });
       setMarks(m);
       setOriginal(JSON.parse(JSON.stringify(m)));
@@ -60,12 +79,9 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
   useEffect(() => { load(); }, [load]);
 
   // -----------------------------------------------------------------
-  // Can the current user edit a given subject column?
-  // -----------------------------------------------------------------
   const canEditSubject = useCallback((subject) => {
     if (!canManage) return false;
     if (isAllAccess) return true;
-    // Teacher: only their assigned subject for this class
     return subject.teacher_id === user.id;
   }, [canManage, isAllAccess, user]);
 
@@ -77,7 +93,6 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
   // -----------------------------------------------------------------
   const setMark = (studentId, subjectId, value) => {
     if (!/^\d*\.?\d*$/.test(value)) return;
-    // Clamp to max marks
     if (activeExamType && value !== '') {
       const num = parseFloat(value);
       if (!isNaN(num) && num > activeExamType.max_marks) return;
@@ -100,7 +115,6 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
     }, 0);
   };
 
-  // Student's grand total across all subjects + exam types
   const studentGrandTotal = (studentId) => {
     if (!data) return 0;
     return data.subjects.reduce((sum, s) => sum + subjectOverall(studentId, s.id), 0);
@@ -117,7 +131,7 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
   };
 
   // -----------------------------------------------------------------
-  // Save - only changed cells
+  // Save - only changed cells (backend stamps the active academic year)
   // -----------------------------------------------------------------
   const handleSave = async () => {
     const entries = [];
@@ -157,6 +171,8 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
   };
 
   // -----------------------------------------------------------------
+  // Search filter, then sort (roll-wise default / by total)
+  // -----------------------------------------------------------------
   const filteredStudents = useMemo(() => {
     if (!data) return [];
     if (!query.trim()) return data.students;
@@ -167,12 +183,38 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
     );
   }, [data, query]);
 
+  const sortedStudents = useMemo(() => {
+    const list = [...filteredStudents];
+    if (sortMode === 'high' || sortMode === 'low') {
+      list.sort((a, b) => {
+        const diff = studentExamTotal(a.id) - studentExamTotal(b.id);
+        return sortMode === 'high' ? -diff : diff;
+      });
+    } else {
+      // roll-wise (default)
+      list.sort((a, b) => {
+        const r = rollNum(a) - rollNum(b);
+        if (r !== 0) return r;
+        return (a.name || '').localeCompare(b.name || '');
+      });
+    }
+    return list;
+    // recompute when marks or selected exam change so totals stay correct
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredStudents, sortMode, marks, examTypeId, data]);
+
   if (loading) {
     return <div className="h-64 flex items-center justify-center"><Loader2 className="animate-spin size-8 text-primary" /></div>;
   }
   if (!data) return null;
 
   const noExamTypes = data.examTypes.length === 0;
+
+  const sortOptions = [
+    { id: 'roll', label: 'Roll wise' },
+    { id: 'high', label: 'High → Low' },
+    { id: 'low',  label: 'Low → High' }
+  ];
 
   return (
     <div className="space-y-4 sm:space-y-6 animate-in fade-in duration-300">
@@ -186,22 +228,22 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
           <h2 className="text-xl font-semibold text-zinc-900 tracking-tight">{classInfo.class_group}</h2>
           <p className="text-xs font-medium text-zinc-500 mt-1 uppercase tracking-wider">Marks Entry</p>
         </div>
-        
-        <div className="flex flex-col sm:flex-row flex-wrap items-center gap-3 w-full lg:w-auto">
+
+        <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-3 w-full lg:w-auto">
           <div className="relative w-full sm:w-64">
             <Search className="size-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input value={query} onChange={e => setQuery(e.target.value)}
               placeholder="Search students..."
               className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
           </div>
-          
+
           <div className="flex items-center gap-2 w-full sm:w-auto">
             <div className="relative w-full sm:w-auto">
               <select value={examTypeId} onChange={e => setExamTypeId(e.target.value)}
                 className="h-9 w-full sm:w-48 bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none transition-colors shadow-sm">
                 <option value="overall">Overall (read-only)</option>
                 {data.examTypes.map(t => (
-                  <option key={t.id} value={t.id}>{t.name} (max {t.max_marks})</option>
+                  <option key={t.id} value={t.id}>{t.name} (max {fmtNum(t.max_marks)})</option>
                 ))}
               </select>
               <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -212,6 +254,31 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
             </button>
           </div>
         </div>
+      </div>
+
+      {/* Sort control */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+          <ArrowUpDown className="size-3.5" /> Sort
+        </span>
+        <div className="inline-flex items-center bg-white border border-zinc-200 rounded-md p-0.5 shadow-sm">
+          {sortOptions.map(o => {
+            const active = sortMode === o.id;
+            return (
+              <button key={o.id} onClick={() => setSortMode(o.id)}
+                className={`px-3 h-7 rounded text-xs font-semibold transition-colors whitespace-nowrap ${
+                  active ? 'bg-primary text-white shadow-sm' : 'text-zinc-600 hover:bg-zinc-50'
+                }`}>
+                {o.label}
+              </button>
+            );
+          })}
+        </div>
+        {sortMode !== 'roll' && (
+          <span className="text-[11px] text-zinc-400 font-medium">
+            by {isOverall ? 'grand total' : (activeExamType ? activeExamType.name + ' total' : 'total')}
+          </span>
+        )}
       </div>
 
       {noExamTypes && (
@@ -228,7 +295,7 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
         <div className="bg-blue-50/50 border border-blue-100 rounded-md p-3 flex items-center gap-2 text-xs font-medium text-blue-700 leading-relaxed">
           <Info className="size-4 shrink-0" />
           <span>
-            Editing <strong className="font-semibold text-blue-900">{activeExamType.name}</strong> - max {activeExamType.max_marks} marks.
+            Editing <strong className="font-semibold text-blue-900">{activeExamType.name}</strong> - max {fmtNum(activeExamType.max_marks)} marks.
             {!isAllAccess && ' Locked columns belong to other teachers.'}
           </span>
         </div>
@@ -265,13 +332,13 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-100">
-            {filteredStudents.length === 0 ? (
+            {sortedStudents.length === 0 ? (
               <tr>
                 <td colSpan={data.subjects.length + 3} className="px-5 py-8 text-center text-zinc-400 text-sm italic">
                   No students found.
                 </td>
               </tr>
-            ) : filteredStudents.map(stu => (
+            ) : sortedStudents.map(stu => (
               <tr key={stu.id} className="hover:bg-zinc-50/50 transition-colors">
                 <td className="px-4 py-3 sticky left-0 bg-white z-10 font-semibold text-zinc-600 text-sm">{stu.roll_no || '-'}</td>
                 <td className="px-4 py-3 sticky left-16 bg-white z-10 font-semibold text-zinc-900 text-sm border-r border-zinc-100 shadow-[1px_0_0_0_rgba(0,0,0,0.05)] truncate max-w-[200px]">{stu.name}</td>
@@ -281,7 +348,7 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
                     return (
                       <td key={s.id} className="p-2 border-r border-zinc-100 last:border-r-0 text-center">
                         <span className="text-sm font-semibold text-zinc-600">
-                          {subjectOverall(stu.id, s.id) || '-'}
+                          {fmtNum(subjectOverall(stu.id, s.id)) || '-'}
                         </span>
                       </td>
                     );
@@ -297,13 +364,13 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
                           editable
                             ? 'bg-white border border-zinc-200 focus:ring-2 focus:ring-primary/20 focus:border-primary/40 text-zinc-900'
                             : 'bg-zinc-50/50 border border-transparent text-zinc-400 cursor-not-allowed'
-                        }`} 
+                        }`}
                       />
                     </td>
                   );
                 })}
                 <td className="p-2 text-center bg-primary/5 font-semibold text-primary text-sm">
-                  {studentExamTotal(stu.id) || '-'}
+                  {fmtNum(studentExamTotal(stu.id)) || '-'}
                 </td>
               </tr>
             ))}

@@ -8,7 +8,13 @@ import ReportCardView from './ReportCardView';
 // =====================================================================
 //  ReportCards - for one class, list students and open their report
 //  card. Printing uses the browser's print dialog scoped to the card.
+//  Students are listed roll-wise (numeric) by default.
 // =====================================================================
+
+const rollNum = (s) => {
+  const n = parseInt(s.roll_no, 10);
+  return isNaN(n) ? Number.POSITIVE_INFINITY : n;
+};
 
 export default function ReportCards({ classInfo, onBack }) {
   const [students, setStudents] = useState([]);   // [{id, name, roll_no}]
@@ -49,12 +55,18 @@ export default function ReportCards({ classInfo, onBack }) {
   const handlePrint = () => window.print();
 
   const filtered = useMemo(() => {
-    if (!query.trim()) return students;
-    const q = query.toLowerCase();
-    return students.filter(s =>
-      (s.name || '').toLowerCase().includes(q) ||
-      String(s.roll_no || '').toLowerCase().includes(q)
-    );
+    const base = query.trim()
+      ? students.filter(s =>
+          (s.name || '').toLowerCase().includes(query.toLowerCase()) ||
+          String(s.roll_no || '').toLowerCase().includes(query.toLowerCase()))
+      : [...students];
+    // Roll-wise (numeric) default ordering
+    base.sort((a, b) => {
+      const r = rollNum(a) - rollNum(b);
+      if (r !== 0) return r;
+      return (a.name || '').localeCompare(b.name || '');
+    });
+    return base;
   }, [students, query]);
 
   // -----------------------------------------------------------------
@@ -109,11 +121,11 @@ export default function ReportCards({ classInfo, onBack }) {
         </div>
         <div className="relative w-full sm:w-72 shrink-0">
           <Search className="size-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-          <input 
-            value={query} 
+          <input
+            value={query}
             onChange={e => setQuery(e.target.value)}
             placeholder="Search students..."
-            className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" 
+            className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm"
           />
         </div>
       </div>
