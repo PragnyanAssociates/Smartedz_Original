@@ -6,7 +6,7 @@ import apiClient from '../../api/client';
 import { MdArrowBack } from 'react-icons/md';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
-import { Users, Loader2, Check, Megaphone } from 'lucide-react';
+import { Users, Loader2, Check, Megaphone, ChevronDown, ChevronRight, Camera } from 'lucide-react';
 
 const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
     const { user } = useAuth();
@@ -16,12 +16,22 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
     const canEdit = can('GroupChat', 'edit');
     const hasCreateRights = isAllAccess || canEdit;
 
+    // Form States
     const [groupName, setGroupName] = useState('');
     const [description, setDescription] = useState('');
     const [isReadOnly, setIsReadOnly] = useState(false);
+    const [groupDp, setGroupDp] = useState(null); // NEW: State for Group DP
+    
+    // Selection States
     const [selectedCategories, setSelectedCategories] = useState([]);
+    const [selectedUserIds, setSelectedUserIds] = useState([]); 
+    
+    // Accordion State
+    const [expandedSection, setExpandedSection] = useState(null);
 
+    // Data States
     const [options, setOptions] = useState({ classes: [], roles: [] });
+    const [usersList, setUsersList] = useState([]); 
     const [isLoadingOptions, setIsLoadingOptions] = useState(true);
     const [isCreating, setIsCreating] = useState(false);
 
@@ -29,18 +39,46 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
         const fetchOptions = async () => {
             if (!user?.id || !user?.institutionId) return;
             try {
-                const res = await apiClient.get('/groups/options', {
-                    params: { userId: user.id, instId: user.institutionId }
-                });
-                setOptions(res.data);
+                const [resOptions, resUsers] = await Promise.all([
+                    apiClient.get('/groups/options', { params: { userId: user.id, instId: user.institutionId } }),
+                    apiClient.get('/groups/users-options', { params: { instId: user.institutionId } })
+                ]);
+                
+                setOptions(resOptions.data);
+                setUsersList(resUsers.data);
             } catch (error) {
-                console.error("Failed to fetch group options");
+                console.error("Failed to fetch group options or users");
             } finally {
                 setIsLoadingOptions(false);
             }
         };
         fetchOptions();
     }, [user?.id, user?.institutionId]);
+
+    // --- Image Handling ---
+    const handlePickImage = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        if (!file.type.startsWith('image/')) {
+            alert('Please select a valid image file.');
+            e.target.value = ''; 
+            return;
+        }
+
+        const MAX_SIZE = 3 * 1024 * 1024; // 3MB
+        if (file.size > MAX_SIZE) {
+            alert('Image is too large! Please select a file under 3MB.');
+            e.target.value = ''; 
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            setGroupDp(reader.result); // Save Base64 to state
+        };
+        reader.readAsDataURL(file);
+    };
 
     const toggleCategory = (category) => {
         setSelectedCategories(prev =>
@@ -50,24 +88,55 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
         );
     };
 
+    const toggleUser = (userId) => {
+        setSelectedUserIds(prev =>
+            prev.includes(userId)
+                ? prev.filter(id => id !== userId)
+                : [...prev, userId]
+        );
+    };
+
+    const toggleSection = (section) => {
+        setExpandedSection(prev => prev === section ? null : section);
+    };
+
     const handleCreateGroup = async () => {
         if (!groupName.trim()) return alert("Group name is required");
-        if (selectedCategories.length === 0) return alert("Select at least one class or role");
+        if (selectedCategories.length === 0 && selectedUserIds.length === 0) {
+            return alert("Select at least one class, role, or specific individual.");
+        }
 
         setIsCreating(true);
         try {
-            const res = await apiClient.post('/groups', {
+            // 1. Create the Group
+            const createRes = await apiClient.post('/groups', {
                 userId: user.id,
                 institutionId: user.institutionId,
                 name: groupName.trim(),
                 description: description.trim(),
                 selectedCategories,
+                selectedUserIds,
                 isReadOnly
             });
 
+            const newGroupId = createRes.data.groupId;
+
+            // 2. If a DP was selected, upload it immediately
+            if (groupDp) {
+                try {
+                    await apiClient.put(`/groups/${newGroupId}/dp`, { 
+                        userId: user.id, 
+                        group_dp: groupDp 
+                    });
+                } catch (dpError) {
+                    console.error("Failed to upload DP during creation:", dpError);
+                    alert("Group created, but failed to upload display picture.");
+                }
+            }
+
             alert("Success: Group created");
             if (isEmbedded && onGroupCreated) {
-                onGroupCreated(res.data.groupId);
+                onGroupCreated(newGroupId);
             } else {
                 navigate('/WhatsAppLayout');
             }
@@ -76,6 +145,77 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
         } finally {
             setIsCreating(false);
         }
+    };
+
+    const renderAccordionSection = (title, items, isClass = false) => {
+        if (!items || items.length === 0) return null;
+
+        return (
+            <div className="space-y-2.5">
+                <h3 className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">{title}</h3>
+                <div className="space-y-2">
+                    {items.map(categoryName => {
+                        const isExpanded = expandedSection === categoryName;
+                        const isCategorySelected = selectedCategories.includes(categoryName);
+                        
+                        const categoryUsers = usersList.filter(u => 
+                            isClass ? u.class_name === categoryName : u.role === categoryName
+                        );
+
+                        return (
+                            <div key={categoryName} className="border border-zinc-200 rounded-lg overflow-hidden bg-white shadow-sm transition-all">
+                                <div className="flex items-center justify-between p-3 cursor-pointer hover:bg-zinc-50 transition-colors" onClick={() => toggleSection(categoryName)}>
+                                    <div className="flex items-center gap-2">
+                                        <div className="text-zinc-400">
+                                            {isExpanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+                                        </div>
+                                        <span className="text-sm font-semibold text-zinc-800">{categoryName}</span>
+                                        <span className="text-xs text-zinc-500 bg-zinc-100 px-2 py-0.5 rounded-full font-medium">{categoryUsers.length}</span>
+                                    </div>
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); toggleCategory(categoryName); }}
+                                        className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide transition-all ${
+                                            isCategorySelected 
+                                            ? 'bg-primary/10 text-primary hover:bg-primary/20' 
+                                            : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'
+                                        }`}
+                                    >
+                                        {isCategorySelected ? 'Deselect All' : 'Select All'}
+                                    </button>
+                                </div>
+
+                                {isExpanded && categoryUsers.length > 0 && (
+                                    <div className="p-3 bg-zinc-50/50 border-t border-zinc-100 flex flex-wrap gap-2">
+                                        {categoryUsers.map(u => {
+                                            const isUserSelected = selectedUserIds.includes(u.id) || isCategorySelected;
+                                            return (
+                                                <button
+                                                    key={`user-${u.id}`}
+                                                    onClick={() => { if (!isCategorySelected) toggleUser(u.id); }}
+                                                    disabled={isCategorySelected}
+                                                    className={`px-3 py-1.5 rounded-full text-xs font-semibold ring-1 ring-inset transition-all flex items-center gap-1.5 ${
+                                                        isUserSelected 
+                                                        ? 'bg-blue-600 text-white ring-blue-600 shadow-sm opacity-100' 
+                                                        : 'bg-white text-zinc-700 ring-zinc-200 hover:bg-zinc-50'
+                                                    } ${isCategorySelected && !selectedUserIds.includes(u.id) ? 'opacity-60 cursor-not-allowed' : ''}`}
+                                                >
+                                                    {u.name} {isUserSelected && <Check className="size-3" />}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                                {isExpanded && categoryUsers.length === 0 && (
+                                    <div className="p-3 bg-zinc-50/50 border-t border-zinc-100 text-xs text-zinc-400 italic">
+                                        No individuals found.
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+        );
     };
 
     if (!hasCreateRights) {
@@ -100,7 +240,25 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
 
             <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-6">
 
-                <div className="space-y-4">
+                {/* --- IMAGE UPLOAD SECTION --- */}
+                <div className="flex flex-col items-center justify-center space-y-3">
+                    <div className="relative group">
+                        <div className="size-28 rounded-full bg-zinc-100 border-2 border-dashed border-zinc-300 flex items-center justify-center overflow-hidden">
+                            {groupDp ? (
+                                <img src={groupDp} alt="Group DP Preview" className="w-full h-full object-cover" />
+                            ) : (
+                                <Camera className="size-8 text-zinc-400" />
+                            )}
+                        </div>
+                        <input type="file" accept="image/*" className="hidden" id="group-dp-upload" onChange={handlePickImage} disabled={isCreating} />
+                        <label htmlFor="group-dp-upload" className="absolute bottom-0 right-0 flex items-center justify-center size-9 bg-primary hover:bg-primary/90 text-white rounded-full cursor-pointer shadow-lg transition-colors ring-4 ring-white">
+                            <Camera className="size-4" />
+                        </label>
+                    </div>
+                    <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Group Icon (Optional)</p>
+                </div>
+
+                <div className="space-y-4 pt-2 border-t border-zinc-100">
                     <div className="space-y-1.5">
                         <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">
                             Group Name <span className="text-red-500">*</span>
@@ -147,7 +305,7 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
                     <label className="block text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-4">Add Members <span className="text-red-500">*</span></label>
                     {isLoadingOptions ? (
                         <div className="flex items-center gap-2 text-zinc-500 text-sm font-medium p-4 bg-zinc-50 rounded-lg ring-1 ring-inset ring-black/5 justify-center">
-                            <Loader2 className="size-4 animate-spin text-primary" /> Loading categories...
+                            <Loader2 className="size-4 animate-spin text-primary" /> Loading options...
                         </div>
                     ) : (
                         <div className="space-y-6">
@@ -167,47 +325,9 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
                                 </div>
                             )}
 
-                            {options.roles.length > 0 && (
-                                <div className="space-y-2.5">
-                                    <h3 className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Staff Roles</h3>
-                                    <div className="flex flex-wrap gap-2">
-                                        {options.roles.map(role => (
-                                            <button
-                                                key={`role-${role}`}
-                                                onClick={() => toggleCategory(role)}
-                                                className={`px-3 py-1.5 rounded-full text-xs font-semibold ring-1 ring-inset transition-all flex items-center gap-1.5 ${
-                                                    selectedCategories.includes(role) 
-                                                    ? 'bg-indigo-600 text-white ring-indigo-600 shadow-sm' 
-                                                    : 'bg-white text-zinc-700 ring-zinc-200 hover:bg-zinc-50 hover:ring-zinc-300'
-                                                }`}
-                                            >
-                                                {role} {selectedCategories.includes(role) && <Check className="size-3" />}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-
-                            {options.classes.length > 0 && (
-                                <div className="space-y-2.5">
-                                    <h3 className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Classes (Students)</h3>
-                                    <div className="flex flex-wrap gap-2">
-                                        {options.classes.map(cls => (
-                                            <button
-                                                key={`class-${cls}`}
-                                                onClick={() => toggleCategory(cls)}
-                                                className={`px-3 py-1.5 rounded-full text-xs font-semibold ring-1 ring-inset transition-all flex items-center gap-1.5 ${
-                                                    selectedCategories.includes(cls) 
-                                                    ? 'bg-emerald-600 text-white ring-emerald-600 shadow-sm' 
-                                                    : 'bg-white text-zinc-700 ring-zinc-200 hover:bg-zinc-50 hover:ring-zinc-300'
-                                                }`}
-                                            >
-                                                {cls} {selectedCategories.includes(cls) && <Check className="size-3" />}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
+                            {renderAccordionSection('Staff Roles', options.roles, false)}
+                            {renderAccordionSection('Classes (Students)', options.classes, true)}
+                            
                         </div>
                     )}
                 </div>
@@ -216,7 +336,7 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
             <div className="p-4 border-t border-zinc-200 bg-zinc-50 shrink-0">
                 <button
                     onClick={handleCreateGroup}
-                    disabled={isCreating || !groupName.trim() || selectedCategories.length === 0}
+                    disabled={isCreating || !groupName.trim() || (selectedCategories.length === 0 && selectedUserIds.length === 0)}
                     className="w-full h-10 bg-primary hover:bg-primary/90 text-white rounded-md text-sm font-semibold transition-colors disabled:bg-zinc-300 disabled:text-zinc-500 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-sm"
                 >
                     {isCreating ? <Loader2 className="size-4 animate-spin shrink-0" /> : null}

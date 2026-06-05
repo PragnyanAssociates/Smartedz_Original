@@ -91,6 +91,11 @@ export default function StudentMaterialsScreen() {
             {filteredMaterials.map((item) => {
               const Icon = getSubjectIcon(item.subject_name);
               const aesthetics = getSubjectAesthetics(item.subject_name);
+              
+              // Base64 Safe Handlers
+              const isBase64 = item.file_path && String(item.file_path).startsWith('data:');
+              const fileUrl = isBase64 ? item.file_path : `${SERVER_URL.replace('/api','')}${item.file_path}`;
+
               return (
                 <div key={item.id} className="group bg-white rounded-lg ring-1 ring-black/5 shadow-sm flex flex-col hover:ring-primary/30 hover:shadow-md transition-all overflow-hidden">
                   <div className={`h-32 ${aesthetics.bg} border-b border-zinc-100 flex items-center justify-center relative`}>
@@ -114,12 +119,32 @@ export default function StudentMaterialsScreen() {
                         <>
                           <button 
                             onClick={() => {
-                              const isOfficeFile = item.file_path.match(/\.(xlsx|xls|doc|docx|ppt|pptx)$/i);
-                              const fileUrl = `${SERVER_URL.replace('/api','')}${item.file_path}`;
-                              const viewUrl = isOfficeFile 
-                                ? `https://docs.google.com/viewer?url=${encodeURIComponent(fileUrl)}&embedded=true` 
-                                : fileUrl;
-                              window.open(viewUrl, "_blank");
+                              if (isBase64) {
+                                // 1. Open the new tab immediately to bypass popup blockers
+                                const win = window.open('', '_blank');
+                                if (win) {
+                                  win.document.body.innerHTML = '<div style="font-family: sans-serif; padding: 20px; text-align: center;">Loading document...</div>';
+                                  
+                                  // 2. Safely convert the massive Base64 string into a Browser Blob
+                                  fetch(fileUrl)
+                                    .then(res => res.blob())
+                                    .then(blob => {
+                                      // 3. Create a temporary URL and redirect the new tab to it
+                                      const blobUrl = URL.createObjectURL(blob);
+                                      win.location.href = blobUrl;
+                                    })
+                                    .catch(() => {
+                                      win.document.body.innerHTML = '<div style="font-family: sans-serif; padding: 20px; color: red; text-align: center;">Failed to load document.</div>';
+                                    });
+                                }
+                              } else {
+                                // Old file system logic
+                                const isOfficeFile = item.file_path.match(/\.(xlsx|xls|doc|docx|ppt|pptx)$/i);
+                                const viewUrl = isOfficeFile 
+                                  ? `https://docs.google.com/viewer?url=${encodeURIComponent(fileUrl)}&embedded=true` 
+                                  : fileUrl;
+                                window.open(viewUrl, "_blank");
+                              }
                             }} 
                             className="flex-1 h-9 bg-zinc-50 hover:bg-zinc-100 text-zinc-700 font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 ring-1 ring-inset ring-zinc-200 transition-colors"
                           >
@@ -129,12 +154,32 @@ export default function StudentMaterialsScreen() {
                           <button 
                             onClick={(e) => {
                               e.preventDefault();
-                              const link = document.createElement('a');
-                              link.href = `${SERVER_URL.replace('/api','')}${item.file_path}`;
-                              link.setAttribute('download', '');
-                              document.body.appendChild(link);
-                              link.click();
-                              document.body.removeChild(link);
+                              if (isBase64) {
+                                // 1. Convert massive Base64 string to a physical Blob file first
+                                fetch(fileUrl)
+                                  .then(res => res.blob())
+                                  .then(blob => {
+                                    // 2. Create a tiny, safe temporary URL for the download
+                                    const blobUrl = URL.createObjectURL(blob);
+                                    const link = document.createElement('a');
+                                    link.href = blobUrl;
+                                    link.setAttribute('download', item.title || 'download');
+                                    document.body.appendChild(link);
+                                    link.click();
+                                    document.body.removeChild(link);
+                                    // 3. Clean up browser memory
+                                    URL.revokeObjectURL(blobUrl); 
+                                  })
+                                  .catch(() => alert("Failed to prepare file for download."));
+                              } else {
+                                // Standard download logic for old/normal files
+                                const link = document.createElement('a');
+                                link.href = fileUrl;
+                                link.setAttribute('download', item.title || 'download');
+                                document.body.appendChild(link);
+                                link.click();
+                                document.body.removeChild(link);
+                              }
                             }} 
                             className="flex-1 h-9 bg-primary hover:bg-primary/90 text-white font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 shadow-sm transition-colors"
                           >

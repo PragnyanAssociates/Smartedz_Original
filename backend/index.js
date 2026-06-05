@@ -1699,7 +1699,7 @@ app.get('/api/admin/attendance/overview/:instId', async (req, res) => {
         const empty = {
             from, to, category, academic_year_id: yearId, user_count: userCount,
             working_days: 0, present: 0, absent: 0, late: 0, total_marks: 0,
-            avg_percentage: '0.0', series: [], per_user: []
+            avg_percentage: '0.0', series: []
         };
         if (userCount === 0) return res.json(empty);
 
@@ -1755,23 +1755,6 @@ app.get('/api/admin/attendance/overview/:instId', async (req, res) => {
                 late: Number(r.late), total: Number(r.total)
             }));
 
-            // Per-user breakdown — powers the "total / present" figure on
-            // each list row and the per-student Analysis bar chart.
-            const [pu] = await db.execute(
-                `SELECT user_id,
-                        SUM(status = 'P') AS present, SUM(status = 'L') AS late,
-                        SUM(status = 'A') AS absent, COUNT(*) AS total
-                   FROM attendance
-                  WHERE ${attWhere}
-                  GROUP BY user_id`,
-                attParams
-            );
-            const per_user = pu.map(r => ({
-                user_id: r.user_id,
-                present: Number(r.present), late: Number(r.late),
-                absent: Number(r.absent), total: Number(r.total)
-            }));
-
             const avg_percentage = total_marks > 0
                 ? (((present + late) / total_marks) * 100).toFixed(1)
                 : '0.0';
@@ -1779,7 +1762,7 @@ app.get('/api/admin/attendance/overview/:instId', async (req, res) => {
             res.json({
                 from, to, category, academic_year_id: yearId, user_count: userCount,
                 working_days, present, absent, late, total_marks,
-                avg_percentage, series, per_user
+                avg_percentage, series
             });
         } catch (attErr) {
             // Attendance table missing or query failed — degrade gracefully
@@ -1800,34 +1783,6 @@ app.get('/api/admin/attendance/overview/:instId', async (req, res) => {
 //   Two related features:
 //     • exam_schedules: printable exam timetables (date/subject/time/room)
 //     • online_exams:   actual assessments students attempt in-browser
-//
-//   ACADEMIC YEAR: exam_schedules and online_exams now carry
-//   academic_year_id, and every read/write scopes to the school's
-//   *active* academic year via the shared resolveYearId() helper
-//   (defined in the Timetable section). So when the admin switches the
-//   active year under Academics, exams & schedules switch with it —
-//   exactly like the timetable and attendance. Each year keeps its own
-//   data (non-destructive); switching back restores it.
-//
-//   REQUIRES a one-time migration (run once in your DB):
-//     ALTER TABLE exam_schedules
-//       ADD COLUMN academic_year_id INT NULL AFTER institutionId;
-//     ALTER TABLE online_exams
-//       ADD COLUMN academic_year_id INT NULL AFTER institutionId;
-//
-//     UPDATE exam_schedules s
-//       JOIN academic_years y
-//         ON y.institutionId = s.institutionId AND y.isActive = 1
-//       SET s.academic_year_id = y.id
-//      WHERE s.academic_year_id IS NULL;
-//     UPDATE online_exams e
-//       JOIN academic_years y
-//         ON y.institutionId = e.institutionId AND y.isActive = 1
-//       SET e.academic_year_id = y.id
-//      WHERE e.academic_year_id IS NULL;
-//
-//     CREATE INDEX idx_examsched_year  ON exam_schedules (academic_year_id);
-//     CREATE INDEX idx_onlineexam_year ON online_exams (academic_year_id);
 // =====================================================================
 
 // Helper — does a JSON column have content? schedule_data comes back as
@@ -1847,18 +1802,16 @@ const nowSQL = () => new Date().toISOString().slice(0, 19).replace('T', ' ');
 
 // --- 16.A.1 List all schedules for a school -----------------------
 //   GET /api/admin/exam-schedules/:instId
-//   Scoped to the active academic year.
 app.get('/api/admin/exam-schedules/:instId', async (req, res) => {
     try {
-        const yearId = await resolveYearId(req.params.instId, req.query.academic_year_id);
         const [rows] = await db.execute(
             `SELECT s.*, c.className, u.name AS created_by_name
                FROM exam_schedules s
                LEFT JOIN classes c ON c.id = s.class_id
                LEFT JOIN users u ON u.id = s.created_by
-              WHERE s.institutionId = ? AND s.academic_year_id = ?
+              WHERE s.institutionId = ?
               ORDER BY s.created_at DESC`,
-            [req.params.instId, yearId]
+            [req.params.instId]
         );
         const decorated = rows.map(r => ({
             ...r,
@@ -1871,14 +1824,12 @@ app.get('/api/admin/exam-schedules/:instId', async (req, res) => {
 // --- 16.A.2 List schedules visible to a student -------------------
 //   GET /api/admin/exam-schedules/student/:studentId
 //   Returns schedules where (class_id = student.class_id OR class_id IS NULL)
-//   AND (section = student.section OR section IS NULL), scoped to the
-//   active academic year.
+//   AND (section = student.section OR section IS NULL).
 app.get('/api/admin/exam-schedules/student/:studentId', async (req, res) => {
     try {
         const [u] = await db.execute('SELECT institutionId, class_id, section FROM users WHERE id = ?', [req.params.studentId]);
         if (u.length === 0) return res.status(404).json({ error: 'Student not found' });
         const { institutionId, class_id, section } = u[0];
-        const yearId = await resolveYearId(institutionId, req.query.academic_year_id);
 
         const [rows] = await db.execute(
             `SELECT s.*, c.className, usr.name AS created_by_name
@@ -1886,11 +1837,10 @@ app.get('/api/admin/exam-schedules/student/:studentId', async (req, res) => {
                LEFT JOIN classes c   ON c.id = s.class_id
                LEFT JOIN users usr   ON usr.id = s.created_by
               WHERE s.institutionId = ?
-                AND s.academic_year_id = ?
                 AND (s.class_id IS NULL OR s.class_id = ?)
                 AND (s.section  IS NULL OR s.section = ?)
               ORDER BY s.created_at DESC`,
-            [institutionId, yearId, class_id || 0, section || '']
+            [institutionId, class_id || 0, section || '']
         );
         const decorated = rows.map(r => ({
             ...r,
@@ -1920,7 +1870,6 @@ app.get('/api/admin/exam-schedules/single/:id', async (req, res) => {
 // --- 16.A.4 Create schedule ---------------------------------------
 //   class_id = null means "All classes"
 //   section  = null means "all sections in the class"
-//   Stamped with the active academic year.
 app.post('/api/admin/exam-schedules', async (req, res) => {
     const {
         institutionId, title, subtitle, exam_type,
@@ -1928,21 +1877,18 @@ app.post('/api/admin/exam-schedules', async (req, res) => {
     } = req.body;
     if (!institutionId || !title) return res.status(400).json({ error: 'institutionId and title required.' });
     try {
-        const yearId = await resolveYearId(institutionId, req.body.academic_year_id);
         const [result] = await db.execute(
             `INSERT INTO exam_schedules
-               (institutionId, academic_year_id, title, subtitle, exam_type, class_id, section, schedule_data, created_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [institutionId, yearId, title, subtitle || null, exam_type || 'Internal',
+               (institutionId, title, subtitle, exam_type, class_id, section, schedule_data, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [institutionId, title, subtitle || null, exam_type || 'Internal',
              class_id || null, section || null, JSON.stringify(schedule_data || []), created_by || null]
         );
-        res.json({ success: true, id: result.insertId, academic_year_id: yearId });
+        res.json({ success: true, id: result.insertId });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // --- 16.A.5 Update schedule ---------------------------------------
-//   academic_year_id is left untouched — a schedule stays in the year
-//   it was created in.
 app.put('/api/admin/exam-schedules/:id', async (req, res) => {
     const { title, subtitle, exam_type, class_id, section, schedule_data } = req.body;
     try {
@@ -1973,7 +1919,6 @@ app.delete('/api/admin/exam-schedules/:id', async (req, res) => {
 // --- 16.B.1 List exams created by/visible to a teacher ------------
 //   GET /api/admin/exams/teacher/:teacherId?instId=...
 //   Super Admin gets ALL exams in the school; teachers get only their own.
-//   Both scoped to the active academic year.
 app.get('/api/admin/exams/teacher/:teacherId', async (req, res) => {
     const { teacherId } = req.params;
     try {
@@ -1981,37 +1926,30 @@ app.get('/api/admin/exams/teacher/:teacherId', async (req, res) => {
         if (users.length === 0) return res.status(404).json({ error: 'User not found' });
         const me = users[0];
         const isAdmin = me.role === 'Super Admin' || me.role === 'Developer';
-        const yearId = await resolveYearId(me.institutionId, req.query.academic_year_id);
 
         let sql, params;
         if (isAdmin) {
             sql = `SELECT e.*, c.className, sub.name AS subject_name, u.name AS created_by_name,
-                          (SELECT COUNT(*) FROM online_exam_attempts a
-                             JOIN users su ON su.id = a.student_id
-                            WHERE a.exam_id = e.id
-                              AND (su.status IS NULL OR LOWER(TRIM(su.status)) <> 'alumni')) AS submission_count,
+                          (SELECT COUNT(*) FROM online_exam_attempts a WHERE a.exam_id = e.id) AS submission_count,
                           (SELECT COUNT(*) FROM online_exam_questions q WHERE q.exam_id = e.id) AS question_count
                      FROM online_exams e
                      LEFT JOIN classes c   ON c.id = e.class_id
                      LEFT JOIN subjects sub ON sub.id = e.subject_id
                      LEFT JOIN users u     ON u.id = e.created_by
-                    WHERE e.institutionId = ? AND e.academic_year_id = ?
+                    WHERE e.institutionId = ?
                     ORDER BY e.created_at DESC`;
-            params = [me.institutionId, yearId];
+            params = [me.institutionId];
         } else {
             sql = `SELECT e.*, c.className, sub.name AS subject_name, u.name AS created_by_name,
-                          (SELECT COUNT(*) FROM online_exam_attempts a
-                             JOIN users su ON su.id = a.student_id
-                            WHERE a.exam_id = e.id
-                              AND (su.status IS NULL OR LOWER(TRIM(su.status)) <> 'alumni')) AS submission_count,
+                          (SELECT COUNT(*) FROM online_exam_attempts a WHERE a.exam_id = e.id) AS submission_count,
                           (SELECT COUNT(*) FROM online_exam_questions q WHERE q.exam_id = e.id) AS question_count
                      FROM online_exams e
                      LEFT JOIN classes c   ON c.id = e.class_id
                      LEFT JOIN subjects sub ON sub.id = e.subject_id
                      LEFT JOIN users u     ON u.id = e.created_by
-                    WHERE e.created_by = ? AND e.academic_year_id = ?
+                    WHERE e.created_by = ?
                     ORDER BY e.created_at DESC`;
-            params = [teacherId, yearId];
+            params = [teacherId];
         }
         const [rows] = await db.execute(sql, params);
         res.json(rows);
@@ -2020,17 +1958,13 @@ app.get('/api/admin/exams/teacher/:teacherId', async (req, res) => {
 
 // --- 16.B.2 List exams for a student to take ----------------------
 //   GET /api/admin/exams/student/:studentId
-//   Returns exams where the student's class+section match, with attempt
-//   status, scoped to the active academic year.
+//   Returns exams where the student's class+section match, with attempt status.
 app.get('/api/admin/exams/student/:studentId', async (req, res) => {
     const { studentId } = req.params;
     try {
-        const [u] = await db.execute('SELECT institutionId, class_id, section, status FROM users WHERE id = ?', [studentId]);
+        const [u] = await db.execute('SELECT institutionId, class_id, section FROM users WHERE id = ?', [studentId]);
         if (u.length === 0) return res.status(404).json({ error: 'Student not found' });
-        // Alumni (passed-out) students no longer receive exams.
-        if ((u[0].status || '').toLowerCase() === 'alumni') return res.json([]);
         const { institutionId, class_id, section } = u[0];
-        const yearId = await resolveYearId(institutionId, req.query.academic_year_id);
 
         const [rows] = await db.execute(
             `SELECT e.id AS exam_id, e.title, e.description, e.time_limit_mins, e.total_marks,
@@ -2043,12 +1977,11 @@ app.get('/api/admin/exams/student/:studentId', async (req, res) => {
                LEFT JOIN subjects sub ON sub.id = e.subject_id
                LEFT JOIN online_exam_attempts a ON a.exam_id = e.id AND a.student_id = ?
               WHERE e.institutionId = ?
-                AND e.academic_year_id = ?
                 AND e.class_id = ?
                 AND (e.section IS NULL OR e.section = ?)
                 AND e.status = 'published'
               ORDER BY e.created_at DESC`,
-            [studentId, institutionId, yearId, class_id || 0, section || '']
+            [studentId, institutionId, class_id || 0, section || '']
         );
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -2080,7 +2013,6 @@ app.get('/api/admin/exams/:examId', async (req, res) => {
 // --- 16.B.4 Create or update exam --------------------------------
 //   Body: { institutionId, title, description, class_id, section, subject_id,
 //           time_limit_mins, status, created_by, questions: [...] }
-//   New exams are stamped with the active academic year.
 app.post('/api/admin/exams', async (req, res) => {
     const {
         institutionId, title, description, class_id, section, subject_id,
@@ -2091,15 +2023,14 @@ app.post('/api/admin/exams', async (req, res) => {
     }
     const conn = await db.getConnection();
     try {
-        const yearId = await resolveYearId(institutionId, req.body.academic_year_id);
         await conn.beginTransaction();
         const totalMarks = questions.reduce((sum, q) => sum + (parseInt(q.marks, 10) || 0), 0);
         const [result] = await conn.execute(
             `INSERT INTO online_exams
-              (institutionId, academic_year_id, title, description, class_id, section, subject_id,
+              (institutionId, title, description, class_id, section, subject_id,
                time_limit_mins, total_marks, created_by, status)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [institutionId, yearId, title, description || null, class_id, section || null,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [institutionId, title, description || null, class_id, section || null,
              subject_id || null, parseInt(time_limit_mins, 10) || 0, totalMarks,
              created_by, status || 'published']
         );
@@ -2117,7 +2048,7 @@ app.post('/api/admin/exams', async (req, res) => {
             );
         }
         await conn.commit();
-        res.json({ success: true, id: examId, academic_year_id: yearId });
+        res.json({ success: true, id: examId });
     } catch (err) {
         await conn.rollback();
         res.status(500).json({ error: err.message });
@@ -2134,7 +2065,6 @@ app.put('/api/admin/exams/:examId', async (req, res) => {
         await conn.beginTransaction();
         const totalMarks = questions.reduce((sum, q) => sum + (parseInt(q.marks, 10) || 0), 0);
 
-        // academic_year_id left untouched — an exam stays in the year it was created in.
         await conn.execute(
             `UPDATE online_exams
                 SET title = ?, description = ?, class_id = ?, section = ?, subject_id = ?,
@@ -2178,8 +2108,6 @@ app.delete('/api/admin/exams/:examId', async (req, res) => {
 
 // =====================================================================
 // === 16.C ATTEMPTS (student takes the exam) ==========================
-//   Attempts belong to an exam, which is already year-scoped, so no
-//   academic_year_id is needed on the attempt rows themselves.
 // =====================================================================
 
 // --- 16.C.1 Get questions without answers (for student to take) ---
@@ -2297,7 +2225,6 @@ app.get('/api/admin/exams/:examId/submissions', async (req, res) => {
                FROM online_exam_attempts a
                JOIN users u ON u.id = a.student_id
               WHERE a.exam_id = ?
-                AND (u.status IS NULL OR LOWER(TRIM(u.status)) <> 'alumni')
               ORDER BY u.name`,
             [req.params.examId]
         );
@@ -4588,18 +4515,12 @@ app.delete('/api/admin/preadmissions/:id', async (req, res) => {
     }
 });
 
-// --- Multer config for Study Materials ---
-const studyMatDir = 'public/uploads/study_materials';
-if (!fs.existsSync(studyMatDir)) { fs.mkdirSync(studyMatDir, { recursive: true }); }
-const studyMatStorage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, studyMatDir),
-    filename: (req, file, cb) => cb(null, 'mat_' + Date.now() + path.extname(file.originalname))
-});
-const studyMatUpload = multer({ storage: studyMatStorage, limits: { fileSize: 100 * 1024 * 1024 } }); // 100MB
-
 // =====================================================================
 // === 24. STUDY MATERIALS =============================================
 // =====================================================================
+
+// Note: Multer and fs logic have been completely removed. Files are now 
+// accepted as Base64 text strings directly in the JSON payload.
 
 // --- 24.1 List Materials (Admin/Teacher) ---
 app.get('/api/admin/study-materials/:instId', async (req, res) => {
@@ -4609,14 +4530,12 @@ app.get('/api/admin/study-materials/:instId', async (req, res) => {
     if (!userId) return res.status(400).json({ error: 'userId is required' });
 
     try {
-        // 1. Get user role
         const [users] = await db.execute('SELECT role, institutionId FROM users WHERE id = ?', [userId]);
         if (users.length === 0) return res.status(404).json({ error: 'User not found' });
         
         const roleName = users[0].role;
         const isSystemAdmin = (roleName === 'Super Admin' || roleName === 'Developer');
 
-        // 2. Check Permission Matrix
         const [perms] = await db.execute(`
             SELECT p.can_read 
               FROM permissions p
@@ -4630,7 +4549,6 @@ app.get('/api/admin/study-materials/:instId', async (req, res) => {
             return res.status(403).json({ message: "You do not have permission to view study materials." });
         }
 
-        // 3. Build Query
         let query = `
             SELECT m.*, c.className, c.section, s.name AS subject_name, u.name AS uploaded_by_name
               FROM study_materials m
@@ -4641,7 +4559,6 @@ app.get('/api/admin/study-materials/:instId', async (req, res) => {
         `;
         let params = [instId];
 
-        // 4. Data Isolation (Teachers only see their own uploads)
         if (!isSystemAdmin) {
             query += ` AND m.uploaded_by = ?`;
             params.push(userId);
@@ -4654,6 +4571,7 @@ app.get('/api/admin/study-materials/:instId', async (req, res) => {
         res.status(500).json({ error: err.message }); 
     }
 });
+
 // --- 24.2 List Materials (Student) ---
 app.get('/api/admin/study-materials/student/:studentId', async (req, res) => {
     try {
@@ -4675,9 +4593,11 @@ app.get('/api/admin/study-materials/student/:studentId', async (req, res) => {
 });
 
 // --- 24.3 Create Material ---
-app.post('/api/admin/study-materials', studyMatUpload.single('materialFile'), async (req, res) => {
-    const { institutionId, title, description, class_id, subject_id, material_type, external_link, uploaded_by } = req.body;
-    const file_path = req.file ? `/public/uploads/study_materials/${req.file.filename}` : null;
+app.post('/api/admin/study-materials', async (req, res) => {
+    const { 
+        institutionId, title, description, class_id, subject_id, 
+        material_type, external_link, uploaded_by, materialFile 
+    } = req.body;
 
     try {
         const [result] = await db.execute(
@@ -4686,7 +4606,7 @@ app.post('/api/admin/study-materials', studyMatUpload.single('materialFile'), as
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 institutionId, title, description || null, class_id, subject_id || null, 
-                material_type || 'Notes', file_path, external_link || null, uploaded_by
+                material_type || 'Notes', materialFile || null, external_link || null, uploaded_by
             ]
         );
         res.json({ success: true, id: result.insertId });
@@ -4694,26 +4614,32 @@ app.post('/api/admin/study-materials', studyMatUpload.single('materialFile'), as
 });
 
 // --- 24.4 Update Material ---
-app.put('/api/admin/study-materials/:id', studyMatUpload.single('materialFile'), async (req, res) => {
-    const { title, description, class_id, subject_id, material_type, external_link } = req.body;
+app.put('/api/admin/study-materials/:id', async (req, res) => {
+    const { 
+        title, description, class_id, subject_id, 
+        material_type, external_link, materialFile 
+    } = req.body;
+    
     try {
-        const [[existing]] = await db.execute('SELECT file_path FROM study_materials WHERE id = ?', [req.params.id]);
-        let file_path = existing.file_path;
+        let updateQuery = `
+            UPDATE study_materials 
+               SET title=?, description=?, class_id=?, subject_id=?, material_type=?, external_link=?
+        `;
+        let params = [
+            title, description || null, class_id, subject_id || null, 
+            material_type || 'Notes', external_link || null
+        ];
 
-        if (req.file) {
-            if (file_path) {
-                const oldPath = path.join(__dirname, '..', file_path);
-                if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
-            }
-            file_path = `/public/uploads/study_materials/${req.file.filename}`;
+        // Only update the file if a new Base64 string was sent
+        if (materialFile !== undefined) {
+            updateQuery += `, file_path=?`;
+            params.push(materialFile || null);
         }
 
-        await db.execute(
-            `UPDATE study_materials 
-                SET title=?, description=?, class_id=?, subject_id=?, material_type=?, file_path=?, external_link=?
-              WHERE id=?`,
-            [title, description || null, class_id, subject_id || null, material_type || 'Notes', file_path, external_link || null, req.params.id]
-        );
+        updateQuery += ` WHERE id=?`;
+        params.push(req.params.id);
+
+        await db.execute(updateQuery, params);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -4721,17 +4647,11 @@ app.put('/api/admin/study-materials/:id', studyMatUpload.single('materialFile'),
 // --- 24.5 Delete Material ---
 app.delete('/api/admin/study-materials/:id', async (req, res) => {
     try {
-        const [[existing]] = await db.execute('SELECT file_path FROM study_materials WHERE id = ?', [req.params.id]);
-        if (existing && existing.file_path) {
-            const oldPath = path.join(__dirname, '..', existing.file_path);
-            if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
-        }
+        // Because the file is stored as LONGTEXT, deleting the row deletes the file data automatically.
         await db.execute('DELETE FROM study_materials WHERE id = ?', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-
-
 
 // =====================================================================
 //  BACKEND — Section 22: SYLLABUS  (v5 — fast viewer, self-contained)
@@ -5275,10 +5195,9 @@ app.delete('/api/admin/syllabus/keywords/:keywordId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-
 // ====================================================================
 // === GROUP CHAT MODULE (UNIFIED PERMISSIONS & MULTI-TENANT) ========
-// =====================================================================
+// ====================================================================
 
 // --- 1. Unified Helper for Group Permissions ---
 const checkGroupPermission = (action) => async (req, res, next) => {
@@ -5376,61 +5295,100 @@ app.get('/api/groups/options', async (req, res) => {
     }
 });
 
+// --- 2.1 Get Users for Specific Selection ---
+app.get('/api/groups/users-options', async (req, res) => {
+    const { instId } = req.query;
+    if (!instId) return res.status(400).json({ error: 'instId is required' });
+
+    try {
+        // UPDATED: Added a LEFT JOIN to attach the exact class name to each user
+        const [users] = await db.execute(`
+            SELECT 
+                u.id, 
+                u.name, 
+                u.role, 
+                u.profile_pic,
+                CASE 
+                    WHEN c.section IS NOT NULL AND c.section != '' THEN CONCAT(c.className, ' - ', c.section)
+                    ELSE c.className 
+                END AS class_name
+            FROM users u
+            LEFT JOIN classes c ON u.class_id = c.id
+            WHERE u.institutionId = ?
+            ORDER BY u.name ASC
+        `, [instId]);
+        
+        res.json(users);
+    } catch (error) {
+        console.error('Error fetching users for group options:', error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // --- 3. Create Group ---
 app.post('/api/groups', checkGroupPermission('edit'), async (req, res) => {
     try {
         const {
             userId, institutionId, name, description,
-            selectedCategories, backgroundColor, isReadOnly
+            selectedCategories = [], selectedUserIds = [], backgroundColor, isReadOnly
         } = req.body;
 
-        if (!userId || !institutionId || !name || !Array.isArray(selectedCategories) || selectedCategories.length === 0) {
-            return res.status(400).json({ message: 'userId, institutionId, name and selectedCategories are required.' });
+        if (!userId || !institutionId || !name || (selectedCategories.length === 0 && selectedUserIds.length === 0)) {
+            return res.status(400).json({ message: 'userId, institutionId, name and at least one member or category are required.' });
         }
 
-        let finalCategories = selectedCategories;
+        let memberIds = [];
 
-        if (!req.isAdminEquivalent) {
-            finalCategories = selectedCategories.filter(cat =>
-                cat !== 'All' && cat !== 'Super Admin' && cat !== 'Developer' && cat !== 'Teacher'
-            );
-            if (finalCategories.length === 0) {
-                return res.status(403).json({ message: 'You can only create groups for specific classes.' });
+        // --- STEP 1: Process Categories (Roles/Classes) if any ---
+        if (selectedCategories.length > 0) {
+            let finalCategories = selectedCategories;
+
+            if (!req.isAdminEquivalent) {
+                finalCategories = selectedCategories.filter(cat =>
+                    cat !== 'All' && cat !== 'Super Admin' && cat !== 'Developer' && cat !== 'Teacher'
+                );
+            }
+
+            if (finalCategories.length > 0) {
+                let whereClauses = [];
+                let queryParams = [];
+
+                finalCategories.forEach(category => {
+                    if (category === 'All' && req.isAdminEquivalent) {
+                        whereClauses.push('u.institutionId = ?');
+                        queryParams.push(institutionId);
+                    } else {
+                        whereClauses.push(`(
+                            u.role = ?
+                            OR (c.section IS NOT NULL AND c.section != '' AND CONCAT(c.className, ' - ', c.section) = ?)
+                            OR ((c.section IS NULL OR c.section = '') AND c.className = ?)
+                        ) AND u.institutionId = ?`);
+                        queryParams.push(category, category, category, institutionId);
+                    }
+                });
+
+                const finalWhereClause = whereClauses.join(' OR ');
+
+                const getUsersQuery = `
+                    SELECT DISTINCT u.id
+                      FROM users u
+                      LEFT JOIN classes c ON u.class_id = c.id
+                     WHERE ${finalWhereClause}
+                `;
+
+                const [usersToAdd] = await db.execute(getUsersQuery, queryParams);
+                memberIds = usersToAdd.map(u => u.id);
             }
         }
 
-        let whereClauses = [];
-        let queryParams = [];
+        // --- STEP 2: Process Explicit User IDs ---
+        const explicitUserIds = Array.isArray(selectedUserIds) ? selectedUserIds.map(id => parseInt(id, 10)) : [];
 
-        finalCategories.forEach(category => {
-            if (category === 'All' && req.isAdminEquivalent) {
-                whereClauses.push('u.institutionId = ?');
-                queryParams.push(institutionId);
-            } else {
-                whereClauses.push(`(
-                    u.role = ?
-                    OR (c.section IS NOT NULL AND c.section != '' AND CONCAT(c.className, ' - ', c.section) = ?)
-                    OR ((c.section IS NULL OR c.section = '') AND c.className = ?)
-                ) AND u.institutionId = ?`);
-                queryParams.push(category, category, category, institutionId);
-            }
-        });
-
-        const finalWhereClause = whereClauses.join(' OR ');
-
-        const getUsersQuery = `
-            SELECT DISTINCT u.id
-              FROM users u
-              LEFT JOIN classes c ON u.class_id = c.id
-             WHERE ${finalWhereClause}
-        `;
-
-        const [usersToAdd] = await db.execute(getUsersQuery, queryParams);
-        const memberIds = usersToAdd.map(u => u.id);
-        const allMemberIds = [...new Set([parseInt(userId, 10), ...memberIds])];
+        // --- STEP 3: Combine and Deduplicate ---
+        const allMemberIds = [...new Set([parseInt(userId, 10), ...memberIds, ...explicitUserIds])];
 
         if (allMemberIds.length === 0) {
-            return res.status(400).json({ message: 'No members found for the selected categories.' });
+            return res.status(400).json({ message: 'No valid members found to add.' });
         }
 
         const conn = await db.getConnection();
@@ -5467,7 +5425,6 @@ app.post('/api/groups', checkGroupPermission('edit'), async (req, res) => {
     }
 });
 
-// --- 4. List Groups for a User ---
 // --- 4. List Groups for a User ---
 app.get('/api/groups', async (req, res) => {
     const { userId, instId } = req.query;
@@ -5530,6 +5487,7 @@ app.get('/api/groups', async (req, res) => {
         res.status(500).json({ message: 'Error fetching groups.' });
     }
 });
+
 // --- 5. Get Group Details ---
 app.get('/api/groups/:groupId/details', async (req, res) => {
     const { groupId } = req.params;
@@ -5567,6 +5525,7 @@ app.get('/api/groups/:groupId/details', async (req, res) => {
         res.status(500).json({ message: 'Error fetching group details.' });
     }
 });
+
 // --- 5.1 Get Group Members ---
 app.get('/api/groups/:groupId/members', async (req, res) => {
     const { groupId } = req.params;
@@ -5585,51 +5544,65 @@ app.get('/api/groups/:groupId/members', async (req, res) => {
         res.status(500).json({ message: 'Error fetching members.' });
     }
 });
+
 // --- 5.2 Add Members to Group ---
 app.post('/api/groups/:groupId/members', async (req, res) => {
     const { groupId } = req.params;
-    const { institutionId, selectedCategories } = req.body;
+    const { institutionId, selectedCategories = [], selectedUserIds = [] } = req.body;
 
-    if (!institutionId || !Array.isArray(selectedCategories) || selectedCategories.length === 0) {
-        return res.status(400).json({ message: 'Invalid data provided.' });
+    if (!institutionId || (selectedCategories.length === 0 && selectedUserIds.length === 0)) {
+        return res.status(400).json({ message: 'Invalid data provided. Select at least one category or user.' });
     }
 
     try {
-        let whereClauses = [];
-        let queryParams = [];
+        let memberIds = [];
 
-        selectedCategories.forEach(category => {
-            if (category === 'All') {
-                whereClauses.push('u.institutionId = ?');
-                queryParams.push(institutionId);
-            } else {
-                whereClauses.push(`(
-                    u.role = ?
-                    OR (c.section IS NOT NULL AND c.section != '' AND CONCAT(c.className, ' - ', c.section) = ?)
-                    OR ((c.section IS NULL OR c.section = '') AND c.className = ?)
-                ) AND u.institutionId = ?`);
-                queryParams.push(category, category, category, institutionId);
-            }
-        });
+        // --- STEP 1: Process Categories ---
+        if (selectedCategories.length > 0) {
+            let whereClauses = [];
+            let queryParams = [];
 
-        const finalWhereClause = whereClauses.join(' OR ');
-        const [usersToAdd] = await db.execute(`
-            SELECT DISTINCT u.id FROM users u 
-            LEFT JOIN classes c ON u.class_id = c.id 
-            WHERE ${finalWhereClause}
-        `, queryParams);
+            selectedCategories.forEach(category => {
+                if (category === 'All') {
+                    whereClauses.push('u.institutionId = ?');
+                    queryParams.push(institutionId);
+                } else {
+                    whereClauses.push(`(
+                        u.role = ?
+                        OR (c.section IS NOT NULL AND c.section != '' AND CONCAT(c.className, ' - ', c.section) = ?)
+                        OR ((c.section IS NULL OR c.section = '') AND c.className = ?)
+                    ) AND u.institutionId = ?`);
+                    queryParams.push(category, category, category, institutionId);
+                }
+            });
 
-        if (usersToAdd.length === 0) {
-            return res.status(400).json({ message: 'No users found for selected categories.' });
+            const finalWhereClause = whereClauses.join(' OR ');
+            const [usersToAdd] = await db.execute(`
+                SELECT DISTINCT u.id FROM users u 
+                LEFT JOIN classes c ON u.class_id = c.id 
+                WHERE ${finalWhereClause}
+            `, queryParams);
+            
+            memberIds = usersToAdd.map(u => u.id);
+        }
+
+        // --- STEP 2: Process Explicit User IDs ---
+        const explicitUserIds = Array.isArray(selectedUserIds) ? selectedUserIds.map(id => parseInt(id, 10)) : [];
+
+        // --- STEP 3: Combine and Deduplicate ---
+        const allMemberIds = [...new Set([...memberIds, ...explicitUserIds])];
+
+        if (allMemberIds.length === 0) {
+            return res.status(400).json({ message: 'No valid users found to add.' });
         }
 
         const conn = await db.getConnection();
         try {
             await conn.beginTransaction();
-            for (const user of usersToAdd) {
+            for (const memberId of allMemberIds) {
                 await conn.execute(
                     'INSERT IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)',
-                    [groupId, user.id]
+                    [groupId, memberId]
                 );
             }
             await conn.commit();
@@ -5737,8 +5710,8 @@ app.delete('/api/groups/:groupId', checkGroupPermission('delete'), async (req, r
 // --- 10. Get Chat History ---
 app.get('/api/groups/:groupId/history', async (req, res) => {
     const { groupId } = req.params;
- const { userId, page = 1, limit = 20 } = req.query;
-const groupIdInt = parseInt(groupId, 10);
+    const { userId, page = 1, limit = 20 } = req.query;
+    const groupIdInt = parseInt(groupId, 10);
     if (!userId) return res.status(400).json({ error: 'userId is required' });
 
     try {
@@ -5761,7 +5734,7 @@ const groupIdInt = parseInt(groupId, 10);
 
         const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
 
-    const limitNum = parseInt(limit, 10);
+        const limitNum = parseInt(limit, 10);
         const offsetNum = parseInt(offset, 10);
         const groupIdNum = parseInt(groupId, 10);
 
@@ -5842,9 +5815,9 @@ app.post('/api/groups/media', async (req, res) => {
     });
 });
 
-// =====================================================================
-// === SOCKET.IO — Real-Time Chat ======================================
-// =====================================================================
+// ====================================================================
+// === SOCKET.IO --- Real-Time Chat ===================================
+// ====================================================================
 
 io.on('connection', (socket) => {
     console.log(`User connected: ${socket.id}`);
@@ -5872,7 +5845,7 @@ io.on('connection', (socket) => {
             await conn.beginTransaction();
 
             const [result] = await conn.execute(
-                `INSERT INTO group_chat_messages
+                `INSERT INTO \`group_chat_messages\`
                    (user_id, group_id, message_type, message_text,
                     file_url, file_name, file_size, file_mime_type, reply_to_message_id)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -6050,7 +6023,7 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => {
         console.log(`User disconnected: ${socket.id}`);
     });
-});
+}); 
 
 // =====================================================================
 //  BACKEND — Section 23: ALUMNI

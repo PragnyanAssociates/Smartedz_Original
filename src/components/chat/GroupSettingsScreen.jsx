@@ -7,7 +7,7 @@ import { useAuth } from "../../context/AuthContext.jsx";
 import { usePermissions } from "../../Screens/PermissionsContext"; 
 import { MdArrowBack } from 'react-icons/md';
 import apiClient from '../../api/client';
-import { Camera, Save, Trash2, Eye, EyeOff, Megaphone, Loader2, Image as ImageIcon, UserPlus, X, Check } from 'lucide-react';
+import { Camera, Save, Trash2, Eye, EyeOff, Megaphone, Loader2, UserPlus, X, Check, ChevronDown, ChevronRight } from 'lucide-react';
 import { getProfileImageSource } from '../../utils/imageHelpers';
 
 const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDeleted }) => {
@@ -34,7 +34,12 @@ const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDele
   // Add Member Modal State
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [options, setOptions] = useState({ classes: [], roles: [] });
+  const [usersList, setUsersList] = useState([]); 
+  
   const [selectedCategories, setSelectedCategories] = useState([]);
+  const [selectedUserIds, setSelectedUserIds] = useState([]);
+  const [expandedSection, setExpandedSection] = useState(null); // Accordion state
+  
   const [isAddingMembers, setIsAddingMembers] = useState(false);
 
   const hasEditRights = (user?.id === group.created_by) || canEdit || isAllAccess;
@@ -58,15 +63,16 @@ const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDele
     }
   }, [group.id]);
 
-  // Fetch Options when Modal opens
   useEffect(() => {
     if (isAddModalOpen && options.classes.length === 0) {
       const fetchOptions = async () => {
         try {
-          const res = await apiClient.get('/groups/options', {
-              params: { userId: user.id, instId: user.institutionId }
-          });
-          setOptions(res.data);
+          const [resOptions, resUsers] = await Promise.all([
+             apiClient.get('/groups/options', { params: { userId: user.id, instId: user.institutionId } }),
+             apiClient.get('/groups/users-options', { params: { instId: user.institutionId } })
+          ]);
+          setOptions(resOptions.data);
+          setUsersList(resUsers.data);
         } catch (error) {
           console.error("Failed to fetch group options");
         }
@@ -144,17 +150,30 @@ const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDele
     setSelectedCategories(prev => prev.includes(category) ? prev.filter(c => c !== category) : [...prev, category]);
   };
 
+  const toggleUser = (userId) => {
+    setSelectedUserIds(prev => prev.includes(userId) ? prev.filter(id => id !== userId) : [...prev, userId]);
+  };
+
+  const toggleSection = (section) => {
+    setExpandedSection(prev => prev === section ? null : section);
+  };
+
   const handleAddMembersSubmit = async () => {
-    if (selectedCategories.length === 0) return alert("Select at least one class or role");
+    if (selectedCategories.length === 0 && selectedUserIds.length === 0) {
+        return alert("Select at least one class, role, or specific individual");
+    }
     setIsAddingMembers(true);
     try {
       await apiClient.post(`/groups/${group.id}/members`, {
         institutionId: user.institutionId,
-        selectedCategories
+        selectedCategories,
+        selectedUserIds 
       });
       alert('Members added successfully!');
       setIsAddModalOpen(false);
       setSelectedCategories([]);
+      setSelectedUserIds([]);
+      setExpandedSection(null);
       fetchMembers(); 
     } catch (error) {
       alert('Error: ' + (error.response?.data?.message || 'Failed to add members'));
@@ -173,6 +192,78 @@ const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDele
     }
   };
 
+  // Helper to render accordion lists
+  const renderAccordionSection = (title, items, isClass = false) => {
+    if (!items || items.length === 0) return null;
+
+    return (
+        <div className="space-y-2.5">
+            <h3 className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">{title}</h3>
+            <div className="space-y-2">
+                {items.map(categoryName => {
+                    const isExpanded = expandedSection === categoryName;
+                    const isCategorySelected = selectedCategories.includes(categoryName);
+                    
+                    const categoryUsers = usersList.filter(u => 
+                        isClass ? u.class_name === categoryName : u.role === categoryName
+                    );
+
+                    return (
+                        <div key={categoryName} className="border border-zinc-200 rounded-lg overflow-hidden bg-white shadow-sm transition-all">
+                            <div className="flex items-center justify-between p-3 cursor-pointer hover:bg-zinc-50 transition-colors" onClick={() => toggleSection(categoryName)}>
+                                <div className="flex items-center gap-2">
+                                    <div className="text-zinc-400">
+                                        {isExpanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+                                    </div>
+                                    <span className="text-sm font-semibold text-zinc-800">{categoryName}</span>
+                                    <span className="text-xs text-zinc-500 bg-zinc-100 px-2 py-0.5 rounded-full font-medium">{categoryUsers.length}</span>
+                                </div>
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); toggleCategory(categoryName); }}
+                                    className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide transition-all ${
+                                        isCategorySelected 
+                                        ? 'bg-primary/10 text-primary hover:bg-primary/20' 
+                                        : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'
+                                    }`}
+                                >
+                                    {isCategorySelected ? 'Deselect All' : 'Select All'}
+                                </button>
+                            </div>
+
+                            {isExpanded && categoryUsers.length > 0 && (
+                                <div className="p-3 bg-zinc-50/50 border-t border-zinc-100 flex flex-wrap gap-2">
+                                    {categoryUsers.map(u => {
+                                        const isUserSelected = selectedUserIds.includes(u.id) || isCategorySelected;
+                                        return (
+                                            <button
+                                                key={`user-${u.id}`}
+                                                onClick={() => { if (!isCategorySelected) toggleUser(u.id); }}
+                                                disabled={isCategorySelected}
+                                                className={`px-3 py-1.5 rounded-full text-xs font-semibold ring-1 ring-inset transition-all flex items-center gap-1.5 ${
+                                                    isUserSelected 
+                                                    ? 'bg-blue-600 text-white ring-blue-600 shadow-sm opacity-100' 
+                                                    : 'bg-white text-zinc-700 ring-zinc-200 hover:bg-zinc-50'
+                                                } ${isCategorySelected && !selectedUserIds.includes(u.id) ? 'opacity-60 cursor-not-allowed' : ''}`}
+                                            >
+                                                {u.name} {isUserSelected && <Check className="size-3" />}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                            {isExpanded && categoryUsers.length === 0 && (
+                                <div className="p-3 bg-zinc-50/50 border-t border-zinc-100 text-xs text-zinc-400 italic">
+                                    No individuals found.
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+  };
+
   const handleKeyPress = (e) => { if (e.key === 'Enter' && !isSaving && hasEditRights) handleSaveChanges(); };
   const handleBackClick = () => { if (isEmbedded && onBack) onBack(); else navigate('/WhatsAppLayout', { state: { selectedGroup: group } }); };
   const imageSourceForDisplay = getProfileImageSource(group.group_dp_url);
@@ -180,7 +271,6 @@ const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDele
   return (
     <div className={`flex flex-col bg-white max-w-2xl mx-auto w-full border-x border-zinc-200 shadow-sm animate-in slide-in-from-right-8 duration-300 ${isEmbedded ? 'h-full' : 'min-h-[calc(100vh-64px)]'}`}>
       
-      {/* View Full Image Modal - PORTALED */}
       {isViewerVisible && createPortal(
         <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/90 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setViewerVisible(false)}>
           <div className="relative max-w-4xl w-full h-full flex items-center justify-center p-4">
@@ -201,36 +291,18 @@ const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDele
             </div>
             
             <div className="p-5 max-h-[60vh] overflow-y-auto custom-scrollbar space-y-6">
-              {options.roles.length > 0 && (
-                <div className="space-y-2.5">
-                    <h3 className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Staff Roles</h3>
-                    <div className="flex flex-wrap gap-2">
-                        {options.roles.map(role => (
-                            <button key={`role-${role}`} onClick={() => toggleCategory(role)} className={`px-3 py-1.5 rounded-full text-xs font-semibold ring-1 ring-inset transition-all flex items-center gap-1.5 ${selectedCategories.includes(role) ? 'bg-indigo-600 text-white ring-indigo-600 shadow-sm' : 'bg-white text-zinc-700 ring-zinc-200 hover:bg-zinc-50'}`}>
-                                {role} {selectedCategories.includes(role) && <Check className="size-3" />}
-                            </button>
-                        ))}
-                    </div>
-                </div>
-              )}
-              {options.classes.length > 0 && (
-                <div className="space-y-2.5">
-                    <h3 className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Classes</h3>
-                    <div className="flex flex-wrap gap-2">
-                        {options.classes.map(cls => (
-                            <button key={`class-${cls}`} onClick={() => toggleCategory(cls)} className={`px-3 py-1.5 rounded-full text-xs font-semibold ring-1 ring-inset transition-all flex items-center gap-1.5 ${selectedCategories.includes(cls) ? 'bg-emerald-600 text-white ring-emerald-600 shadow-sm' : 'bg-white text-zinc-700 ring-zinc-200 hover:bg-zinc-50'}`}>
-                                {cls} {selectedCategories.includes(cls) && <Check className="size-3" />}
-                            </button>
-                        ))}
-                    </div>
-                </div>
-              )}
+                {renderAccordionSection('Staff Roles', options.roles, false)}
+                {renderAccordionSection('Classes', options.classes, true)}
             </div>
             
             <div className="px-5 py-4 border-t border-zinc-100 bg-zinc-50">
-              <button onClick={handleAddMembersSubmit} disabled={isAddingMembers || selectedCategories.length === 0} className="w-full h-10 bg-primary hover:bg-primary/90 text-white rounded-md font-semibold text-sm transition-colors flex items-center justify-center gap-2 disabled:bg-zinc-300 disabled:cursor-not-allowed">
+              <button 
+                onClick={handleAddMembersSubmit} 
+                disabled={isAddingMembers || (selectedCategories.length === 0 && selectedUserIds.length === 0)} 
+                className="w-full h-10 bg-primary hover:bg-primary/90 text-white rounded-md font-semibold text-sm transition-colors flex items-center justify-center gap-2 disabled:bg-zinc-300 disabled:cursor-not-allowed"
+              >
                 {isAddingMembers ? <Loader2 className="size-4 animate-spin" /> : <UserPlus className="size-4" />}
-                {isAddingMembers ? 'Adding...' : 'Add Selected Categories'}
+                {isAddingMembers ? 'Adding...' : 'Add Selected Members'}
               </button>
             </div>
           </div>
@@ -238,16 +310,13 @@ const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDele
         document.body
       )}
 
-      {/* Header */}
       <div className="flex items-center px-4 py-3 border-b border-zinc-200 bg-zinc-50 shrink-0">
         <button onClick={handleBackClick} className="p-2 mr-2 hover:bg-zinc-200 rounded-full text-zinc-500 hover:text-zinc-900 transition-colors"><MdArrowBack className="size-5" /></button>
         <h1 className="text-lg font-semibold text-zinc-900 tracking-tight">Group Settings</h1>
       </div>
 
-      {/* Content */}
       <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-8">
         
-        {/* Image Section */}
         <div className="flex flex-col items-center justify-center space-y-4">
           <div className="relative group">
             <button onClick={() => setViewerVisible(true)} className="relative block">
@@ -267,7 +336,6 @@ const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDele
           </div>
         </div>
 
-        {/* Form Section */}
         <div className="space-y-6 pt-4 border-t border-zinc-100">
           <div className="space-y-1.5">
             <label htmlFor="groupName" className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">Group Name <span className="text-red-500">*</span></label>
@@ -287,7 +355,6 @@ const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDele
             </div>
           )}
 
-          {/* Members Section */}
           <div className="pt-6 mt-6 border-t border-zinc-100">
             <div className="flex items-center justify-between mb-4">
                 <h3 className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">
@@ -316,7 +383,6 @@ const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDele
                         </div>
                     </div>
                     
-                    {/* Remove Member Button */}
                     {hasEditRights && member.id !== group.created_by && (
                         <button 
                             onClick={() => handleRemoveMember(member.id, member.name)}
@@ -334,7 +400,6 @@ const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDele
         </div>
       </div>
 
-      {/* Action Footer */}
       <div className="p-4 pb-[max(1rem,env(safe-area-inset-bottom))] border-t border-zinc-200 bg-zinc-50 shrink-0 flex flex-col sm:flex-row gap-3">
         {hasEditRights && (
           <button onClick={handleSaveChanges} disabled={isSaving || !groupName.trim() || (groupName === group.name && isReadOnly === (group.is_read_only === 1 || group.is_read_only === true))} className="w-full sm:flex-1 h-12 sm:h-10 flex items-center justify-center gap-2 bg-primary hover:bg-primary/90 text-white rounded-lg sm:rounded-md font-semibold text-[15px] sm:text-sm shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
