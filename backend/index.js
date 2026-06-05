@@ -5321,64 +5321,79 @@ app.get('/api/groups/options', async (req, res) => {
         res.status(500).json({ classes: [], roles: [], error: error.message });
     }
 });
-
 // --- 3. Create Group ---
 app.post('/api/groups', checkGroupPermission('edit'), async (req, res) => {
     try {
         const {
             userId, institutionId, name, description,
-            selectedCategories, backgroundColor, isReadOnly
+            selectedCategories = [], selectedUserIds = [], // Added selectedUserIds
+            backgroundColor, isReadOnly
         } = req.body;
 
-        if (!userId || !institutionId || !name || !Array.isArray(selectedCategories) || selectedCategories.length === 0) {
-            return res.status(400).json({ message: 'userId, institutionId, name and selectedCategories are required.' });
+        if (!userId || !institutionId || !name) {
+            return res.status(400).json({ message: 'userId, institutionId, and name are required.' });
+        }
+
+        if (selectedCategories.length === 0 && selectedUserIds.length === 0) {
+            return res.status(400).json({ message: 'Please select at least one category or specific user.' });
         }
 
         let finalCategories = selectedCategories;
+        let memberIds = [];
 
-        if (!req.isAdminEquivalent) {
-            finalCategories = selectedCategories.filter(cat =>
-                cat !== 'All' && cat !== 'Super Admin' && cat !== 'Developer' && cat !== 'Teacher'
-            );
-            if (finalCategories.length === 0) {
-                return res.status(403).json({ message: 'You can only create groups for specific classes.' });
+        // 1. Process Categories (Bulk Assignment)
+        if (finalCategories.length > 0) {
+            if (!req.isAdminEquivalent) {
+                finalCategories = selectedCategories.filter(cat =>
+                    cat !== 'All' && cat !== 'Super Admin' && cat !== 'Developer' && cat !== 'Teacher'
+                );
+                if (finalCategories.length === 0 && selectedUserIds.length === 0) {
+                    return res.status(403).json({ message: 'You lack permission to create groups with these settings.' });
+                }
+            }
+
+            if (finalCategories.length > 0) {
+                let whereClauses = [];
+                let queryParams = [];
+
+                finalCategories.forEach(category => {
+                    if (category === 'All' && req.isAdminEquivalent) {
+                        whereClauses.push('u.institutionId = ?');
+                        queryParams.push(institutionId);
+                    } else {
+                        whereClauses.push(`(
+                            u.role = ?
+                            OR (c.section IS NOT NULL AND c.section != '' AND CONCAT(c.className, ' - ', c.section) = ?)
+                            OR ((c.section IS NULL OR c.section = '') AND c.className = ?)
+                        ) AND u.institutionId = ?`);
+                        queryParams.push(category, category, category, institutionId);
+                    }
+                });
+
+                const finalWhereClause = whereClauses.join(' OR ');
+                const getUsersQuery = `
+                    SELECT DISTINCT u.id
+                      FROM users u
+                      LEFT JOIN classes c ON u.class_id = c.id
+                     WHERE ${finalWhereClause}
+                `;
+
+                const [usersToAdd] = await db.execute(getUsersQuery, queryParams);
+                memberIds = usersToAdd.map(u => u.id);
             }
         }
 
-        let whereClauses = [];
-        let queryParams = [];
-
-        finalCategories.forEach(category => {
-            if (category === 'All' && req.isAdminEquivalent) {
-                whereClauses.push('u.institutionId = ?');
-                queryParams.push(institutionId);
-            } else {
-                whereClauses.push(`(
-                    u.role = ?
-                    OR (c.section IS NOT NULL AND c.section != '' AND CONCAT(c.className, ' - ', c.section) = ?)
-                    OR ((c.section IS NULL OR c.section = '') AND c.className = ?)
-                ) AND u.institutionId = ?`);
-                queryParams.push(category, category, category, institutionId);
-            }
-        });
-
-        const finalWhereClause = whereClauses.join(' OR ');
-
-        const getUsersQuery = `
-            SELECT DISTINCT u.id
-              FROM users u
-              LEFT JOIN classes c ON u.class_id = c.id
-             WHERE ${finalWhereClause}
-        `;
-
-        const [usersToAdd] = await db.execute(getUsersQuery, queryParams);
-        const memberIds = usersToAdd.map(u => u.id);
-        const allMemberIds = [...new Set([parseInt(userId, 10), ...memberIds])];
+        // 2. Merge Bulk Category Users with Specific User IDs
+        const specificUserIdsParsed = selectedUserIds.map(id => parseInt(id, 10)).filter(id => !isNaN(id));
+        
+        // Use Set to remove duplicates (e.g., if a selected user is also in a selected category)
+        const allMemberIds = [...new Set([parseInt(userId, 10), ...memberIds, ...specificUserIdsParsed])];
 
         if (allMemberIds.length === 0) {
-            return res.status(400).json({ message: 'No members found for the selected categories.' });
+            return res.status(400).json({ message: 'No valid members found to add.' });
         }
 
+        // 3. Database Insertion (Unchanged)
         const conn = await db.getConnection();
         try {
             await conn.beginTransaction();
@@ -5412,7 +5427,6 @@ app.post('/api/groups', checkGroupPermission('edit'), async (req, res) => {
         res.status(500).json({ message: 'Server error while creating group.' });
     }
 });
-
 // --- 4. List Groups for a User ---
 // --- 4. List Groups for a User ---
 app.get('/api/groups', async (req, res) => {
