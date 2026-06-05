@@ -5148,7 +5148,6 @@ app.delete('/api/admin/syllabus/keywords/:keywordId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-
 // ====================================================================
 // === GROUP CHAT MODULE (UNIFIED PERMISSIONS & MULTI-TENANT) ========
 // =====================================================================
@@ -5341,7 +5340,6 @@ app.post('/api/groups', checkGroupPermission('edit'), async (req, res) => {
 });
 
 // --- 4. List Groups for a User ---
-// --- 4. List Groups for a User ---
 app.get('/api/groups', async (req, res) => {
     const { userId, instId } = req.query;
     if (!userId || !instId) return res.status(400).json({ error: 'userId and instId are required' });
@@ -5403,6 +5401,7 @@ app.get('/api/groups', async (req, res) => {
         res.status(500).json({ message: 'Error fetching groups.' });
     }
 });
+
 // --- 5. Get Group Details ---
 app.get('/api/groups/:groupId/details', async (req, res) => {
     const { groupId } = req.params;
@@ -5440,6 +5439,7 @@ app.get('/api/groups/:groupId/details', async (req, res) => {
         res.status(500).json({ message: 'Error fetching group details.' });
     }
 });
+
 // --- 5.1 Get Group Members ---
 app.get('/api/groups/:groupId/members', async (req, res) => {
     const { groupId } = req.params;
@@ -5458,6 +5458,7 @@ app.get('/api/groups/:groupId/members', async (req, res) => {
         res.status(500).json({ message: 'Error fetching members.' });
     }
 });
+
 // --- 5.2 Add Members to Group ---
 app.post('/api/groups/:groupId/members', async (req, res) => {
     const { groupId } = req.params;
@@ -5610,8 +5611,8 @@ app.delete('/api/groups/:groupId', checkGroupPermission('delete'), async (req, r
 // --- 10. Get Chat History ---
 app.get('/api/groups/:groupId/history', async (req, res) => {
     const { groupId } = req.params;
- const { userId, page = 1, limit = 20 } = req.query;
-const groupIdInt = parseInt(groupId, 10);
+    const { userId, page = 1, limit = 20 } = req.query;
+    const groupIdInt = parseInt(groupId, 10);
     if (!userId) return res.status(400).json({ error: 'userId is required' });
 
     try {
@@ -5634,7 +5635,7 @@ const groupIdInt = parseInt(groupId, 10);
 
         const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
 
-    const limitNum = parseInt(limit, 10);
+        const limitNum = parseInt(limit, 10);
         const offsetNum = parseInt(offset, 10);
         const groupIdNum = parseInt(groupId, 10);
 
@@ -5924,7 +5925,6 @@ io.on('connection', (socket) => {
         console.log(`User disconnected: ${socket.id}`);
     });
 });
-
 // =====================================================================
 //  BACKEND — Section 23: ALUMNI
 //
