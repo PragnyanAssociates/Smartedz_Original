@@ -1699,7 +1699,7 @@ app.get('/api/admin/attendance/overview/:instId', async (req, res) => {
         const empty = {
             from, to, category, academic_year_id: yearId, user_count: userCount,
             working_days: 0, present: 0, absent: 0, late: 0, total_marks: 0,
-            avg_percentage: '0.0', series: []
+            avg_percentage: '0.0', series: [], per_user: []
         };
         if (userCount === 0) return res.json(empty);
 
@@ -1755,6 +1755,23 @@ app.get('/api/admin/attendance/overview/:instId', async (req, res) => {
                 late: Number(r.late), total: Number(r.total)
             }));
 
+            // Per-user breakdown — powers the "total / present" figure on
+            // each list row and the per-student Analysis bar chart.
+            const [pu] = await db.execute(
+                `SELECT user_id,
+                        SUM(status = 'P') AS present, SUM(status = 'L') AS late,
+                        SUM(status = 'A') AS absent, COUNT(*) AS total
+                   FROM attendance
+                  WHERE ${attWhere}
+                  GROUP BY user_id`,
+                attParams
+            );
+            const per_user = pu.map(r => ({
+                user_id: r.user_id,
+                present: Number(r.present), late: Number(r.late),
+                absent: Number(r.absent), total: Number(r.total)
+            }));
+
             const avg_percentage = total_marks > 0
                 ? (((present + late) / total_marks) * 100).toFixed(1)
                 : '0.0';
@@ -1762,7 +1779,7 @@ app.get('/api/admin/attendance/overview/:instId', async (req, res) => {
             res.json({
                 from, to, category, academic_year_id: yearId, user_count: userCount,
                 working_days, present, absent, late, total_marks,
-                avg_percentage, series
+                avg_percentage, series, per_user
             });
         } catch (attErr) {
             // Attendance table missing or query failed — degrade gracefully

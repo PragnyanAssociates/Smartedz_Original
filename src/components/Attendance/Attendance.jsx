@@ -8,7 +8,6 @@ import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import RosterMarker from './RosterMarker';
 import AttendanceHistory from './AttendanceHistory';
-import AttendanceChart from './AttendanceChart';
 import { API_BASE_URL } from '../../apiConfig';
 
 // =====================================================================
@@ -210,6 +209,7 @@ function HistoryPicker({ category, yearName }) {
   const [overview, setOverview] = useState(null);
   const [ovLoading, setOvLoading] = useState(true);
   const [view, setView] = useState('list'); // 'list' | 'analysis'
+  const [analysisSort, setAnalysisSort] = useState('high'); // 'high' | 'low' | 'order'
 
   // Teacher in "teachers" tab -> just shortcut to their own history
   const teacherViewingTeachers = !isAllAccess && isTeacher && category === 'teachers';
@@ -295,6 +295,43 @@ function HistoryPicker({ category, yearName }) {
       (u.roll_no || '').toString().toLowerCase().includes(q)
     );
   }, [sortedAll, search]);
+
+  // ---- Per-user stats (for the "total / present" figure + Analysis) -
+  // "present" counts days attended (Present + Late); the denominator is
+  // the category's working days in the selected range.
+  const workingDays = overview?.working_days || 0;
+  const statsById = useMemo(() => {
+    const m = {};
+    (overview?.per_user || []).forEach(s => {
+      const attended = (s.present || 0) + (s.late || 0);
+      m[s.user_id] = {
+        present: attended,
+        absent: s.absent || 0,
+        late: s.late || 0,
+        total: workingDays,
+        pct: workingDays > 0 ? Math.round((attended / workingDays) * 100) : 0
+      };
+    });
+    return m;
+  }, [overview, workingDays]);
+
+  // Per-student data for the Analysis bar chart, sorted per the chosen order.
+  const analysisData = useMemo(() => {
+    const arr = sortedAll.map(u => {
+      const st = statsById[u.id] || { present: 0, absent: 0, late: 0, total: workingDays, pct: 0 };
+      return {
+        id: u.id, name: u.name, roll_no: u.roll_no, serial: serialMap[u.id],
+        present: st.present, total: workingDays, pct: st.pct
+      };
+    });
+    if (analysisSort === 'high') {
+      arr.sort((a, b) => b.pct - a.pct || (a.name || '').localeCompare(b.name || ''));
+    } else if (analysisSort === 'low') {
+      arr.sort((a, b) => a.pct - b.pct || (a.name || '').localeCompare(b.name || ''));
+    }
+    // 'order' keeps sortedAll order (roll-wise for students, S.No/alpha otherwise)
+    return arr;
+  }, [sortedAll, statsById, serialMap, workingDays, analysisSort]);
 
   // ---- Early outs --------------------------------------------------
   if (teacherViewingTeachers) {
@@ -388,11 +425,28 @@ function HistoryPicker({ category, yearName }) {
             <div className="size-8 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" />
           </div>
         ) : (
-          <div className="space-y-2">
-            <h3 className="text-xs font-semibold text-zinc-700 flex items-center gap-1.5">
-              <BarChart3 className="size-3.5 text-primary" /> Daily attendance — {category}
-            </h3>
-            <AttendanceChart series={overview?.series || []} />
+          <div className="space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <h3 className="text-xs font-semibold text-zinc-700 flex items-center gap-1.5">
+                <BarChart3 className="size-3.5 text-primary" /> Attendance % per {category === 'students' ? 'student' : (category === 'teachers' ? 'teacher' : 'person')}
+              </h3>
+              {/* Bar-graph sort filter */}
+              <div className="inline-flex bg-zinc-100/80 p-1 rounded-md self-start sm:self-auto">
+                {[
+                  { key: 'high',  label: 'High → Low' },
+                  { key: 'low',   label: 'Low → High' },
+                  { key: 'order', label: category === 'students' ? 'Roll No.' : 'S.No' }
+                ].map(o => (
+                  <button key={o.key} onClick={() => setAnalysisSort(o.key)}
+                    className={`px-2.5 py-1 rounded text-[10px] font-semibold uppercase tracking-wider transition-colors whitespace-nowrap ${
+                      analysisSort === o.key ? 'bg-white text-zinc-900 shadow-sm ring-1 ring-black/5' : 'text-zinc-500 hover:text-zinc-700'
+                    }`}>
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <AnalysisBars data={analysisData} category={category} />
           </div>
         )
       ) : (
@@ -406,11 +460,14 @@ function HistoryPicker({ category, yearName }) {
           </div>
         ) : (
           <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-x-auto custom-scrollbar">
-            <table className="w-full text-left border-collapse min-w-[600px]">
+            <table className="w-full text-left border-collapse min-w-[640px]">
               <thead>
                 <tr className="bg-zinc-50/50">
                   <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 whitespace-nowrap">
                     {category === 'students' ? 'Roll' : 'S.No'} / Name
+                  </th>
+                  <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 whitespace-nowrap text-center">
+                    Total / Present
                   </th>
                   <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 whitespace-nowrap">Role</th>
                   <th className="px-5 py-3 border-b border-zinc-100"></th>
@@ -421,6 +478,8 @@ function HistoryPicker({ category, yearName }) {
                   const idLabel = category === 'students'
                     ? (u.roll_no ? `Roll ${u.roll_no}` : '—')
                     : `S.No ${serialMap[u.id] || '—'}`;
+                  const st = statsById[u.id];
+                  const present = st ? st.present : 0;
                   return (
                     <tr key={u.id} className="hover:bg-zinc-50/60 transition-colors cursor-pointer group" onClick={() => setPicked(u)}>
                       <td className="px-5 py-4 flex items-center gap-3">
@@ -435,6 +494,17 @@ function HistoryPicker({ category, yearName }) {
                           <span className="font-medium text-zinc-900 text-sm truncate">{u.name}</span>
                           <span className="text-[10px] text-zinc-500 truncate">{idLabel}</span>
                         </div>
+                      </td>
+                      <td className="px-5 py-4 text-center whitespace-nowrap">
+                        {ovLoading ? (
+                          <span className="text-zinc-300">…</span>
+                        ) : (
+                          <span className="text-sm tabular-nums">
+                            <span className="font-semibold text-zinc-800">{workingDays}</span>
+                            <span className="text-zinc-400"> / </span>
+                            <span className="font-semibold text-emerald-600">{present}</span>
+                          </span>
+                        )}
                       </td>
                       <td className="px-5 py-4">
                         <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-zinc-100 text-zinc-700 ring-1 ring-zinc-200 whitespace-nowrap">
@@ -509,6 +579,67 @@ function OverviewBar({ overview, loading, category }) {
       {overview.total_marks === 0 && (
         <p className="text-[11px] text-zinc-400 italic mt-2">No attendance recorded for this range yet.</p>
       )}
+    </div>
+  );
+}
+
+// =====================================================================
+//  AnalysisBars — one vertical bar per person, height = attendance %.
+//  Colour bands:  ≥ 80% green · 50–80% blue · < 50% red.
+//  Horizontally scrollable; people are shown line-wise.
+// =====================================================================
+function bandColor(pct) {
+  if (pct >= 80) return { bar: 'bg-emerald-500', text: 'text-emerald-600' };
+  if (pct >= 50) return { bar: 'bg-primary',     text: 'text-primary' };
+  return { bar: 'bg-red-500', text: 'text-red-600' };
+}
+
+function AnalysisBars({ data, category }) {
+  const CHART_H = 240; // px track height for the bars
+
+  if (!data || data.length === 0) {
+    return (
+      <div className="bg-white rounded-lg ring-1 ring-black/5 border-dashed h-56 flex items-center justify-center">
+        <p className="text-zinc-400 text-sm font-medium">No one to chart for this range.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-lg ring-1 ring-black/5 p-4 sm:p-5">
+      {/* Band legend */}
+      <div className="flex flex-wrap items-center gap-3 sm:gap-4 mb-5 text-[10px] font-medium text-zinc-500">
+        <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-emerald-500" /> ≥ 80%</span>
+        <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-primary" /> 50–80%</span>
+        <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-red-500" /> &lt; 50%</span>
+      </div>
+
+      <div className="overflow-x-auto custom-scrollbar pb-1">
+        <div className="flex items-end gap-3 sm:gap-4" style={{ minWidth: '100%' }}>
+          {data.map(d => {
+            const c = bandColor(d.pct);
+            const barPx = Math.max(Math.round((d.pct / 100) * (CHART_H - 26)), d.pct > 0 ? 6 : 2);
+            return (
+              <div key={d.id} className="flex flex-col items-center shrink-0" style={{ width: 72 }}>
+                {/* Bar + % label (bottom-aligned so the label sits above the bar) */}
+                <div className="flex flex-col justify-end items-center w-full" style={{ height: CHART_H }}>
+                  <span className={`text-[11px] font-bold tabular-nums mb-1 ${c.text}`}>{d.pct}%</span>
+                  <div className={`w-full ${c.bar} rounded-t transition-all`}
+                    style={{ height: barPx }}
+                    title={`${d.name} — ${d.present}/${d.total} present (${d.pct}%)`} />
+                </div>
+                {/* Name + roll / serial */}
+                <span className="text-[10px] font-semibold text-zinc-700 mt-2 text-center leading-tight w-full truncate" title={d.name}>
+                  {d.name}
+                </span>
+                <span className="text-[9px] text-zinc-400 mt-0.5 whitespace-nowrap">
+                  {category === 'students' ? `Roll: ${d.roll_no || '—'}` : `S.No: ${d.serial || '—'}`}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
