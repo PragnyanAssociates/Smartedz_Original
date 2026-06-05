@@ -2919,6 +2919,11 @@ app.get('/api/admin/reports/class-cards/:classId', async (req, res) => {
 //  exam_types, exam_max_marks, subject_classes, subject_teacher_map).
 //  No new tables needed.
 //
+//  ACADEMIC YEAR: every read of student_marks is scoped to the school's
+//  ACTIVE academic year via the shared resolveYearId() helper (defined
+//  in the Timetable section). Requires the Reports migration that adds
+//  student_marks.academic_year_id.
+//
 //  ALSO — add 'Performance' to DEFAULT_MODULES at the top of index.js:
 //
 //      const DEFAULT_MODULES = [
@@ -2928,17 +2933,17 @@ app.get('/api/admin/reports/class-cards/:classId', async (req, res) => {
 // =====================================================================
 
 // --- Shared helper: build a class's performance dataset --------------
-//   Given a classId, returns:
-//     { class, students[], subjects[], examTypes[], marks[] }
-//   where examTypes carry max_marks for this class, and marks is the
-//   raw student_marks rows. The frontend does the % math so it can
-//   slice by exam / subject without re-querying.
-async function loadClassPerformance(classId) {
+//   Given a classId (+ optional requested year), returns:
+//     { class, students[], subjects[], examTypes[], assignments[], marks[] }
+//   scoped to the active academic year. assignments carry the subject's
+//   teacher name + email so the UI can show "Teacher: X".
+async function loadClassPerformance(classId, requestedYearId) {
     const [cls] = await db.execute('SELECT * FROM classes WHERE id = ?', [classId]);
     if (cls.length === 0) return null;
     const instId = cls[0].institutionId;
+    const yearId = await resolveYearId(instId, requestedYearId);
 
-    // Students
+    // Students (active only — excludes alumni)
     const [students] = await db.execute(
         `SELECT id, name, roll_no, section
            FROM users
@@ -2984,25 +2989,26 @@ async function loadClassPerformance(classId) {
         .filter(t => maxMap[t.id] !== undefined)
         .map(t => ({ ...t, max_marks: maxMap[t.id] }));
 
-    // Teacher assignment (so UI can show "Teacher: X")
+    // Teacher assignment (name + email, so UI can show "Teacher: X")
     const [assignments] = await db.execute(
-        `SELECT stm.subject_id, stm.teacher_id, u.name AS teacher_name
+        `SELECT stm.subject_id, stm.teacher_id, u.name AS teacher_name, u.email AS teacher_email
            FROM subject_teacher_map stm
            JOIN users u ON u.id = stm.teacher_id
           WHERE stm.class_id = ?`,
         [classId]
     );
 
-    // All marks for the class
+    // All marks for the class, ACTIVE YEAR only
     const [marks] = await db.execute(
         `SELECT student_id, subject_id, exam_type_id, marks_obtained
            FROM student_marks
-          WHERE class_id = ?`,
-        [classId]
+          WHERE class_id = ? AND academic_year_id = ?`,
+        [classId, yearId]
     );
 
     return {
         class: cls[0],
+        academic_year_id: yearId,
         students,
         subjects,
         examTypes: examTypesForClass,
@@ -3013,7 +3019,6 @@ async function loadClassPerformance(classId) {
 
 
 // --- 18.1 Class list for a school (performance dropdowns) ------------
-//   GET /api/admin/performance/classes/:instId
 app.get('/api/admin/performance/classes/:instId', async (req, res) => {
     try {
         const [rows] = await db.execute(
@@ -3031,11 +3036,9 @@ app.get('/api/admin/performance/classes/:instId', async (req, res) => {
 
 
 // --- 18.2 Full performance dataset for one class --------------------
-//   GET /api/admin/performance/class/:classId
-//   Frontend computes %, ranks, filters from this bundle.
 app.get('/api/admin/performance/class/:classId', async (req, res) => {
     try {
-        const data = await loadClassPerformance(req.params.classId);
+        const data = await loadClassPerformance(req.params.classId, req.query.academic_year_id);
         if (!data) return res.status(404).json({ error: 'Class not found' });
         res.json(data);
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -3043,9 +3046,6 @@ app.get('/api/admin/performance/class/:classId', async (req, res) => {
 
 
 // --- 18.3 One student's own performance bundle --------------------
-//   GET /api/admin/performance/student/:studentId
-//   Returns the student's class dataset + which student is "me".
-//   Used by the student-facing My Performance view.
 app.get('/api/admin/performance/student/:studentId', async (req, res) => {
     try {
         const [u] = await db.execute(
@@ -3054,9 +3054,9 @@ app.get('/api/admin/performance/student/:studentId', async (req, res) => {
         );
         if (u.length === 0) return res.status(404).json({ error: 'Student not found' });
         if (!u[0].class_id) {
-            return res.json({ me: u[0], class: null, students: [], subjects: [], examTypes: [], marks: [] });
+            return res.json({ me: u[0], class: null, students: [], subjects: [], examTypes: [], assignments: [], marks: [] });
         }
-        const data = await loadClassPerformance(u[0].class_id);
+        const data = await loadClassPerformance(u[0].class_id, req.query.academic_year_id);
         if (!data) return res.status(404).json({ error: 'Class not found' });
         res.json({ me: u[0], ...data });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -3065,16 +3065,29 @@ app.get('/api/admin/performance/student/:studentId', async (req, res) => {
 
 // --- 18.4 Teacher performance across the whole school ---------------
 //   GET /api/admin/performance/teachers/:instId
-//   For every teacher, for every (class, subject) they're assigned via
-//   subject_teacher_map, compute their students' total obtained vs total
-//   possible. A teacher's overall % = sum(obtained) / sum(possible).
+//   Scoped to the active academic year. Returns:
+//     { examTypes:[{id,name}],
+//       teachers:[ { teacher_id, teacher_name, teacher_email,
+//                    detail:[ { class_id, class_group, subject_id,
+//                               subject_name, student_count,
+//                               exams:[ {exam_type_id,exam_name,obtained,possible} ] } ] } ] }
+//   The frontend computes overall/filtered %, so it can slice by class,
+//   subject and exam type without re-querying.
 app.get('/api/admin/performance/teachers/:instId', async (req, res) => {
     const { instId } = req.params;
     try {
-        // All teacher↔class↔subject assignments in the school
+        const yearId = await resolveYearId(instId, req.query.academic_year_id);
+
+        // Exam types for the school
+        const [examTypeRows] = await db.execute(
+            'SELECT id, name, exam_order FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id',
+            [instId]
+        );
+
+        // All teacher↔class↔subject assignments
         const [assignments] = await db.execute(
             `SELECT stm.class_id, stm.subject_id, stm.teacher_id,
-                    u.name AS teacher_name,
+                    u.name AS teacher_name, u.email AS teacher_email,
                     sub.name AS subject_name,
                     c.className, c.section
                FROM subject_teacher_map stm
@@ -3099,7 +3112,7 @@ app.get('/api/admin/performance/teachers/:instId', async (req, res) => {
             maxByClass[r.class_id][r.exam_type_id] = r.max_marks;
         });
 
-        // Count of active students per class
+        // Active-student count per class
         const [studentCounts] = await db.execute(
             `SELECT class_id, COUNT(*) AS cnt
                FROM users
@@ -3111,84 +3124,83 @@ app.get('/api/admin/performance/teachers/:instId', async (req, res) => {
         const studentCountMap = {};
         studentCounts.forEach(r => { studentCountMap[r.class_id] = r.cnt; });
 
-        // All marks in the school, indexed for fast lookup
+        // All marks in the school for the ACTIVE YEAR
         const [allMarks] = await db.execute(
-            `SELECT sm.class_id, sm.subject_id, sm.exam_type_id,
-                    sm.student_id, sm.marks_obtained
+            `SELECT sm.class_id, sm.subject_id, sm.exam_type_id, sm.marks_obtained
                FROM student_marks sm
-              WHERE sm.institutionId = ?`,
-            [instId]
+              WHERE sm.institutionId = ? AND sm.academic_year_id = ?`,
+            [instId, yearId]
         );
 
-        // teacherId → { name, overallObtained, overallPossible, detail[] }
-        const teachers = {};
+        // Aggregate marks by class:subject:exam → {obtained, possible}
+        const agg = {};
+        allMarks.forEach(m => {
+            const max = maxByClass[m.class_id]?.[m.exam_type_id];
+            if (max === undefined || max === null) return;
+            const val = parseFloat(m.marks_obtained);
+            if (isNaN(val)) return;
+            const k = `${m.class_id}:${m.subject_id}:${m.exam_type_id}`;
+            if (!agg[k]) agg[k] = { obtained: 0, possible: 0 };
+            agg[k].obtained += val;
+            agg[k].possible += parseFloat(max);
+        });
 
+        // teacherId → { ..., detail[] }
+        const teachers = {};
         for (const a of assignments) {
             if (!teachers[a.teacher_id]) {
                 teachers[a.teacher_id] = {
                     teacher_id: a.teacher_id,
                     teacher_name: a.teacher_name,
-                    overall_obtained: 0,
-                    overall_possible: 0,
+                    teacher_email: a.teacher_email || null,
                     detail: []
                 };
             }
-            const t = teachers[a.teacher_id];
+            const exams = examTypeRows.map(t => {
+                const e = agg[`${a.class_id}:${a.subject_id}:${t.id}`] || { obtained: 0, possible: 0 };
+                return {
+                    exam_type_id: t.id,
+                    exam_name: t.name,
+                    obtained: e.obtained,
+                    possible: e.possible
+                };
+            }).filter(e => e.possible > 0);
 
-            // Marks for this class+subject
-            const relevant = allMarks.filter(m =>
-                m.class_id === a.class_id && m.subject_id === a.subject_id);
-
-            let obtained = 0, possible = 0;
-            relevant.forEach(m => {
-                const val = parseFloat(m.marks_obtained);
-                if (isNaN(val)) return;
-                const max = maxByClass[a.class_id]?.[m.exam_type_id];
-                if (max === undefined || max === null) return;
-                obtained += val;
-                possible += parseFloat(max);
-            });
-
-            const pct = possible > 0 ? (obtained / possible) * 100 : null;
-
-            t.detail.push({
+            teachers[a.teacher_id].detail.push({
                 class_id: a.class_id,
                 class_group: `${a.className}${a.section ? ' - ' + a.section : ''}`,
                 subject_id: a.subject_id,
                 subject_name: a.subject_name,
                 student_count: studentCountMap[a.class_id] || 0,
-                total_obtained: obtained,
-                total_possible: possible,
-                percentage: pct
+                exams
             });
-            t.overall_obtained += obtained;
-            t.overall_possible += possible;
         }
 
-        const result = Object.values(teachers).map(t => ({
-            ...t,
-            overall_percentage: t.overall_possible > 0
-                ? (t.overall_obtained / t.overall_possible) * 100
-                : null
-        }));
-
-        res.json(result);
+        res.json({
+            examTypes: examTypeRows.map(t => ({ id: t.id, name: t.name })),
+            teachers: Object.values(teachers)
+        });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 
 // --- 18.5 One teacher's own performance -----------------------------
-//   GET /api/admin/performance/teacher/:teacherId
-//   Same shape as one element of 18.4, scoped to a single teacher.
+//   GET /api/admin/performance/teacher/:teacherId  (active year)
 app.get('/api/admin/performance/teacher/:teacherId', async (req, res) => {
     const { teacherId } = req.params;
     try {
         const [u] = await db.execute(
-            'SELECT id, name, institutionId FROM users WHERE id = ?',
+            'SELECT id, name, email, institutionId FROM users WHERE id = ?',
             [teacherId]
         );
         if (u.length === 0) return res.status(404).json({ error: 'Teacher not found' });
         const instId = u[0].institutionId;
+        const yearId = await resolveYearId(instId, req.query.academic_year_id);
+
+        const [examTypeRows] = await db.execute(
+            'SELECT id, name, exam_order FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id',
+            [instId]
+        );
 
         const [assignments] = await db.execute(
             `SELECT stm.class_id, stm.subject_id,
@@ -3221,38 +3233,47 @@ app.get('/api/admin/performance/teacher/:teacherId', async (req, res) => {
             const [marks] = await db.execute(
                 `SELECT exam_type_id, marks_obtained
                    FROM student_marks
-                  WHERE class_id = ? AND subject_id = ?`,
-                [a.class_id, a.subject_id]
+                  WHERE class_id = ? AND subject_id = ? AND academic_year_id = ?`,
+                [a.class_id, a.subject_id, yearId]
             );
-            let obtained = 0, possible = 0;
-            marks.forEach(m => {
-                const val = parseFloat(m.marks_obtained);
-                if (isNaN(val)) return;
-                const max = maxByClass[a.class_id]?.[m.exam_type_id];
-                if (max === undefined || max === null) return;
-                obtained += val;
-                possible += parseFloat(max);
-            });
+            const exams = examTypeRows.map(t => {
+                let o = 0, p = 0;
+                marks.forEach(m => {
+                    if (m.exam_type_id !== t.id) return;
+                    const val = parseFloat(m.marks_obtained);
+                    if (isNaN(val)) return;
+                    const max = maxByClass[a.class_id]?.[t.id];
+                    if (max === undefined || max === null) return;
+                    o += val; p += parseFloat(max);
+                });
+                return { exam_type_id: t.id, exam_name: t.name, obtained: o, possible: p };
+            }).filter(e => e.possible > 0);
+
+            const o = exams.reduce((s, e) => s + e.obtained, 0);
+            const p = exams.reduce((s, e) => s + e.possible, 0);
             detail.push({
                 class_id: a.class_id,
                 class_group: `${a.className}${a.section ? ' - ' + a.section : ''}`,
                 subject_id: a.subject_id,
                 subject_name: a.subject_name,
-                total_obtained: obtained,
-                total_possible: possible,
-                percentage: possible > 0 ? (obtained / possible) * 100 : null
+                exams,
+                total_obtained: o,
+                total_possible: p,
+                percentage: p > 0 ? (o / p) * 100 : null
             });
-            overallObtained += obtained;
-            overallPossible += possible;
+            overallObtained += o;
+            overallPossible += p;
         }
 
         res.json({
             teacher_id: u[0].id,
             teacher_name: u[0].name,
+            teacher_email: u[0].email || null,
             overall_obtained: overallObtained,
             overall_possible: overallPossible,
             overall_percentage: overallPossible > 0
                 ? (overallObtained / overallPossible) * 100 : null,
+            examTypes: examTypeRows.map(t => ({ id: t.id, name: t.name })),
             detail
         });
     } catch (err) { res.status(500).json({ error: err.message }); }

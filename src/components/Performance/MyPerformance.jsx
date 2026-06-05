@@ -9,7 +9,7 @@ import { PerfBar, BarRow, ChartModal } from './PerfBar';
 //  MyPerformance - a student's own view.
 //   - Topper vs You bar comparison, filtered by exam + subject.
 //   - Analysis button -> bar chart of the student's own exams.
-//  Driven entirely by the dynamic class dataset.
+//  Bands: 100-80 green, 80-50 blue, 50-0 red. Active academic year only.
 // =====================================================================
 
 export default function MyPerformance() {
@@ -70,7 +70,7 @@ export default function MyPerformance() {
 
   return (
     <div className="flex flex-col flex-1 gap-4 sm:gap-6 animate-in fade-in duration-300">
-      
+
       {/* Filter bar */}
       <div className="flex flex-wrap items-end gap-3 sm:gap-4 bg-white p-4 rounded-lg ring-1 ring-black/5 shadow-sm">
         <Selector label="Exam" value={examTypeId} onChange={setExam}
@@ -83,9 +83,9 @@ export default function MyPerformance() {
             { value: 'all', label: 'All Subjects' },
             ...((data.subjects || []).map(s => ({ value: String(s.id), label: s.name })))
           ]} />
-          
+
         <div className="flex-1 min-w-[100px]" />
-        
+
         <button onClick={() => setShowAnalysis(true)} disabled={!me}
           className="h-9 px-4 inline-flex items-center justify-center gap-2 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800 border border-emerald-200 disabled:opacity-50 rounded-md text-xs font-semibold shadow-sm transition-colors shrink-0 w-full sm:w-auto">
           <BarChart3 className="size-3.5" /> Analysis
@@ -100,8 +100,8 @@ export default function MyPerformance() {
       <div className="bg-amber-50/50 border border-amber-200/60 rounded-md px-4 py-3 flex flex-wrap gap-4 sm:gap-6 items-center shrink-0">
         <span className="text-[10px] font-semibold text-amber-700 uppercase tracking-wider">Performance Index</span>
         <div className="flex flex-wrap gap-4">
-          <Legend color="bg-emerald-500" text="85%+ Excellent" />
-          <Legend color="bg-primary" text="50-85% Average" />
+          <Legend color="bg-emerald-500" text="80%+ Excellent" />
+          <Legend color="bg-blue-500" text="50-80% Average" />
           <Legend color="bg-red-500" text="Below 50% Needs Work" />
         </div>
       </div>
@@ -113,12 +113,12 @@ export default function MyPerformance() {
         </div>
       ) : (
         <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm p-6 sm:p-8 flex flex-col flex-1 justify-center">
-          
+
           <div className="flex items-end justify-center gap-12 sm:gap-24 md:gap-32 h-[340px] pt-4">
             {topper && <BigBar row={topper} label="Topper" icon={<Trophy className="size-3.5" />} />}
             <BigBar row={me} label="You" highlight icon={<User className="size-3.5" />} />
           </div>
-          
+
           <div className="mt-10 pt-6 border-t border-zinc-100 grid grid-cols-3 gap-4 text-center">
             <Stat label="Your Rank" value={`#${me.rank}`} />
             <Stat label="Your Marks" value={`${Math.round(me.obtained)}/${Math.round(me.possible)}`} />
@@ -151,7 +151,7 @@ export default function MyPerformance() {
 function BigBar({ row, label, highlight, icon }) {
   const [fill, setFill] = useState(0);
   const b = band(row.percentage);
-  
+
   useEffect(() => {
     const t = setTimeout(() => setFill(Math.min(row.percentage, 100)), 100);
     return () => clearTimeout(t);
@@ -167,12 +167,12 @@ function BigBar({ row, label, highlight, icon }) {
         <div className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mt-1.5">of {Math.round(row.possible)}</div>
         <div className={`text-sm font-bold ${b.text} mt-1`}>{row.percentage}%</div>
       </div>
-      
+
       <div className="w-20 sm:w-24 h-56 bg-zinc-100/80 rounded-t-md flex flex-col justify-end overflow-hidden ring-1 ring-inset ring-black/5">
         <div className={`w-full ${b.bar} transition-all duration-1000 ease-out rounded-t-md opacity-90 group-hover:opacity-100`}
           style={{ height: `${fill}%` }} />
       </div>
-      
+
       <span className={`mt-4 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-semibold uppercase tracking-wider ${
         highlight ? 'bg-primary/10 text-primary ring-1 ring-inset ring-primary/20 shadow-sm' : 'bg-zinc-50 text-zinc-600 ring-1 ring-inset ring-black/5'
       }`}>

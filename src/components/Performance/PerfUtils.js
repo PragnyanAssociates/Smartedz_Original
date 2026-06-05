@@ -14,15 +14,37 @@ export function roundPct(value) {
 }
 
 // Performance band → tailwind classes.
+//   100–80%  → green   (Excellent)
+//    80–50%  → blue    (Average)
+//    50–0%   → red      (Needs Work)
 export function band(pct) {
   const v = roundPct(pct);
-  if (v >= 85) return { bar: 'bg-emerald-500', text: 'text-emerald-600', bg: 'bg-emerald-50', border: 'border-emerald-200', hex: '#10b981', label: 'Excellent' };
+  if (v >= 80) return { bar: 'bg-emerald-500', text: 'text-emerald-600', bg: 'bg-emerald-50', border: 'border-emerald-200', hex: '#10b981', label: 'Excellent' };
   if (v >= 50) return { bar: 'bg-blue-500',    text: 'text-blue-600',    bg: 'bg-blue-50',    border: 'border-blue-200',    hex: '#3b82f6', label: 'Average' };
   return          { bar: 'bg-red-500',     text: 'text-red-600',     bg: 'bg-red-50',     border: 'border-red-200',     hex: '#ef4444', label: 'Needs Work' };
 }
 
 const classGroupOf = (c) =>
   c ? `${c.className}${c.section ? ' - ' + c.section : ''}` : '';
+
+// Numeric roll for ordering (non-numeric rolls sort last)
+export function rollNum(s) {
+  const n = parseInt(s?.roll_no, 10);
+  return isNaN(n) ? Number.POSITIVE_INFINITY : n;
+}
+
+// Sort a list of ranked rows by mode: 'roll' | 'high' | 'low'
+export function sortRows(rows, mode) {
+  const list = [...(rows || [])];
+  if (mode === 'high') list.sort((a, b) => b.obtained - a.obtained);
+  else if (mode === 'low') list.sort((a, b) => a.obtained - b.obtained);
+  else list.sort((a, b) => {
+    const r = rollNum(a) - rollNum(b);
+    if (r !== 0) return r;
+    return (a.name || '').localeCompare(b.name || '');
+  });
+  return list;
+}
 
 // ---------------------------------------------------------------------
 //  Build per-student totals from a class dataset.
@@ -44,7 +66,6 @@ export function buildStudentTotals(dataset, { examTypeId = 'overall', subjectId 
 
   const { students, subjects, examTypes, marks } = dataset;
 
-  // Quick lookups
   const maxByExam = {};
   examTypes.forEach(t => { maxByExam[t.id] = parseFloat(t.max_marks) || 0; });
 
@@ -56,7 +77,6 @@ export function buildStudentTotals(dataset, { examTypeId = 'overall', subjectId 
     ? examTypes.map(t => t.id)
     : [parseInt(examTypeId, 10)];
 
-  // marks index: `${student}:${subject}:${exam}` → value
   const markIndex = {};
   marks.forEach(m => {
     markIndex[`${m.student_id}:${m.subject_id}:${m.exam_type_id}`] = m.marks_obtained;
@@ -88,15 +108,12 @@ export function buildStudentTotals(dataset, { examTypeId = 'overall', subjectId 
     };
   }).filter(r => r.hasAny && r.possible > 0);
 
-  // Rank by raw obtained (desc)
   rows.sort((a, b) => b.obtained - a.obtained);
   return rows.map((r, i) => ({ ...r, rank: i + 1 }));
 }
 
 // ---------------------------------------------------------------------
 //  Per-exam breakdown for ONE student across all subjects.
-//  Returns [{ exam_type_id, name, obtained, possible, percentage }]
-//  in exam_order, only exams that have data.
 // ---------------------------------------------------------------------
 export function studentExamBreakdown(dataset, studentId) {
   if (!dataset || !dataset.examTypes) return [];
@@ -129,6 +146,23 @@ export function studentExamBreakdown(dataset, studentId) {
     }
   });
   return out;
+}
+
+// ---------------------------------------------------------------------
+//  Class-wide total for a subject (used for the "teacher details"
+//  banner in the student analysis modal).
+//  Returns { obtained, possible, percentage }.
+// ---------------------------------------------------------------------
+export function subjectClassTotal(dataset, { examTypeId = 'overall', subjectId } = {}) {
+  if (!dataset || subjectId === undefined || subjectId === 'all') return null;
+  const ranked = buildStudentTotals(dataset, { examTypeId, subjectId });
+  const obtained = ranked.reduce((s, r) => s + r.obtained, 0);
+  const possible = ranked.reduce((s, r) => s + r.possible, 0);
+  return {
+    obtained,
+    possible,
+    percentage: possible > 0 ? roundPct((obtained / possible) * 100) : 0
+  };
 }
 
 export { classGroupOf };

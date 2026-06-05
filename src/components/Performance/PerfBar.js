@@ -45,13 +45,13 @@ export function PerfBar({ percentage, label, subLabel, marks, highlight }) {
   );
 }
 
-// --- Green / blue / red legend -------------------------------------
+// --- Green / blue / red legend (100–80 / 80–50 / 50–0) -------------
 export function BandLegend() {
   return (
     <div className="flex justify-center gap-5 flex-wrap">
       {[
-        ['bg-emerald-500', '85–100% Excellent'],
-        ['bg-blue-500', '50–85% Average'],
+        ['bg-emerald-500', '80–100% Excellent'],
+        ['bg-blue-500', '50–80% Average'],
         ['bg-red-500', '0–50% Needs Work']
       ].map(([c, t]) => (
         <div key={t} className="flex items-center gap-1.5">
@@ -81,8 +81,8 @@ export function BarRow({ children, empty }) {
   );
 }
 
-// --- Modal shell with header + legend footer -----------------------
-export function ChartModal({ title, subtitle, onClose, children }) {
+// --- Modal shell with header + optional filter row + legend footer --
+export function ChartModal({ title, subtitle, onClose, filters, banner, children }) {
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
       <div className="bg-white w-full max-w-5xl rounded-3xl shadow-2xl flex flex-col max-h-[92vh] overflow-hidden">
@@ -95,6 +95,12 @@ export function ChartModal({ title, subtitle, onClose, children }) {
             <X size={22} />
           </button>
         </div>
+        {filters && (
+          <div className="px-6 pt-5 pb-1 border-b border-slate-100 bg-white">
+            {filters}
+          </div>
+        )}
+        {banner}
         <div className="flex-1 overflow-auto p-6">{children}</div>
         <div className="p-4 border-t border-slate-100 bg-slate-50">
           <BandLegend />

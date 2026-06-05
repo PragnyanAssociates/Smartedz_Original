@@ -3,17 +3,20 @@ import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   RefreshCw, Loader2, ChevronDown, ChevronUp, BarChart3,
-  Trophy, GraduationCap, Search, X
+  Trophy, GraduationCap, Search, X, User, Mail, ArrowUpDown, Star, TrendingUp
 } from 'lucide-react';
-import { roundPct, band, buildStudentTotals, studentExamBreakdown } from './PerfUtils';
+import {
+  roundPct, band, buildStudentTotals, studentExamBreakdown, sortRows, subjectClassTotal
+} from './PerfUtils';
 import { PerfBar, BarRow, ChartModal } from './PerfBar';
 
 // =====================================================================
 //  StudentPerformance - ranked class list + graphical Analysis.
-//   - Table view: rank, %, marks, expand for exam breakdown.
-//   - Analysis button -> bar-chart comparison of the whole class.
-//   - Each expanded row -> "Graph" button for that student's exams.
-//  All driven by the dynamic Reports tables - no hardcoded subjects.
+//   - Class / Exam / Subject filters + roll/high/low sort.
+//   - Selecting a subject shows that subject's teacher (name + email).
+//   - Analysis modal: Select Class / Criterion / Subject / Sort Order,
+//     with a teacher-details banner when a single subject is chosen.
+//  Bands: 100-80 green, 80-50 blue, 50-0 red. Active academic year only.
 // =====================================================================
 
 export default function StudentPerformance() {
@@ -29,9 +32,9 @@ export default function StudentPerformance() {
   const [subjectId, setSubjectId]   = useState('all');
   const [tab, setTab]               = useState('all');
   const [query, setQuery]           = useState('');
+  const [sortMode, setSortMode]     = useState('roll');   // 'roll' | 'high' | 'low'
   const [expanded, setExpanded]     = useState(null);
 
-  // Chart modals
   const [showAnalysis, setShowAnalysis] = useState(false);
   const [graphStudent, setGraphStudent] = useState(null);
 
@@ -77,7 +80,7 @@ export default function StudentPerformance() {
   const counts = useMemo(() => {
     const c = { all: ranked.length, top: 0, avg: 0, low: 0 };
     ranked.forEach(r => {
-      if (r.percentage >= 85) c.top++;
+      if (r.percentage >= 80) c.top++;
       else if (r.percentage >= 50) c.avg++;
       else c.low++;
     });
@@ -86,27 +89,28 @@ export default function StudentPerformance() {
 
   const visible = useMemo(() => {
     let list = ranked;
-    if (tab === 'top') list = list.filter(r => r.percentage >= 85);
-    else if (tab === 'avg') list = list.filter(r => r.percentage >= 50 && r.percentage < 85);
-    else if (tab === 'low') list = [...list.filter(r => r.percentage < 50)]
-      .sort((a, b) => a.percentage - b.percentage);
+    if (tab === 'top') list = list.filter(r => r.percentage >= 80);
+    else if (tab === 'avg') list = list.filter(r => r.percentage >= 50 && r.percentage < 80);
+    else if (tab === 'low') list = list.filter(r => r.percentage < 50);
     if (query.trim()) {
       const q = query.toLowerCase();
       list = list.filter(r =>
         (r.name || '').toLowerCase().includes(q) ||
         String(r.roll_no || '').toLowerCase().includes(q));
     }
-    return list;
-  }, [ranked, tab, query]);
+    return sortRows(list, sortMode);
+  }, [ranked, tab, query, sortMode]);
 
   const topper = ranked[0] || null;
+
+  // Teacher for the selected subject (name + email)
+  const subjectTeacher = useMemo(() => {
+    if (!dataset || subjectId === 'all') return null;
+    const a = (dataset.assignments || []).find(x => String(x.subject_id) === String(subjectId));
+    return a || null;
+  }, [dataset, subjectId]);
+
   const classLabel = classes.find(c => String(c.id) === String(classId))?.class_group || '';
-  const examLabel = examTypeId === 'overall'
-    ? 'Overall'
-    : (dataset?.examTypes || []).find(t => String(t.id) === examTypeId)?.name || '';
-  const subjectLabel = subjectId === 'all'
-    ? 'All Subjects'
-    : (dataset?.subjects || []).find(s => String(s.id) === subjectId)?.name || '';
 
   // ---------------------------------------------------------------
   if (loadingClasses) {
@@ -128,7 +132,7 @@ export default function StudentPerformance() {
 
   return (
     <div className="flex flex-col flex-1 gap-4 sm:gap-6 animate-in fade-in duration-300">
-      
+
       {/* Filter bar */}
       <div className="flex flex-wrap items-end gap-3 sm:gap-4 bg-white p-4 rounded-lg ring-1 ring-black/5 shadow-sm">
         <Selector label="Class" value={classId} onChange={setClassId}
@@ -143,9 +147,9 @@ export default function StudentPerformance() {
             { value: 'all', label: 'All Subjects' },
             ...((dataset?.subjects || []).map(s => ({ value: String(s.id), label: s.name })))
           ]} />
-          
-        <div className="flex-1 min-w-[200px]" />
-        
+
+        <div className="flex-1 min-w-[120px]" />
+
         <div className="relative w-full sm:w-56 shrink-0">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
           <input value={query} onChange={e => setQuery(e.target.value)}
@@ -157,12 +161,12 @@ export default function StudentPerformance() {
             </button>
           )}
         </div>
-        
+
         <button onClick={() => setShowAnalysis(true)} disabled={ranked.length === 0}
           className="h-9 px-4 inline-flex items-center justify-center gap-2 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800 border border-emerald-200 disabled:opacity-50 rounded-md text-xs font-semibold shadow-sm transition-colors shrink-0 w-full sm:w-auto">
           <BarChart3 className="size-3.5" /> Analysis
         </button>
-        
+
         <button onClick={loadClass} title="Refresh Data"
           className="h-9 px-3 bg-white border border-zinc-200 text-zinc-600 hover:text-primary hover:bg-zinc-50 rounded-md flex items-center justify-center transition-colors shadow-sm shrink-0 w-full sm:w-auto">
           <RefreshCw className="size-4" />
@@ -173,8 +177,8 @@ export default function StudentPerformance() {
       <div className="bg-amber-50/50 border border-amber-200/60 rounded-md px-4 py-3 flex flex-wrap gap-4 sm:gap-6 items-center shrink-0">
         <span className="text-[10px] font-semibold text-amber-700 uppercase tracking-wider">Performance Index</span>
         <div className="flex flex-wrap gap-4">
-          <Legend color="bg-emerald-500" text="85%+ Excellent" />
-          <Legend color="bg-primary" text="50-85% Average" />
+          <Legend color="bg-emerald-500" text="80%+ Excellent" />
+          <Legend color="bg-blue-500" text="50-80% Average" />
           <Legend color="bg-red-500" text="Below 50% Needs Work" />
         </div>
       </div>
@@ -212,21 +216,32 @@ export default function StudentPerformance() {
             </div>
           )}
 
-          {/* Category tabs */}
-          <div className="flex bg-zinc-100/80 p-1 rounded-md overflow-x-auto custom-scrollbar shrink-0">
-            {[
-              { id: 'all', label: 'All' },
-              { id: 'top', label: 'Above Average' },
-              { id: 'avg', label: 'Average' },
-              { id: 'low', label: 'Below Average' }
-            ].map(t => (
-              <button key={t.id} onClick={() => setTab(t.id)}
-                className={`flex-1 sm:flex-none px-4 py-1.5 rounded-md text-[11px] font-semibold transition-colors whitespace-nowrap ${
-                  tab === t.id ? 'bg-white text-zinc-900 shadow-sm ring-1 ring-black/5' : 'text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50/50'
-                }`}>
-                {t.label} ({counts[t.id]})
-              </button>
-            ))}
+          {/* Subject-teacher banner (shows when a single subject is picked) */}
+          {subjectTeacher && (
+            <TeacherInfoBanner
+              name={subjectTeacher.teacher_name}
+              email={subjectTeacher.teacher_email}
+              subjectLabel={(dataset.subjects || []).find(s => String(s.id) === String(subjectId))?.name} />
+          )}
+
+          {/* Category tabs + sort */}
+          <div className="flex flex-col lg:flex-row lg:items-center gap-3 shrink-0">
+            <div className="flex bg-zinc-100/80 p-1 rounded-md overflow-x-auto custom-scrollbar flex-1">
+              {[
+                { id: 'all', label: 'All' },
+                { id: 'top', label: 'Above Average' },
+                { id: 'avg', label: 'Average' },
+                { id: 'low', label: 'Below Average' }
+              ].map(t => (
+                <button key={t.id} onClick={() => setTab(t.id)}
+                  className={`flex-1 sm:flex-none px-4 py-1.5 rounded-md text-[11px] font-semibold transition-colors whitespace-nowrap ${
+                    tab === t.id ? 'bg-white text-zinc-900 shadow-sm ring-1 ring-black/5' : 'text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50/50'
+                  }`}>
+                  {t.label} ({counts[t.id]})
+                </button>
+              ))}
+            </div>
+            <SortControl mode={sortMode} onChange={setSortMode} />
           </div>
 
           {/* Ranked list */}
@@ -275,7 +290,7 @@ export default function StudentPerformance() {
                           {isOpen ? <ChevronUp className="size-4 mx-auto" /> : <ChevronDown className="size-4 mx-auto" />}
                         </td>
                       </tr>
-                      
+
                       {isOpen && (
                         <tr className="bg-zinc-50/50 border-t-0">
                           <td colSpan={6} className="p-4 sm:p-5">
@@ -301,23 +316,14 @@ export default function StudentPerformance() {
         </div>
       )}
 
-      {/* ---- ANALYSIS MODAL: class comparison bar chart ---- */}
+      {/* ---- ANALYSIS MODAL: class comparison with full filters ---- */}
       {showAnalysis && (
-        <ChartModal
-          title={`Class Analysis - ${classLabel}`}
-          subtitle={`${examLabel} / ${subjectLabel} / ranked by performance`}
-          onClose={() => setShowAnalysis(false)}>
-          <BarRow empty="No marks to chart for this selection.">
-            {ranked.map(r => (
-              <PerfBar key={r.id}
-                percentage={r.percentage}
-                label={r.name}
-                subLabel={`Roll ${r.roll_no || '-'}`}
-                marks={`${Math.round(r.obtained)}/${Math.round(r.possible)}`}
-                highlight={r.rank === 1} />
-            ))}
-          </BarRow>
-        </ChartModal>
+        <StudentAnalysisModal
+          classes={classes}
+          initialClassId={classId}
+          initialExam={examTypeId}
+          initialSubject={subjectId}
+          onClose={() => setShowAnalysis(false)} />
       )}
 
       {/* ---- EXAM GRAPH MODAL: one student's exams ---- */}
@@ -340,6 +346,120 @@ export default function StudentPerformance() {
   );
 }
 
+
+// =====================================================================
+//  Analysis modal — its own Class / Criterion / Subject / Sort filters,
+//  with a teacher-details banner when a single subject is selected.
+// =====================================================================
+function StudentAnalysisModal({ classes, initialClassId, initialExam, initialSubject, onClose }) {
+  const [classId, setClassId]   = useState(String(initialClassId || (classes[0]?.id ?? '')));
+  const [criterion, setCriterion] = useState(initialExam || 'overall');
+  const [subjectId, setSubjectId] = useState(initialSubject || 'all');
+  const [sortOrder, setSortOrder] = useState('high');   // 'high' | 'low'
+  const [dataset, setDataset]   = useState(null);
+  const [loading, setLoading]   = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/admin/performance/class/${classId}`);
+        const d = await res.json();
+        if (cancelled) return;
+        if (!res.ok) throw new Error(d.error || 'Failed to load');
+        setDataset(d);
+        // If the previously-selected subject/exam doesn't exist here, reset
+        if (subjectId !== 'all' && !(d.subjects || []).some(s => String(s.id) === String(subjectId))) setSubjectId('all');
+        if (criterion !== 'overall' && !(d.examTypes || []).some(t => String(t.id) === String(criterion))) setCriterion('overall');
+      } catch (e) { if (!cancelled) { setDataset(null); } }
+      if (!cancelled) setLoading(false);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [classId]);
+
+  const ranked = useMemo(
+    () => sortRows(buildStudentTotals(dataset, { examTypeId: criterion, subjectId }), sortOrder),
+    [dataset, criterion, subjectId, sortOrder]
+  );
+
+  const classLabel = classes.find(c => String(c.id) === String(classId))?.class_group || '';
+  const criterionLabel = criterion === 'overall'
+    ? 'Overall'
+    : (dataset?.examTypes || []).find(t => String(t.id) === criterion)?.name || 'Overall';
+  const subjectLabel = subjectId === 'all'
+    ? 'All Subjects'
+    : (dataset?.subjects || []).find(s => String(s.id) === subjectId)?.name || '';
+
+  // Teacher banner when a single subject is chosen
+  const teacher = useMemo(() => {
+    if (!dataset || subjectId === 'all') return null;
+    return (dataset.assignments || []).find(a => String(a.subject_id) === String(subjectId)) || null;
+  }, [dataset, subjectId]);
+  const subjectTotal = useMemo(
+    () => subjectClassTotal(dataset, { examTypeId: criterion, subjectId }),
+    [dataset, criterion, subjectId]
+  );
+
+  const filters = (
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 pb-4">
+      <Selector label="Select Class" value={classId} onChange={setClassId}
+        options={classes.map(c => ({ value: String(c.id), label: c.class_group }))} />
+      <Selector label="Criterion" value={criterion} onChange={setCriterion}
+        options={[
+          { value: 'overall', label: 'Overall' },
+          ...((dataset?.examTypes || []).map(t => ({ value: String(t.id), label: t.name })))
+        ]} />
+      <Selector label="Subject" value={subjectId} onChange={setSubjectId}
+        options={[
+          { value: 'all', label: 'All Subjects' },
+          ...((dataset?.subjects || []).map(s => ({ value: String(s.id), label: s.name })))
+        ]} />
+      <Selector label="Sort Order" value={sortOrder} onChange={setSortOrder}
+        options={[
+          { value: 'high', label: 'High to Low' },
+          { value: 'low', label: 'Low to High' }
+        ]} />
+    </div>
+  );
+
+  const banner = (teacher && subjectTotal) ? (
+    <div className="px-6 pb-2 bg-white">
+      <div className="bg-amber-50/70 border border-amber-200/70 rounded-lg px-5 py-3 flex flex-wrap items-center gap-x-10 gap-y-3">
+        <InfoCell icon={<User className="size-4 text-emerald-600" />} label="Teacher" value={teacher.teacher_name || '—'} sub={teacher.teacher_email || ''} />
+        <InfoCell icon={<Star className="size-4 text-amber-500" />} label="Total Marks" value={`${Math.round(subjectTotal.obtained)} / ${Math.round(subjectTotal.possible)}`} />
+        <InfoCell icon={<TrendingUp className="size-4 text-blue-500" />} label="Average" value={`${subjectTotal.percentage}%`} valueClass={band(subjectTotal.percentage).text} />
+      </div>
+    </div>
+  ) : null;
+
+  return (
+    <ChartModal
+      title={`Student Comparison - ${classLabel}`}
+      subtitle={`Ranking by ${criterionLabel} (${subjectLabel})`}
+      onClose={onClose}
+      filters={filters}
+      banner={banner}>
+      {loading ? (
+        <div className="h-[300px] flex items-center justify-center"><Loader2 className="animate-spin size-8 text-primary" /></div>
+      ) : (
+        <BarRow empty="No marks to chart for this selection.">
+          {ranked.map(r => (
+            <PerfBar key={r.id}
+              percentage={r.percentage}
+              label={r.name}
+              subLabel={`Roll ${r.roll_no || '-'}`}
+              marks={`${Math.round(r.obtained)}/${Math.round(r.possible)}`}
+              highlight={r.rank === 1} />
+          ))}
+        </BarRow>
+      )}
+    </ChartModal>
+  );
+}
+
+
 // --- Sub: a single student's exam-by-exam breakdown (cards) --------
 function ExamBreakdown({ dataset, studentId }) {
   const rows = useMemo(() => studentExamBreakdown(dataset, studentId), [dataset, studentId]);
@@ -355,7 +475,7 @@ function ExamBreakdown({ dataset, studentId }) {
             <span className="text-xs font-semibold text-zinc-700 truncate mr-2">{ex.name}</span>
             <div className="flex items-center gap-2 shrink-0">
               <span className="text-[11px] font-medium text-zinc-400 tabular-nums uppercase tracking-wider">{Math.round(ex.obtained)}/{Math.round(ex.possible)}</span>
-              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ring-1 ring-inset ${b.bg} ${b.text} ring-${b.text.split('-')[1]}-600/20`}>
+              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ring-1 ring-inset ${b.bg} ${b.text}`}>
                 {ex.percentage}%
               </span>
             </div>
@@ -366,7 +486,68 @@ function ExamBreakdown({ dataset, studentId }) {
   );
 }
 
-// --- Shared Selector Component ---
+// --- Subject-teacher info banner (page) ----------------------------
+function TeacherInfoBanner({ name, email, subjectLabel }) {
+  return (
+    <div className="bg-white border border-zinc-200 rounded-lg px-4 sm:px-5 py-3 flex flex-wrap items-center gap-x-8 gap-y-2 shadow-sm shrink-0">
+      <div className="flex items-center gap-2.5">
+        <div className="size-9 rounded-md bg-emerald-50 ring-1 ring-emerald-500/20 flex items-center justify-center shrink-0">
+          <User className="size-4 text-emerald-600" />
+        </div>
+        <div className="flex flex-col">
+          <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">{subjectLabel ? `${subjectLabel} Teacher` : 'Teacher'}</span>
+          <span className="text-sm font-semibold text-zinc-900 leading-tight">{name || '—'}</span>
+        </div>
+      </div>
+      {email && (
+        <div className="flex items-center gap-2 text-sm text-zinc-600">
+          <Mail className="size-4 text-zinc-400 shrink-0" />
+          <span className="truncate">{email}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InfoCell({ icon, label, value, sub, valueClass }) {
+  return (
+    <div className="flex items-center gap-2.5">
+      <div className="shrink-0">{icon}</div>
+      <div className="flex flex-col">
+        <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">{label}</span>
+        <span className={`text-sm font-bold text-zinc-900 ${valueClass || ''}`}>{value}</span>
+        {sub && <span className="text-[11px] text-zinc-500 truncate max-w-[220px]">{sub}</span>}
+      </div>
+    </div>
+  );
+}
+
+// --- Sort segmented control (roll / high / low) --------------------
+function SortControl({ mode, onChange }) {
+  const opts = [
+    { id: 'roll', label: 'Roll wise' },
+    { id: 'high', label: 'High → Low' },
+    { id: 'low',  label: 'Low → High' }
+  ];
+  return (
+    <div className="flex items-center gap-2 shrink-0">
+      <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+        <ArrowUpDown className="size-3.5" /> Sort
+      </span>
+      <div className="inline-flex items-center bg-white border border-zinc-200 rounded-md p-0.5 shadow-sm">
+        {opts.map(o => (
+          <button key={o.id} onClick={() => onChange(o.id)}
+            className={`px-3 h-7 rounded text-xs font-semibold transition-colors whitespace-nowrap ${
+              mode === o.id ? 'bg-primary text-white shadow-sm' : 'text-zinc-600 hover:bg-zinc-50'
+            }`}>
+            {o.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function Selector({ label, value, onChange, options }) {
   return (
     <div className="space-y-1.5 w-full sm:w-auto min-w-[150px]">
