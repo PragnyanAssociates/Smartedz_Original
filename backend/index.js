@@ -5254,11 +5254,21 @@ app.get('/api/groups/users-options', async (req, res) => {
     if (!instId) return res.status(400).json({ error: 'instId is required' });
 
     try {
+        // UPDATED: Added a LEFT JOIN to attach the exact class name to each user
         const [users] = await db.execute(`
-            SELECT id, name, role, profile_pic 
-            FROM users 
-            WHERE institutionId = ?
-            ORDER BY name ASC
+            SELECT 
+                u.id, 
+                u.name, 
+                u.role, 
+                u.profile_pic,
+                CASE 
+                    WHEN c.section IS NOT NULL AND c.section != '' THEN CONCAT(c.className, ' - ', c.section)
+                    ELSE c.className 
+                END AS class_name
+            FROM users u
+            LEFT JOIN classes c ON u.class_id = c.id
+            WHERE u.institutionId = ?
+            ORDER BY u.name ASC
         `, [instId]);
         
         res.json(users);

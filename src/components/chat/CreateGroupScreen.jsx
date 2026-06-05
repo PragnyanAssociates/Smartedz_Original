@@ -6,7 +6,7 @@ import apiClient from '../../api/client';
 import { MdArrowBack } from 'react-icons/md';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
-import { Users, Loader2, Check, Megaphone } from 'lucide-react';
+import { Users, Loader2, Check, Megaphone, ChevronDown, ChevronRight } from 'lucide-react';
 
 const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
     const { user } = useAuth();
@@ -22,11 +22,14 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
     
     // Selection States
     const [selectedCategories, setSelectedCategories] = useState([]);
-    const [selectedUserIds, setSelectedUserIds] = useState([]); // NEW: For individual users
+    const [selectedUserIds, setSelectedUserIds] = useState([]); 
+    
+    // Accordion State
+    const [expandedSection, setExpandedSection] = useState(null);
 
     // Data States
     const [options, setOptions] = useState({ classes: [], roles: [] });
-    const [usersList, setUsersList] = useState([]); // NEW: Available individual users
+    const [usersList, setUsersList] = useState([]); 
     const [isLoadingOptions, setIsLoadingOptions] = useState(true);
     const [isCreating, setIsCreating] = useState(false);
 
@@ -34,14 +37,9 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
         const fetchOptions = async () => {
             if (!user?.id || !user?.institutionId) return;
             try {
-                // Fetch both Categories and Specific Users simultaneously
                 const [resOptions, resUsers] = await Promise.all([
-                    apiClient.get('/groups/options', {
-                        params: { userId: user.id, instId: user.institutionId }
-                    }),
-                    apiClient.get('/groups/users-options', {
-                        params: { instId: user.institutionId }
-                    })
+                    apiClient.get('/groups/options', { params: { userId: user.id, instId: user.institutionId } }),
+                    apiClient.get('/groups/users-options', { params: { instId: user.institutionId } })
                 ]);
                 
                 setOptions(resOptions.data);
@@ -63,7 +61,6 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
         );
     };
 
-    // NEW: Toggle individual users
     const toggleUser = (userId) => {
         setSelectedUserIds(prev =>
             prev.includes(userId)
@@ -72,9 +69,12 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
         );
     };
 
+    const toggleSection = (section) => {
+        setExpandedSection(prev => prev === section ? null : section);
+    };
+
     const handleCreateGroup = async () => {
         if (!groupName.trim()) return alert("Group name is required");
-        // UPDATED: Require at least one category OR one user
         if (selectedCategories.length === 0 && selectedUserIds.length === 0) {
             return alert("Select at least one class, role, or specific individual.");
         }
@@ -87,7 +87,7 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
                 name: groupName.trim(),
                 description: description.trim(),
                 selectedCategories,
-                selectedUserIds, // NEW: Send explicit IDs to backend
+                selectedUserIds,
                 isReadOnly
             });
 
@@ -102,6 +102,84 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
         } finally {
             setIsCreating(false);
         }
+    };
+
+    // Helper to render accordion lists
+    const renderAccordionSection = (title, items, isClass = false) => {
+        if (!items || items.length === 0) return null;
+
+        return (
+            <div className="space-y-2.5">
+                <h3 className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">{title}</h3>
+                <div className="space-y-2">
+                    {items.map(categoryName => {
+                        const isExpanded = expandedSection === categoryName;
+                        const isCategorySelected = selectedCategories.includes(categoryName);
+                        
+                        // Filter users for this specific role or class
+                        const categoryUsers = usersList.filter(u => 
+                            isClass ? u.class_name === categoryName : u.role === categoryName
+                        );
+
+                        return (
+                            <div key={categoryName} className="border border-zinc-200 rounded-lg overflow-hidden bg-white shadow-sm transition-all">
+                                
+                                {/* Accordion Header */}
+                                <div className="flex items-center justify-between p-3 cursor-pointer hover:bg-zinc-50 transition-colors" onClick={() => toggleSection(categoryName)}>
+                                    <div className="flex items-center gap-2">
+                                        <div className="text-zinc-400">
+                                            {isExpanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+                                        </div>
+                                        <span className="text-sm font-semibold text-zinc-800">{categoryName}</span>
+                                        <span className="text-xs text-zinc-500 bg-zinc-100 px-2 py-0.5 rounded-full font-medium">{categoryUsers.length}</span>
+                                    </div>
+                                    
+                                    {/* Select Entire Category Button */}
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); toggleCategory(categoryName); }}
+                                        className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide transition-all ${
+                                            isCategorySelected 
+                                            ? 'bg-primary/10 text-primary hover:bg-primary/20' 
+                                            : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'
+                                        }`}
+                                    >
+                                        {isCategorySelected ? 'Deselect All' : 'Select All'}
+                                    </button>
+                                </div>
+
+                                {/* Expanded Individual Users List */}
+                                {isExpanded && categoryUsers.length > 0 && (
+                                    <div className="p-3 bg-zinc-50/50 border-t border-zinc-100 flex flex-wrap gap-2">
+                                        {categoryUsers.map(u => {
+                                            const isUserSelected = selectedUserIds.includes(u.id) || isCategorySelected;
+                                            return (
+                                                <button
+                                                    key={`user-${u.id}`}
+                                                    onClick={() => { if (!isCategorySelected) toggleUser(u.id); }}
+                                                    disabled={isCategorySelected}
+                                                    className={`px-3 py-1.5 rounded-full text-xs font-semibold ring-1 ring-inset transition-all flex items-center gap-1.5 ${
+                                                        isUserSelected 
+                                                        ? 'bg-blue-600 text-white ring-blue-600 shadow-sm opacity-100' 
+                                                        : 'bg-white text-zinc-700 ring-zinc-200 hover:bg-zinc-50'
+                                                    } ${isCategorySelected && !selectedUserIds.includes(u.id) ? 'opacity-60 cursor-not-allowed' : ''}`}
+                                                >
+                                                    {u.name} {isUserSelected && <Check className="size-3" />}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                                {isExpanded && categoryUsers.length === 0 && (
+                                    <div className="p-3 bg-zinc-50/50 border-t border-zinc-100 text-xs text-zinc-400 italic">
+                                        No individuals found.
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+        );
     };
 
     if (!hasCreateRights) {
@@ -193,71 +271,9 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
                                 </div>
                             )}
 
-                            {options.roles.length > 0 && (
-                                <div className="space-y-2.5">
-                                    <h3 className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Staff Roles</h3>
-                                    <div className="flex flex-wrap gap-2">
-                                        {options.roles.map(role => (
-                                            <button
-                                                key={`role-${role}`}
-                                                onClick={() => toggleCategory(role)}
-                                                className={`px-3 py-1.5 rounded-full text-xs font-semibold ring-1 ring-inset transition-all flex items-center gap-1.5 ${
-                                                    selectedCategories.includes(role) 
-                                                    ? 'bg-indigo-600 text-white ring-indigo-600 shadow-sm' 
-                                                    : 'bg-white text-zinc-700 ring-zinc-200 hover:bg-zinc-50 hover:ring-zinc-300'
-                                                }`}
-                                            >
-                                                {role} {selectedCategories.includes(role) && <Check className="size-3" />}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-
-                            {options.classes.length > 0 && (
-                                <div className="space-y-2.5">
-                                    <h3 className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Classes (Students)</h3>
-                                    <div className="flex flex-wrap gap-2">
-                                        {options.classes.map(cls => (
-                                            <button
-                                                key={`class-${cls}`}
-                                                onClick={() => toggleCategory(cls)}
-                                                className={`px-3 py-1.5 rounded-full text-xs font-semibold ring-1 ring-inset transition-all flex items-center gap-1.5 ${
-                                                    selectedCategories.includes(cls) 
-                                                    ? 'bg-emerald-600 text-white ring-emerald-600 shadow-sm' 
-                                                    : 'bg-white text-zinc-700 ring-zinc-200 hover:bg-zinc-50 hover:ring-zinc-300'
-                                                }`}
-                                            >
-                                                {cls} {selectedCategories.includes(cls) && <Check className="size-3" />}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* NEW: Specific Individuals Block */}
-                            {usersList.length > 0 && (
-                                <div className="space-y-2.5 mt-2">
-                                    <h3 className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Specific Individuals</h3>
-                                    <div className="flex flex-wrap gap-2 max-h-60 overflow-y-auto custom-scrollbar p-1">
-                                        {usersList.map(u => (
-                                            <button
-                                                key={`user-${u.id}`}
-                                                onClick={() => toggleUser(u.id)}
-                                                className={`px-3 py-1.5 rounded-full text-xs font-semibold ring-1 ring-inset transition-all flex items-center gap-1.5 ${
-                                                    selectedUserIds.includes(u.id) 
-                                                    ? 'bg-blue-600 text-white ring-blue-600 shadow-sm' 
-                                                    : 'bg-white text-zinc-700 ring-zinc-200 hover:bg-zinc-50 hover:ring-zinc-300'
-                                                }`}
-                                            >
-                                                {u.name} <span className="opacity-60 font-normal">({u.role})</span>
-                                                {selectedUserIds.includes(u.id) && <Check className="size-3" />}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-
+                            {renderAccordionSection('Staff Roles', options.roles, false)}
+                            {renderAccordionSection('Classes (Students)', options.classes, true)}
+                            
                         </div>
                     )}
                 </div>
@@ -266,7 +282,6 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
             <div className="p-4 border-t border-zinc-200 bg-zinc-50 shrink-0">
                 <button
                     onClick={handleCreateGroup}
-                    // UPDATED: Disable if BOTH categories and individual users are empty
                     disabled={isCreating || !groupName.trim() || (selectedCategories.length === 0 && selectedUserIds.length === 0)}
                     className="w-full h-10 bg-primary hover:bg-primary/90 text-white rounded-md text-sm font-semibold transition-colors disabled:bg-zinc-300 disabled:text-zinc-500 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-sm"
                 >
