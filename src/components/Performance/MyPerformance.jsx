@@ -1,20 +1,212 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
-import { RefreshCw, Loader2, BarChart3, Trophy, User, ChevronDown } from 'lucide-react';
+import {
+  RefreshCw, Loader2, BarChart3, Trophy, User, ChevronDown, TrendingUp, Star
+} from 'lucide-react';
 import { roundPct, band, buildStudentTotals, studentExamBreakdown } from './PerfUtils';
 import { PerfBar, BarRow, ChartModal } from './PerfBar';
 
 // =====================================================================
-//  MyPerformance - a student's own view.
-//   - Topper vs You bar comparison, filtered by exam + subject.
-//   - Analysis button -> bar chart of the student's own exams.
+//  MyPerformance - the logged-in user's own view.
+//   * Teacher -> their teaching performance (assigned class+subjects).
+//   * Student -> Topper vs You comparison.
 //  Bands: 100-80 green, 80-50 blue, 50-0 red. Active academic year only.
 // =====================================================================
 
 export default function MyPerformance() {
   const { user } = useAuth();
+  const role = (user?.role || '').toLowerCase();
+  const isStudent = role.includes('student');
 
+  // Teachers (and any non-student) see their teaching performance.
+  if (!isStudent) return <TeacherMyPerformance user={user} />;
+  return <StudentMyPerformance user={user} />;
+}
+
+
+// =====================================================================
+//  TEACHER's own performance — uses /performance/teacher/:id (18.5)
+// =====================================================================
+function TeacherMyPerformance({ user }) {
+  const [data, setData]       = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [examTypeId, setExam] = useState('all');
+  const [showAnalysis, setShowAnalysis] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!user?.id) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/performance/teacher/${user.id}`);
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || 'Failed to load');
+      setData(d);
+    } catch (e) { alert(e.message); setData(null); }
+    setLoading(false);
+  }, [user]);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Per class+subject totals under the selected exam filter
+  const rows = useMemo(() => {
+    if (!data) return [];
+    return (data.detail || []).map(d => {
+      let o = 0, p = 0;
+      (d.exams || []).forEach(e => {
+        if (examTypeId !== 'all' && String(e.exam_type_id) !== String(examTypeId)) return;
+        o += e.obtained; p += e.possible;
+      });
+      return { ...d, obtained: o, possible: p, pct: p > 0 ? roundPct((o / p) * 100) : null };
+    }).filter(r => r.possible > 0).sort((a, b) => b.pct - a.pct);
+  }, [data, examTypeId]);
+
+  const overall = useMemo(() => {
+    const o = rows.reduce((s, r) => s + r.obtained, 0);
+    const p = rows.reduce((s, r) => s + r.possible, 0);
+    return { obtained: o, possible: p, pct: p > 0 ? roundPct((o / p) * 100) : 0 };
+  }, [rows]);
+
+  const examLabel = examTypeId === 'all'
+    ? 'All Exams'
+    : (data?.examTypes || []).find(t => String(t.id) === examTypeId)?.name || 'All Exams';
+
+  if (loading) {
+    return (
+      <div className="flex-1 flex items-center justify-center min-h-[400px]">
+        <Loader2 className="animate-spin size-8 text-primary" />
+      </div>
+    );
+  }
+
+  const hasData = data && rows.length > 0;
+  const ob = band(overall.pct);
+
+  return (
+    <div className="flex flex-col flex-1 gap-4 sm:gap-6 animate-in fade-in duration-300">
+
+      {/* Filter bar */}
+      <div className="flex flex-wrap items-end gap-3 sm:gap-4 bg-white p-4 rounded-lg ring-1 ring-black/5 shadow-sm">
+        <Selector label="Exam" value={examTypeId} onChange={setExam}
+          options={[
+            { value: 'all', label: 'All Exams' },
+            ...((data?.examTypes || []).map(t => ({ value: String(t.id), label: t.name })))
+          ]} />
+
+        <div className="flex-1 min-w-[100px]" />
+
+        <button onClick={() => setShowAnalysis(true)} disabled={!hasData}
+          className="h-9 px-4 inline-flex items-center justify-center gap-2 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800 border border-emerald-200 disabled:opacity-50 rounded-md text-xs font-semibold shadow-sm transition-colors shrink-0 w-full sm:w-auto">
+          <BarChart3 className="size-3.5" /> Analysis
+        </button>
+        <button onClick={load} title="Refresh Data"
+          className="h-9 px-3 bg-white border border-zinc-200 text-zinc-600 hover:text-primary hover:bg-zinc-50 rounded-md flex items-center justify-center transition-colors shadow-sm shrink-0 w-full sm:w-auto">
+          <RefreshCw className="size-4" />
+        </button>
+      </div>
+
+      {/* Legend */}
+      <div className="bg-amber-50/50 border border-amber-200/60 rounded-md px-4 py-3 flex flex-wrap gap-4 sm:gap-6 items-center shrink-0">
+        <span className="text-[10px] font-semibold text-amber-700 uppercase tracking-wider">Performance Index</span>
+        <div className="flex flex-wrap gap-4">
+          <Legend color="bg-emerald-500" text="80%+ Excellent" />
+          <Legend color="bg-blue-500" text="50-80% Average" />
+          <Legend color="bg-red-500" text="Below 50% Needs Work" />
+        </div>
+      </div>
+
+      {!hasData ? (
+        <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center justify-center flex-1 min-h-[300px]">
+          <BarChart3 className="size-10 text-zinc-300 mx-auto mb-3" />
+          <p className="text-zinc-500 font-medium text-sm">No performance data yet.</p>
+          <p className="text-zinc-400 text-xs mt-1">
+            Marks need to be entered for your assigned class &amp; subject in <strong>Reports</strong> first.
+          </p>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-4 sm:gap-6 flex-1">
+          {/* Overall summary */}
+          <div className="bg-gradient-to-r from-amber-50/80 to-white border border-amber-200/60 rounded-lg p-4 sm:p-5 flex items-center gap-4 shadow-sm shrink-0">
+            <div className="size-10 sm:size-12 bg-amber-100 rounded-md flex items-center justify-center text-amber-600 shrink-0 ring-1 ring-amber-200/50">
+              <Trophy className="size-5 sm:size-6" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[10px] font-semibold text-amber-600 uppercase tracking-wider mb-0.5">My Overall Performance · {examLabel}</div>
+              <div className="font-semibold text-zinc-900 truncate text-sm sm:text-base">{data.teacher_name}</div>
+            </div>
+            <div className="text-right shrink-0">
+              <div className={`text-lg sm:text-2xl font-bold tabular-nums leading-none ${ob.text}`}>{overall.pct}%</div>
+              <div className="text-[11px] font-medium text-zinc-500 mt-1 uppercase tracking-wider">
+                {Math.round(overall.obtained)} / {Math.round(overall.possible)}
+              </div>
+            </div>
+          </div>
+
+          {/* Per class+subject breakdown */}
+          <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-x-auto custom-scrollbar flex-1">
+            <table className="w-full text-left border-collapse min-w-[600px]">
+              <thead className="bg-zinc-50/80 sticky top-0 z-10">
+                <tr>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Class</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Subject</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 w-1/3">Performance</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 text-right w-32">Marks</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100">
+                {rows.map((r, i) => {
+                  const b = band(r.pct);
+                  return (
+                    <tr key={i} className="hover:bg-zinc-50/60 transition-colors">
+                      <td className="px-5 py-3 font-semibold text-sm text-zinc-900">{r.class_group}</td>
+                      <td className="px-5 py-3 text-sm font-medium text-zinc-500">{r.subject_name}</td>
+                      <td className="px-5 py-3">
+                        <div className="flex flex-col gap-1.5 justify-center w-full pr-4">
+                          <span className={`text-[11px] font-semibold ${b.text}`}>{r.pct}%</span>
+                          <div className="w-full bg-zinc-100 rounded-full h-1.5 overflow-hidden">
+                            <div className={`h-1.5 rounded-full ${b.bar}`} style={{ width: `${Math.min(r.pct, 100)}%` }} />
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-5 py-3 text-right">
+                        <div className="text-sm font-bold text-zinc-900 tabular-nums">{Math.round(r.obtained)}</div>
+                        <div className="text-[10px] text-zinc-400 font-medium uppercase tracking-wider mt-0.5">of {Math.round(r.possible)}</div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ---- ANALYSIS MODAL: my class+subject chart ---- */}
+      {showAnalysis && hasData && (
+        <ChartModal
+          title="My Performance Analysis"
+          subtitle={`${examLabel} / by class and subject`}
+          onClose={() => setShowAnalysis(false)}>
+          <BarRow empty="No marks recorded yet.">
+            {rows.map((r, i) => (
+              <PerfBar key={i}
+                percentage={r.pct}
+                label={r.subject_name}
+                subLabel={r.class_group}
+                marks={`${Math.round(r.obtained)}/${Math.round(r.possible)}`} />
+            ))}
+          </BarRow>
+        </ChartModal>
+      )}
+    </div>
+  );
+}
+
+
+// =====================================================================
+//  STUDENT's own performance — Topper vs You
+// =====================================================================
+function StudentMyPerformance({ user }) {
   const [data, setData]         = useState(null);
   const [loading, setLoading]   = useState(true);
   const [examTypeId, setExam]   = useState('overall');

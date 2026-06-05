@@ -3021,10 +3021,24 @@ async function loadClassPerformance(classId, requestedYearId) {
 // --- 18.1 Class list for a school (performance dropdowns) ------------
 app.get('/api/admin/performance/classes/:instId', async (req, res) => {
     try {
-        const [rows] = await db.execute(
-            'SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section',
-            [req.params.instId]
-        );
+        const { teacher_id } = req.query;
+        let rows;
+        if (teacher_id) {
+            // Only classes this teacher is assigned to (via subject_teacher_map)
+            [rows] = await db.execute(
+                `SELECT DISTINCT c.id, c.className, c.section
+                   FROM classes c
+                   JOIN subject_teacher_map stm ON stm.class_id = c.id
+                  WHERE c.institutionId = ? AND stm.teacher_id = ?
+                  ORDER BY c.className, c.section`,
+                [req.params.instId, teacher_id]
+            );
+        } else {
+            [rows] = await db.execute(
+                'SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section',
+                [req.params.instId]
+            );
+        }
         res.json(rows.map(c => ({
             id: c.id,
             className: c.className,

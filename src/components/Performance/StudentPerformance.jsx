@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { usePermissions } from '../../Screens/PermissionsContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   RefreshCw, Loader2, ChevronDown, ChevronUp, BarChart3,
@@ -21,6 +22,10 @@ import { PerfBar, BarRow, ChartModal } from './PerfBar';
 
 export default function StudentPerformance() {
   const { user } = useAuth();
+  const { isAllAccess } = usePermissions();
+
+  // A non-admin teacher only sees the classes they're assigned to.
+  const restrictToTeacher = !isAllAccess && (user?.role || '').toLowerCase().includes('teacher');
 
   const [classes, setClasses]       = useState([]);
   const [classId, setClassId]       = useState('');
@@ -44,7 +49,10 @@ export default function StudentPerformance() {
     (async () => {
       setLC(true);
       try {
-        const res = await fetch(`${API_BASE_URL}/admin/performance/classes/${user.institutionId}`);
+        const url = restrictToTeacher
+          ? `${API_BASE_URL}/admin/performance/classes/${user.institutionId}?teacher_id=${user.id}`
+          : `${API_BASE_URL}/admin/performance/classes/${user.institutionId}`;
+        const res = await fetch(url);
         const d = await res.json();
         setClasses(d || []);
         if (d && d.length > 0) setClassId(String(d[0].id));
