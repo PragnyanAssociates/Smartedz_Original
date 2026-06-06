@@ -2,30 +2,72 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   ChevronLeft, Mail, Phone, MapPin, Calendar,
-  BookOpen, Award, Clock, ShieldCheck, User, Loader2, Info, BarChart3, TrendingUp
+  BookOpen, Award, Clock, ShieldCheck, User, Loader2, Info, BarChart3, TrendingUp,
+  Users, Briefcase, Hash, Wallet, GraduationCap, Fingerprint
 } from 'lucide-react';
 import Timetable from '../Timetable/Timetable';
 import { roundPct, band, buildStudentTotals, studentExamBreakdown } from '../Performance/PerfUtils';
 
-export default function UserProfileDetail({ userId, onBack }) {
-  const [profile, setProfile] = useState(null);
-  const [loading, setLoading] = useState(true);
+// --- small display helpers -----------------------------------------
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// DD/MM/YYYY for date columns (parses the date portion directly to avoid
+// any timezone drift from the stored UTC datetime).
+const fmtDate = (v) => {
+  if (!v) return '';
+  const s = String(v);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return '';
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  return `${dd}/${mm}/${d.getFullYear()}`;
+};
+
+// "YYYY-MM" -> "Jun 2026"
+const fmtMonth = (ym) => {
+  const [y, m] = String(ym).split('-').map(Number);
+  return `${MON[(m || 1) - 1] || ''} ${y || ''}`.trim();
+};
+
+// ₹ with Indian grouping; falls back to the raw value if not numeric.
+const fmtMoney = (v) => {
+  if (v === null || v === undefined || v === '') return '';
+  const n = Number(v);
+  if (isNaN(n)) return String(v);
+  return `₹${n.toLocaleString('en-IN')}`;
+};
+
+export default function UserProfileDetail({ userId, seedProfile = null, classes = [], onBack }) {
+  // `seedProfile` is the complete user row handed down from the Directory
+  // (it comes from /admin/data and carries every column). `fetched` is the
+  // /profile lookup. We merge them so the screen always has the full set.
+  const [fetched, setFetched] = useState(null);
+  const [loading, setLoading] = useState(!seedProfile);
   const [activeTab, setActiveTab] = useState('info');
 
   const fetchProfile = useCallback(async () => {
     try {
-      setLoading(true);
+      if (!seedProfile) setLoading(true);
       const res = await fetch(`${API_BASE_URL}/profile/${userId}`);
       const data = await res.json();
-      setProfile(data);
+      setFetched(data);
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [userId, seedProfile]);
 
   useEffect(() => { fetchProfile(); }, [fetchProfile]);
+
+  // Seed wins on shared keys (it's the authoritative full record); the
+  // /profile result fills in anything seed doesn't carry.
+  const profile = useMemo(() => {
+    const merged = { ...(fetched || {}), ...(seedProfile || {}) };
+    return Object.keys(merged).length ? merged : null;
+  }, [fetched, seedProfile]);
 
   const tabs = useMemo(() => {
     const t = [{ id: 'info', label: 'Basic Info', icon: User }];
@@ -37,7 +79,7 @@ export default function UserProfileDetail({ userId, onBack }) {
     return t;
   }, [profile]);
 
-  if (loading) {
+  if (loading || !profile) {
     return (
       <div className="h-64 flex items-center justify-center animate-in fade-in duration-300">
         <Loader2 className="animate-spin size-8 text-primary" />
@@ -108,7 +150,7 @@ export default function UserProfileDetail({ userId, onBack }) {
 
           {/* Tab Content Area */}
           <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm p-5 sm:p-8 min-h-[400px]">
-            {activeTab === 'info' && <BasicInfo profile={profile} />}
+            {activeTab === 'info' && <BasicInfo profile={profile} classes={classes} />}
 
             {activeTab === 'timetable' && (
               <Timetable teacherId={userId} isEmbedded={true} />
@@ -130,38 +172,57 @@ export default function UserProfileDetail({ userId, onBack }) {
 
 
 // =====================================================================
-//  Basic info — curated sections + any extra profile fields
+//  Basic info — curated sections + any leftover profile fields
 // =====================================================================
-// Keys already shown above, or technical/internal — never listed under
-// "Additional Details".
-const HIDDEN_KEYS = new Set([
+// Keys rendered explicitly in a curated row below (or purely technical),
+// so they are never duplicated under "Additional Details".
+const SHOWN_KEYS = new Set([
+  // technical / internal
   'id', 'userid', 'institutionid', 'institution_id', 'password', 'password_hash',
-  'profile_pic', 'created_at', 'updated_at', 'role', 'name', 'email',
-  'phone', 'phone_no', 'mobile', 'dob', 'date_of_birth', 'address',
-  'class_id', 'classname', 'class_name', 'roll_no', 'status', 'admission_no',
-  'username', 'section', 'academic_year_id', 'token', 'otp'
+  'profile_pic', 'created_at', 'updated_at', 'role', 'name', 'username',
+  'token', 'otp', 'academic_year_id', 'subject_ids',
+  // personal & contact
+  'email', 'phone', 'phone_no', 'mobile', 'dob', 'date_of_birth',
+  'gender', 'address',
+  // academic (student)
+  'class_id', 'classname', 'class_name', 'section', 'roll_no', 'admission_no',
+  'admission_date', 'parent_name', 'guardian_name', 'pen_no', 'tc_number',
+  'school_joined_date', 'school_joined_grade', 'status',
+  // employment (staff)
+  'aadhar_no', 'aadhaar_no', 'joining_date', 'date_of_joining', 'experience',
+  'prev_salary', 'present_salary', 'salary'
 ]);
 
 const LABELS = {
-  gender: 'Gender', blood_group: 'Blood Group', father_name: "Father's Name",
-  mother_name: "Mother's Name", guardian_name: 'Guardian', parent_name: 'Parent',
-  joining_date: 'Joining Date', date_of_joining: 'Joining Date',
-  qualification: 'Qualification', experience: 'Experience', designation: 'Designation',
-  religion: 'Religion', caste: 'Caste', category: 'Category', nationality: 'Nationality',
-  aadhar: 'Aadhar No', aadhar_no: 'Aadhar No', emergency_contact: 'Emergency Contact',
-  emergency_phone: 'Emergency Contact', whatsapp: 'WhatsApp', city: 'City',
-  state: 'State', pincode: 'Pincode', country: 'Country', subject: 'Subject',
-  department: 'Department', salary: 'Salary'
+  blood_group: 'Blood Group', father_name: "Father's Name", mother_name: "Mother's Name",
+  qualification: 'Qualification', designation: 'Designation', religion: 'Religion',
+  caste: 'Caste', category: 'Category', nationality: 'Nationality',
+  emergency_contact: 'Emergency Contact', emergency_phone: 'Emergency Contact',
+  whatsapp: 'WhatsApp', city: 'City', state: 'State', pincode: 'Pincode',
+  country: 'Country', subject: 'Subject', department: 'Department'
 };
 
 const humanize = (k) =>
   k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
-function BasicInfo({ profile }) {
+function BasicInfo({ profile, classes = [] }) {
+  const role = profile.role || '';
+  const isStudent = /student/i.test(role);
+  const isStaff = role === 'Super Admin' || /teacher/i.test(role);
+
+  // Resolve the real class label from class_id (the profile only carries
+  // the numeric id, which previously rendered as e.g. "1" instead of "10").
+  const className = useMemo(() => {
+    const c = (classes || []).find(x => String(x.id) === String(profile.class_id));
+    if (c) return `${c.className}${c.section ? ` - ${c.section}` : ''}`;
+    return profile.className || profile.class_name || (profile.class_id != null ? String(profile.class_id) : '');
+  }, [classes, profile]);
+
+  // Anything left over that we didn't curate explicitly.
   const extra = useMemo(() => {
     return Object.entries(profile || {})
       .filter(([k, v]) =>
-        !HIDDEN_KEYS.has(k.toLowerCase()) &&
+        !SHOWN_KEYS.has(k.toLowerCase()) &&
         v !== null && v !== undefined && v !== '' &&
         typeof v !== 'object')
       .map(([k, v]) => ({ key: k, label: LABELS[k.toLowerCase()] || humanize(k), value: String(v) }));
@@ -170,32 +231,61 @@ function BasicInfo({ profile }) {
   return (
     <div className="space-y-8">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8 sm:gap-10">
+
+        {/* Personal & Contact — everyone */}
         <div className="space-y-6">
           <h4 className="text-[10px] font-semibold text-primary uppercase tracking-wider border-b border-zinc-100 pb-2">Personal &amp; Contact</h4>
           <div className="space-y-4">
             <InfoRow icon={Mail} label="Email" value={profile.email} />
             <InfoRow icon={Phone} label="Phone" value={profile.phone_no || profile.phone || profile.mobile} />
-            <InfoRow icon={Calendar} label="Date of Birth" value={profile.dob || profile.date_of_birth} />
+            <InfoRow icon={Calendar} label="Date of Birth" value={fmtDate(profile.dob || profile.date_of_birth)} />
+            <InfoRow icon={User} label="Gender" value={profile.gender} />
             <InfoRow icon={MapPin} label="Address" value={profile.address} />
           </div>
         </div>
 
-        <div className="space-y-6">
-          <h4 className="text-[10px] font-semibold text-emerald-600 uppercase tracking-wider border-b border-zinc-100 pb-2">Academic Info</h4>
-          <div className="space-y-4">
-            {profile.role === 'Student' && (
-              <>
-                <InfoRow icon={BookOpen} label="Class" value={profile.className || profile.class_name || profile.class_id} />
-                <InfoRow icon={ShieldCheck} label="Roll No" value={profile.roll_no} />
-                {profile.admission_no && <InfoRow icon={ShieldCheck} label="Admission No" value={profile.admission_no} />}
-              </>
-            )}
-            <InfoRow icon={ShieldCheck} label="Status" value={profile.status} />
+        {/* Right column — Academic (students) or Employment (staff) */}
+        {isStudent ? (
+          <div className="space-y-6">
+            <h4 className="text-[10px] font-semibold text-emerald-600 uppercase tracking-wider border-b border-zinc-100 pb-2">Academic Info</h4>
+            <div className="space-y-4">
+              <InfoRow icon={BookOpen} label="Class" value={className} />
+              {profile.section && <InfoRow icon={Hash} label="Section" value={profile.section} />}
+              <InfoRow icon={ShieldCheck} label="Roll No" value={profile.roll_no} />
+              <InfoRow icon={Hash} label="Admission No" value={profile.admission_no} />
+              <InfoRow icon={Calendar} label="Admission Date" value={fmtDate(profile.admission_date)} />
+              <InfoRow icon={Users} label="Parent / Guardian" value={profile.parent_name || profile.guardian_name} />
+              <InfoRow icon={Fingerprint} label="Aadhaar No" value={profile.aadhar_no || profile.aadhaar_no} />
+              <InfoRow icon={Hash} label="PEN No" value={profile.pen_no} />
+              <InfoRow icon={Hash} label="TC No" value={profile.tc_number} />
+              <InfoRow icon={GraduationCap} label="School Joined Grade" value={profile.school_joined_grade} />
+              <InfoRow icon={Calendar} label="School Joined Date" value={fmtDate(profile.school_joined_date)} />
+              <InfoRow icon={ShieldCheck} label="Status" value={profile.status} />
+            </div>
           </div>
-        </div>
+        ) : isStaff ? (
+          <div className="space-y-6">
+            <h4 className="text-[10px] font-semibold text-emerald-600 uppercase tracking-wider border-b border-zinc-100 pb-2">Employment Details</h4>
+            <div className="space-y-4">
+              <InfoRow icon={Fingerprint} label="Aadhaar No" value={profile.aadhar_no || profile.aadhaar_no} />
+              <InfoRow icon={Calendar} label="Joining Date" value={fmtDate(profile.joining_date || profile.date_of_joining)} />
+              <InfoRow icon={Briefcase} label="Experience" value={profile.experience} />
+              <InfoRow icon={Wallet} label="Previous Salary" value={fmtMoney(profile.prev_salary)} />
+              <InfoRow icon={Wallet} label="Present Salary" value={fmtMoney(profile.present_salary)} />
+              <InfoRow icon={ShieldCheck} label="Status" value={profile.status} />
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            <h4 className="text-[10px] font-semibold text-emerald-600 uppercase tracking-wider border-b border-zinc-100 pb-2">Account</h4>
+            <div className="space-y-4">
+              <InfoRow icon={ShieldCheck} label="Status" value={profile.status} />
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Any additional profile fields */}
+      {/* Any additional profile fields we didn't curate explicitly */}
       {extra.length > 0 && (
         <div className="space-y-6">
           <h4 className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 pb-2 flex items-center gap-1.5">
@@ -306,36 +396,58 @@ function PerformanceOverview({ userId, role }) {
 
 
 // =====================================================================
-//  Attendance overview (student = monthly W/P from Attendance module)
+//  Attendance overview — monthly Working / Present for students AND staff.
+//    • Students pull monthly figures from the Reports endpoint.
+//    • Teachers/staff pull their own rows from the Attendance history
+//      endpoint (active year) and we group them by month client-side.
+//  "Present" counts attended days (P + L), matching the Attendance module.
 // =====================================================================
 function AttendanceOverview({ userId, role }) {
-  const [card, setCard] = useState(null);
+  const [months, setMonths] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (role === 'Teacher') { setLoading(false); return; }
     let cancelled = false;
     setLoading(true);
-    fetch(`${API_BASE_URL}/admin/reports/student/${userId}`)
-      .then(r => r.json())
-      .then(d => { if (!cancelled) setCard(d); })
-      .catch(() => { if (!cancelled) setCard(null); })
-      .finally(() => { if (!cancelled) setLoading(false); });
+    const finish = (arr) => { if (!cancelled) { setMonths(arr); setLoading(false); } };
+    const isTeacher = /teacher/i.test(role);
+
+    if (isTeacher) {
+      // Whole active year (no from/to) → group rows into months.
+      fetch(`${API_BASE_URL}/admin/attendance/history/${userId}`)
+        .then(r => r.json())
+        .then(d => {
+          const map = {};
+          (d?.rows || []).forEach(r => {
+            const ym = String(r.attendance_date).slice(0, 7);
+            if (!ym) return;
+            if (!map[ym]) map[ym] = { ym, working_days: 0, present_days: 0 };
+            map[ym].working_days += 1;
+            if (r.status === 'P' || r.status === 'L') map[ym].present_days += 1;
+          });
+          const arr = Object.values(map)
+            .sort((a, b) => a.ym.localeCompare(b.ym))
+            .map(m => ({ month: fmtMonth(m.ym), working_days: m.working_days, present_days: m.present_days }));
+          finish(arr);
+        })
+        .catch(() => finish([]));
+    } else {
+      fetch(`${API_BASE_URL}/admin/reports/student/${userId}`)
+        .then(r => r.json())
+        .then(d => finish((d?.attendance || []).filter(m => (m.working_days || 0) > 0)))
+        .catch(() => finish([]));
+    }
     return () => { cancelled = true; };
   }, [userId, role]);
-
-  if (role === 'Teacher') {
-    return <EmptyOverview icon={ShieldCheck} text="Staff attendance isn't shown in the directory view." />;
-  }
 
   if (loading) {
     return <div className="h-48 flex items-center justify-center"><Loader2 className="animate-spin size-7 text-primary" /></div>;
   }
 
-  const months = (card?.attendance || []).filter(m => (m.working_days || 0) > 0);
-  if (!months.length) return <EmptyOverview icon={ShieldCheck} text="No attendance recorded for this student yet." />;
+  const list = months || [];
+  if (!list.length) return <EmptyOverview icon={ShieldCheck} text="No attendance recorded yet." />;
 
-  const totals = months.reduce(
+  const totals = list.reduce(
     (acc, m) => ({ working: acc.working + (m.working_days || 0), present: acc.present + (m.present_days || 0) }),
     { working: 0, present: 0 }
   );
@@ -356,7 +468,7 @@ function AttendanceOverview({ userId, role }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-100">
-            {months.map((m, i) => {
+            {list.map((m, i) => {
               const p = m.working_days > 0 ? roundPct((m.present_days / m.working_days) * 100) : 0;
               const b = band(p);
               return (

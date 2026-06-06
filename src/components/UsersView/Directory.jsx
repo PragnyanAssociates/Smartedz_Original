@@ -14,7 +14,9 @@ export default function Directory() {
   const { user } = useAuth();
   const [data, setData] = useState({ users: [], roles: [], classes: [] });
   const [loading, setLoading] = useState(true);
-  const [selectedUserId, setSelectedUserId] = useState(null);
+  // Store the full selected user record (not just the id) so the detail
+  // screen has every column without an extra round-trip.
+  const [selected, setSelected] = useState(null);
 
   // Filters
   const [activeRole, setActiveRole] = useState('All');
@@ -68,8 +70,15 @@ export default function Directory() {
     return list;
   }, [activeUsers, activeRole, activeClass, search]);
 
-  if (selectedUserId) {
-    return <UserProfileDetail userId={selectedUserId} onBack={() => setSelectedUserId(null)} />;
+  if (selected) {
+    return (
+      <UserProfileDetail
+        userId={selected.id}
+        seedProfile={selected}
+        classes={data.classes || []}
+        onBack={() => setSelected(null)}
+      />
+    );
   }
 
   return (
@@ -153,7 +162,7 @@ export default function Directory() {
           {filteredUsers.map(u => (
             <div
               key={u.id}
-              onClick={() => setSelectedUserId(u.id)}
+              onClick={() => setSelected(u)}
               className="bg-white p-4 sm:p-5 rounded-lg ring-1 ring-black/5 shadow-sm hover:ring-zinc-300 transition-all cursor-pointer group flex flex-col items-center text-center"
             >
               <div className="relative mb-3 sm:mb-4">
