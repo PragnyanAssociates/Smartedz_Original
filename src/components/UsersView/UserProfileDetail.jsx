@@ -390,10 +390,11 @@ function PerformanceOverview({ userId, role }) {
 
 
 // =====================================================================
-//  Attendance overview — monthly Working / Present for students AND staff.
-//    • Students pull monthly figures from the Reports endpoint.
-//    • Teachers/staff pull their own rows from the Attendance history
-//      endpoint (active year) and we group them by month client-side.
+//  Attendance overview — monthly Working / Present, read straight from
+//  the live Attendance table via the history endpoint (active year) for
+//  students AND staff, then grouped by month on the client. Reading the
+//  same source the marker writes to means the latest marked day always
+//  shows here immediately — no dependence on the Reports aggregation.
 //  "Present" counts attended days (P + L), matching the Attendance module.
 // =====================================================================
 function AttendanceOverview({ userId, role }) {
@@ -404,33 +405,26 @@ function AttendanceOverview({ userId, role }) {
     let cancelled = false;
     setLoading(true);
     const finish = (arr) => { if (!cancelled) { setMonths(arr); setLoading(false); } };
-    const isTeacher = /teacher/i.test(role);
 
-    if (isTeacher) {
-      // Whole active year (no from/to) → group rows into months.
-      fetch(`${API_BASE_URL}/admin/attendance/history/${userId}`)
-        .then(r => r.json())
-        .then(d => {
-          const map = {};
-          (d?.rows || []).forEach(r => {
-            const ym = String(r.attendance_date).slice(0, 7);
-            if (!ym) return;
-            if (!map[ym]) map[ym] = { ym, working_days: 0, present_days: 0 };
-            map[ym].working_days += 1;
-            if (r.status === 'P' || r.status === 'L') map[ym].present_days += 1;
-          });
-          const arr = Object.values(map)
-            .sort((a, b) => a.ym.localeCompare(b.ym))
-            .map(m => ({ month: fmtMonth(m.ym), working_days: m.working_days, present_days: m.present_days }));
-          finish(arr);
-        })
-        .catch(() => finish([]));
-    } else {
-      fetch(`${API_BASE_URL}/admin/reports/student/${userId}`)
-        .then(r => r.json())
-        .then(d => finish((d?.attendance || []).filter(m => (m.working_days || 0) > 0)))
-        .catch(() => finish([]));
-    }
+    // Whole active year (no from/to) → group rows into months.
+    fetch(`${API_BASE_URL}/admin/attendance/history/${userId}`)
+      .then(r => r.json())
+      .then(d => {
+        const map = {};
+        (d?.rows || []).forEach(r => {
+          const ym = String(r.attendance_date).slice(0, 7);
+          if (!ym) return;
+          if (!map[ym]) map[ym] = { ym, working_days: 0, present_days: 0 };
+          map[ym].working_days += 1;
+          if (r.status === 'P' || r.status === 'L') map[ym].present_days += 1;
+        });
+        const arr = Object.values(map)
+          .sort((a, b) => a.ym.localeCompare(b.ym))
+          .map(m => ({ month: fmtMonth(m.ym), working_days: m.working_days, present_days: m.present_days }));
+        finish(arr);
+      })
+      .catch(() => finish([]));
+
     return () => { cancelled = true; };
   }, [userId, role]);
 

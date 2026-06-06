@@ -2376,6 +2376,8 @@ app.post('/api/admin/attempts/:attemptId/grade', async (req, res) => {
 // --- Month boundaries helper for attendance roll-up ----------------
 //   Given an academic year row {startDate,endDate}, returns an ordered
 //   list of { key:'2025-06', label:'June', from, to } month buckets.
+//   (Retained for reference / other callers; the report-card attendance
+//   below no longer relies on it — see the note in buildReportCard.)
 function buildMonthBuckets(startDateStr, endDateStr) {
     const buckets = [];
     if (!startDateStr || !endDateStr) return buckets;
@@ -2793,7 +2795,7 @@ async function buildReportCard(studentId) {
     );
     const institution = instRows[0] || null;
 
-    // Active academic year (for month buckets + year label + marks scope)
+    // Active academic year (for year label + marks scope + attendance scope)
     const [yearRows] = await db.execute(
         `SELECT * FROM academic_years
           WHERE institutionId = ? AND isActive = 1 LIMIT 1`,
@@ -2849,34 +2851,60 @@ async function buildReportCard(studentId) {
     }
 
     // ---- Attendance: pulled from the Attendance module (Section 15) ----
+    //   Scoped to the school's ACTIVE academic year (academic_year_id),
+    //   exactly like the Attendance module, the Directory and the history
+    //   endpoint — and grouped by the REAL month of each row, NOT by month
+    //   buckets derived from the year's start/end dates.
+    //
+    //   The old bucket approach queried each month by a date range bounded
+    //   by academicYear.startDate..endDate. Any day marked under the active
+    //   year but outside that configured window (e.g. the day you just
+    //   marked, when the calendar month sits past the year's end date) fell
+    //   into no bucket and silently vanished — which is why freshly marked
+    //   attendance wasn't appearing here.
+    //
     //   working_days = distinct dates the student's CLASS had attendance
-    //   taken that month; present_days = this student's Present + Late.
+    //   taken that month (the denominator); present_days = this student's
+    //   Present + Late that month.
     let attendance = [];
     if (academicYear) {
-        const buckets = buildMonthBuckets(academicYear.startDate, academicYear.endDate);
-        for (const b of buckets) {
-            let working = 0, present = 0;
-            try {
-                const [wRows] = await db.execute(
-                    `SELECT COUNT(DISTINCT a.attendance_date) AS working
-                       FROM attendance a
-                       JOIN users u ON u.id = a.user_id
-                      WHERE u.class_id = ? AND a.attendance_date BETWEEN ? AND ?`,
-                    [student.class_id, b.from, b.to]
-                );
-                working = Number(wRows[0]?.working || 0);
-                const [pRows] = await db.execute(
-                    `SELECT COUNT(*) AS present
-                       FROM attendance
-                      WHERE user_id = ? AND status IN ('P','L')
-                        AND attendance_date BETWEEN ? AND ?`,
-                    [studentId, b.from, b.to]
-                );
-                present = Number(pRows[0]?.present || 0);
-            } catch {
-                working = 0; present = 0;
-            }
-            attendance.push({ month: b.label, working_days: working, present_days: present });
+        try {
+            const [wRows] = await db.execute(
+                `SELECT DATE_FORMAT(a.attendance_date, '%Y-%m') AS ym,
+                        COUNT(DISTINCT a.attendance_date) AS working
+                   FROM attendance a
+                   JOIN users u ON u.id = a.user_id
+                  WHERE u.class_id = ? AND a.academic_year_id = ?
+                  GROUP BY ym`,
+                [student.class_id, academicYear.id]
+            );
+            const [pRows] = await db.execute(
+                `SELECT DATE_FORMAT(attendance_date, '%Y-%m') AS ym,
+                        COUNT(*) AS present
+                   FROM attendance
+                  WHERE user_id = ? AND academic_year_id = ? AND status IN ('P','L')
+                  GROUP BY ym`,
+                [studentId, academicYear.id]
+            );
+
+            const monthNames = ['January','February','March','April','May','June',
+                                'July','August','September','October','November','December'];
+            const wMap = {}; wRows.forEach(r => { wMap[r.ym] = Number(r.working) || 0; });
+            const pMap = {}; pRows.forEach(r => { pMap[r.ym] = Number(r.present) || 0; });
+
+            // Every month that has any data, in chronological order across
+            // the academic year (e.g. 2025-06, 2025-07, … 2026-05).
+            const months = Array.from(new Set([...Object.keys(wMap), ...Object.keys(pMap)])).sort();
+            attendance = months.map(ym => {
+                const m = parseInt(ym.slice(5, 7), 10);
+                return {
+                    month: monthNames[m - 1] || ym,
+                    working_days: wMap[ym] || 0,
+                    present_days: pMap[ym] || 0
+                };
+            });
+        } catch {
+            attendance = [];
         }
     }
 
