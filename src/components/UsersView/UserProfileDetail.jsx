@@ -2,10 +2,9 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   ChevronLeft, Mail, Phone, MapPin, Calendar,
-  BookOpen, Award, Clock, ShieldCheck, User, Loader2, Info, BarChart3, TrendingUp,
+  BookOpen, Award, ShieldCheck, User, Loader2, Info, BarChart3, TrendingUp,
   Users, Briefcase, Hash, Wallet, GraduationCap, Fingerprint
 } from 'lucide-react';
-import Timetable from '../Timetable/Timetable';
 import { roundPct, band, buildStudentTotals, studentExamBreakdown } from '../Performance/PerfUtils';
 
 // --- small display helpers -----------------------------------------
@@ -71,7 +70,6 @@ export default function UserProfileDetail({ userId, seedProfile = null, classes 
 
   const tabs = useMemo(() => {
     const t = [{ id: 'info', label: 'Basic Info', icon: User }];
-    if (profile?.role === 'Teacher') t.push({ id: 'timetable', label: 'Schedule', icon: Clock });
     if (profile?.role === 'Student' || profile?.role === 'Teacher') {
       t.push({ id: 'performance', label: 'Performance', icon: Award });
       t.push({ id: 'attendance', label: 'Attendance', icon: ShieldCheck });
@@ -151,10 +149,6 @@ export default function UserProfileDetail({ userId, seedProfile = null, classes 
           {/* Tab Content Area */}
           <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm p-5 sm:p-8 min-h-[400px]">
             {activeTab === 'info' && <BasicInfo profile={profile} classes={classes} />}
-
-            {activeTab === 'timetable' && (
-              <Timetable teacherId={userId} isEmbedded={true} />
-            )}
 
             {activeTab === 'performance' && (
               <PerformanceOverview userId={userId} role={profile.role} />
