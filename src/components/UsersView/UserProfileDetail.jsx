@@ -69,11 +69,18 @@ export default function UserProfileDetail({ userId, seedProfile = null, classes 
   }, [fetched, seedProfile]);
 
   const tabs = useMemo(() => {
+    const roleLc = (profile?.role || '').trim().toLowerCase();
+    const isStudent = roleLc === 'student';
+    const isTeacher = roleLc.includes('teacher');
+    // Super Admin (and Developer) are never marked in the Attendance module,
+    // so they get Basic Info only. Everyone else — Student, Teacher, and any
+    // other role (Principal, custom roles…) — gets an Attendance tab.
+    // Performance stays limited to Students and Teachers.
+    const noAttendance = roleLc === 'super admin' || roleLc === 'developer';
+
     const t = [{ id: 'info', label: 'Basic Info', icon: User }];
-    if (profile?.role === 'Student' || profile?.role === 'Teacher') {
-      t.push({ id: 'performance', label: 'Performance', icon: Award });
-      t.push({ id: 'attendance', label: 'Attendance', icon: ShieldCheck });
-    }
+    if (isStudent || isTeacher) t.push({ id: 'performance', label: 'Performance', icon: Award });
+    if (!noAttendance) t.push({ id: 'attendance', label: 'Attendance', icon: ShieldCheck });
     return t;
   }, [profile]);
 
