@@ -23,21 +23,21 @@ export function PerfBar({ percentage, label, subLabel, marks, highlight }) {
   return (
     <div className="flex flex-col items-center justify-end h-full group min-w-[66px] mx-1.5">
       <div className="mb-2 text-center">
-        <div className={`text-xs font-black ${b.text}`}>{percentage}%</div>
-        {marks && <div className="text-[9px] font-bold text-slate-400 whitespace-nowrap">{marks}</div>}
+        <div className={`text-xs font-semibold ${b.text}`}>{percentage}%</div>
+        {marks && <div className="text-[9px] font-semibold text-zinc-400 whitespace-nowrap">{marks}</div>}
       </div>
-      <div className="w-9 sm:w-12 flex-1 bg-slate-100 rounded-t-lg flex flex-col justify-end overflow-hidden border border-slate-200">
-        <div className={`w-full ${b.bar} rounded-t-lg transition-all duration-700 ease-out`}
+      <div className="w-9 sm:w-12 flex-1 bg-zinc-100 rounded-t-md flex flex-col justify-end overflow-hidden ring-1 ring-inset ring-black/5">
+        <div className={`w-full ${b.bar} rounded-t-md transition-all duration-700 ease-out`}
           style={{ height: `${h}%` }} />
       </div>
-      <div className="w-full h-px bg-slate-200 mt-1" />
-      <span className={`mt-1.5 text-[10px] font-bold text-center truncate max-w-[84px] px-1 ${
-        highlight ? 'text-blue-600' : 'text-slate-600'
+      <div className="w-full h-px bg-zinc-200 mt-1" />
+      <span className={`mt-1.5 text-[10px] font-semibold text-center truncate max-w-[84px] px-1 ${
+        highlight ? 'text-primary' : 'text-zinc-600'
       }`} title={label}>
         {label}
       </span>
       {subLabel && (
-        <span className="text-[9px] text-slate-400 truncate max-w-[84px]" title={subLabel}>
+        <span className="text-[9px] text-zinc-400 font-medium truncate max-w-[84px]" title={subLabel}>
           {subLabel}
         </span>
       )}
@@ -55,8 +55,8 @@ export function BandLegend() {
         ['bg-red-500', '0–50% Needs Work']
       ].map(([c, t]) => (
         <div key={t} className="flex items-center gap-1.5">
-          <span className={`w-3 h-3 rounded ${c}`} />
-          <span className="text-xs font-bold text-slate-600">{t}</span>
+          <span className={`w-3 h-3 rounded-sm ${c}`} />
+          <span className="text-xs font-semibold text-zinc-600 tracking-tight">{t}</span>
         </div>
       ))}
     </div>
@@ -68,14 +68,14 @@ export function BarRow({ children, empty }) {
   const items = React.Children.toArray(children);
   if (items.length === 0) {
     return (
-      <div className="h-[300px] flex flex-col items-center justify-center text-slate-400">
+      <div className="h-[300px] flex flex-col items-center justify-center text-zinc-400">
         <BarChart3 className="w-14 h-14 opacity-20 mb-3" />
-        <span className="font-medium">{empty || 'No data to chart.'}</span>
+        <span className="font-medium text-sm">{empty || 'No data to chart.'}</span>
       </div>
     );
   }
   return (
-    <div className="h-[340px] overflow-x-auto">
+    <div className="h-[340px] overflow-x-auto custom-scrollbar">
       <div className="flex items-end h-full min-w-max pt-8 px-2">{children}</div>
     </div>
   );
@@ -84,27 +84,35 @@ export function BarRow({ children, empty }) {
 // --- Modal shell with header + optional filter row + legend footer --
 export function ChartModal({ title, subtitle, onClose, filters, banner, children }) {
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
-      <div className="bg-white w-full max-w-5xl rounded-3xl shadow-2xl flex flex-col max-h-[92vh] overflow-hidden">
-        <div className="flex justify-between items-center p-5 border-b border-slate-100 bg-slate-50">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+      <div className="bg-white w-full max-w-5xl rounded-lg ring-1 ring-black/5 shadow-xl flex flex-col max-h-[92vh] overflow-hidden animate-in zoom-in-95 duration-200">
+        
+        <div className="flex justify-between items-center p-5 border-b border-zinc-100 bg-zinc-50/50 shrink-0">
           <div>
-            <h3 className="text-lg font-black text-slate-800">{title}</h3>
-            {subtitle && <p className="text-xs text-slate-500 font-medium">{subtitle}</p>}
+            <h3 className="text-lg font-semibold text-zinc-900 tracking-tight">{title}</h3>
+            {subtitle && <p className="text-xs text-zinc-500 font-medium mt-0.5">{subtitle}</p>}
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-700">
-            <X size={22} />
+          <button onClick={onClose} className="text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 p-1.5 rounded-md transition-colors">
+            <X className="size-5" />
           </button>
         </div>
+        
         {filters && (
-          <div className="px-6 pt-5 pb-1 border-b border-slate-100 bg-white">
+          <div className="px-6 pt-5 pb-3 border-b border-zinc-100 bg-white shrink-0">
             {filters}
           </div>
         )}
-        {banner}
-        <div className="flex-1 overflow-auto p-6">{children}</div>
-        <div className="p-4 border-t border-slate-100 bg-slate-50">
+        
+        {banner && <div className="shrink-0">{banner}</div>}
+        
+        <div className="flex-1 overflow-auto p-6 bg-zinc-50/30 custom-scrollbar">
+          {children}
+        </div>
+        
+        <div className="p-4 border-t border-zinc-100 bg-zinc-50 shrink-0">
           <BandLegend />
         </div>
+        
       </div>
     </div>
   );

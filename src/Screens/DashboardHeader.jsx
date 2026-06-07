@@ -45,13 +45,13 @@ export default function DashboardHeader({ onMenuClick }) {
             <img
               src={inst.logo}
               alt={schoolName || 'School Logo'}
-              className="h-12 md:h-14 w-auto object-contain shrink-0"
+              className="h-14 md:h-16 w-auto object-contain shrink-0"
             />
           ) : (
             // Neutral placeholder — shows this school's initial, never a
             // hardcoded name. Falls back to a generic icon if name is empty.
-            <div className="size-10 sm:size-12 bg-primary/10 text-primary rounded flex items-center justify-center border border-primary/20 shrink-0 font-semibold text-lg">
-              {schoolName ? initial : <Building2 className="size-5 text-zinc-400" />}
+            <div className="size-12 sm:size-14 bg-primary/10 text-primary rounded flex items-center justify-center border border-primary/20 shrink-0 font-semibold text-lg">
+              {schoolName ? initial : <Building2 className="size-6 text-zinc-400" />}
             </div>
           )}
 
@@ -99,7 +99,7 @@ export default function DashboardHeader({ onMenuClick }) {
           <img
             src={smartedzLogo}
             alt="SmartEdz"
-            className="h-10 sm:h-12 w-auto object-contain shrink-0"
+            className="h-12 sm:h-16 w-auto object-contain shrink-0"
           />
         </div>
 

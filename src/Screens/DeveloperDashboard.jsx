@@ -154,7 +154,11 @@ export default function DeveloperDashboard() {
         <div className="flex items-center gap-4">
           <img src={smartedzLogo} alt="SmartEdz" className="h-8 w-auto" />
           <div className="h-6 w-[1px] bg-zinc-200"></div>
-          <h1 className="text-lg font-semibold text-zinc-900 tracking-tight">DEV<span className="text-primary">CONSOLE</span></h1>
+          <h1 className="text-lg font-semibold tracking-tight">
+            <span className="text-primary">SMART</span>
+            <span className="text-accent">EDZ</span>
+            <span className="text-zinc-900">BOARD</span>
+          </h1>
         </div>
         <button onClick={logout} className="h-9 px-4 rounded-md hover:bg-zinc-50 border border-zinc-200 text-zinc-600 hover:text-zinc-900 flex items-center transition-colors text-xs font-semibold shadow-sm">
           <LogOut className="size-3.5 mr-2" /> Sign Out
