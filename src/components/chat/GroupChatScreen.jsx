@@ -92,7 +92,7 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
   // --- UPDATED PERMISSIONS LOGIC ---
   const isSystemAdmin = user?.role === 'Super Admin' || user?.role === 'Developer';
 const isCreator = Boolean(user?.id && group?.created_by && String(user?.id) === String(group?.created_by));
-  const hasEditRights = isAllAccess || canEdit || isSystemAdmin || isCreator;
+const hasEditRights = isAllAccess || isSystemAdmin || isCreator;
   const hasGlobalDelete = isAllAccess || canDelete || isSystemAdmin;
 const isReadOnlyMode = group?.is_read_only == 1;
   const canSendMessages = !isReadOnlyMode || hasEditRights;
@@ -107,6 +107,17 @@ console.log('DEBUG GROUP STATE:', {
     isCreator,
     isAllAccess,
     canEdit
+});
+console.log('DEBUG EDIT RIGHTS:', {
+    isAllAccess,
+    canEdit,
+    isSystemAdmin,
+    isCreator,
+    userRole: user?.role,
+    userId: user?.id,
+    groupCreatedBy: group?.created_by,
+    typeof_userId: typeof user?.id,
+    typeof_created_by: typeof group?.created_by,
 });
  useEffect(() => {
   if (providedGroup) {

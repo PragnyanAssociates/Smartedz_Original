@@ -5977,7 +5977,6 @@ socket.on('sendMessage', async (data) => {
     const conn = await db.getConnection();
 
     try {
-        // Always re-fetch both group AND user fresh from DB
         const [[groupRow]] = await conn.execute(
             'SELECT is_read_only, created_by, institutionId FROM `groups` WHERE id = ?',
             [groupId]
@@ -5986,53 +5985,25 @@ socket.on('sendMessage', async (data) => {
             'SELECT role, institutionId FROM users WHERE id = ?',
             [userId]
         );
-         console.log('DEBUG DB ROWS:', {
-          is_read_only: groupRows[0]?.is_read_only,
-          typeof_is_read_only: typeof groupRows[0]?.is_read_only,
-          created_by: groupRows[0]?.created_by,
-          typeof_created_by: typeof groupRows[0]?.created_by,
-          userId,
-          typeof_userId: typeof userId,
-          isCreatorCheck: String(groupRows[0]?.created_by) === String(userId),
-          userRole: userRows[0]?.role,
-          isSystemAdmin: userRows[0]?.role === 'Super Admin' || userRows[0]?.role === 'Developer'
-      });
 
         if (!groupRow || !userRow) {
             conn.release();
             return;
         }
 
-        const isReadOnly = groupRow.is_read_only == 1; // loose equality handles TINYINT
+        const isReadOnly = groupRow.is_read_only == 1;
         const isSystemAdmin = userRow.role === 'Super Admin' || userRow.role === 'Developer';
-        
-        // Cast both to string for safe comparison
         const isCreator = String(groupRow.created_by) === String(userId);
 
         if (isReadOnly && !isSystemAdmin && !isCreator) {
-            // Also check role-based edit permission as fallback
-            const [[permRow]] = await conn.execute(`
-                SELECT p.can_edit
-                FROM permissions p
-                JOIN roles r ON p.role_id = r.id
-                WHERE r.role_name = ? 
-                  AND r.institutionId = ? 
-                  AND p.module_name = 'GroupChat'
-            `, [userRow.role, userRow.institutionId]);
-
-            const hasEditPerm = permRow?.can_edit == 1;
-
-            if (!hasEditPerm) {
-                socket.emit('messageError', {
-                    message: 'Only admins can send messages in this group.',
-                    clientMessageId: clientMessageId || null
-                });
-                conn.release();
-                return;
-            }
+            socket.emit('messageError', {
+                message: 'Only admins can send messages in this group.',
+                clientMessageId: clientMessageId || null
+            });
+            conn.release();
+            return;
         }
 
-        // Also verify the user is actually a member of this group
         const [[memberRow]] = await conn.execute(
             'SELECT user_id FROM group_members WHERE group_id = ? AND user_id = ?',
             [groupId, userId]

@@ -62,25 +62,30 @@ const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDele
         fetchMembers();
     }
   }, [group.id]);
+const [isLoadingOptions, setIsLoadingOptions] = useState(false);
 
-  useEffect(() => {
-    if (isAddModalOpen && options.classes.length === 0) {
-      const fetchOptions = async () => {
+useEffect(() => {
+    if (!isAddModalOpen) return;
+    
+    const fetchOptions = async () => {
+        setIsLoadingOptions(true);
         try {
-          const [resOptions, resUsers] = await Promise.all([
-             apiClient.get('/groups/options', { params: { userId: user.id, instId: user.institutionId } }),
-             apiClient.get('/groups/users-options', { params: { instId: user.institutionId } })
-          ]);
-          setOptions(resOptions.data);
-          setUsersList(resUsers.data);
+            const [resOptions, resUsers] = await Promise.all([
+                apiClient.get('/groups/options', { params: { userId: user.id, instId: user.institutionId } }),
+                apiClient.get('/groups/users-options', { params: { instId: user.institutionId } })
+            ]);
+            console.log('OPTIONS:', resOptions.data);
+            console.log('USERS:', resUsers.data);
+            setOptions(resOptions.data);
+            setUsersList(resUsers.data);
         } catch (error) {
-          console.error("Failed to fetch group options");
+            console.error("Failed to fetch group options", error);
+        } finally {
+            setIsLoadingOptions(false);
         }
-      };
-      fetchOptions();
-    }
-  }, [isAddModalOpen, user.id, user.institutionId, options.classes.length]);
-
+    };
+    fetchOptions();
+}, [isAddModalOpen]); // ← simplified dependency array
   const handlePickImage = async (e) => {
     if (!hasEditRights) return;
     const file = e.target.files[0];
@@ -290,10 +295,22 @@ const GroupSettingsScreen = ({ group: propGroup, isEmbedded, onBack, onGroupDele
               <button onClick={() => setIsAddModalOpen(false)} className="p-1 hover:bg-zinc-200 rounded-full text-zinc-500 transition-colors"><X className="size-5" /></button>
             </div>
             
-            <div className="p-5 max-h-[60vh] overflow-y-auto custom-scrollbar space-y-6">
-                {renderAccordionSection('Staff Roles', options.roles, false)}
-                {renderAccordionSection('Classes', options.classes, true)}
-            </div>
+        <div className="p-5 max-h-[60vh] overflow-y-auto custom-scrollbar space-y-6">
+    {isLoadingOptions ? (
+        <div className="flex items-center justify-center py-8 gap-2 text-zinc-500">
+            <Loader2 className="size-5 animate-spin text-primary" />
+            <span className="text-sm font-medium">Loading options...</span>
+        </div>
+    ) : (
+        <>
+            {renderAccordionSection('Staff Roles', options.roles, false)}
+            {renderAccordionSection('Classes', options.classes, true)}
+            {options.roles.length === 0 && options.classes.length === 0 && (
+                <p className="text-sm text-zinc-400 text-center py-4">No options found.</p>
+            )}
+        </>
+    )}
+</div>
             
             <div className="px-5 py-4 border-t border-zinc-100 bg-zinc-50">
               <button 
