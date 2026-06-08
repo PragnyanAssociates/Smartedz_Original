@@ -3358,22 +3358,36 @@ const galleryUpload = multer({
 
 
 // --- 19.1 Get all albums (grouped by title) --------------------------
-//  Returns a `cover_id` (the newest item's id) instead of a file path,
-//  so the frontend can request the cover image from the media endpoint.
+//  Cover selection: prefer the newest PHOTO in the album so the card
+//  shows a real image from that album. Only if the album has no photos
+//  at all do we fall back to the newest item (a video), and we tell the
+//  frontend via `cover_type` so it can render a video frame instead of a
+//  broken <img>. This removes the old "unknown stock image" fallback.
 app.get('/api/admin/gallery/:instId', async (req, res) => {
     try {
         const [rows] = await db.execute(
             `SELECT title,
                     event_date,
-                    COUNT(*)  AS item_count,
-                    MAX(id)   AS cover_id
+                    COUNT(*) AS item_count,
+                    MAX(id)  AS newest_id,
+                    MAX(CASE WHEN file_type = 'photo' THEN id END) AS newest_photo_id
                FROM gallery
               WHERE institutionId = ?
               GROUP BY title, event_date
               ORDER BY event_date DESC`,
             [req.params.instId]
         );
-        res.json(rows);
+        const albums = rows.map(r => {
+            const hasPhoto = r.newest_photo_id != null;
+            return {
+                title:      r.title,
+                event_date: r.event_date,
+                item_count: r.item_count,
+                cover_id:   hasPhoto ? r.newest_photo_id : r.newest_id,
+                cover_type: hasPhoto ? 'photo' : 'video'
+            };
+        });
+        res.json(albums);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

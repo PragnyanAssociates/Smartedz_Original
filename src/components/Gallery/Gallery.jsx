@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import { API_BASE_URL } from '../../apiConfig';
@@ -33,6 +33,85 @@ const MONTHS = [
   { value: '9', label: 'September' }, { value: '10', label: 'October' },
   { value: '11', label: 'November' }, { value: '12', label: 'December' }
 ];
+
+// =====================================================================
+//  VideoThumb — shows a real frame from a video as its poster instead of
+//  a black box. The element is muted and never plays; on metadata load we
+//  seek ~20% into the clip (skipping a possibly-black first frame) and the
+//  browser renders that frame. No canvas, so no cross-origin tainting.
+// =====================================================================
+function VideoThumb({ src, className }) {
+  const ref = useRef(null);
+
+  const seekToFrame = useCallback(() => {
+    const v = ref.current;
+    if (!v) return;
+    const d = v.duration;
+    try {
+      if (d && isFinite(d) && d > 0) {
+        v.currentTime = Math.min(Math.max(d * 0.2, 0.1), d - 0.05);
+      } else {
+        v.currentTime = 0.1;
+      }
+    } catch { /* seeking not ready yet — ignore */ }
+  }, []);
+
+  return (
+    <video
+      ref={ref}
+      src={src}
+      muted
+      playsInline
+      preload="metadata"
+      tabIndex={-1}
+      onLoadedMetadata={seekToFrame}
+      className={className}
+    />
+  );
+}
+
+// =====================================================================
+//  AlbumCover — renders the album card thumbnail. Prefers a real photo
+//  from the album (cover_type 'photo'); if the album is video-only it
+//  shows a frame from the cover video. On image error it falls back to a
+//  neutral placeholder — never an unrelated stock image.
+// =====================================================================
+function AlbumCover({ album }) {
+  const [imgError, setImgError] = useState(false);
+
+  if (album.cover_type === 'video') {
+    return (
+      <>
+        <VideoThumb
+          src={mediaUrl(album.cover_id)}
+          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+        />
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="bg-white/15 p-2.5 rounded-full backdrop-blur-sm ring-1 ring-white/25">
+            <Play className="size-5 text-white fill-current" />
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  if (imgError || album.cover_id == null) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-zinc-100 text-zinc-300">
+        <AlbumIcon className="size-10" />
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={mediaUrl(album.cover_id)}
+      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+      alt={album.title}
+      onError={() => setImgError(true)}
+    />
+  );
+}
 
 // =====================================================================
 //  MAIN GALLERY COMPONENT
@@ -167,12 +246,7 @@ export default function Gallery() {
               className="group bg-white rounded-lg ring-1 ring-black/5 overflow-hidden shadow-sm hover:ring-zinc-300 transition-all cursor-pointer flex flex-col"
             >
               <div className="aspect-video relative overflow-hidden bg-zinc-100 border-b border-zinc-100">
-                <img
-                  src={mediaUrl(album.cover_id)}
-                  className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-                  alt={album.title}
-                  onError={(e) => { e.target.src = "https://images.unsplash.com/photo-1540575467063-178a50c2df87?w=800"; }}
-                />
+                <AlbumCover album={album} />
                 <div className="absolute top-3 right-3 bg-white/95 backdrop-blur-sm px-2 py-1 rounded-md text-[10px] font-semibold text-zinc-700 shadow-sm ring-1 ring-black/5">
                   {album.item_count} ITEMS
                 </div>
@@ -298,21 +372,37 @@ function AlbumDetail({ albumTitle, onBack }) {
               {item.file_type === 'photo' ? (
                 <img src={mediaUrl(item.id)} className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-300" alt="" />
               ) : (
-                <div className="w-full h-full flex items-center justify-center bg-zinc-900 text-white">
-                  <div className="bg-white/10 p-3 rounded-full backdrop-blur-sm ring-1 ring-white/20">
-                    <Play className="size-6 fill-current" />
+                <>
+                  <VideoThumb
+                    src={mediaUrl(item.id)}
+                    className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-300"
+                  />
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    <div className="bg-white/15 p-2.5 rounded-full backdrop-blur-sm ring-1 ring-white/25">
+                      <Play className="size-5 text-white fill-current" />
+                    </div>
                   </div>
-                </div>
+                </>
               )}
 
-              <div className="absolute inset-0 bg-zinc-900/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+              {/* Actions — small, top-right, revealed on hover (always shown on touch) */}
+              <div className="absolute top-1.5 right-1.5 flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
                 {canDelete && (
-                  <button onClick={(e) => handleDelete(item.id, e)} className="p-2 bg-white/90 hover:bg-white text-zinc-700 hover:text-red-600 rounded-md shadow-sm transition-colors">
-                    <Trash2 className="size-4" />
+                  <button
+                    onClick={(e) => handleDelete(item.id, e)}
+                    title="Delete"
+                    className="p-1.5 bg-white/90 hover:bg-white text-zinc-600 hover:text-red-600 rounded-md shadow-sm ring-1 ring-black/5 transition-colors">
+                    <Trash2 className="size-3.5" />
                   </button>
                 )}
-                <a href={mediaUrl(item.id, true)} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} className="p-2 bg-white/90 hover:bg-white text-zinc-700 hover:text-primary rounded-md shadow-sm transition-colors">
-                  <Download className="size-4" />
+                <a
+                  href={mediaUrl(item.id, true)}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={e => e.stopPropagation()}
+                  title="Download"
+                  className="p-1.5 bg-white/90 hover:bg-white text-zinc-600 hover:text-primary rounded-md shadow-sm ring-1 ring-black/5 transition-colors">
+                  <Download className="size-3.5" />
                 </a>
               </div>
             </div>
