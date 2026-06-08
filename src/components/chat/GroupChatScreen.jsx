@@ -20,8 +20,8 @@ const THEME = { myMessageBg: "bg-primary/10 ring-1 ring-primary/20 shadow-sm", o
 const MESSAGES_PER_PAGE = 20; 
 
 const getLocalISOString = () => {
-    const now = new Date(); const offsetMs = now.getTimezoneOffset() * 60 * 1000;
-    return new Date(now.getTime() - offsetMs).toISOString().slice(0, 19); 
+  const now = new Date(); const offsetMs = now.getTimezoneOffset() * 60 * 1000;
+  return new Date(now.getTime() - offsetMs).toISOString().slice(0, 19); 
 };
 
 const formatDateSeparator = (dateString) => {
@@ -34,10 +34,10 @@ const formatDateSeparator = (dateString) => {
 };
 
 const formatFileSize = (bytes) => {
-    if (!bytes || bytes === 0) return '0 Bytes';
-    const k = 1024; const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  if (!bytes || bytes === 0) return '0 Bytes';
+  const k = 1024; const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 };
 
 const getFileIcon = (fileName) => {
@@ -89,10 +89,14 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
   const prevScrollHeightRef = useRef(0);
   const isPaginationLoadRef = useRef(false);
 
-  const hasEditRights = isAllAccess || canEdit || (user?.id === group.created_by);
-  const hasGlobalDelete = isAllAccess || canDelete;
-  const isReadOnlyMode = group.is_read_only === 1 || group.is_read_only === true;
+  // --- UPDATED PERMISSIONS LOGIC ---
+  const isSystemAdmin = user?.role === 'Super Admin' || user?.role === 'Developer';
+  const isCreator = String(user?.id) === String(group?.created_by);
+  const hasEditRights = isAllAccess || canEdit || isSystemAdmin || isCreator;
+  const hasGlobalDelete = isAllAccess || canDelete || isSystemAdmin;
+  const isReadOnlyMode = group?.is_read_only === 1 || group?.is_read_only === true || String(group?.is_read_only) === '1';
   const canSendMessages = !isReadOnlyMode || hasEditRights;
+  // ---------------------------------
 
   useEffect(() => {
     if (providedGroup) {
@@ -343,8 +347,6 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
   const downloadAndOpenFile = async (fileUrl, fileName, action) => {
     if (!fileUrl) return alert("No file available.");
     
-    // In Base64 storage, fileUrl IS the base64 string, not a relative path.
-    // If it's a URL starting with HTTP or /, append SERVER_URL. Otherwise it's Base64.
     const isBase64 = fileUrl.startsWith('data:');
     const fullUrl = isBase64 ? fileUrl : SERVER_URL + fileUrl;
     
@@ -356,7 +358,6 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
         const officeExts = ['xls', 'xlsx', 'doc', 'docx', 'ppt', 'pptx'];
 
         if (['pdf', 'txt', 'jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
-            // For Base64, we can directly open it in a new tab if it's an image/pdf
             if (isBase64) {
                 const win = window.open();
                 if(win) win.document.write(`<iframe src="${fullUrl}" frameborder="0" style="border:0; top:0px; left:0px; bottom:0px; right:0px; width:100%; height:100%;" allowfullscreen></iframe>`);
@@ -420,7 +421,6 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
           );
       }
 
-      // Updated Source URI logic to handle Base64 strings correctly
       const isBase64 = item.file_url && item.file_url.startsWith('data:');
       const sourceUri = item.localUri || (item.file_url ? (isBase64 ? item.file_url : SERVER_URL + item.file_url) : null);
       

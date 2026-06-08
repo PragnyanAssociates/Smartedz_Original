@@ -5963,78 +5963,107 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('sendMessage', async (data) => {
-        const {
-            userId, groupId, messageType, messageText,
-            fileUrl, fileName, fileSize, fileMimeType,
-            replyToMessageId, clientMessageId
-        } = data;
+  socket.on('sendMessage', async (data) => {
+    const {
+      userId, groupId, messageType, messageText,
+      fileUrl, fileName, fileSize, fileMimeType,
+      replyToMessageId, clientMessageId
+    } = data;
 
-        if (!userId || !groupId || !messageType) return;
-        if (messageType === 'text' && !messageText?.trim()) return;
-        if (messageType !== 'text' && !fileUrl) return;
+    if (!userId || !groupId || !messageType) return;
+    if (messageType === 'text' && !messageText?.trim()) return;
+    if (messageType !== 'text' && !fileUrl) return;
 
-        const roomName = `group-${groupId}`;
-        const conn = await db.getConnection();
-        try {
-            await conn.beginTransaction();
+    const roomName = `group-${groupId}`;
+    const conn = await db.getConnection();
+    
+    try {
+      // --- NEW VALIDATION: Check Announcement Mode & User Role ---
+      const [groupRows] = await conn.execute(
+        'SELECT is_read_only FROM `groups` WHERE id = ?', 
+        [groupId]
+      );
+      const [userRows] = await conn.execute(
+        'SELECT role FROM users WHERE id = ?', 
+        [userId]
+      );
 
-            const [result] = await conn.execute(
-                `INSERT INTO \`group_chat_messages\`
-                   (user_id, group_id, message_type, message_text,
-                    file_url, file_name, file_size, file_mime_type, reply_to_message_id)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [userId, groupId, messageType, messageText || null,
-                 fileUrl || null, fileName || null, fileSize || null,
-                 fileMimeType || null, replyToMessageId || null]
-            );
-            const newMessageId = result.insertId;
+      if (groupRows.length === 0 || userRows.length === 0) {
+        conn.release();
+        return; // Group or user doesn't exist
+      }
 
-            const [rows] = await conn.execute(`
-                SELECT
-                    m.id,
-                    m.message_text,
-                    DATE_FORMAT(m.timestamp, '%Y-%m-%dT%H:%i:%s') AS timestamp,
-                    m.user_id,
-                    m.group_id,
-                    m.message_type,
-                    m.file_url,
-                    m.file_size,
-                    m.file_mime_type,
-                    m.is_edited,
-                    m.is_deleted,
-                    m.deleted_by,
-                    m.is_pinned,
-                    m.file_name,
-                    m.reply_to_message_id,
-                    u.name AS full_name,
-                    u.role,
-                    u.profile_pic AS profile_image_url,
-                    u.roll_no,
-                    reply_m.message_text AS reply_text,
-                    reply_m.message_type AS reply_type,
-                    reply_u.name AS reply_sender_name
-                  FROM group_chat_messages m
-                  JOIN users u ON m.user_id = u.id
-                  LEFT JOIN group_chat_messages reply_m ON m.reply_to_message_id = reply_m.id
-                  LEFT JOIN users reply_u ON reply_m.user_id = reply_u.id
-                 WHERE m.id = ?
-            `, [newMessageId]);
+      const isReadOnly = groupRows[0].is_read_only;
+      const userRole = userRows[0].role;
+      const isSystemAdmin = (userRole === 'Super Admin' || userRole === 'Developer');
 
-            await conn.commit();
+      // If the group is announcement only, block non-admins
+      if (isReadOnly === 1 && !isSystemAdmin) {
+        // Optionally emit an error back to the specific client
+        socket.emit('messageError', { message: 'Only admins can send messages in this group.' });
+        conn.release();
+        return;
+      }
+      // -----------------------------------------------------------
 
-            const broadcastMessage = { ...rows[0], clientMessageId: clientMessageId || null };
-            io.to(roomName).emit('newMessage', broadcastMessage);
-            io.emit('updateGroupList', { groupId });
+      await conn.beginTransaction();
 
-        } catch (error) {
-            await conn.rollback();
-            console.error('Failed to save message:', error);
-        } finally {
-            conn.release();
-        }
-    });
+      const [result] = await conn.execute(
+        `INSERT INTO group_chat_messages
+           (user_id, group_id, message_type, message_text,
+            file_url, file_name, file_size, file_mime_type, reply_to_message_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [userId, groupId, messageType, messageText || null,
+         fileUrl || null, fileName || null, fileSize || null,
+         fileMimeType || null, replyToMessageId || null]
+      );
+      
+      const newMessageId = result.insertId;
 
+      const [rows] = await conn.execute(`
+        SELECT
+          m.id,
+          m.message_text,
+          DATE_FORMAT(m.timestamp, '%Y-%m-%dT%H:%i:%s') AS timestamp,
+          m.user_id,
+          m.group_id,
+          m.message_type,
+          m.file_url,
+          m.file_size,
+          m.file_mime_type,
+          m.is_edited,
+          m.is_deleted,
+          m.deleted_by,
+          m.is_pinned,
+          m.file_name,
+          m.reply_to_message_id,
+          u.name AS full_name,
+          u.role,
+          u.profile_pic AS profile_image_url,
+          u.roll_no,
+          reply_m.message_text AS reply_text,
+          reply_m.message_type AS reply_type,
+          reply_u.name AS reply_sender_name
+        FROM group_chat_messages m
+        JOIN users u ON m.user_id = u.id
+        LEFT JOIN group_chat_messages reply_m ON m.reply_to_message_id = reply_m.id
+        LEFT JOIN users reply_u ON reply_m.user_id = reply_u.id
+        WHERE m.id = ?
+      `, [newMessageId]);
+
+      await conn.commit();
+
+      const broadcastMessage = { ...rows[0], clientMessageId: clientMessageId || null };
+      io.to(roomName).emit('newMessage', broadcastMessage);
+      io.emit('updateGroupList', { groupId });
+
+    } catch (error) {
+      await conn.rollback();
+      console.error('Failed to save message:', error);
+    } finally {
+      conn.release();
+    }
+  });
     socket.on('deleteMessage', async (data) => {
         const { messageId, userId, groupId } = data;
         if (!messageId || !userId || !groupId) return;
