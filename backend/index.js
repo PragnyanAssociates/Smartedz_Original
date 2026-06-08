@@ -3346,6 +3346,26 @@ app.get('/api/admin/performance/teacher/:teacherId', async (req, res) => {
 
 // =====================================================================
 // === 19. GALLERY =====================================================
+//
+//   Media bytes are stored in the DB (gallery.file_data LONGBLOB) and
+//   streamed by id from 19.4.
+//
+//   ACADEMIC YEAR: every gallery row now carries academic_year_id, and
+//   every read/write scopes to the school's ACTIVE academic year via the
+//   shared resolveYearId() helper (defined in the Timetable section) —
+//   exactly like Attendance, Reports, etc. Switching the active year
+//   under Academics switches which albums are shown; each year keeps its
+//   own albums (non-destructive).
+//
+//   REQUIRES a one-time migration (run once in your DB):
+//     ALTER TABLE gallery
+//       ADD COLUMN academic_year_id INT NULL AFTER institutionId;
+//     UPDATE gallery g
+//       JOIN academic_years y
+//         ON y.institutionId = g.institutionId AND y.isActive = 1
+//       SET g.academic_year_id = y.id
+//      WHERE g.academic_year_id IS NULL;
+//     CREATE INDEX idx_gallery_year ON gallery (academic_year_id);
 // =====================================================================
 
 
@@ -3358,13 +3378,15 @@ const galleryUpload = multer({
 
 
 // --- 19.1 Get all albums (grouped by title) --------------------------
-//  Cover selection: prefer the newest PHOTO in the album so the card
-//  shows a real image from that album. Only if the album has no photos
-//  at all do we fall back to the newest item (a video), and we tell the
-//  frontend via `cover_type` so it can render a video frame instead of a
-//  broken <img>. This removes the old "unknown stock image" fallback.
+//  Scoped to the active academic year (resolveYearId). Cover selection
+//  prefers the newest PHOTO in the album so the card shows a real image
+//  from that album. If the album has no photos at all, cover_type is
+//  'none' and the frontend renders a generated placeholder cover instead
+//  of a broken <img> or an unrelated stock image.
 app.get('/api/admin/gallery/:instId', async (req, res) => {
     try {
+        const yearId = await resolveYearId(req.params.instId, req.query.academic_year_id);
+
         const [rows] = await db.execute(
             `SELECT title,
                     event_date,
@@ -3372,19 +3394,20 @@ app.get('/api/admin/gallery/:instId', async (req, res) => {
                     MAX(id)  AS newest_id,
                     MAX(CASE WHEN file_type = 'photo' THEN id END) AS newest_photo_id
                FROM gallery
-              WHERE institutionId = ?
+              WHERE institutionId = ? AND academic_year_id = ?
               GROUP BY title, event_date
               ORDER BY event_date DESC`,
-            [req.params.instId]
+            [req.params.instId, yearId]
         );
+
         const albums = rows.map(r => {
             const hasPhoto = r.newest_photo_id != null;
             return {
                 title:      r.title,
                 event_date: r.event_date,
                 item_count: r.item_count,
-                cover_id:   hasPhoto ? r.newest_photo_id : r.newest_id,
-                cover_type: hasPhoto ? 'photo' : 'video'
+                cover_id:   hasPhoto ? r.newest_photo_id : null,
+                cover_type: hasPhoto ? 'photo' : 'none'
             };
         });
         res.json(albums);
@@ -3393,17 +3416,18 @@ app.get('/api/admin/gallery/:instId', async (req, res) => {
 
 
 // --- 19.2 Get items in a specific album ------------------------------
-//  Note: we DO NOT select file_data here (it would be huge). The list
-//  only needs ids + types; the bytes are fetched per-item on demand.
+//  Scoped to the active academic year. We DO NOT select file_data here
+//  (it would be huge); the bytes are fetched per-item on demand.
 app.get('/api/admin/gallery/album/:instId/:title', async (req, res) => {
     try {
+        const yearId = await resolveYearId(req.params.instId, req.query.academic_year_id);
         const [rows] = await db.execute(
             `SELECT id, institutionId, title, file_type, mime_type,
                     event_date, created_by, created_at
                FROM gallery
-              WHERE institutionId = ? AND title = ?
+              WHERE institutionId = ? AND title = ? AND academic_year_id = ?
               ORDER BY created_at DESC`,
-            [req.params.instId, req.params.title]
+            [req.params.instId, req.params.title, yearId]
         );
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -3411,6 +3435,8 @@ app.get('/api/admin/gallery/album/:instId/:title', async (req, res) => {
 
 
 // --- 19.3 Upload media -> store bytes in the DB ----------------------
+//  Stamped with the active academic year, so the upload joins whichever
+//  year is current (or the year the viewed album belongs to, passed in).
 app.post('/api/admin/gallery/upload', galleryUpload.single('media'), async (req, res) => {
     const { title, event_date, institutionId, adminId } = req.body;
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
@@ -3419,13 +3445,14 @@ app.post('/api/admin/gallery/upload', galleryUpload.single('media'), async (req,
     const file_type = mime.startsWith('image') ? 'photo' : 'video';
 
     try {
+        const yearId = await resolveYearId(institutionId, req.body.academic_year_id);
         const [result] = await db.execute(
             `INSERT INTO gallery
-               (institutionId, title, file_path, file_data, mime_type, file_type, event_date, created_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [institutionId, title, null, req.file.buffer, mime, file_type, event_date, adminId || null]
+               (institutionId, academic_year_id, title, file_path, file_data, mime_type, file_type, event_date, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [institutionId, yearId, title, null, req.file.buffer, mime, file_type, event_date, adminId || null]
         );
-        res.json({ success: true, insertId: result.insertId });
+        res.json({ success: true, insertId: result.insertId, academic_year_id: yearId });
     } catch (err) {
         // A "max_allowed_packet" / "got a packet bigger than" error here
         // means MySQL's max_allowed_packet is smaller than the file.
@@ -3505,14 +3532,17 @@ app.delete('/api/admin/gallery/:id', async (req, res) => {
 
 
 // --- 19.6 Delete a whole album (Super Admin only) --------------------
+//  Scoped to the active academic year so a same-titled album in another
+//  year is left untouched.
 app.delete('/api/admin/gallery/album/:instId/:title', async (req, res) => {
     const { role } = req.body; // Pass role from frontend
     if (role !== 'Super Admin') {
         return res.status(403).json({ error: "You don't have permission to delete albums." });
     }
     try {
-        await db.execute('DELETE FROM gallery WHERE institutionId = ? AND title = ?',
-            [req.params.instId, req.params.title]);
+        const yearId = await resolveYearId(req.params.instId, req.body.academic_year_id);
+        await db.execute('DELETE FROM gallery WHERE institutionId = ? AND title = ? AND academic_year_id = ?',
+            [req.params.instId, req.params.title, yearId]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });

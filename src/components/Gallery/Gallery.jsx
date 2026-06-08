@@ -34,6 +34,23 @@ const MONTHS = [
   { value: '11', label: 'November' }, { value: '12', label: 'December' }
 ];
 
+// Decorative gradient covers for albums that have no photo. Full literal
+// class names so Tailwind's JIT picks them up. Chosen deterministically by
+// album title, so each album keeps a stable, pleasant cover.
+const COVER_GRADIENTS = [
+  'from-rose-400 to-orange-300',
+  'from-sky-400 to-indigo-400',
+  'from-emerald-400 to-teal-400',
+  'from-violet-400 to-fuchsia-400',
+  'from-amber-400 to-pink-400',
+  'from-cyan-400 to-blue-500'
+];
+const hashStr = (s) => {
+  let h = 0;
+  for (let i = 0; i < String(s).length; i++) h = (h * 31 + String(s).charCodeAt(i)) | 0;
+  return Math.abs(h);
+};
+
 // =====================================================================
 //  VideoThumb — shows a real frame from a video as its poster instead of
 //  a black box. The element is muted and never plays; on metadata load we
@@ -71,46 +88,38 @@ function VideoThumb({ src, className }) {
 }
 
 // =====================================================================
-//  AlbumCover — renders the album card thumbnail. Prefers a real photo
-//  from the album (cover_type 'photo'); if the album is video-only it
-//  shows a frame from the cover video. On image error it falls back to a
-//  neutral placeholder — never an unrelated stock image.
+//  DefaultCover — generated placeholder for albums with no photo.
+//  A tasteful gradient + the album's initial. No external image, no
+//  broken <img>, no stock photo.
+// =====================================================================
+function DefaultCover({ title }) {
+  const grad = COVER_GRADIENTS[hashStr(title || '') % COVER_GRADIENTS.length];
+  const initial = (title || '?').trim().charAt(0).toUpperCase() || '?';
+  return (
+    <div className={`w-full h-full bg-gradient-to-br ${grad} flex items-center justify-center transition-transform duration-500 group-hover:scale-105`}>
+      <span className="text-white/90 text-4xl font-bold drop-shadow-sm select-none">{initial}</span>
+    </div>
+  );
+}
+
+// =====================================================================
+//  AlbumCover — prefers a real photo from the album; otherwise shows the
+//  generated DefaultCover. Any image load error also falls back to it.
 // =====================================================================
 function AlbumCover({ album }) {
   const [imgError, setImgError] = useState(false);
 
-  if (album.cover_type === 'video') {
+  if (album.cover_type === 'photo' && album.cover_id != null && !imgError) {
     return (
-      <>
-        <VideoThumb
-          src={mediaUrl(album.cover_id)}
-          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-        />
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <div className="bg-white/15 p-2.5 rounded-full backdrop-blur-sm ring-1 ring-white/25">
-            <Play className="size-5 text-white fill-current" />
-          </div>
-        </div>
-      </>
+      <img
+        src={mediaUrl(album.cover_id)}
+        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+        alt={album.title}
+        onError={() => setImgError(true)}
+      />
     );
   }
-
-  if (imgError || album.cover_id == null) {
-    return (
-      <div className="w-full h-full flex items-center justify-center bg-zinc-100 text-zinc-300">
-        <AlbumIcon className="size-10" />
-      </div>
-    );
-  }
-
-  return (
-    <img
-      src={mediaUrl(album.cover_id)}
-      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-      alt={album.title}
-      onError={() => setImgError(true)}
-    />
-  );
+  return <DefaultCover title={album.title} />;
 }
 
 // =====================================================================
@@ -123,54 +132,78 @@ export default function Gallery() {
   const [albums, setAlbums] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [yearFilter, setYearFilter]   = useState('all');
   const [monthFilter, setMonthFilter] = useState('all');
+
+  // Academic year scoping — mirrors the other modules.
+  const [academicYears, setAcademicYears] = useState([]);
+  const [yearId, setYearId] = useState('');     // selected academic_year_id ('' = let backend resolve active)
 
   // Permission Check: Can this user add new albums/media?
   const canCreate = can('Gallery', 'edit');
+
+  const activeYear = useMemo(
+    () => (academicYears || []).find(y => y.isActive) || null,
+    [academicYears]
+  );
+
+  // Load the school's academic years (active one becomes the default scope).
+  useEffect(() => {
+    if (!user?.institutionId) return;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/admin/data/${user.institutionId}`);
+        const data = await res.json();
+        const ys = data.academicYears || [];
+        setAcademicYears(ys);
+        const active = ys.find(y => y.isActive);
+        if (active) setYearId(String(active.id));
+      } catch (e) { console.error('Academic years load:', e); }
+    })();
+  }, [user]);
 
   const fetchAlbums = useCallback(async () => {
     if (!user?.institutionId) return;
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/gallery/${user.institutionId}`);
+      const qs = yearId ? `?academic_year_id=${yearId}` : '';
+      const res = await fetch(`${API_BASE_URL}/admin/gallery/${user.institutionId}${qs}`);
       const data = await res.json();
       setAlbums(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error('Fetch albums error:', e);
     }
     setLoading(false);
-  }, [user]);
+  }, [user, yearId]);
 
   useEffect(() => { fetchAlbums(); }, [fetchAlbums]);
-
-  // Years available in the data (newest first) for the period filter
-  const years = useMemo(() => {
-    const set = new Set();
-    albums.forEach(a => {
-      const d = new Date(a.event_date);
-      if (!isNaN(d.getTime())) set.add(d.getFullYear());
-    });
-    return Array.from(set).sort((a, b) => b - a);
-  }, [albums]);
 
   const filteredAlbums = useMemo(() => {
     return albums.filter(a => {
       // text search
       if (search && !a.title.toLowerCase().includes(search.toLowerCase())) return false;
-      // period filter (year / month from event_date)
-      const d = new Date(a.event_date);
-      if (yearFilter !== 'all' && d.getFullYear() !== Number(yearFilter)) return false;
-      if (monthFilter !== 'all' && (d.getMonth() + 1) !== Number(monthFilter)) return false;
+      // month filter (within the selected academic year)
+      if (monthFilter !== 'all') {
+        const d = new Date(a.event_date);
+        if (isNaN(d.getTime()) || (d.getMonth() + 1) !== Number(monthFilter)) return false;
+      }
       return true;
     });
-  }, [albums, search, yearFilter, monthFilter]);
+  }, [albums, search, monthFilter]);
+
+  const clearFilters = () => {
+    setMonthFilter('all');
+    setYearId(activeYear ? String(activeYear.id) : '');
+  };
+
+  const filtersDirty = monthFilter !== 'all' ||
+    (activeYear && String(yearId) !== String(activeYear.id));
 
   // Render Detailed View if an album is selected
   if (viewingAlbum) {
     return (
       <AlbumDetail
         albumTitle={viewingAlbum}
+        yearId={yearId}
         onBack={() => { setViewingAlbum(null); fetchAlbums(); }}
       />
     );
@@ -197,34 +230,40 @@ export default function Gallery() {
               className="h-9 w-full rounded-md border border-zinc-200 bg-white pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm"
             />
           </div>
-          {canCreate && <CreateAlbumModal onCreated={fetchAlbums} />}
+          {canCreate && <CreateAlbumModal yearId={yearId} onCreated={fetchAlbums} />}
         </div>
       </header>
 
-      {/* Period filter - optimized for mobile with grid-cols-2 */}
+      {/* Period filter — Academic Year (scopes data, like other modules) + Month */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-2 bg-zinc-50/50 p-2 sm:p-2.5 rounded-md ring-1 ring-black/5 mb-4">
         <span className="hidden sm:inline-flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider pl-1 shrink-0">
           <Calendar className="size-3.5" /> Filter by Period
         </span>
-        
+
         <div className="grid grid-cols-2 sm:flex sm:flex-row gap-2 w-full sm:w-auto">
+          <select
+            value={yearId}
+            onChange={(e) => setYearId(e.target.value)}
+            title="Academic Year"
+            className="h-9 w-full sm:w-44 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm cursor-pointer">
+            {academicYears.length === 0 && <option value="">Active Year</option>}
+            {academicYears.map(y => (
+              <option key={y.id} value={y.id}>
+                {y.name}{y.isActive ? ' (Active)' : ''}
+              </option>
+            ))}
+          </select>
           <select
             value={monthFilter}
             onChange={(e) => setMonthFilter(e.target.value)}
+            title="Month"
             className="h-9 w-full sm:w-44 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm cursor-pointer">
             <option value="all">All Months</option>
             {MONTHS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
           </select>
-          <select
-            value={yearFilter}
-            onChange={(e) => setYearFilter(e.target.value)}
-            className="h-9 w-full sm:w-36 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm cursor-pointer">
-            <option value="all">All Years</option>
-            {years.map(y => <option key={y} value={y}>{y}</option>)}
-          </select>
-          {(monthFilter !== 'all' || yearFilter !== 'all') && (
+          {filtersDirty && (
             <button
-              onClick={() => { setMonthFilter('all'); setYearFilter('all'); }}
+              onClick={clearFilters}
               className="col-span-2 sm:col-span-1 h-9 px-3 rounded-md border border-zinc-200 bg-white text-xs font-semibold text-zinc-600 hover:bg-zinc-50 transition-colors shrink-0">
               Clear
             </button>
@@ -264,7 +303,7 @@ export default function Gallery() {
       ) : (
         <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
           <AlbumIcon className="size-10 text-zinc-300 mb-3" />
-          <p className="text-zinc-500 text-sm font-medium">No albums found. Create your first one!</p>
+          <p className="text-zinc-500 text-sm font-medium">No albums found for this period. Create your first one!</p>
         </div>
       )}
     </div>
@@ -274,7 +313,7 @@ export default function Gallery() {
 // =====================================================================
 //  ALBUM DETAIL COMPONENT (VIEWING ITEMS INSIDE AN ALBUM)
 // =====================================================================
-function AlbumDetail({ albumTitle, onBack }) {
+function AlbumDetail({ albumTitle, yearId, onBack }) {
   const { user } = useAuth();
   const { can } = usePermissions();
   const [items, setItems] = useState([]);
@@ -288,12 +327,13 @@ function AlbumDetail({ albumTitle, onBack }) {
   const fetchItems = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/gallery/album/${user.institutionId}/${encodeURIComponent(albumTitle)}`);
+      const qs = yearId ? `?academic_year_id=${yearId}` : '';
+      const res = await fetch(`${API_BASE_URL}/admin/gallery/album/${user.institutionId}/${encodeURIComponent(albumTitle)}${qs}`);
       const data = await res.json();
       setItems(Array.isArray(data) ? data : []);
     } catch (e) { console.error('Fetch items error:', e); }
     setLoading(false);
-  }, [user, albumTitle]);
+  }, [user, albumTitle, yearId]);
 
   useEffect(() => { fetchItems(); }, [fetchItems]);
 
@@ -317,6 +357,8 @@ function AlbumDetail({ albumTitle, onBack }) {
     formData.append('event_date', items[0]?.event_date || new Date().toISOString().split('T')[0]);
     formData.append('institutionId', user.institutionId);
     formData.append('adminId', user.id);
+    // Keep the new media in the same academic year as the album being viewed.
+    if (yearId) formData.append('academic_year_id', yearId);
 
     try {
       const res = await fetch(`${API_BASE_URL}/admin/gallery/upload`, { method: 'POST', body: formData });
@@ -439,7 +481,7 @@ function AlbumDetail({ albumTitle, onBack }) {
 // =====================================================================
 //  CREATE ALBUM MODAL
 // =====================================================================
-function CreateAlbumModal({ onCreated }) {
+function CreateAlbumModal({ yearId, onCreated }) {
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ title: '', date: new Date().toISOString().split('T')[0], file: null });
@@ -455,6 +497,7 @@ function CreateAlbumModal({ onCreated }) {
     formData.append('event_date', form.date);
     formData.append('institutionId', user.institutionId);
     formData.append('adminId', user.id);
+    if (yearId) formData.append('academic_year_id', yearId);
 
     try {
       const res = await fetch(`${API_BASE_URL}/admin/gallery/upload`, { method: 'POST', body: formData });
