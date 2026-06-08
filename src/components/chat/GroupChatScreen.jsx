@@ -94,23 +94,25 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
 const isCreator = Boolean(user?.id && group?.created_by && String(user?.id) === String(group?.created_by));
   const hasEditRights = isAllAccess || canEdit || isSystemAdmin || isCreator;
   const hasGlobalDelete = isAllAccess || canDelete || isSystemAdmin;
-  const isReadOnlyMode = group?.is_read_only === 1 || group?.is_read_only === true || String(group?.is_read_only) === '1';
+const isReadOnlyMode = group?.is_read_only == 1;
   const canSendMessages = !isReadOnlyMode || hasEditRights;
   // ---------------------------------
 
-  useEffect(() => {
-    if (providedGroup) {
-        setGroup(providedGroup);
-        setMessages([]); 
-        setNewMessage(""); 
-        setReplyingTo(null); 
-        setEditingMessage(null);
-        setPage(1);
-        setHasMore(true);
-        initialLoadDone.current = false;
-    }
-  }, [providedGroup]);
-
+ useEffect(() => {
+  if (providedGroup) {
+    setGroup({
+      ...providedGroup,
+      is_read_only: providedGroup.is_read_only == 1, // normalize here too
+    });
+    setMessages([]);
+    setNewMessage("");
+    setReplyingTo(null);
+    setEditingMessage(null);
+    setPage(1);
+    setHasMore(true);
+    initialLoadDone.current = false;
+  }
+}, [providedGroup]);
   const markAsSeen = useCallback(async () => {
     if (!group?.id || !user?.id) return;
     try {
@@ -118,22 +120,27 @@ const isCreator = Boolean(user?.id && group?.created_by && String(user?.id) === 
     } catch (error) {}
   }, [group.id, user?.id]);
 
-  useEffect(() => {
-    if (!group?.id) return;
-    const fetchGroupDetails = async () => {
-        if (!user?.id) return;
-        try {
-            const response = await apiClient.get(`/groups/${group.id}/details`, {
-                params: { userId: user.id }
-            });
-            if (response.data) {
-                const fetchedDetails = response.data.group || response.data;
-                setGroup(prev => ({ ...prev, ...fetchedDetails }));
-            }
-        } catch (error) {}
-    };
-    fetchGroupDetails();
-  }, [group.id, user?.id]);
+ // Replace the details useEffect with this:
+useEffect(() => {
+  if (!group?.id || !user?.id) return;
+  const fetchGroupDetails = async () => {
+    try {
+      const response = await apiClient.get(`/groups/${group.id}/details`, {
+        params: { userId: user.id }
+      });
+      if (response.data) {
+        const fetchedDetails = response.data.group || response.data;
+        setGroup(prev => ({
+          ...prev,
+          ...fetchedDetails,
+          // Normalize to a real boolean so === checks always work
+          is_read_only: fetchedDetails.is_read_only == 1,
+        }));
+      }
+    } catch (error) {}
+  };
+  fetchGroupDetails();
+}, [group.id, user?.id]);
 
   const fetchHistory = useCallback(async (pageNum = 1) => {
     if (pageNum === 1) setLoading(true);
@@ -173,34 +180,56 @@ const isCreator = Boolean(user?.id && group?.created_by && String(user?.id) === 
       setIsFetchingMore(false);
     }
   }, [group.id, markAsSeen, onBack, user?.id]);
-
-  useEffect(() => {
+useEffect(() => {
     if (group?.id) { fetchHistory(1); }
     
     socketRef.current = io(SERVER_URL, { transports: ["websocket"] });
-    socketRef.current.on("connect", () => { socketRef.current?.emit("joinGroup", { groupId: group.id }); });
     
-    socketRef.current.on("groupDeleted", (deletedGroupId) => { if (deletedGroupId === group.id || parseInt(deletedGroupId) === parseInt(group.id)) { if (onBack) onBack(); } });
+    socketRef.current.on("connect", () => { 
+        socketRef.current?.emit("joinGroup", { groupId: group.id }); 
+    });
+    
+    socketRef.current.on("groupDeleted", (deletedGroupId) => { 
+        if (deletedGroupId === group.id || parseInt(deletedGroupId) === parseInt(group.id)) { 
+            if (onBack) onBack(); 
+        } 
+    });
 
     socketRef.current.on("newMessage", (msg) => {
-      if (String(msg.group_id) === String(group.id)) {
-        setMessages(prev => {
-          const idx = prev.findIndex(m => m.clientMessageId === msg.clientMessageId);
-          if (idx !== -1) { const newMsgs = [...prev]; newMsgs[idx] = msg; return newMsgs; }
-          return [...prev, msg];
-        });
-        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
-      }
+        if (String(msg.group_id) === String(group.id)) {
+            setMessages(prev => {
+                const idx = prev.findIndex(m => m.clientMessageId === msg.clientMessageId);
+                if (idx !== -1) { const newMsgs = [...prev]; newMsgs[idx] = msg; return newMsgs; }
+                return [...prev, msg];
+            });
+            setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+        }
     });
 
     socketRef.current.on("messageDeleted", ({ messageId, deletedBy }) => {
-        setMessages((prev) => prev.map((msg) => msg.id === messageId ? { ...msg, is_deleted: true, deleted_by: deletedBy, message_text: null, file_url: null, file_name: null, file_size: null } : msg));
+        setMessages((prev) => prev.map((msg) => msg.id === messageId ? { 
+            ...msg, is_deleted: true, deleted_by: deletedBy, 
+            message_text: null, file_url: null, file_name: null, file_size: null 
+        } : msg));
     });
     
-    socketRef.current.on("messageEdited", (msg) => { if (msg.group_id === group.id) setMessages((prev) => prev.map((m) => (m.id === msg.id ? msg : m))); });
-    return () => { socketRef.current?.disconnect(); };
-  }, [group.id, fetchHistory, onBack]); 
+    socketRef.current.on("messageEdited", (msg) => { 
+        if (msg.group_id === group.id) setMessages((prev) => prev.map((m) => (m.id === msg.id ? msg : m))); 
+    });
 
+    // 👇 Add this right here, before the return cleanup
+    socketRef.current.on("messageError", ({ message, clientMessageId }) => {
+        if (clientMessageId) {
+            setMessages(prev => prev.filter(m => m.clientMessageId !== clientMessageId));
+        }
+        alert(message || 'You cannot send messages in this group.');
+    });
+
+   return () => { 
+    socketRef.current?.off('messageError');
+    socketRef.current?.disconnect(); 
+};
+}, [group.id, fetchHistory, onBack]);
   const handleScroll = (e) => {
     const { scrollTop } = e.currentTarget;
     if (scrollTop === 0 && hasMore && !loading && !isFetchingMore) {
