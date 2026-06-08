@@ -148,11 +148,18 @@ app.post('/api/login', async (req, res) => {
 
 // =====================================================================
 // === 2. DEVELOPER ENDPOINTS ==========================================
+//
+//   REQUIRES a one-time migration to allow the new "Tuition" category:
+//     ALTER TABLE institutions
+//       MODIFY COLUMN `type`
+//       ENUM('School','College','University','Tuition') NOT NULL;
 // =====================================================================
 app.get('/api/developer/data', async (req, res) => {
     try {
         const [insts] = await db.execute('SELECT * FROM institutions ORDER BY created_at DESC');
-        const [users] = await db.execute('SELECT id, name, email, username, role, institutionId, password FROM users');
+        // `status` is included so the dashboard can show each school's live
+        // user count excluding alumni (matching the Users screen "All" tab).
+        const [users] = await db.execute('SELECT id, name, email, username, role, institutionId, password, status FROM users');
         const decorated = insts.map(inst => ({ ...inst, ...computePlanStatus(inst.usage_plan, inst.plan_start_date) }));
         res.json({ institutions: decorated, users });
     } catch (err) { res.status(500).json({ error: err.message }); }

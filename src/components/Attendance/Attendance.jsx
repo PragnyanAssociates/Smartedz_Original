@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   GraduationCap, Users as UsersIcon, UserCog, ClipboardCheck, History,
-  Search, ChevronLeft, BarChart3, CalendarCheck, CalendarX,
+  Search, ChevronLeft, ChevronDown, BarChart3, CalendarCheck, CalendarX,
   Clock, CalendarRange, List, PieChart
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
@@ -178,8 +178,11 @@ function Header({ subtitle }) {
 
 // =====================================================================
 //  HistoryPicker — category overview + Analysis + person list.
+//  • For STUDENTS, a class filter scopes the roster + overview to one
+//    class (mirrors the marking screen). Without it the list mixed every
+//    class together — showing all students and colliding roll numbers.
 //  • Overview bar (below search): working days + present/absent/late for
-//    the chosen Daily/Monthly/Yearly/Custom range, across the whole
+//    the chosen Daily/Monthly/Yearly/Custom range, across the (scoped)
 //    category.
 //  • "Analysis" button toggles a bar graph of the same data.
 //  • Picking a person opens their individual history (with its own graph).
@@ -195,6 +198,10 @@ function HistoryPicker({ category, yearName }) {
   const [search, setSearch] = useState('');
   const [picked, setPicked] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  // Class filter (students only) — scopes roster + overview to one class.
+  const [classes, setClasses] = useState([]);
+  const [classId, setClassId] = useState('');
 
   // Overview filter state
   const [mode, setMode] = useState('monthly'); // daily | monthly | yearly | custom
@@ -214,6 +221,27 @@ function HistoryPicker({ category, yearName }) {
   // Teacher in "teachers" tab -> just shortcut to their own history
   const teacherViewingTeachers = !isAllAccess && isTeacher && category === 'teachers';
 
+  // ---- Load the class list for the student class filter ------------
+  //   Super Admin -> all classes; Teacher -> only their timetabled classes
+  //   (and default to the first one). Non-student categories clear it.
+  useEffect(() => {
+    if (category !== 'students') { setClasses([]); setClassId(''); return; }
+    (async () => {
+      try {
+        if (isTeacher && !isAllAccess) {
+          const res = await fetch(`${API_BASE_URL}/admin/attendance/teacher-classes/${user.id}`);
+          const data = await res.json();
+          setClasses(data || []);
+          if (data?.[0]) setClassId(String(data[0].id));
+        } else {
+          const res = await fetch(`${API_BASE_URL}/admin/data/${user.institutionId}`);
+          const data = await res.json();
+          setClasses(data.classes || []);
+        }
+      } catch (e) { console.error('classes load:', e); }
+    })();
+  }, [category, user, isTeacher, isAllAccess]);
+
   // ---- Range resolution. "Yearly" returns no date bound — the backend
   //      scopes to the whole active academic year. ------------------
   const resolveRange = useCallback(() => {
@@ -232,13 +260,14 @@ function HistoryPicker({ category, yearName }) {
     setLoading(true);
     try {
       const today = new Date().toISOString().slice(0, 10);
-      const url = `${API_BASE_URL}/admin/attendance/roster/${user.institutionId}?category=${category}&date=${today}`;
+      let url = `${API_BASE_URL}/admin/attendance/roster/${user.institutionId}?category=${category}&date=${today}`;
+      if (category === 'students' && classId) url += `&class_id=${classId}`;
       const res = await fetch(url);
       const data = await res.json();
       setUsers(data.users || []);
     } catch (e) { console.error(e); }
     setLoading(false);
-  }, [user, category]);
+  }, [user, category, classId]);
 
   useEffect(() => {
     if (!teacherViewingTeachers) loadRoster();
@@ -253,12 +282,13 @@ function HistoryPicker({ category, yearName }) {
       const r = resolveRange();
       let url = `${API_BASE_URL}/admin/attendance/overview/${user.institutionId}?category=${category}`;
       if (r.from && r.to) url += `&from=${r.from}&to=${r.to}`;
+      if (category === 'students' && classId) url += `&class_id=${classId}`;
       const res = await fetch(url);
       const data = await res.json();
       setOverview(data);
     } catch (e) { console.error(e); setOverview(null); }
     setOvLoading(false);
-  }, [user, category, resolveRange, teacherViewingTeachers]);
+  }, [user, category, classId, resolveRange, teacherViewingTeachers]);
 
   useEffect(() => { loadOverview(); }, [loadOverview]);
 
@@ -333,6 +363,8 @@ function HistoryPicker({ category, yearName }) {
     return arr;
   }, [sortedAll, statsById, serialMap, workingDays, analysisSort]);
 
+  const categoryLabel = category === 'students' ? 'Students' : (category === 'teachers' ? 'Teachers' : 'Other');
+
   // ---- Early outs --------------------------------------------------
   if (teacherViewingTeachers) {
     return <AttendanceHistory userId={user.id} userName={user.name} selfOnly yearName={yearName} />;
@@ -353,7 +385,7 @@ function HistoryPicker({ category, yearName }) {
   return (
     <div className="space-y-4">
 
-      {/* Filter row: Daily/Monthly/Yearly/Custom + pickers + Analysis toggle */}
+      {/* Filter row: Daily/Monthly/Yearly/Custom + class (students) + pickers + Analysis toggle */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         <div className="inline-flex bg-zinc-100/80 p-1 rounded-md overflow-x-auto custom-scrollbar shrink-0 max-w-full">
           {['daily', 'monthly', 'yearly', 'custom'].map(m => (
@@ -367,6 +399,23 @@ function HistoryPicker({ category, yearName }) {
         </div>
 
         <div className="flex items-center flex-wrap gap-2">
+          {/* Class filter — students only. Scopes the roster + overview. */}
+          {category === 'students' && classes.length > 0 && (
+            <div className="relative shrink-0">
+              <select value={classId} onChange={e => setClassId(e.target.value)}
+                title="Class"
+                className="h-9 rounded-md border border-zinc-200 bg-white pl-3 pr-8 text-sm text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none transition-colors">
+                <option value="">All classes</option>
+                {classes.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.className}{c.section ? ` - ${c.section}` : ''}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="size-3.5 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
+          )}
+
           {/* Range pickers */}
           {mode === 'daily' && (
             <input type="date" value={day} onChange={e => setDay(e.target.value)}
@@ -459,68 +508,76 @@ function HistoryPicker({ category, yearName }) {
             <p className="text-zinc-500 text-sm font-medium">No {category} found.</p>
           </div>
         ) : (
-          <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-x-auto custom-scrollbar">
-            <table className="w-full text-left border-collapse min-w-[640px]">
-              <thead>
-                <tr className="bg-zinc-50/50">
-                  <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 whitespace-nowrap">
-                    {category === 'students' ? 'Roll' : 'S.No'} / Name
-                  </th>
-                  <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 whitespace-nowrap text-center">
-                    Total / Present
-                  </th>
-                  <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 whitespace-nowrap">Role</th>
-                  <th className="px-5 py-3 border-b border-zinc-100"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-100">
-                {filtered.map(u => {
-                  const idLabel = category === 'students'
-                    ? (u.roll_no ? `Roll ${u.roll_no}` : '—')
-                    : `S.No ${serialMap[u.id] || '—'}`;
-                  const st = statsById[u.id];
-                  const present = st ? st.present : 0;
-                  return (
-                    <tr key={u.id} className="hover:bg-zinc-50/60 transition-colors cursor-pointer group" onClick={() => setPicked(u)}>
-                      <td className="px-5 py-4 flex items-center gap-3">
-                        {u.profile_pic ? (
-                          <img src={u.profile_pic} alt="" className="size-8 rounded-full object-cover shrink-0 ring-1 ring-black/5" />
-                        ) : (
-                          <div className="size-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-xs shrink-0 ring-1 ring-primary/20">
-                            {(u.name || '?').charAt(0).toUpperCase()}
+          <div className="space-y-3">
+            {/* Heading above the people list */}
+            <h3 className="text-xs font-semibold text-zinc-700 flex items-center gap-1.5">
+              <List className="size-3.5 text-primary" /> {categoryLabel}
+              <span className="text-zinc-400 font-medium tabular-nums">({filtered.length})</span>
+            </h3>
+
+            <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-x-auto custom-scrollbar">
+              <table className="w-full text-left border-collapse min-w-[640px]">
+                <thead>
+                  <tr className="bg-zinc-50/50">
+                    <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 whitespace-nowrap">
+                      {category === 'students' ? 'Roll' : 'S.No'} / Name
+                    </th>
+                    <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 whitespace-nowrap text-center">
+                      Total / Present
+                    </th>
+                    <th className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 whitespace-nowrap">Role</th>
+                    <th className="px-5 py-3 border-b border-zinc-100"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100">
+                  {filtered.map(u => {
+                    const idLabel = category === 'students'
+                      ? (u.roll_no ? `Roll ${u.roll_no}` : '—')
+                      : `S.No ${serialMap[u.id] || '—'}`;
+                    const st = statsById[u.id];
+                    const present = st ? st.present : 0;
+                    return (
+                      <tr key={u.id} className="hover:bg-zinc-50/60 transition-colors cursor-pointer group" onClick={() => setPicked(u)}>
+                        <td className="px-5 py-4 flex items-center gap-3">
+                          {u.profile_pic ? (
+                            <img src={u.profile_pic} alt="" className="size-8 rounded-full object-cover shrink-0 ring-1 ring-black/5" />
+                          ) : (
+                            <div className="size-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-xs shrink-0 ring-1 ring-primary/20">
+                              {(u.name || '?').charAt(0).toUpperCase()}
+                            </div>
+                          )}
+                          <div className="flex flex-col min-w-0">
+                            <span className="font-medium text-zinc-900 text-sm truncate">{u.name}</span>
+                            <span className="text-[10px] text-zinc-500 truncate">{idLabel}</span>
                           </div>
-                        )}
-                        <div className="flex flex-col min-w-0">
-                          <span className="font-medium text-zinc-900 text-sm truncate">{u.name}</span>
-                          <span className="text-[10px] text-zinc-500 truncate">{idLabel}</span>
-                        </div>
-                      </td>
-                      <td className="px-5 py-4 text-center whitespace-nowrap">
-                        {ovLoading ? (
-                          <span className="text-zinc-300">…</span>
-                        ) : (
-                          <span className="text-sm tabular-nums">
-                            <span className="font-semibold text-zinc-800">{workingDays}</span>
-                            <span className="text-zinc-400"> / </span>
-                            <span className="font-semibold text-emerald-600">{present}</span>
+                        </td>
+                        <td className="px-5 py-4 text-center whitespace-nowrap">
+                          {ovLoading ? (
+                            <span className="text-zinc-300">…</span>
+                          ) : (
+                            <span className="text-sm tabular-nums">
+                              <span className="font-semibold text-zinc-800">{workingDays}</span>
+                              <span className="text-zinc-400"> / </span>
+                              <span className="font-semibold text-emerald-600">{present}</span>
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-5 py-4">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-zinc-100 text-zinc-700 ring-1 ring-zinc-200 whitespace-nowrap">
+                            {u.role}
                           </span>
-                        )}
-                      </td>
-                      <td className="px-5 py-4">
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-zinc-100 text-zinc-700 ring-1 ring-zinc-200 whitespace-nowrap">
-                          {u.role}
-                        </span>
-                      </td>
-                      <td className="px-5 py-4 text-right">
-                        <span className="text-xs font-semibold text-primary opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                          View Details
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                        </td>
+                        <td className="px-5 py-4 text-right">
+                          <span className="text-xs font-semibold text-primary opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                            View Details
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         )
       )}
