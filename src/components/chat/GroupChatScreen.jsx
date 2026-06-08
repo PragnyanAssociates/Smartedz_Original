@@ -91,7 +91,7 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
 
   // --- UPDATED PERMISSIONS LOGIC ---
   const isSystemAdmin = user?.role === 'Super Admin' || user?.role === 'Developer';
-  const isCreator = String(user?.id) === String(group?.created_by);
+const isCreator = Boolean(user?.id && group?.created_by && String(user?.id) === String(group?.created_by));
   const hasEditRights = isAllAccess || canEdit || isSystemAdmin || isCreator;
   const hasGlobalDelete = isAllAccess || canDelete || isSystemAdmin;
   const isReadOnlyMode = group?.is_read_only === 1 || group?.is_read_only === true || String(group?.is_read_only) === '1';

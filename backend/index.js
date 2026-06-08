@@ -5979,10 +5979,12 @@ io.on('connection', (socket) => {
     
     try {
       // --- NEW VALIDATION: Check Announcement Mode & User Role ---
+    // --- UPDATED VALIDATION: Check Announcement Mode, Admin, & Creator ---
       const [groupRows] = await conn.execute(
-        'SELECT is_read_only FROM `groups` WHERE id = ?', 
+        'SELECT is_read_only, created_by FROM `groups` WHERE id = ?', 
         [groupId]
       );
+      
       const [userRows] = await conn.execute(
         'SELECT role FROM users WHERE id = ?', 
         [userId]
@@ -5994,17 +5996,18 @@ io.on('connection', (socket) => {
       }
 
       const isReadOnly = groupRows[0].is_read_only;
+      const isCreator = String(groupRows[0].created_by) === String(userId);
       const userRole = userRows[0].role;
       const isSystemAdmin = (userRole === 'Super Admin' || userRole === 'Developer');
 
-      // If the group is announcement only, block non-admins
-      if (isReadOnly === 1 && !isSystemAdmin) {
-        // Optionally emit an error back to the specific client
+      // If the group is announcement only, block non-admins UNLESS they created the group
+      // Using loosely typed checks to handle tinyint (1) or string ("1")
+      if ((isReadOnly == 1 || isReadOnly === true) && !isSystemAdmin && !isCreator) {
         socket.emit('messageError', { message: 'Only admins can send messages in this group.' });
         conn.release();
         return;
       }
-      // -----------------------------------------------------------
+      // ------------------------------------------------------------------------------------
 
       await conn.beginTransaction();
 
