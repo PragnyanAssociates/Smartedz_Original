@@ -45,13 +45,18 @@ const fmtDMY = (val) => {
   return `${dd}/${mm}/${yy}`;
 };
 
+// Display-only label for a plan. The value stored/sent to the backend
+// stays "Full Time" (PLAN_DAYS keys off it); only the on-screen word
+// changes to "Life Time".
+const planLabel = (p) => (p === 'Full Time' ? 'Life Time' : p);
+
 // Pick chip styling based on plan status returned by the backend
 const planBadgeStyle = (inst) => {
   if (inst.usage_plan === 'Full Time' || inst.daysLeft === null) {
     return {
       wrap: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20',
       icon: InfinityIcon,
-      headline: 'Full Time',
+      headline: 'Life Time',
       sub: 'No expiry'
     };
   }
@@ -288,7 +293,7 @@ export default function DeveloperDashboard() {
                 title="Filter by plan"
                 className="h-9 w-full sm:w-44 rounded-md border border-zinc-200 bg-white pl-3 pr-8 text-sm text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 appearance-none shadow-sm transition-colors cursor-pointer">
                 <option value="all">All Plans</option>
-                {PLAN_OPTIONS.map(p => <option key={p} value={p}>{p}</option>)}
+                {PLAN_OPTIONS.map(p => <option key={p} value={p}>{planLabel(p)}</option>)}
               </select>
               <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
@@ -362,7 +367,7 @@ export default function DeveloperDashboard() {
                       <BadgeIcon className="size-5 shrink-0" />
                       <div className="flex flex-col min-w-0 flex-1">
                         <span className="text-[10px] font-semibold uppercase tracking-wider opacity-80 mb-0.5">
-                          {inst.usage_plan || 'Full Time'} Plan
+                          {planLabel(inst.usage_plan || 'Full Time')} Plan
                         </span>
                         <span className="text-sm font-semibold leading-tight truncate">{badge.headline}</span>
                         {!isFullTime && (
@@ -511,7 +516,7 @@ export default function DeveloperDashboard() {
                           onChange={e => setFormData({ ...formData, usage_plan: e.target.value })}
                           className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 appearance-none shadow-sm transition-colors cursor-pointer">
                           {PLAN_OPTIONS.map(opt => (
-                            <option key={opt} value={opt}>{opt}</option>
+                            <option key={opt} value={opt}>{planLabel(opt)}</option>
                           ))}
                         </select>
                         <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -528,7 +533,7 @@ export default function DeveloperDashboard() {
                     </div>
                   </div>
                   <p className="text-[11px] text-zinc-500 font-medium">
-                    Tip: "Full Time" never expires. Other plans count from the start date you pick.
+                    Tip: "Life Time" never expires. Other plans count from the start date you pick.
                   </p>
                 </div>
 

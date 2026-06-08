@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import { API_BASE_URL } from '../../apiConfig';
-import { CalendarDays, Clock, LayoutGrid, Plus, Trash2, Save, Coffee, AlertCircle, ChevronDown, Users, Search, GraduationCap } from 'lucide-react';
+import { CalendarDays, Clock, LayoutGrid, Plus, Trash2, Save, Coffee, AlertCircle, ChevronDown, Users, Search, GraduationCap, CalendarRange } from 'lucide-react';
 
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -17,12 +17,45 @@ const fmtTime = (t) => {
 };
 
 // =====================================================================
+//  ACTIVE-YEAR BADGE — read-only context chip, identical to Attendance.
+//  The timetable backend scopes every query to the school's ACTIVE
+//  academic year (resolveYearId). This just shows which year that is;
+//  switching the active year under Academics switches the timetable.
+// =====================================================================
+function YearBadge({ name }) {
+  if (!name) return null;
+  return (
+    <div className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-primary/5 ring-1 ring-primary/15 text-primary text-xs font-semibold whitespace-nowrap self-start sm:self-auto">
+      <CalendarRange className="size-3.5" /> Academic Year: {name}
+    </div>
+  );
+}
+
+// Shared hook: fetch the institution's ACTIVE academic year name (for the badge).
+function useActiveYearName(user) {
+  const [activeYearName, setActiveYearName] = useState('');
+  useEffect(() => {
+    if (!user?.institutionId) return;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/admin/data/${user.institutionId}`);
+        const data = await res.json();
+        const list = data.academicYears || [];
+        const active = list.find(y => y.isActive) || list[0];
+        if (active) setActiveYearName(active.name || '');
+      } catch (e) { console.error('academic year load:', e); }
+    })();
+  }, [user]);
+  return activeYearName;
+}
+
+// =====================================================================
 //  ENTRY POINT — routes the user to the right view based on role +
 //  Timetable module permissions.
 //
 //   • Student / Teacher  -> read-only "My Timetable" (their own schedule)
 //   • Edit OR Delete perm -> full manager view:
-//        [ Days & Periods ] [ Class Timetable ] [ Teachers Timetable ]
+//        [ Class Timetable ] [ Days & Periods ] [ Teachers Timetable ]
 //   • Read-only (no edit/delete) -> "Class Timetable" tab only (read-only)
 // =====================================================================
 export default function Timetable() {
@@ -78,7 +111,11 @@ function AdminTimetable({ user, canEdit, canDelete, isManager }) {
     teacherSubjects: {}
   });
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState(isManager ? 'setup' : 'grid');
+  // Class Timetable is the default tab for everyone (managers included).
+  const [activeTab, setActiveTab] = useState('grid');
+
+  // Active academic year name — shown as a read-only badge (like Attendance).
+  const activeYearName = useActiveYearName(user);
 
   const fetchData = useCallback(async () => {
     if (!user?.institutionId) return;
@@ -117,12 +154,12 @@ function AdminTimetable({ user, canEdit, canDelete, isManager }) {
   }
 
   // Build the tab set from permissions.
-  //  • Days & Periods    -> managers only (edit/delete)
   //  • Class Timetable   -> everyone with view access (read-only sees disabled inputs)
+  //  • Days & Periods    -> managers only (edit/delete)
   //  • Teachers Timetable-> managers only (edit/delete)
   const tabs = [];
-  if (isManager) tabs.push({ id: 'setup',    label: 'Days & Periods',     icon: Clock });
   tabs.push({ id: 'grid', label: 'Class Timetable', icon: LayoutGrid });
+  if (isManager) tabs.push({ id: 'setup',    label: 'Days & Periods',     icon: Clock });
   if (isManager) tabs.push({ id: 'teachers', label: 'Teachers Timetable', icon: Users });
 
   const tabIds = tabs.map(t => t.id);
@@ -131,14 +168,16 @@ function AdminTimetable({ user, canEdit, canDelete, isManager }) {
   const tabProps = { data, fetchData, user, canEdit };
 
   return (
-// Remove 'animate-in fade-in duration-700'
 <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto">
       {/* 1. Page Header */}
-      <header className="mb-6 flex flex-col gap-2">
-        <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Timetable</h1>
-        <p className="text-sm text-zinc-500 max-w-[56ch]">
-          Configure the school's weekly schedule once, then fill in each class's grid.
-        </p>
+      <header className="mb-6 flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+        <div className="flex flex-col gap-2">
+          <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Timetable</h1>
+          <p className="text-sm text-zinc-500 max-w-[56ch]">
+            Configure the school's weekly schedule once, then fill in each class's grid.
+          </p>
+        </div>
+        <YearBadge name={activeYearName} />
       </header>
 
       {/* Segmented Tabs - Horizontally Scrollable on Mobile */}
@@ -993,6 +1032,9 @@ function PersonalTimetable({ user, mode }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // Active academic year name — read-only badge, like Attendance.
+  const activeYearName = useActiveYearName(user);
+
   const fetchMine = useCallback(async () => {
     if (!user?.id) return;
     setLoading(true);
@@ -1050,17 +1092,19 @@ function PersonalTimetable({ user, mode }) {
   }
 
   return (
-// Remove 'animate-in fade-in duration-700'
 <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto">
-      <header className="mb-6 flex flex-col gap-2">
-        <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
-          <GraduationCap className="size-5 text-primary" /> My Timetable
-        </h1>
-        <p className="text-sm text-zinc-500">
-          {mode === 'student'
-            ? <>Your class schedule{data.class_label ? <> for <strong className="text-zinc-700">{data.class_label}</strong></> : ''}.</>
-            : <>Your weekly teaching schedule across all your classes.</>}
-        </p>
+      <header className="mb-6 flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+        <div className="flex flex-col gap-2">
+          <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
+            <GraduationCap className="size-5 text-primary" /> My Timetable
+          </h1>
+          <p className="text-sm text-zinc-500">
+            {mode === 'student'
+              ? <>Your class schedule{data.class_label ? <> for <strong className="text-zinc-700">{data.class_label}</strong></> : ''}.</>
+              : <>Your weekly teaching schedule across all your classes.</>}
+          </p>
+        </div>
+        <YearBadge name={activeYearName} />
       </header>
 
       <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-x-auto custom-scrollbar flex flex-col">
