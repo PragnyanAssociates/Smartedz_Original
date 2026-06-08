@@ -5986,6 +5986,17 @@ socket.on('sendMessage', async (data) => {
             'SELECT role, institutionId FROM users WHERE id = ?',
             [userId]
         );
+         console.log('DEBUG DB ROWS:', {
+          is_read_only: groupRows[0]?.is_read_only,
+          typeof_is_read_only: typeof groupRows[0]?.is_read_only,
+          created_by: groupRows[0]?.created_by,
+          typeof_created_by: typeof groupRows[0]?.created_by,
+          userId,
+          typeof_userId: typeof userId,
+          isCreatorCheck: String(groupRows[0]?.created_by) === String(userId),
+          userRole: userRows[0]?.role,
+          isSystemAdmin: userRows[0]?.role === 'Super Admin' || userRows[0]?.role === 'Developer'
+      });
 
         if (!groupRow || !userRow) {
             conn.release();

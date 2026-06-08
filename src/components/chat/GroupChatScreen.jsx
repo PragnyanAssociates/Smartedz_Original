@@ -97,7 +97,17 @@ const isCreator = Boolean(user?.id && group?.created_by && String(user?.id) === 
 const isReadOnlyMode = group?.is_read_only == 1;
   const canSendMessages = !isReadOnlyMode || hasEditRights;
   // ---------------------------------
-
+console.log('DEBUG GROUP STATE:', {
+    is_read_only: group?.is_read_only,
+    typeof_is_read_only: typeof group?.is_read_only,
+    isReadOnlyMode,
+    hasEditRights,
+    canSendMessages,
+    userRole: user?.role,
+    isCreator,
+    isAllAccess,
+    canEdit
+});
  useEffect(() => {
   if (providedGroup) {
     setGroup({
