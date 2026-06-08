@@ -53,6 +53,22 @@ export const MODULES = [
     imageSource: 'https://cdn-icons-png.flaticon.com/128/17163/17163937.png',
     navigateTo: '/Attendance'
   },
+    {
+    id: 'LessonPlan',
+    module_name: 'LessonPlan',
+    label: 'LessonPlan',
+    title: 'LessonPlan',
+    imageSource: 'https://cdn-icons-png.flaticon.com/128/5341/5341025.png',
+    navigateTo: '/LessonPlan'
+  },
+   {
+    id: 'Homework',
+    module_name: 'Homework', // Must match backend exactly
+    label: 'Homework',
+    title: 'Homework',
+    imageSource: 'https://cdn-icons-png.flaticon.com/128/5027/5027360.png',
+    navigateTo: '/Homework'
+  },
   {
     id: 'Exams',
     module_name: 'Exams',
@@ -107,14 +123,7 @@ export const MODULES = [
     imageSource: 'https://cdn-icons-png.flaticon.com/128/8418/8418513.png',
     navigateTo: '/Gallery'
   },
-  {
-    id: 'Homework',
-    module_name: 'Homework', // Must match backend exactly
-    label: 'Homework',
-    title: 'Homework',
-    imageSource: 'https://cdn-icons-png.flaticon.com/128/5027/5027360.png',
-    navigateTo: '/Homework'
-  },
+ 
   {
     id: 'Meals',
     module_name: 'Meals', // Must match backend exactly
@@ -186,15 +195,8 @@ export const MODULES = [
     title: 'Alumni',
     imageSource: 'https://cdn-icons-png.flaticon.com/128/4696/4696859.png',
     navigateTo: '/Alumni'
-  },
-  {
-    id: 'LessonPlan',
-    module_name: 'LessonPlan',
-    label: 'LessonPlan',
-    title: 'LessonPlan',
-    imageSource: 'https://cdn-icons-png.flaticon.com/128/5341/5341025.png',
-    navigateTo: '/LessonPlan'
   }
+
 ];
 
 export const MODULE_NAMES = MODULES.map(m => m.module_name);
