@@ -2380,7 +2380,7 @@ app.post('/api/admin/attempts/:attemptId/grade', async (req, res) => {
 //     CREATE INDEX idx_marks_year ON student_marks (academic_year_id);
 // =====================================================================
 
-// --- Month boundaries helper for attendance roll-up ----------------
+// --- Month boundaries helper for attendance roll-up --------------
 //   Given an academic year row {startDate,endDate}, returns an ordered
 //   list of { key:'2025-06', label:'June', from, to } month buckets.
 //   (Retained for reference / other callers; the report-card attendance
