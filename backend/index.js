@@ -2335,36 +2335,49 @@ app.post('/api/admin/attempts/:attemptId/grade', async (req, res) => {
 //   Distinct from Section 16 (online quizzes). This covers the
 //   traditional paper-exam workflow:
 //     • exam_types          — admin defines AT1, UT1, SA1...   (config)
-//     • exam_max_marks      — per exam-type + class max marks  (config)
+//     • exam_max_marks      — per exam-type + class (+ subject) max marks
 //     • subject_teacher_map — who enters marks for a class+subject
 //     • student_marks       — the actual entered marks  (per academic year)
 //   Report-card attendance is auto-computed from the daily `attendance`
 //   table built in Section 15 — no separate W/P entry.
 //
-//   ACADEMIC YEAR: student_marks now carry academic_year_id, and marks
+//   ACADEMIC YEAR: student_marks carry academic_year_id, and marks
 //   reads/writes scope to the school's ACTIVE academic year via the
 //   shared resolveYearId() helper (defined in the Timetable section).
-//   Exam types & max marks stay global config (reused across years),
-//   like the timetable's days/periods setup. So when the admin switches
-//   the active year, the entered marks switch with it.
+//   Exam types & max marks stay global config (reused across years).
 //
 //   ALUMNI: passed-out students (users.status = 'alumni') are excluded
-//   from class summaries and the marks grid, so they no longer inflate
-//   totals or appear as "top student".
+//   from class summaries and the marks grid.
 //
-//   REQUIRES a one-time migration (run once in your DB). This also
-//   removes any duplicate mark rows that were doubling totals and swaps
-//   the unique key to include the year:
+//   PER-SUBJECT MAX MARKS: exam_max_marks now carries a subject_id.
+//   A row with subject_id = 0 is the "All Subjects" DEFAULT for that
+//   exam+class; a row with a real subject_id OVERRIDES the default for
+//   just that subject. So you can set one max for every subject, or give
+//   individual subjects their own max. Existing rows become subject_id=0
+//   defaults automatically.
+//
+//   REQUIRES a one-time migration for the per-subject max marks:
+//     -- 1. Add the subject dimension (0 = "All Subjects" default).
+//     ALTER TABLE exam_max_marks
+//       ADD COLUMN subject_id INT NOT NULL DEFAULT 0 AFTER class_id;
+//
+//     -- 2. Find the OLD unique key on (exam_type_id, class_id):
+//     SHOW CREATE TABLE exam_max_marks;
+//
+//     -- 3. Drop that old unique key (use the name you saw above), then
+//     --    add the new one that includes subject_id:
+//     ALTER TABLE exam_max_marks DROP INDEX <old_unique_key_name>;
+//     ALTER TABLE exam_max_marks
+//       ADD UNIQUE KEY uniq_exam_class_subject (exam_type_id, class_id, subject_id);
+//
+//   (student_marks academic-year migration — run once, if not already:)
 //     ALTER TABLE student_marks
 //       ADD COLUMN academic_year_id INT NULL AFTER class_id;
-//
 //     UPDATE student_marks sm
 //       JOIN academic_years y
 //         ON y.institutionId = sm.institutionId AND y.isActive = 1
 //       SET sm.academic_year_id = y.id
 //      WHERE sm.id > 0 AND sm.academic_year_id IS NULL;
-//
-//     -- de-duplicate (keep the newest row per student/subject/exam/year)
 //     DELETE s1 FROM student_marks s1
 //       JOIN student_marks s2
 //         ON s1.student_id  = s2.student_id
@@ -2372,7 +2385,6 @@ app.post('/api/admin/attempts/:attemptId/grade', async (req, res) => {
 //        AND s1.exam_type_id = s2.exam_type_id
 //        AND COALESCE(s1.academic_year_id,0) = COALESCE(s2.academic_year_id,0)
 //        AND s1.id < s2.id;
-//
 //     ALTER TABLE student_marks DROP INDEX uniq_student_subject_exam;
 //     ALTER TABLE student_marks
 //       ADD UNIQUE KEY uniq_student_subject_exam_year
@@ -2380,7 +2392,7 @@ app.post('/api/admin/attempts/:attemptId/grade', async (req, res) => {
 //     CREATE INDEX idx_marks_year ON student_marks (academic_year_id);
 // =====================================================================
 
-// --- Month boundaries helper for attendance roll-up --------------
+// --- Month boundaries helper for attendance roll-up ----------------
 //   Given an academic year row {startDate,endDate}, returns an ordered
 //   list of { key:'2025-06', label:'June', from, to } month buckets.
 //   (Retained for reference / other callers; the report-card attendance
@@ -2407,6 +2419,21 @@ function buildMonthBuckets(startDateStr, endDateStr) {
         cur.setMonth(cur.getMonth() + 1);
     }
     return buckets;
+}
+
+// --- Build the per-exam max-marks map from exam_max_marks rows ------
+//   rows: [{ exam_type_id, subject_id, max_marks }]
+//   returns { [examTypeId]: { default: n|null, bySubject: { [subjectId]: n } } }
+//   subject_id = 0 is the "All Subjects" default; others are overrides.
+function buildMaxMarksMap(rows) {
+    const maxMarks = {};
+    (rows || []).forEach(r => {
+        const et = r.exam_type_id;
+        if (!maxMarks[et]) maxMarks[et] = { default: null, bySubject: {} };
+        if (Number(r.subject_id) === 0) maxMarks[et].default = r.max_marks;
+        else maxMarks[et].bySubject[r.subject_id] = r.max_marks;
+    });
+    return maxMarks;
 }
 
 
@@ -2470,14 +2497,15 @@ app.delete('/api/admin/exam-types/:id', async (req, res) => {
 
 
 // =====================================================================
-// === 17.B MAX MARKS (per exam-type + class) ==========================
+// === 17.B MAX MARKS (per exam-type + class + subject) ================
 // =====================================================================
 
 // --- 17.B.1 Get the full max-marks matrix for a school ------------
+//   Includes subject_id (0 = All Subjects default, else a per-subject override).
 app.get('/api/admin/exam-max-marks/:instId', async (req, res) => {
     try {
         const [rows] = await db.execute(
-            `SELECT m.id, m.exam_type_id, m.class_id, m.max_marks,
+            `SELECT m.id, m.exam_type_id, m.class_id, m.subject_id, m.max_marks,
                     t.name AS exam_type_name, c.className, c.section
                FROM exam_max_marks m
                JOIN exam_types t ON t.id = m.exam_type_id
@@ -2490,6 +2518,8 @@ app.get('/api/admin/exam-max-marks/:instId', async (req, res) => {
 });
 
 // --- 17.B.2 Bulk upsert max marks ---------------------------------
+//   Each entry: { exam_type_id, class_id, subject_id (0 = all), max_marks }
+//   Blank max_marks deletes that exact (exam, class, subject) row.
 app.post('/api/admin/exam-max-marks', async (req, res) => {
     const { entries = [] } = req.body;
     const conn = await db.getConnection();
@@ -2497,19 +2527,21 @@ app.post('/api/admin/exam-max-marks', async (req, res) => {
         await conn.beginTransaction();
         for (const e of entries) {
             if (!e.exam_type_id || !e.class_id) continue;
+            const subjectId = (e.subject_id === undefined || e.subject_id === null || e.subject_id === '')
+                ? 0 : parseInt(e.subject_id, 10);
             const max = (e.max_marks === '' || e.max_marks === null || e.max_marks === undefined)
                 ? null : parseInt(e.max_marks, 10);
             if (max === null) {
                 await conn.execute(
-                    'DELETE FROM exam_max_marks WHERE exam_type_id = ? AND class_id = ?',
-                    [e.exam_type_id, e.class_id]
+                    'DELETE FROM exam_max_marks WHERE exam_type_id = ? AND class_id = ? AND subject_id = ?',
+                    [e.exam_type_id, e.class_id, subjectId]
                 );
             } else {
                 await conn.execute(
-                    `INSERT INTO exam_max_marks (exam_type_id, class_id, max_marks)
-                     VALUES (?, ?, ?)
+                    `INSERT INTO exam_max_marks (exam_type_id, class_id, subject_id, max_marks)
+                     VALUES (?, ?, ?, ?)
                      ON DUPLICATE KEY UPDATE max_marks = VALUES(max_marks)`,
-                    [e.exam_type_id, e.class_id, max]
+                    [e.exam_type_id, e.class_id, subjectId, max]
                 );
             }
         }
@@ -2574,7 +2606,8 @@ app.delete('/api/admin/subject-teachers/:id', async (req, res) => {
 
 // --- 17.D.1 Class data bundle for the marks grid ------------------
 //   Marks are scoped to the active academic year. Alumni students are
-//   excluded from the roster (status filter).
+//   excluded from the roster (status filter). Returns a per-subject
+//   max-marks map so the grid can show/validate each subject's own max.
 app.get('/api/admin/reports/class-data/:classId', async (req, res) => {
     const { classId } = req.params;
     try {
@@ -2626,23 +2659,27 @@ app.get('/api/admin/reports/class-data/:classId', async (req, res) => {
         const assignMap = {};
         assignments.forEach(a => { assignMap[a.subject_id] = a; });
 
-        // Exam types + this class's max marks
+        // Exam types + this class's max marks (per subject, with defaults)
         const [examTypes] = await db.execute(
             'SELECT * FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id',
             [instId]
         );
         const [maxRows] = await db.execute(
-            `SELECT m.exam_type_id, m.max_marks
+            `SELECT m.exam_type_id, m.subject_id, m.max_marks
                FROM exam_max_marks m
               WHERE m.class_id = ?`,
             [classId]
         );
-        const maxMap = {};
-        maxRows.forEach(r => { maxMap[r.exam_type_id] = r.max_marks; });
+        // { [examTypeId]: { default: n|null, bySubject: { [subjectId]: n } } }
+        const maxMarks = buildMaxMarksMap(maxRows);
 
+        // An exam type is active for this class if it has ANY max row
+        // (an All-Subjects default OR at least one per-subject override).
+        // max_marks here is the All-Subjects default (may be null) — kept
+        // for backward compatibility / the exam dropdown label.
         const examTypesForClass = examTypes
-            .filter(t => maxMap[t.id] !== undefined)
-            .map(t => ({ ...t, max_marks: maxMap[t.id] }));
+            .filter(t => maxMarks[t.id] !== undefined)
+            .map(t => ({ ...t, max_marks: maxMarks[t.id]?.default ?? null }));
 
         const subjectsForClass = subjects.map(s => ({
             ...s,
@@ -2664,6 +2701,7 @@ app.get('/api/admin/reports/class-data/:classId', async (req, res) => {
             students,
             subjects: subjectsForClass,
             examTypes: examTypesForClass,
+            maxMarks,
             marks
         });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -2836,14 +2874,14 @@ async function buildReportCard(studentId) {
         [student.institutionId]
     );
     const [maxRows] = await db.execute(
-        'SELECT exam_type_id, max_marks FROM exam_max_marks WHERE class_id = ?',
+        'SELECT exam_type_id, subject_id, max_marks FROM exam_max_marks WHERE class_id = ?',
         [student.class_id]
     );
-    const maxMap = {};
-    maxRows.forEach(r => { maxMap[r.exam_type_id] = r.max_marks; });
+    // { [examTypeId]: { default: n|null, bySubject: { [subjectId]: n } } }
+    const maxMarks = buildMaxMarksMap(maxRows);
     const examTypesForClass = examTypes
-        .filter(t => maxMap[t.id] !== undefined)
-        .map(t => ({ ...t, max_marks: maxMap[t.id] }));
+        .filter(t => maxMarks[t.id] !== undefined)
+        .map(t => ({ ...t, max_marks: maxMarks[t.id]?.default ?? null }));
 
     // This student's marks for the ACTIVE academic year only
     let marks = [];
@@ -2862,13 +2900,6 @@ async function buildReportCard(studentId) {
     //   exactly like the Attendance module, the Directory and the history
     //   endpoint — and grouped by the REAL month of each row, NOT by month
     //   buckets derived from the year's start/end dates.
-    //
-    //   The old bucket approach queried each month by a date range bounded
-    //   by academicYear.startDate..endDate. Any day marked under the active
-    //   year but outside that configured window (e.g. the day you just
-    //   marked, when the calendar month sits past the year's end date) fell
-    //   into no bucket and silently vanished — which is why freshly marked
-    //   attendance wasn't appearing here.
     //
     //   working_days = distinct dates the student's CLASS had attendance
     //   taken that month (the denominator); present_days = this student's
@@ -2921,6 +2952,7 @@ async function buildReportCard(studentId) {
         academicYear: academicYear ? academicYear.name : '',
         subjects,
         examTypes: examTypesForClass,
+        maxMarks,
         marks,
         attendance
     };

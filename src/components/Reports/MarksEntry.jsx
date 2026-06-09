@@ -16,9 +16,16 @@ import {
 //  "Overall" view shows the per-subject sum across all exam types and
 //  is always read-only.
 //
-//  Marks are scoped to the active academic year by the backend.
-//  Students are shown roll-wise by default, with an optional sort by
-//  total (High -> Low / Low -> High) that recalculates live.
+//  MAX MARKS are now per subject. The backend sends a maxMarks map:
+//    { [examTypeId]: { default: n|null, bySubject: { [subjectId]: n } } }
+//  Each subject's max for the selected exam = its own override, else the
+//  All-Subjects default. The header shows it and entry is capped to it.
+//
+//  A footer "Total" row sums each subject column across the whole class
+//  plus the grand total of everything.
+//
+//  Marks are scoped to the active academic year by the backend. Students
+//  are shown roll-wise by default, with an optional sort by total.
 // =====================================================================
 
 // Format a numeric mark without trailing decimals: 20.00 -> 20, 19.50 -> 19.5
@@ -39,7 +46,7 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
   const { user } = useAuth();
   const { isAllAccess } = usePermissions();
 
-  const [data, setData]       = useState(null);   // {class, students, subjects, examTypes, marks}
+  const [data, setData]       = useState(null);   // {class, students, subjects, examTypes, maxMarks, marks}
   const [marks, setMarks]     = useState({});     // `${studentId}:${subjectId}:${examTypeId}` -> value
   const [original, setOriginal] = useState({});
   const [examTypeId, setExamTypeId] = useState('overall');
@@ -89,13 +96,43 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
   const activeExamType = data?.examTypes?.find(t => String(t.id) === examTypeId);
 
   // -----------------------------------------------------------------
+  // Per-subject max for an exam type: subject override, else the
+  // All-Subjects default. Returns undefined when no max is configured.
+  // -----------------------------------------------------------------
+  const maxFor = useCallback((etId, subjectId) => {
+    const m = data?.maxMarks?.[etId];
+    if (!m) return undefined;
+    const sp = m.bySubject ? m.bySubject[subjectId] : undefined;
+    if (sp !== undefined && sp !== null) return Number(sp);
+    if (m.default !== undefined && m.default !== null) return Number(m.default);
+    return undefined;
+  }, [data]);
+
+  // Max shown in a subject's column header. For a specific exam that's
+  // the per-subject max; for Overall it's the sum of the subject's max
+  // across all exams (its grand max).
+  const subjectHeaderMax = (subjectId) => {
+    if (!data) return undefined;
+    if (isOverall) {
+      let sum = 0, any = false;
+      data.examTypes.forEach(t => {
+        const mx = maxFor(t.id, subjectId);
+        if (mx !== undefined) { sum += mx; any = true; }
+      });
+      return any ? sum : undefined;
+    }
+    return maxFor(examTypeId, subjectId);
+  };
+
+  // -----------------------------------------------------------------
   // Mark editing
   // -----------------------------------------------------------------
   const setMark = (studentId, subjectId, value) => {
     if (!/^\d*\.?\d*$/.test(value)) return;
-    if (activeExamType && value !== '') {
+    const cap = maxFor(examTypeId, subjectId);
+    if (cap !== undefined && value !== '') {
       const num = parseFloat(value);
-      if (!isNaN(num) && num > activeExamType.max_marks) return;
+      if (!isNaN(num) && num > cap) return;
     }
     setMarks(prev => ({
       ...prev,
@@ -128,6 +165,23 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
       const v = parseFloat(getMark(studentId, s.id, examTypeId));
       return sum + (isNaN(v) ? 0 : v);
     }, 0);
+  };
+
+  // -----------------------------------------------------------------
+  // Column totals (whole class) for the footer row
+  // -----------------------------------------------------------------
+  const subjectColumnTotal = (subjectId) => {
+    if (!data) return 0;
+    return data.students.reduce((sum, stu) => {
+      if (isOverall) return sum + subjectOverall(stu.id, subjectId);
+      const v = parseFloat(getMark(stu.id, subjectId, examTypeId));
+      return sum + (isNaN(v) ? 0 : v);
+    }, 0);
+  };
+
+  const grandColumnTotal = () => {
+    if (!data) return 0;
+    return data.subjects.reduce((sum, s) => sum + subjectColumnTotal(s.id), 0);
   };
 
   // -----------------------------------------------------------------
@@ -240,10 +294,12 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
           <div className="flex items-center gap-2 w-full sm:w-auto">
             <div className="relative w-full sm:w-auto">
               <select value={examTypeId} onChange={e => setExamTypeId(e.target.value)}
-                className="h-9 w-full sm:w-48 bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none transition-colors shadow-sm">
+                className="h-9 w-full sm:w-52 bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none transition-colors shadow-sm">
                 <option value="overall">Overall (read-only)</option>
                 {data.examTypes.map(t => (
-                  <option key={t.id} value={t.id}>{t.name} (max {fmtNum(t.max_marks)})</option>
+                  <option key={t.id} value={t.id}>
+                    {t.name}{t.max_marks != null ? ` (default max ${fmtNum(t.max_marks)})` : ''}
+                  </option>
                 ))}
               </select>
               <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -285,8 +341,8 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
           <AlertTriangle className="size-5 text-amber-600 shrink-0 mt-0.5" />
           <div className="text-xs text-amber-800 leading-relaxed">
-            No exam types are configured for this class. Go to <strong className="font-semibold">Exam Setup - Max Marks</strong> and
-            set max marks for this class first.
+            No exam types are configured for this class. Go to <strong className="font-semibold">Exam Setup - Max Marks</strong>,
+            pick this class and set max marks first.
           </div>
         </div>
       )}
@@ -295,7 +351,7 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
         <div className="bg-blue-50/50 border border-blue-100 rounded-md p-3 flex items-center gap-2 text-xs font-medium text-blue-700 leading-relaxed">
           <Info className="size-4 shrink-0" />
           <span>
-            Editing <strong className="font-semibold text-blue-900">{activeExamType.name}</strong> - max {fmtNum(activeExamType.max_marks)} marks.
+            Editing <strong className="font-semibold text-blue-900">{activeExamType.name}</strong>. Each subject's max marks are shown in its column header.
             {!isAllAccess && ' Locked columns belong to other teachers.'}
           </span>
         </div>
@@ -310,6 +366,7 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
               <th className="px-4 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider sticky left-16 bg-zinc-50/95 backdrop-blur z-10 border-b border-r border-zinc-100 min-w-[160px]">Name</th>
               {data.subjects.map(s => {
                 const editable = canEditSubject(s);
+                const mx = subjectHeaderMax(s.id);
                 return (
                   <th key={s.id} className="p-3 text-center whitespace-nowrap border-b border-r border-zinc-100 last:border-r-0 min-w-[100px]">
                     <div className="flex items-center justify-center gap-1.5 text-zinc-700">
@@ -320,6 +377,9 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
                       <div className="text-[9px] font-medium text-zinc-400 mt-1 truncate max-w-[120px] mx-auto">
                         {s.teacher_name}
                       </div>
+                    )}
+                    {mx !== undefined && (
+                      <div className="text-[9px] font-semibold text-primary/70 mt-0.5">max {fmtNum(mx)}</div>
                     )}
                   </th>
                 );
@@ -375,6 +435,24 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
               </tr>
             ))}
           </tbody>
+          {sortedStudents.length > 0 && (
+            <tfoot>
+              <tr className="bg-zinc-50 border-t-2 border-zinc-200">
+                <td className="px-4 py-3 sticky left-0 bg-zinc-50 z-10"></td>
+                <td className="px-4 py-3 sticky left-16 bg-zinc-50 z-10 border-r border-zinc-100 shadow-[1px_0_0_0_rgba(0,0,0,0.05)] text-[11px] font-semibold uppercase tracking-wider text-zinc-700">
+                  Total
+                </td>
+                {data.subjects.map(s => (
+                  <td key={s.id} className="p-2 text-center border-r border-zinc-100 last:border-r-0 text-sm font-bold text-zinc-800 tabular-nums">
+                    {fmtNum(subjectColumnTotal(s.id)) || '-'}
+                  </td>
+                ))}
+                <td className="p-2 text-center bg-primary/10 font-bold text-primary text-sm tabular-nums">
+                  {fmtNum(grandColumnTotal()) || '-'}
+                </td>
+              </tr>
+            </tfoot>
+          )}
         </table>
       </div>
 

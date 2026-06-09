@@ -6,11 +6,15 @@ import { GraduationCap } from 'lucide-react';
 //
 //  Pure presentational component. Receives a `card` object shaped like
 //  the backend's buildReportCard() output:
-//    { student, institution, academicYear, subjects, examTypes, marks, attendance }
+//    { student, institution, academicYear, subjects, examTypes, maxMarks, marks, attendance }
 //
 //  School logo + name + contact come from `institution` (multi-tenant -
 //  no hardcoded school). Attendance is the auto-computed monthly W/P,
 //  pulled from the Attendance module.
+//
+//  Max marks are per subject: a subject's max for an exam is its own
+//  override, else the All-Subjects default (maxMarks), else the exam's
+//  default field (backward compatible). The grand max sums those.
 // =====================================================================
 
 // Format a numeric mark without trailing decimals: 20.00 -> 20, 19.50 -> 19.5
@@ -23,6 +27,7 @@ const fmtNum = (v) => {
 
 export default function ReportCardView({ card }) {
   const { student, institution, academicYear, subjects, examTypes, marks, attendance } = card;
+  const maxMarks = card.maxMarks || {};
 
   // Index marks by `${subjectId}:${examTypeId}` for O(1) lookup
   const markMap = useMemo(() => {
@@ -36,6 +41,18 @@ export default function ReportCardView({ card }) {
   const getMark = (subjectId, etId) => {
     const v = markMap[`${subjectId}:${etId}`];
     return v != null ? v : null;
+  };
+
+  // Per-subject max for an exam: subject override -> All-Subjects default
+  // -> the exam's default field (so old data without maxMarks still works).
+  const maxFor = (t, subjectId) => {
+    const m = maxMarks[t.id];
+    if (m) {
+      const sp = m.bySubject ? m.bySubject[subjectId] : undefined;
+      if (sp !== undefined && sp !== null) return Number(sp);
+      if (m.default !== undefined && m.default !== null) return Number(m.default);
+    }
+    return Number(t.max_marks || 0);
   };
 
   // Column total for an exam type (sum across subjects)
@@ -53,8 +70,12 @@ export default function ReportCardView({ card }) {
     }, 0);
 
   const grandTotal = (subjects || []).reduce((sum, s) => sum + subjectRowTotal(s.id), 0);
-  const grandMax = (subjects || []).length *
-    (examTypes || []).reduce((sum, t) => sum + (t.max_marks || 0), 0);
+  // Grand max = sum over every subject of the sum of that subject's max
+  // across all exams (so per-subject overrides are reflected accurately).
+  const grandMax = (subjects || []).reduce(
+    (sTot, s) => sTot + (examTypes || []).reduce((eTot, t) => eTot + maxFor(t, s.id), 0),
+    0
+  );
 
   // Attendance roll-up
   const attTotals = (attendance || []).reduce(
@@ -119,7 +140,7 @@ export default function ReportCardView({ card }) {
                 <th className="border border-zinc-300 px-3 py-2.5 text-left font-semibold text-zinc-700">Subject</th>
                 {examTypes.map(t => (
                   <th key={t.id} className="border border-zinc-300 px-3 py-2.5 text-center font-semibold text-zinc-700 whitespace-nowrap">
-                    {t.name}<br/><span className="text-[10px] font-medium text-zinc-500">({fmtNum(t.max_marks)})</span>
+                    {t.name}{t.max_marks != null ? <><br/><span className="text-[10px] font-medium text-zinc-500">({fmtNum(t.max_marks)})</span></> : null}
                   </th>
                 ))}
                 <th className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-primary">Total</th>
