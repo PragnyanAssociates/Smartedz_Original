@@ -64,9 +64,11 @@ export default function RosterMarker({ category }) {
   const [error, setError] = useState(null);
   const [warning, setWarning] = useState(null);
 
-  // Class filter for students
+  // Class filter for students — no "All classes" option; one real class
+  // is always selected (default to the first).
   const [classes, setClasses] = useState([]);
   const [classId, setClassId] = useState('');
+  const [classesLoaded, setClassesLoaded] = useState(false);
 
   const teacherCantMark = isTeacher && !isAllAccess && category === 'teachers';
 
@@ -74,28 +76,42 @@ export default function RosterMarker({ category }) {
   // Load classes
   // -----------------------------------------------------------------
   useEffect(() => {
-    if (category !== 'students') { setClasses([]); setClassId(''); return; }
+    if (category !== 'students') { setClasses([]); setClassId(''); setClassesLoaded(false); return; }
+    setClassesLoaded(false);
     (async () => {
       try {
         if (isTeacher && !isAllAccess) {
           const res = await fetch(`${API_BASE_URL}/admin/attendance/teacher-classes/${user.id}`);
           const data = await res.json();
           setClasses(data || []);
-          if (data?.[0]) setClassId(String(data[0].id));
         } else {
           const res = await fetch(`${API_BASE_URL}/admin/data/${user.institutionId}`);
           const data = await res.json();
           setClasses(data.classes || []);
         }
       } catch (e) { console.error('classes load:', e); }
+      finally { setClassesLoaded(true); }
     })();
   }, [category, user, isTeacher, isAllAccess]);
+
+  // Keep one real class selected — default to the first, re-point if the
+  // current one disappears.
+  useEffect(() => {
+    if (category !== 'students' || classes.length === 0) return;
+    const valid = classes.some(c => String(c.id) === String(classId));
+    if (!valid) setClassId(String(classes[0].id));
+  }, [classes, category, classId]);
+
+  // Hold off loading the student roster until the default class resolves,
+  // so we never briefly show every class together.
+  const awaitingClass = category === 'students' && !classId && (!classesLoaded || classes.length > 0);
 
   // -----------------------------------------------------------------
   // Load roster
   // -----------------------------------------------------------------
   const loadRoster = useCallback(async () => {
     if (teacherCantMark) { setLoading(false); return; }
+    if (awaitingClass) { setLoading(true); return; }
     setLoading(true);
     setError(null);
     setWarning(null);
@@ -124,7 +140,7 @@ export default function RosterMarker({ category }) {
       setError(e.message || 'Network error');
     }
     setLoading(false);
-  }, [user, category, date, classId, teacherCantMark]);
+  }, [user, category, date, classId, teacherCantMark, awaitingClass]);
 
   useEffect(() => { loadRoster(); }, [loadRoster]);
 
@@ -252,7 +268,6 @@ export default function RosterMarker({ category }) {
               <div className="relative w-full">
                 <select value={classId} onChange={e => setClassId(e.target.value)}
                   className="h-9 w-full rounded-md border border-zinc-200 bg-white pl-2 sm:pl-3 pr-6 text-xs sm:text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none transition-colors">
-                  <option value="">All classes</option>
                   {classes.map(c => (
                     <option key={c.id} value={c.id}>
                       {c.className}{c.section ? ` - ${c.section}` : ''}

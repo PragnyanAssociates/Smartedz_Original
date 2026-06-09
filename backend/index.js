@@ -3012,6 +3012,13 @@ app.get('/api/admin/reports/class-cards/:classId', async (req, res) => {
 //  in the Timetable section). Requires the Reports migration that adds
 //  student_marks.academic_year_id.
 //
+//  PER-SUBJECT MAX MARKS: exam_max_marks now carries a subject_id
+//  (0 = "All Subjects" default, a real id = that subject's override).
+//  Every "possible marks" denominator below resolves a subject's max as
+//  override → default, so percentages stay correct whether a school uses
+//  one max for all subjects or per-subject maxes. Requires the Reports
+//  migration that adds exam_max_marks.subject_id.
+//
 //  ALSO — add 'Performance' to DEFAULT_MODULES at the top of index.js:
 //
 //      const DEFAULT_MODULES = [
@@ -3020,11 +3027,37 @@ app.get('/api/admin/reports/class-cards/:classId', async (req, res) => {
 //      ];
 // =====================================================================
 
+// --- Per-subject max-marks helpers ----------------------------------
+//   buildExamMaxMap(rows) — rows: [{ exam_type_id, subject_id, max_marks }]
+//     -> { [examTypeId]: { default: n|null, bySubject: { [subjectId]: n } } }
+//   resolveExamMax(examMax, subjectId) — subject override -> default ->
+//     undefined (uniquely named so it can't clash with the Reports
+//     section's buildMaxMarksMap).
+function buildExamMaxMap(rows) {
+    const map = {};
+    (rows || []).forEach(r => {
+        const et = r.exam_type_id;
+        if (!map[et]) map[et] = { default: null, bySubject: {} };
+        if (Number(r.subject_id) === 0) map[et].default = r.max_marks;
+        else map[et].bySubject[r.subject_id] = r.max_marks;
+    });
+    return map;
+}
+function resolveExamMax(examMax, subjectId) {
+    if (!examMax) return undefined;
+    const sp = examMax.bySubject ? examMax.bySubject[subjectId] : undefined;
+    if (sp !== undefined && sp !== null) return Number(sp);
+    if (examMax.default !== undefined && examMax.default !== null) return Number(examMax.default);
+    return undefined;
+}
+
+
 // --- Shared helper: build a class's performance dataset --------------
 //   Given a classId (+ optional requested year), returns:
-//     { class, students[], subjects[], examTypes[], assignments[], marks[] }
+//     { class, students[], subjects[], examTypes[], maxMarks, assignments[], marks[] }
 //   scoped to the active academic year. assignments carry the subject's
-//   teacher name + email so the UI can show "Teacher: X".
+//   teacher name + email so the UI can show "Teacher: X". maxMarks is the
+//   per-subject max map so the frontend can compute each subject's possible.
 async function loadClassPerformance(classId, requestedYearId) {
     const [cls] = await db.execute('SELECT * FROM classes WHERE id = ?', [classId]);
     if (cls.length === 0) return null;
@@ -3062,20 +3095,23 @@ async function loadClassPerformance(classId, requestedYearId) {
         return links.has(parseInt(classId, 10));
     });
 
-    // Exam types + this class's max marks
+    // Exam types + this class's max marks (per subject, with defaults)
     const [examTypes] = await db.execute(
         'SELECT * FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id',
         [instId]
     );
     const [maxRows] = await db.execute(
-        'SELECT exam_type_id, max_marks FROM exam_max_marks WHERE class_id = ?',
+        'SELECT exam_type_id, subject_id, max_marks FROM exam_max_marks WHERE class_id = ?',
         [classId]
     );
-    const maxMap = {};
-    maxRows.forEach(r => { maxMap[r.exam_type_id] = r.max_marks; });
+    // { [examTypeId]: { default: n|null, bySubject: { [subjectId]: n } } }
+    const maxMarks = buildExamMaxMap(maxRows);
+    // An exam type is active for this class if it has ANY max row.
+    // max_marks here is the All-Subjects default (may be null) — kept for
+    // backward compatibility; the per-subject values live in maxMarks.
     const examTypesForClass = examTypes
-        .filter(t => maxMap[t.id] !== undefined)
-        .map(t => ({ ...t, max_marks: maxMap[t.id] }));
+        .filter(t => maxMarks[t.id] !== undefined)
+        .map(t => ({ ...t, max_marks: maxMarks[t.id]?.default ?? null }));
 
     // Teacher assignment (name + email, so UI can show "Teacher: X")
     const [assignments] = await db.execute(
@@ -3100,6 +3136,7 @@ async function loadClassPerformance(classId, requestedYearId) {
         students,
         subjects,
         examTypes: examTypesForClass,
+        maxMarks,
         assignments,
         marks
     };
@@ -3156,7 +3193,7 @@ app.get('/api/admin/performance/student/:studentId', async (req, res) => {
         );
         if (u.length === 0) return res.status(404).json({ error: 'Student not found' });
         if (!u[0].class_id) {
-            return res.json({ me: u[0], class: null, students: [], subjects: [], examTypes: [], assignments: [], marks: [] });
+            return res.json({ me: u[0], class: null, students: [], subjects: [], examTypes: [], maxMarks: {}, assignments: [], marks: [] });
         }
         const data = await loadClassPerformance(u[0].class_id, req.query.academic_year_id);
         if (!data) return res.status(404).json({ error: 'Class not found' });
@@ -3200,9 +3237,9 @@ app.get('/api/admin/performance/teachers/:instId', async (req, res) => {
             [instId]
         );
 
-        // Exam max marks: classId → (examTypeId → max)
+        // Exam max marks: classId → (examTypeId → { default, bySubject })
         const [maxRows] = await db.execute(
-            `SELECT m.class_id, m.exam_type_id, m.max_marks
+            `SELECT m.class_id, m.exam_type_id, m.subject_id, m.max_marks
                FROM exam_max_marks m
                JOIN exam_types t ON t.id = m.exam_type_id
               WHERE t.institutionId = ?`,
@@ -3211,7 +3248,10 @@ app.get('/api/admin/performance/teachers/:instId', async (req, res) => {
         const maxByClass = {};
         maxRows.forEach(r => {
             if (!maxByClass[r.class_id]) maxByClass[r.class_id] = {};
-            maxByClass[r.class_id][r.exam_type_id] = r.max_marks;
+            const et = r.exam_type_id;
+            if (!maxByClass[r.class_id][et]) maxByClass[r.class_id][et] = { default: null, bySubject: {} };
+            if (Number(r.subject_id) === 0) maxByClass[r.class_id][et].default = r.max_marks;
+            else maxByClass[r.class_id][et].bySubject[r.subject_id] = r.max_marks;
         });
 
         // Active-student count per class
@@ -3235,16 +3275,17 @@ app.get('/api/admin/performance/teachers/:instId', async (req, res) => {
         );
 
         // Aggregate marks by class:subject:exam → {obtained, possible}
+        // (possible uses each subject's resolved max for that exam).
         const agg = {};
         allMarks.forEach(m => {
-            const max = maxByClass[m.class_id]?.[m.exam_type_id];
+            const max = resolveExamMax(maxByClass[m.class_id]?.[m.exam_type_id], m.subject_id);
             if (max === undefined || max === null) return;
             const val = parseFloat(m.marks_obtained);
             if (isNaN(val)) return;
             const k = `${m.class_id}:${m.subject_id}:${m.exam_type_id}`;
             if (!agg[k]) agg[k] = { obtained: 0, possible: 0 };
             agg[k].obtained += val;
-            agg[k].possible += parseFloat(max);
+            agg[k].possible += max;
         });
 
         // teacherId → { ..., detail[] }
@@ -3316,7 +3357,7 @@ app.get('/api/admin/performance/teacher/:teacherId', async (req, res) => {
         );
 
         const [maxRows] = await db.execute(
-            `SELECT m.class_id, m.exam_type_id, m.max_marks
+            `SELECT m.class_id, m.exam_type_id, m.subject_id, m.max_marks
                FROM exam_max_marks m
                JOIN exam_types t ON t.id = m.exam_type_id
               WHERE t.institutionId = ?`,
@@ -3325,7 +3366,10 @@ app.get('/api/admin/performance/teacher/:teacherId', async (req, res) => {
         const maxByClass = {};
         maxRows.forEach(r => {
             if (!maxByClass[r.class_id]) maxByClass[r.class_id] = {};
-            maxByClass[r.class_id][r.exam_type_id] = r.max_marks;
+            const et = r.exam_type_id;
+            if (!maxByClass[r.class_id][et]) maxByClass[r.class_id][et] = { default: null, bySubject: {} };
+            if (Number(r.subject_id) === 0) maxByClass[r.class_id][et].default = r.max_marks;
+            else maxByClass[r.class_id][et].bySubject[r.subject_id] = r.max_marks;
         });
 
         const detail = [];
@@ -3340,13 +3384,14 @@ app.get('/api/admin/performance/teacher/:teacherId', async (req, res) => {
             );
             const exams = examTypeRows.map(t => {
                 let o = 0, p = 0;
+                // This subject's max for this exam (override -> default).
+                const max = resolveExamMax(maxByClass[a.class_id]?.[t.id], a.subject_id);
                 marks.forEach(m => {
                     if (m.exam_type_id !== t.id) return;
                     const val = parseFloat(m.marks_obtained);
                     if (isNaN(val)) return;
-                    const max = maxByClass[a.class_id]?.[t.id];
                     if (max === undefined || max === null) return;
-                    o += val; p += parseFloat(max);
+                    o += val; p += max;
                 });
                 return { exam_type_id: t.id, exam_name: t.name, obtained: o, possible: p };
             }).filter(e => e.possible > 0);

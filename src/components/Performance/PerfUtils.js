@@ -3,6 +3,12 @@
 //  Pure functions used by every Performance component. No hardcoded
 //  subjects / exams / max marks — everything is driven by the dataset
 //  the backend sends (Section 18).
+//
+//  MAX MARKS are per subject. The dataset carries a maxMarks map:
+//    { [examTypeId]: { default: n|null, bySubject: { [subjectId]: n } } }
+//  A subject's max for an exam = its own override, else the All-Subjects
+//  default, else the exam's max_marks field (so older datasets without a
+//  maxMarks map still work). maxFor() resolves this everywhere.
 // =====================================================================
 
 // Custom rounding: > .5 rounds up, <= .5 floors (matches old project).
@@ -47,10 +53,27 @@ export function sortRows(rows, mode) {
 }
 
 // ---------------------------------------------------------------------
+//  Resolve a subject's max for an exam from the dataset.
+//    override (bySubject) -> All-Subjects default -> the exam's max_marks
+//  field (backward compatible) -> 0.
+// ---------------------------------------------------------------------
+export function maxFor(dataset, examTypeId, subjectId) {
+  const mm = (dataset && dataset.maxMarks) || {};
+  const m = mm[examTypeId];
+  if (m) {
+    const sp = m.bySubject ? m.bySubject[subjectId] : undefined;
+    if (sp !== undefined && sp !== null) return Number(sp);
+    if (m.default !== undefined && m.default !== null) return Number(m.default);
+  }
+  const t = ((dataset && dataset.examTypes) || []).find(x => String(x.id) === String(examTypeId));
+  return t && t.max_marks != null ? Number(t.max_marks) : 0;
+}
+
+// ---------------------------------------------------------------------
 //  Build per-student totals from a class dataset.
 //
-//  dataset = { students[], subjects[], examTypes[], marks[] }
-//    - each examType has .max_marks (for THIS class)
+//  dataset = { students[], subjects[], examTypes[], maxMarks{}, marks[] }
+//    - maxMarks resolves each subject's max per exam (see maxFor)
 //    - marks rows: { student_id, subject_id, exam_type_id, marks_obtained }
 //
 //  opts:
@@ -65,9 +88,6 @@ export function buildStudentTotals(dataset, { examTypeId = 'overall', subjectId 
   if (!dataset || !dataset.students) return [];
 
   const { students, subjects, examTypes, marks } = dataset;
-
-  const maxByExam = {};
-  examTypes.forEach(t => { maxByExam[t.id] = parseFloat(t.max_marks) || 0; });
 
   const subjectIds = subjectId === 'all'
     ? subjects.map(s => s.id)
@@ -91,7 +111,7 @@ export function buildStudentTotals(dataset, { examTypeId = 'overall', subjectId 
         const val = parseFloat(raw);
         if (raw === undefined || raw === null || raw === '' || isNaN(val)) return;
         obtained += val;
-        possible += maxByExam[eid] || 0;
+        possible += maxFor(dataset, eid, sid);
         hasAny = true;
       });
     });
@@ -132,7 +152,7 @@ export function studentExamBreakdown(dataset, studentId) {
       const val = parseFloat(raw);
       if (raw === undefined || raw === null || raw === '' || isNaN(val)) return;
       obtained += val;
-      possible += parseFloat(t.max_marks) || 0;
+      possible += maxFor(dataset, t.id, s.id);
       hasAny = true;
     });
     if (hasAny && possible > 0) {

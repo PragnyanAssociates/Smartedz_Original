@@ -1,10 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Plus, Edit, Trash2, X, Search, UserCircle2, BookOpen, Camera, AtSign, GraduationCap, ChevronDown } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
 
 export default function UserTab({ data, fetchData, user }) {
   const [activeRoleTab, setActiveRoleTab] = useState('all');
-  const [activeClass, setActiveClass]     = useState('all');
+  const [activeClass, setActiveClass]     = useState('');   // a real class id; the class filter is Student-only and has no "All Classes" option
   const [isModalOpen, setIsModalOpen]     = useState(false);
   const [editingUser, setEditingUser]     = useState(null);
   const [search, setSearch]               = useState('');
@@ -49,16 +49,27 @@ export default function UserTab({ data, fetchData, user }) {
     }));
   }, [activeUsers, data.classes]);
 
+  // The class filter is shown ONLY on the Student tab. (Removed the "All"
+  // tab case — a class filter there mixed roll numbers across classes.)
   const showClassFilter = useMemo(() => {
     if (classFilters.length === 0) return false;
-    if (activeRoleTab === 'all') return true;
     return activeRoleTab.toLowerCase().includes('student');
   }, [classFilters, activeRoleTab]);
 
+  // Keep a real class selected at all times (no "All Classes" option).
+  // Defaults to the first class and re-points if the current one disappears.
+  useEffect(() => {
+    if (classFilters.length === 0) return;
+    const stillValid = classFilters.some(c => String(c.id) === String(activeClass));
+    if (!stillValid) setActiveClass(String(classFilters[0].id));
+  }, [classFilters, activeClass]);
+
   const filteredUsers = useMemo(() => {
+    const onStudentTab = activeRoleTab.toLowerCase().includes('student');
     let list = activeUsers;
     if (activeRoleTab !== 'all') list = list.filter(u => u.role === activeRoleTab);
-    if (activeClass !== 'all') {
+    // Class filter only applies on the Student tab (where it's shown).
+    if (onStudentTab && activeClass) {
       list = list.filter(u => String(u.class_id) === String(activeClass));
     }
     if (search.trim()) {
@@ -279,9 +290,8 @@ export default function UserTab({ data, fetchData, user }) {
 
   const handleRoleTab = (roleName) => {
     setActiveRoleTab(roleName);
-    if (roleName !== 'all' && !roleName.toLowerCase().includes('student')) {
-      setActiveClass('all');
-    }
+    // Class filter only applies on the Student tab; the active class is kept
+    // valid by the effect above, so no reset is needed when switching tabs.
   };
 
   const useDropdown = classFilters.length > 6;
@@ -351,7 +361,7 @@ export default function UserTab({ data, fetchData, user }) {
           ))}
         </div>
 
-        {/* Class filters */}
+        {/* Class filter — Student tab only, single class selected (no "All Classes") */}
         {showClassFilter && (
           <div className="flex items-center gap-3 flex-wrap bg-zinc-50/50 p-2.5 rounded-md ring-1 ring-black/5">
             <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider pl-1">
@@ -364,7 +374,6 @@ export default function UserTab({ data, fetchData, user }) {
                   value={activeClass}
                   onChange={e => setActiveClass(e.target.value)}
                   className="h-8 w-full sm:w-auto appearance-none rounded border border-zinc-200 bg-white pl-2 pr-7 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer">
-                  <option value="all">All Classes ({classFilters.reduce((s, c) => s + c.count, 0)})</option>
                   {classFilters.map(c => (
                     <option key={c.id} value={c.id}>{c.label} ({c.count})</option>
                   ))}
@@ -373,14 +382,6 @@ export default function UserTab({ data, fetchData, user }) {
               </div>
             ) : (
               <div className="flex flex-wrap gap-2">
-                <button onClick={() => setActiveClass('all')}
-                  className={`px-2.5 py-1.5 rounded-md text-[10px] font-semibold uppercase tracking-wider transition-colors ${
-                    activeClass === 'all'
-                      ? 'bg-primary/10 text-primary ring-1 ring-primary/20'
-                      : 'bg-white text-zinc-500 ring-1 ring-zinc-200 hover:bg-zinc-50 hover:text-zinc-700'
-                  }`}>
-                  All <span className="ml-1 opacity-80 tabular-nums">{classFilters.reduce((s, c) => s + c.count, 0)}</span>
-                </button>
                 {classFilters.map(c => (
                   <button key={c.id} onClick={() => setActiveClass(String(c.id))}
                     className={`px-2.5 py-1.5 rounded-md text-[10px] font-semibold uppercase tracking-wider transition-colors ${

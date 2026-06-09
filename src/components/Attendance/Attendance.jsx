@@ -178,9 +178,10 @@ function Header({ subtitle }) {
 
 // =====================================================================
 //  HistoryPicker — category overview + Analysis + person list.
-//  • For STUDENTS, a class filter scopes the roster + overview to one
-//    class (mirrors the marking screen). Without it the list mixed every
-//    class together — showing all students and colliding roll numbers.
+//  • For STUDENTS, a class filter scopes the roster + overview to ONE
+//    class (mirrors the marking screen). There is no "All classes" option
+//    — a default class is always selected, otherwise the list mixed every
+//    class together and collided roll numbers.
 //  • Overview bar (below search): working days + present/absent/late for
 //    the chosen Daily/Monthly/Yearly/Custom range, across the (scoped)
 //    category.
@@ -200,8 +201,10 @@ function HistoryPicker({ category, yearName }) {
   const [loading, setLoading] = useState(true);
 
   // Class filter (students only) — scopes roster + overview to one class.
+  // No "All classes" option: one real class is always selected.
   const [classes, setClasses] = useState([]);
   const [classId, setClassId] = useState('');
+  const [classesLoaded, setClassesLoaded] = useState(false);
 
   // Overview filter state
   const [mode, setMode] = useState('monthly'); // daily | monthly | yearly | custom
@@ -222,25 +225,39 @@ function HistoryPicker({ category, yearName }) {
   const teacherViewingTeachers = !isAllAccess && isTeacher && category === 'teachers';
 
   // ---- Load the class list for the student class filter ------------
-  //   Super Admin -> all classes; Teacher -> only their timetabled classes
-  //   (and default to the first one). Non-student categories clear it.
+  //   Super Admin -> all classes; Teacher -> only their timetabled classes.
+  //   Non-student categories clear it. The default class is chosen by the
+  //   effect below (no "All classes" entry).
   useEffect(() => {
-    if (category !== 'students') { setClasses([]); setClassId(''); return; }
+    if (category !== 'students') { setClasses([]); setClassId(''); setClassesLoaded(false); return; }
+    setClassesLoaded(false);
     (async () => {
       try {
         if (isTeacher && !isAllAccess) {
           const res = await fetch(`${API_BASE_URL}/admin/attendance/teacher-classes/${user.id}`);
           const data = await res.json();
           setClasses(data || []);
-          if (data?.[0]) setClassId(String(data[0].id));
         } else {
           const res = await fetch(`${API_BASE_URL}/admin/data/${user.institutionId}`);
           const data = await res.json();
           setClasses(data.classes || []);
         }
       } catch (e) { console.error('classes load:', e); }
+      finally { setClassesLoaded(true); }
     })();
   }, [category, user, isTeacher, isAllAccess]);
+
+  // Keep one real class selected — default to the first, re-point if the
+  // current one disappears.
+  useEffect(() => {
+    if (category !== 'students' || classes.length === 0) return;
+    const valid = classes.some(c => String(c.id) === String(classId));
+    if (!valid) setClassId(String(classes[0].id));
+  }, [classes, category, classId]);
+
+  // While students' default class is still resolving, hold off fetching so
+  // we never briefly list every class together.
+  const awaitingClass = category === 'students' && !classId && (!classesLoaded || classes.length > 0);
 
   // ---- Range resolution. "Yearly" returns no date bound — the backend
   //      scopes to the whole active academic year. ------------------
@@ -257,6 +274,7 @@ function HistoryPicker({ category, yearName }) {
 
   // ---- Load the roster of people to pick from ----------------------
   const loadRoster = useCallback(async () => {
+    if (awaitingClass) { setLoading(true); return; }
     setLoading(true);
     try {
       const today = new Date().toISOString().slice(0, 10);
@@ -267,7 +285,7 @@ function HistoryPicker({ category, yearName }) {
       setUsers(data.users || []);
     } catch (e) { console.error(e); }
     setLoading(false);
-  }, [user, category, classId]);
+  }, [user, category, classId, awaitingClass]);
 
   useEffect(() => {
     if (!teacherViewingTeachers) loadRoster();
@@ -277,6 +295,7 @@ function HistoryPicker({ category, yearName }) {
   // ---- Load the category overview / analysis series ----------------
   const loadOverview = useCallback(async () => {
     if (teacherViewingTeachers) { setOvLoading(false); return; }
+    if (awaitingClass) { setOvLoading(true); return; }
     setOvLoading(true);
     try {
       const r = resolveRange();
@@ -288,7 +307,7 @@ function HistoryPicker({ category, yearName }) {
       setOverview(data);
     } catch (e) { console.error(e); setOverview(null); }
     setOvLoading(false);
-  }, [user, category, classId, resolveRange, teacherViewingTeachers]);
+  }, [user, category, classId, resolveRange, teacherViewingTeachers, awaitingClass]);
 
   useEffect(() => { loadOverview(); }, [loadOverview]);
 
@@ -405,7 +424,6 @@ function HistoryPicker({ category, yearName }) {
               <select value={classId} onChange={e => setClassId(e.target.value)}
                 title="Class"
                 className="h-9 rounded-md border border-zinc-200 bg-white pl-3 pr-8 text-sm text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none transition-colors">
-                <option value="">All classes</option>
                 {classes.map(c => (
                   <option key={c.id} value={c.id}>
                     {c.className}{c.section ? ` - ${c.section}` : ''}
