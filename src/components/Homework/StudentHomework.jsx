@@ -3,15 +3,18 @@ import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   Loader2, Upload, FileText, Eye, Trash2, Edit, Paperclip,
-  CheckCircle2, Clock, XCircle, BookOpen, X, ClipboardList, Send
+  CheckCircle2, Clock, XCircle, BookOpen, X, ClipboardList, Send, CalendarRange
 } from 'lucide-react';
-import { fmtDate, fileToBase64, openFile, statusStyle } from './HwUtils';
+import { fmtDate, fileToBase64, statusStyle } from './HwUtils';
+import FileViewer from './FileViewer';
 
 // =====================================================================
 //  StudentHomework - list of assigned homework + detail panel.
 //   • PDF type     -> upload files (base64)
 //   • Written type -> in-app text answer screen
 //  Students can delete their submission until it's graded.
+//  Homework is scoped to the school's ACTIVE academic year (backend),
+//  shown as a read-only badge in the header.
 // =====================================================================
 
 export default function StudentHomework() {
@@ -23,6 +26,7 @@ export default function StudentHomework() {
   const [filter, setFilter]     = useState('All');
   const [busy, setBusy]         = useState(null);   // homework id being acted on
   const [writingFor, setWriting] = useState(null);  // homework obj for written screen
+  const [yearName, setYearName] = useState('');
 
   const load = useCallback(async () => {
     if (!user?.id) return;
@@ -43,6 +47,22 @@ export default function StudentHomework() {
   }, [user]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Active academic year name for the header badge.
+  useEffect(() => {
+    if (!user?.institutionId) return;
+    let cancelled = false;
+    fetch(`${API_BASE_URL}/admin/data/${user.institutionId}`)
+      .then(r => r.json())
+      .then(d => {
+        if (cancelled) return;
+        const list = d.academicYears || [];
+        const active = list.find(y => y.isActive) || list[0];
+        if (active) setYearName(active.name || '');
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [user]);
 
   useEffect(() => {
     if (items.length > 0 && !selectedId) setSelId(items[0].id);
@@ -114,6 +134,14 @@ export default function StudentHomework() {
     setBusy(null);
   };
 
+  const YearBadge = () => (
+    yearName ? (
+      <div className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-primary/5 ring-1 ring-primary/15 text-primary text-xs font-semibold whitespace-nowrap self-start sm:self-auto shrink-0">
+        <CalendarRange className="size-3.5" /> Academic Year: {yearName}
+      </div>
+    ) : null
+  );
+
   if (loading) {
     return <div className="h-64 flex items-center justify-center animate-in fade-in duration-300"><Loader2 className="animate-spin size-8 text-primary" /></div>;
   }
@@ -121,13 +149,16 @@ export default function StudentHomework() {
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
       
-      <header className="flex flex-col mb-2 sm:mb-0">
-        <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
-          <ClipboardList className="text-primary size-5" />
-          My Homework
-        </h1>
-        <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">View and submit your class assignments.</p>
-      </header>
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-2 sm:mb-0">
+        <header className="flex flex-col">
+          <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
+            <ClipboardList className="text-primary size-5" />
+            My Homework
+          </h1>
+          <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">View and submit your class assignments.</p>
+        </header>
+        <YearBadge />
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 flex-1 items-start">
         
@@ -214,6 +245,7 @@ function AssignmentDetail({ hw, busy, onSubmitFiles, onWrite, onDelete }) {
   const overdue = !hw.submission_id && new Date(hw.due_date) < new Date();
   const statusText = hw.submission_id ? hw.status : (overdue ? 'Overdue' : 'Pending');
   const s = statusStyle(statusText);
+  const [viewFile, setViewFile] = useState(null);   // file shown in the in-screen viewer
 
   const StatusIcon = statusText === 'Graded' ? CheckCircle2
     : statusText === 'Submitted' ? CheckCircle2
@@ -268,7 +300,7 @@ function AssignmentDetail({ hw, busy, onSubmitFiles, onWrite, onDelete }) {
           <Section title="Teacher's Attachments">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {hw.attachments.map((f, i) => (
-                <button key={i} onClick={() => openFile(f)}
+                <button key={i} onClick={() => setViewFile(f)}
                   className="flex items-center gap-2.5 bg-white hover:bg-zinc-50 border border-zinc-200 p-3 rounded-md transition-colors text-left shadow-sm ring-1 ring-black/5 group w-full">
                   <Paperclip className="size-4 text-primary shrink-0" />
                   <span className="text-sm font-semibold text-zinc-700 truncate group-hover:text-primary transition-colors flex-1">{f.name}</span>
@@ -305,7 +337,7 @@ function AssignmentDetail({ hw, busy, onSubmitFiles, onWrite, onDelete }) {
             {(hw.submission_files || []).length > 0 && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
                 {hw.submission_files.map((f, i) => (
-                  <button key={i} onClick={() => openFile(f)}
+                  <button key={i} onClick={() => setViewFile(f)}
                     className="flex items-center gap-2.5 bg-white hover:bg-zinc-50 border border-zinc-200 p-3 rounded-md transition-colors text-left shadow-sm ring-1 ring-black/5 group w-full">
                     <FileText className="size-4 text-primary shrink-0" />
                     <div className="flex-1 overflow-hidden">
@@ -364,6 +396,9 @@ function AssignmentDetail({ hw, busy, onSubmitFiles, onWrite, onDelete }) {
           )}
         </div>
       </div>
+
+      {/* In-screen file viewer */}
+      <FileViewer file={viewFile} onClose={() => setViewFile(null)} />
     </div>
   );
 }

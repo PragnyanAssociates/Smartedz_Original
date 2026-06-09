@@ -3,32 +3,65 @@ import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   Plus, Edit, Trash2, X, Eye, Search, Loader2, ArrowLeft,
-  Paperclip, FileText, Star, ClipboardList, BookOpen, ChevronDown, Save
+  Paperclip, FileText, Star, ClipboardList, BookOpen, ChevronDown, Save, CalendarRange
 } from 'lucide-react';
-import { fmtDate, isoDate, fileToBase64, openFile } from './HwUtils';
+import { fmtDate, isoDate, fileToBase64 } from './HwUtils';
+import FileViewer from './FileViewer';
+
+// Numeric roll for ordering (non-numeric / missing rolls sort last)
+const rollNum = (s) => {
+  const n = parseInt(s?.roll_no, 10);
+  return isNaN(n) ? Number.POSITIVE_INFINITY : n;
+};
 
 // =====================================================================
 //  TeacherHomework - two views:
 //    'list'        -> all homework (create / edit / delete)
 //    'submissions' -> roster for one homework (view & grade)
+//  Homework is scoped to the school's ACTIVE academic year (backend),
+//  shown as a read-only badge in the header.
 // =====================================================================
 
 export default function TeacherHomework({ canManage = true }) {
   const { user } = useAuth();
   const [view, setView]       = useState('list');
   const [activeHw, setActiveHw] = useState(null);
+  const [yearName, setYearName] = useState('');
+
+  // Active academic year name for the header badge.
+  useEffect(() => {
+    if (!user?.institutionId) return;
+    let cancelled = false;
+    fetch(`${API_BASE_URL}/admin/data/${user.institutionId}`)
+      .then(r => r.json())
+      .then(d => {
+        if (cancelled) return;
+        const list = d.academicYears || [];
+        const active = list.find(y => y.isActive) || list[0];
+        if (active) setYearName(active.name || '');
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [user]);
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
-      <header className="flex flex-col mb-2 sm:mb-0">
-        <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
-          <ClipboardList className="text-primary size-5" />
-          Homework
-        </h1>
-        <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
-          Create assignments, then review and grade student submissions.
-        </p>
-      </header>
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-2 sm:mb-0">
+        <header className="flex flex-col">
+          <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
+            <ClipboardList className="text-primary size-5" />
+            Homework
+          </h1>
+          <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
+            Create assignments, then review and grade student submissions.
+          </p>
+        </header>
+        {yearName && (
+          <div className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-primary/5 ring-1 ring-primary/15 text-primary text-xs font-semibold whitespace-nowrap self-start sm:self-auto shrink-0">
+            <CalendarRange className="size-3.5" /> Academic Year: {yearName}
+          </div>
+        )}
+      </div>
 
       {view === 'list' ? (
         <AssignmentList user={user} canManage={canManage}
@@ -444,6 +477,7 @@ function SubmissionList({ user, homework, canManage, onBack }) {
   const [grading, setGrading] = useState(null);   // roster row being graded
   const [gradeForm, setGradeForm] = useState({ grade: '', remarks: '' });
   const [saving, setSaving]   = useState(false);
+  const [viewFile, setViewFile] = useState(null); // file shown in the in-screen viewer
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -457,6 +491,7 @@ function SubmissionList({ user, homework, canManage, onBack }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // Filter by tab + search, then order roll-number-wise (numeric).
   const filtered = useMemo(() => {
     let list = roster;
     if (tab === 'Submitted') list = list.filter(r => r.submission_id);
@@ -467,7 +502,11 @@ function SubmissionList({ user, homework, canManage, onBack }) {
         (r.student_name || '').toLowerCase().includes(q) ||
         String(r.roll_no || '').toLowerCase().includes(q));
     }
-    return list;
+    return [...list].sort((a, b) => {
+      const r = rollNum(a) - rollNum(b);
+      if (r !== 0) return r;
+      return (a.student_name || '').localeCompare(b.student_name || '');
+    });
   }, [roster, tab, query]);
 
   const openGrade = (row) => {
@@ -539,7 +578,7 @@ function SubmissionList({ user, homework, canManage, onBack }) {
             <table className="w-full text-left border-collapse min-w-[600px]">
               <thead className="bg-zinc-50/80">
                 <tr>
-                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Student</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Roll / Student</th>
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Status</th>
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Grade</th>
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 text-right">Action</th>
@@ -644,7 +683,7 @@ function SubmissionList({ user, homework, canManage, onBack }) {
                   {(grading.files || []).length > 0 && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       {grading.files.map((f, i) => (
-                        <button type="button" key={i} onClick={() => openFile(f)}
+                        <button type="button" key={i} onClick={() => setViewFile(f)}
                           className="flex items-start gap-3 bg-white hover:bg-zinc-50 border border-zinc-200 p-3 rounded-md transition-colors text-left shadow-sm ring-1 ring-black/5 group">
                           <FileText className="size-5 text-primary shrink-0 mt-0.5" />
                           <div className="flex-1 overflow-hidden">
@@ -691,6 +730,9 @@ function SubmissionList({ user, homework, canManage, onBack }) {
           </div>
         </div>
       )}
+
+      {/* In-screen file viewer */}
+      <FileViewer file={viewFile} onClose={() => setViewFile(null)} />
     </div>
   );
 }

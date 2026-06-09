@@ -14,7 +14,9 @@ import { GraduationCap } from 'lucide-react';
 //
 //  Max marks are per subject: a subject's max for an exam is its own
 //  override, else the All-Subjects default (maxMarks), else the exam's
-//  default field (backward compatible). The grand max sums those.
+//  default field (backward compatible). Each subject row shows its
+//  obtained / max, and the grand total shows the overall % computed
+//  against the summed max.
 // =====================================================================
 
 // Format a numeric mark without trailing decimals: 20.00 -> 20, 19.50 -> 19.5
@@ -69,13 +71,15 @@ export default function ReportCardView({ card }) {
       return sum + (v != null ? Number(v) : 0);
     }, 0);
 
+  // Row max for a subject (sum of its max across exam types)
+  const subjectRowMax = (subjectId) =>
+    (examTypes || []).reduce((sum, t) => sum + maxFor(t, subjectId), 0);
+
   const grandTotal = (subjects || []).reduce((sum, s) => sum + subjectRowTotal(s.id), 0);
   // Grand max = sum over every subject of the sum of that subject's max
   // across all exams (so per-subject overrides are reflected accurately).
-  const grandMax = (subjects || []).reduce(
-    (sTot, s) => sTot + (examTypes || []).reduce((eTot, t) => eTot + maxFor(t, s.id), 0),
-    0
-  );
+  const grandMax = (subjects || []).reduce((sum, s) => sum + subjectRowMax(s.id), 0);
+  const grandPct = grandMax > 0 ? ((grandTotal / grandMax) * 100).toFixed(1) : '0.0';
 
   // Attendance roll-up
   const attTotals = (attendance || []).reduce(
@@ -140,29 +144,35 @@ export default function ReportCardView({ card }) {
                 <th className="border border-zinc-300 px-3 py-2.5 text-left font-semibold text-zinc-700">Subject</th>
                 {examTypes.map(t => (
                   <th key={t.id} className="border border-zinc-300 px-3 py-2.5 text-center font-semibold text-zinc-700 whitespace-nowrap">
-                    {t.name}{t.max_marks != null ? <><br/><span className="text-[10px] font-medium text-zinc-500">({fmtNum(t.max_marks)})</span></> : null}
+                    {t.name}
                   </th>
                 ))}
-                <th className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-primary">Total</th>
+                <th className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-primary whitespace-nowrap">Total / Max</th>
               </tr>
             </thead>
             <tbody>
-              {(subjects || []).map(s => (
-                <tr key={s.id} className="hover:bg-zinc-50/50 transition-colors">
-                  <td className="border border-zinc-300 px-3 py-2.5 font-semibold text-zinc-800">{s.name}</td>
-                  {examTypes.map(t => {
-                    const v = getMark(s.id, t.id);
-                    return (
-                      <td key={t.id} className="border border-zinc-300 px-3 py-2.5 text-center text-zinc-700 tabular-nums">
-                        {v != null ? fmtNum(v) : '-'}
-                      </td>
-                    );
-                  })}
-                  <td className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-primary tabular-nums">
-                    {fmtNum(subjectRowTotal(s.id)) || '-'}
-                  </td>
-                </tr>
-              ))}
+              {(subjects || []).map(s => {
+                const rowMax = subjectRowMax(s.id);
+                return (
+                  <tr key={s.id} className="hover:bg-zinc-50/50 transition-colors">
+                    <td className="border border-zinc-300 px-3 py-2.5 font-semibold text-zinc-800">{s.name}</td>
+                    {examTypes.map(t => {
+                      const v = getMark(s.id, t.id);
+                      const mx = maxFor(t, s.id);
+                      return (
+                        <td key={t.id} className="border border-zinc-300 px-3 py-2.5 text-center text-zinc-700 tabular-nums">
+                          {v != null ? fmtNum(v) : '-'}
+                          {mx > 0 && <span className="text-[10px] text-zinc-400"> / {fmtNum(mx)}</span>}
+                        </td>
+                      );
+                    })}
+                    <td className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-primary tabular-nums whitespace-nowrap">
+                      {fmtNum(subjectRowTotal(s.id)) || '0'}
+                      {rowMax > 0 && <span className="text-[11px] font-semibold text-zinc-400"> / {fmtNum(rowMax)}</span>}
+                    </td>
+                  </tr>
+                );
+              })}
               {/* Column totals */}
               <tr className="bg-zinc-50/80">
                 <td className="border border-zinc-300 px-3 py-2.5 font-bold text-zinc-800">Total</td>
@@ -171,8 +181,9 @@ export default function ReportCardView({ card }) {
                     {fmtNum(examColumnTotal(t.id)) || '-'}
                   </td>
                 ))}
-                <td className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-primary tabular-nums">
-                  {fmtNum(grandTotal) || '-'}
+                <td className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-primary tabular-nums whitespace-nowrap">
+                  {fmtNum(grandTotal) || '0'}
+                  {grandMax > 0 && <span className="text-[11px] font-semibold text-zinc-400"> / {fmtNum(grandMax)}</span>}
                 </td>
               </tr>
             </tbody>
@@ -180,13 +191,17 @@ export default function ReportCardView({ card }) {
         </div>
       )}
 
-      {/* Grand total summary */}
+      {/* Grand total + percentage summary */}
       {(examTypes || []).length > 0 && (
-        <div className="flex justify-end mb-10">
+        <div className="flex flex-wrap justify-end gap-2 mb-10">
           <div className="bg-primary/5 rounded-md px-4 py-2.5 text-sm ring-1 ring-primary/20 flex items-center gap-1.5">
             <span className="font-semibold text-zinc-700">Grand Total: </span>
             <span className="font-bold text-primary tabular-nums">{fmtNum(grandTotal)}</span>
             <span className="text-zinc-500 tabular-nums">/ {fmtNum(grandMax)}</span>
+          </div>
+          <div className="bg-emerald-50 rounded-md px-4 py-2.5 text-sm ring-1 ring-emerald-600/20 flex items-center gap-1.5">
+            <span className="font-semibold text-zinc-700">Percentage: </span>
+            <span className="font-bold text-emerald-700 tabular-nums">{grandPct}%</span>
           </div>
         </div>
       )}

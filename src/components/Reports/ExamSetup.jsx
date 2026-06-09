@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
@@ -9,8 +9,8 @@ import {
 // =====================================================================
 //  ExamSetup - three sub-sections, switched by inner tabs:
 //    1. Exam Types     - create/rename/reorder/delete exam types
-//    2. Max Marks      - per class: an "All Subjects" default + optional
-//                        per-subject overrides, for each exam type
+//    2. Max Marks      - per class: an "All Subjects" default OR
+//                        per-subject values (mutually exclusive), per exam
 //    3. Teacher Assign - per class, map each subject to a teacher
 // =====================================================================
 
@@ -228,11 +228,13 @@ function ExamTypesPanel() {
 // =====================================================================
 //  2. Max Marks — per class, per exam, with subjects.
 //
-//  For the picked class, the grid has:
-//    • an "All Subjects" row (subject_id = 0) — sets ONE max that applies
-//      to every subject for that exam, and
-//    • one row per subject — leave blank to inherit the All-Subjects value,
-//      or type a number to give that subject its own max for that exam.
+//  TWO MUTUALLY-EXCLUSIVE MODES per exam column:
+//    • All-Subjects mode  — type a value in the "All Subjects" row. The
+//      per-subject cells below lock (they all inherit that one value).
+//    • Per-subject mode    — type a value in any subject row. The
+//      "All Subjects" cell for that exam clears and locks.
+//  Entering on one side automatically empties + disables the other side
+//  (and vice-versa). Each exam column is independent.
 //
 //  Subjects shown for a class come from the same subject→class links used
 //  everywhere else (a subject with no links applies to all classes).
@@ -287,28 +289,70 @@ function MaxMarksPanel() {
     });
   }, [subjects, subjectClasses]);
 
+  const classSubjects = useMemo(
+    () => (pickedClass ? subjectsForClass(pickedClass) : []),
+    [pickedClass, subjectsForClass]
+  );
+
+  // Per exam column: which side is locked for the picked class.
+  //   perSubjectLocked -> All-Subjects has a value (subjects inherit it)
+  //   allLocked        -> a subject has a value (one-value mode is off)
+  const colMode = useMemo(() => {
+    const map = {};
+    if (!pickedClass) return map;
+    types.forEach(t => {
+      const allVal = grid[`${t.id}:${pickedClass}:0`] ?? '';
+      const subjVal = classSubjects.some(s => (grid[`${t.id}:${pickedClass}:${s.id}`] ?? '') !== '');
+      map[t.id] = {
+        perSubjectLocked: allVal !== '',
+        allLocked: allVal === '' && subjVal
+      };
+    });
+    return map;
+  }, [types, pickedClass, grid, classSubjects]);
+
+  // Editing one side clears + disables the other (mutual exclusion).
   const setCell = (typeId, classId, subjectId, value) => {
     if (!/^\d*$/.test(value)) return;
-    setGrid(prev => ({ ...prev, [`${typeId}:${classId}:${subjectId}`]: value }));
+    setGrid(prev => {
+      const next = { ...prev, [`${typeId}:${classId}:${subjectId}`]: value };
+      if (value !== '') {
+        if (Number(subjectId) === 0) {
+          // All-Subjects entered -> clear every per-subject override here
+          subjectsForClass(classId).forEach(s => {
+            next[`${typeId}:${classId}:${s.id}`] = '';
+          });
+        } else {
+          // A per-subject value entered -> clear the All-Subjects default
+          next[`${typeId}:${classId}:0`] = '';
+        }
+      }
+      return next;
+    });
   };
 
   const handleSave = async () => {
     setSaving(true);
     try {
-      // Persist every class fully: the All-Subjects row (subject_id 0) plus
-      // each of that class's subjects, for every exam type. Blank => delete.
+      // Persist every class fully. For each exam+class we send EITHER the
+      // All-Subjects default (subject 0) with per-subject rows blanked, OR
+      // the per-subject rows with the default blanked — never both. Blank
+      // => the backend deletes that row, so the modes stay exclusive.
       const entries = [];
       classes.forEach(c => {
-        const rows = [{ id: 0 }, ...subjectsForClass(c.id)];
-        rows.forEach(s => {
-          types.forEach(t => {
-            entries.push({
-              exam_type_id: t.id,
-              class_id: c.id,
-              subject_id: s.id,                       // 0 = All Subjects
+        const subs = subjectsForClass(c.id);
+        types.forEach(t => {
+          const allVal = grid[`${t.id}:${c.id}:0`] ?? '';
+          if (allVal !== '') {
+            entries.push({ exam_type_id: t.id, class_id: c.id, subject_id: 0, max_marks: allVal });
+            subs.forEach(s => entries.push({ exam_type_id: t.id, class_id: c.id, subject_id: s.id, max_marks: '' }));
+          } else {
+            entries.push({ exam_type_id: t.id, class_id: c.id, subject_id: 0, max_marks: '' });
+            subs.forEach(s => entries.push({
+              exam_type_id: t.id, class_id: c.id, subject_id: s.id,
               max_marks: grid[`${t.id}:${c.id}:${s.id}`] ?? ''
-            });
-          });
+            }));
+          }
         });
       });
       const res = await fetch(`${API_BASE_URL}/admin/exam-max-marks`, {
@@ -341,17 +385,16 @@ function MaxMarksPanel() {
     );
   }
 
-  const classSubjects = pickedClass ? subjectsForClass(pickedClass) : [];
-
   return (
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
           <h3 className="font-semibold text-zinc-900 text-sm">Max Marks per Class</h3>
           <p className="text-[11px] text-zinc-500 mt-0.5 max-w-2xl">
-            Pick a class, then set the maximum marks for each exam. Use the <strong>All Subjects</strong> row to apply
-            one value to every subject, or give a subject its own value to override it. Leave a subject blank to inherit
-            the All-Subjects value; leave All Subjects blank too if the class doesn't take that exam.
+            Pick a class, then for each exam set the max marks <strong>one of two ways</strong>: type a value in the
+            <strong> All Subjects</strong> row to use it for every subject (the subject rows lock), or type values in the
+            <strong> individual subject</strong> rows to set them separately (the All-Subjects cell clears and locks).
+            Each exam column is independent. Leave an exam fully blank if the class doesn't take it.
           </p>
         </div>
 
@@ -399,17 +442,29 @@ function MaxMarksPanel() {
                   <span className="inline-flex items-center gap-1.5 font-semibold text-primary text-sm">
                     <Layers className="size-3.5" /> All Subjects
                   </span>
-                  <span className="block text-[10px] font-medium text-primary/70 mt-0.5">Default for every subject</span>
+                  <span className="block text-[10px] font-medium text-primary/70 mt-0.5">One value for every subject</span>
                 </td>
-                {types.map(t => (
-                  <td key={t.id} className="p-2 border-r border-zinc-100 last:border-r-0">
-                    <input
-                      value={grid[`${t.id}:${pickedClass}:0`] ?? ''}
-                      onChange={e => setCell(t.id, pickedClass, 0, e.target.value)}
-                      placeholder="-"
-                      className="h-8 w-16 mx-auto block bg-white border border-primary/30 rounded-md px-2 text-sm text-center font-semibold tabular-nums outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
-                  </td>
-                ))}
+                {types.map(t => {
+                  const locked = colMode[t.id]?.allLocked;
+                  return (
+                    <td key={t.id} className="p-2 border-r border-zinc-100 last:border-r-0">
+                      <input
+                        value={locked ? '' : (grid[`${t.id}:${pickedClass}:0`] ?? '')}
+                        onChange={e => setCell(t.id, pickedClass, 0, e.target.value)}
+                        disabled={locked}
+                        inputMode="numeric"
+                        placeholder={locked ? 'per-subj' : '-'}
+                        title={locked
+                          ? 'Per-subject marks are set for this exam. Clear them to use one value for all subjects.'
+                          : 'Applies to every subject for this exam'}
+                        className={`h-8 w-16 mx-auto block rounded-md px-2 text-sm text-center font-semibold tabular-nums outline-none transition-colors shadow-sm ${
+                          locked
+                            ? 'bg-zinc-100 border border-zinc-200 text-zinc-300 placeholder:text-zinc-300 cursor-not-allowed'
+                            : 'bg-white border border-primary/30 focus:ring-2 focus:ring-primary/20 focus:border-primary/40'
+                        }`} />
+                    </td>
+                  );
+                })}
               </tr>
 
               {/* Per-subject override rows */}
@@ -419,15 +474,24 @@ function MaxMarksPanel() {
                     {s.name}
                   </td>
                   {types.map(t => {
+                    const locked = colMode[t.id]?.perSubjectLocked;
                     const inherit = grid[`${t.id}:${pickedClass}:0`];
                     return (
                       <td key={t.id} className="p-2 border-r border-zinc-100 last:border-r-0">
                         <input
-                          value={grid[`${t.id}:${pickedClass}:${s.id}`] ?? ''}
+                          value={locked ? '' : (grid[`${t.id}:${pickedClass}:${s.id}`] ?? '')}
                           onChange={e => setCell(t.id, pickedClass, s.id, e.target.value)}
-                          placeholder={inherit ? String(inherit) : '-'}
-                          title={inherit ? `Inherits ${inherit} from All Subjects` : 'No All-Subjects default set'}
-                          className="h-8 w-16 mx-auto block bg-white border border-zinc-200 rounded-md px-2 text-sm text-center font-semibold tabular-nums text-zinc-900 placeholder:text-zinc-300 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
+                          disabled={locked}
+                          inputMode="numeric"
+                          placeholder={locked ? (inherit ? String(inherit) : '-') : '-'}
+                          title={locked
+                            ? `Locked — inherits ${inherit || 'the'} from All Subjects. Clear All Subjects to set this subject separately.`
+                            : 'Overrides the All-Subjects value for this subject'}
+                          className={`h-8 w-16 mx-auto block rounded-md px-2 text-sm text-center font-semibold tabular-nums outline-none transition-colors shadow-sm ${
+                            locked
+                              ? 'bg-zinc-50 border border-dashed border-zinc-200 text-zinc-400 placeholder:text-zinc-400 cursor-not-allowed'
+                              : 'bg-white border border-zinc-200 text-zinc-900 placeholder:text-zinc-300 focus:ring-2 focus:ring-primary/20 focus:border-primary/40'
+                          }`} />
                       </td>
                     );
                   })}

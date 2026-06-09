@@ -3646,7 +3646,29 @@ app.delete('/api/admin/gallery/album/:instId/:title', async (req, res) => {
 //    ];
 //
 //  Files are stored as base64 JSON in the rows — no filesystem needed.
-//  Reuses parseJsonSafe() and nowSQL() defined in Section 16.
+//  Reuses parseJsonSafe() and nowSQL() defined in Section 16, and the
+//  shared resolveYearId() helper defined in the Timetable section.
+//
+//  ------------------------------------------------------------------
+//  ONE-TIME MIGRATION (run once on the database) — adds academic-year
+//  scoping to homework, exactly like the other temporal modules:
+//
+//    ALTER TABLE homework
+//      ADD COLUMN academic_year_id INT NULL AFTER institutionId;
+//
+//    -- Backfill existing homework to each school's active year:
+//    UPDATE homework h
+//      JOIN academic_years y
+//        ON y.institutionId = h.institutionId AND y.isActive = 1
+//       SET h.academic_year_id = y.id
+//     WHERE h.academic_year_id IS NULL;
+//
+//    CREATE INDEX idx_homework_year ON homework (academic_year_id);
+//
+//  No FK is added (kept consistent with the other modules' year column).
+//  homework is now scoped to the ACTIVE academic year on every read,
+//  and stamped with it on create. Switching the active year under
+//  Academics switches the visible homework automatically.
 // =====================================================================
 
 
@@ -3654,6 +3676,7 @@ app.delete('/api/admin/gallery/album/:instId/:title', async (req, res) => {
 //   GET /api/admin/homework/teacher/:userId
 //   Super Admin / Developer  → ALL homework in the school
 //   Teacher (or other role)  → only homework they created
+//   Scoped to the school's ACTIVE academic year.
 app.get('/api/admin/homework/teacher/:userId', async (req, res) => {
     const { userId } = req.params;
     try {
@@ -3662,6 +3685,8 @@ app.get('/api/admin/homework/teacher/:userId', async (req, res) => {
         if (users.length === 0) return res.status(404).json({ error: 'User not found' });
         const me = users[0];
         const isAdmin = me.role === 'Super Admin' || me.role === 'Developer';
+
+        const yearId = await resolveYearId(me.institutionId, req.query.academic_year_id);
 
         const baseSelect = `
             SELECT h.id, h.title, h.description, h.homework_type,
@@ -3679,12 +3704,16 @@ app.get('/api/admin/homework/teacher/:userId', async (req, res) => {
         let rows;
         if (isAdmin) {
             [rows] = await db.execute(
-                `${baseSelect} WHERE h.institutionId = ? ORDER BY h.created_at DESC`,
-                [me.institutionId]);
+                `${baseSelect}
+                  WHERE h.institutionId = ? AND h.academic_year_id = ?
+                  ORDER BY h.created_at DESC`,
+                [me.institutionId, yearId]);
         } else {
             [rows] = await db.execute(
-                `${baseSelect} WHERE h.created_by = ? ORDER BY h.created_at DESC`,
-                [userId]);
+                `${baseSelect}
+                  WHERE h.created_by = ? AND h.academic_year_id = ?
+                  ORDER BY h.created_at DESC`,
+                [userId, yearId]);
         }
         const decorated = rows.map(r => ({
             ...r,
@@ -3698,8 +3727,8 @@ app.get('/api/admin/homework/teacher/:userId', async (req, res) => {
 
 // --- 19.2 List homework for a student -------------------------------
 //   GET /api/admin/homework/student/:studentId
-//   Returns homework for the student's class, each with that student's
-//   submission status merged in.
+//   Returns homework for the student's class (in the ACTIVE academic
+//   year), each with that student's submission status merged in.
 app.get('/api/admin/homework/student/:studentId', async (req, res) => {
     const { studentId } = req.params;
     try {
@@ -3707,6 +3736,8 @@ app.get('/api/admin/homework/student/:studentId', async (req, res) => {
             'SELECT institutionId, class_id FROM users WHERE id = ?', [studentId]);
         if (u.length === 0) return res.status(404).json({ error: 'Student not found' });
         if (!u[0].class_id) return res.json([]);
+
+        const yearId = await resolveYearId(u[0].institutionId, req.query.academic_year_id);
 
         const [rows] = await db.execute(
             `SELECT h.id, h.title, h.description, h.homework_type,
@@ -3719,9 +3750,9 @@ app.get('/api/admin/homework/student/:studentId', async (req, res) => {
                LEFT JOIN subjects sub ON sub.id = h.subject_id
                LEFT JOIN homework_submissions s
                       ON s.homework_id = h.id AND s.student_id = ?
-              WHERE h.class_id = ?
+              WHERE h.class_id = ? AND h.academic_year_id = ?
               ORDER BY h.due_date DESC`,
-            [studentId, u[0].class_id]
+            [studentId, u[0].class_id, yearId]
         );
         const decorated = rows.map(r => ({
             ...r,
@@ -3761,7 +3792,10 @@ app.get('/api/admin/homework/:id', async (req, res) => {
 
 // --- 19.4 Create homework -------------------------------------------
 //   Body: { institutionId, title, description, homework_type, class_id,
-//           subject_id, due_date, questions[], attachments[], created_by }
+//           subject_id, due_date, questions[], attachments[], created_by,
+//           academic_year_id? }
+//   Stamped with the school's ACTIVE academic year (unless one is
+//   explicitly supplied).
 app.post('/api/admin/homework', async (req, res) => {
     const {
         institutionId, title, description, homework_type,
@@ -3771,12 +3805,14 @@ app.post('/api/admin/homework', async (req, res) => {
         return res.status(400).json({ error: 'institutionId, title, class_id and due_date are required.' });
     }
     try {
+        const yearId = await resolveYearId(institutionId, req.body.academic_year_id);
+
         const [result] = await db.execute(
             `INSERT INTO homework
-               (institutionId, title, description, homework_type, class_id,
-                subject_id, due_date, questions, attachments, created_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [institutionId, title, description || null, homework_type || 'PDF',
+               (institutionId, academic_year_id, title, description, homework_type,
+                class_id, subject_id, due_date, questions, attachments, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [institutionId, yearId, title, description || null, homework_type || 'PDF',
              class_id, subject_id || null, due_date,
              JSON.stringify(questions || []), JSON.stringify(attachments || []),
              created_by || null]
@@ -3787,6 +3823,8 @@ app.post('/api/admin/homework', async (req, res) => {
 
 
 // --- 19.5 Update homework -------------------------------------------
+//   academic_year_id is left untouched on edit (a homework stays in the
+//   year it was created in).
 app.put('/api/admin/homework/:id', async (req, res) => {
     const {
         title, description, homework_type,
@@ -3820,7 +3858,8 @@ app.delete('/api/admin/homework/:id', async (req, res) => {
 
 // --- 19.7 Roster of submissions for one homework (teacher view) -----
 //   GET /api/admin/homework/:id/submissions
-//   Returns EVERY student in the class, with their submission (or null).
+//   Returns EVERY active student in the class, with their submission
+//   (or null). Ordered roll-number-wise (numeric).
 app.get('/api/admin/homework/:id/submissions', async (req, res) => {
     try {
         const [hw] = await db.execute(
@@ -3836,7 +3875,10 @@ app.get('/api/admin/homework/:id/submissions', async (req, res) => {
                       ON s.student_id = u.id AND s.homework_id = ?
               WHERE u.class_id = ? AND LOWER(TRIM(u.role)) = 'student'
                 AND (u.status IS NULL OR LOWER(TRIM(u.status)) = 'active')
-              ORDER BY u.roll_no, u.name`,
+              ORDER BY
+                CASE WHEN u.roll_no REGEXP '^[0-9]+$' THEN CAST(u.roll_no AS UNSIGNED)
+                     ELSE 999999 END,
+                u.name`,
             [req.params.id, hw[0].class_id]
         );
         const decorated = rows.map(r => ({
