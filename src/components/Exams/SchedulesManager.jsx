@@ -8,17 +8,34 @@ import {
 
 // =====================================================================
 //  SchedulesManager - full CRUD for Exam Schedules
-//
-//  An "Internal" schedule has rows: { date, subject, time, room }
-//  An "External" (Govt) schedule has rows: { examName, fromDate, toDate }
-//  A "special" row breaks the table with a banner: { type, mainText, subText }
-//
-//  Academic year: new schedules are saved against the school's active
-//  academic year (handled server-side). The Subtitle defaults to the
-//  active year's name so it no longer has to be typed in by hand.
 // =====================================================================
 
-const emptyInternalRow = () => ({ date: '', subject: '', time_from: '09:00', time_to: '12:00', room: '' });
+// Manual time entry helpers
+const parse24to12 = (t24) => {
+  if (!t24) return { time: '09:00', period: 'AM' };
+  // Supports formats like "09:00" or "14:30"
+  const [hStr, mStr] = t24.split(':');
+  let hh = parseInt(hStr, 10);
+  const period = hh >= 12 ? 'PM' : 'AM';
+  hh = hh % 12 || 12;
+  return { time: `${String(hh).padStart(2, '0')}:${mStr || '00'}`, period };
+};
+
+const joinTo12String = (t, p) => {
+  if (!t || !t.includes(':')) return `09:00 ${p}`;
+  let [h, m] = t.split(':');
+  return `${String(h).padStart(2, '0')}:${(m || '00').padEnd(2, '0').slice(0, 2)} ${p}`;
+};
+
+const emptyInternalRow = () => ({ 
+  date: '', 
+  subject: '', 
+  time_from: '09:00', 
+  from_period: 'AM', 
+  time_to: '12:00', 
+  to_period: 'PM', 
+  room: '' 
+});
 const emptyExternalRow = () => ({ examName: '', fromDate: '', toDate: '' });
 const emptySpecialRow  = () => ({ type: 'special', mainText: '', subText: '' });
 
@@ -37,7 +54,7 @@ export default function SchedulesManager({ canManage, activeYearName = '' }) {
   const [loading, setLoading]     = useState(true);
 
   // ------------ view state ----------------
-  const [view, setView] = useState('list');   // 'list' | 'detail'
+  const [view, setView] = useState('list');   
   const [selected, setSelected] = useState(null);
 
   // ------------ filters -------------------
@@ -55,9 +72,6 @@ export default function SchedulesManager({ canManage, activeYearName = '' }) {
     rows: [emptyInternalRow()]
   });
 
-  // -----------------------------------------------------------------
-  // Load
-  // -----------------------------------------------------------------
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -83,14 +97,11 @@ export default function SchedulesManager({ canManage, activeYearName = '' }) {
     });
   }, [schedules, activeTab, filterClass]);
 
-  // -----------------------------------------------------------------
-  // Modal helpers
-  // -----------------------------------------------------------------
   const openAdd = () => {
     setEditing(null);
     setForm({
       title: '',
-      subtitle: activeYearName || '',   // default to the active academic year
+      subtitle: activeYearName || '',
       exam_type: 'Internal',
       class_id: '', section: '',
       rows: [emptyInternalRow()]
@@ -100,17 +111,22 @@ export default function SchedulesManager({ canManage, activeYearName = '' }) {
 
   const openEdit = (s) => {
     setEditing(s);
-    // Migrate stored shape into editor shape (split time string)
     const rows = (s.schedule_data || []).map(r => {
       if (r.type === 'special') return { ...r };
       if (s.exam_type === 'External') return { ...r };
-      // Internal - split "09:00 - 12:00" into separate fields
-      const [from = '', to = ''] = (r.time || '').split('-').map(x => x.trim());
+      
+      const [fromPart = '', toPart = ''] = (r.time || '').split('-').map(x => x.trim());
+      // Handle existing strings like "09:00 AM"
+      const fromParsed = parseExisting12h(fromPart);
+      const toParsed = parseExisting12h(toPart);
+
       return {
         date: r.date || '',
         subject: r.subject || '',
-        time_from: timeTo24(from),
-        time_to:   timeTo24(to),
+        time_from: fromParsed.time,
+        from_period: fromParsed.period,
+        time_to: toParsed.time,
+        to_period: toParsed.period,
         room: r.room || r.block || ''
       };
     });
@@ -124,6 +140,14 @@ export default function SchedulesManager({ canManage, activeYearName = '' }) {
     });
     setShowModal(true);
   };
+
+  // Helper to parse stored "09:00 AM" back into state
+  function parseExisting12h(str) {
+    if (!str) return { time: '09:00', period: 'AM' };
+    const m = str.match(/(\d{1,2}:\d{2})\s*(AM|PM)/i);
+    if (!m) return { time: '09:00', period: 'AM' };
+    return { time: m[1], period: m[2].toUpperCase() };
+  }
 
   const handleTypeChange = (newType) => {
     setForm(f => ({
@@ -152,9 +176,6 @@ export default function SchedulesManager({ canManage, activeYearName = '' }) {
     }));
   };
 
-  // -----------------------------------------------------------------
-  // Save / Delete
-  // -----------------------------------------------------------------
   const handleSave = async () => {
     if (!form.title.trim()) return alert('Title is required.');
     if (!form.class_id) return alert('Pick a class.');
@@ -162,7 +183,6 @@ export default function SchedulesManager({ canManage, activeYearName = '' }) {
 
     setSaving(true);
     try {
-      // Convert editor rows -> stored shape
       const payloadRows = form.rows.map(r => {
         if (r.type === 'special') return { type: 'special', mainText: r.mainText, subText: r.subText };
         if (form.exam_type === 'External') {
@@ -175,7 +195,7 @@ export default function SchedulesManager({ canManage, activeYearName = '' }) {
         return {
           date: fmtDDMMYYYY(r.date),
           subject: r.subject,
-          time: `${time12(r.time_from)} - ${time12(r.time_to)}`,
+          time: `${joinTo12String(r.time_from, r.from_period)} - ${joinTo12String(r.time_to, r.to_period)}`,
           room: r.room
         };
       });
@@ -216,9 +236,6 @@ export default function SchedulesManager({ canManage, activeYearName = '' }) {
     } catch (e) { alert(e.message); }
   };
 
-  // -----------------------------------------------------------------
-  // Render
-  // -----------------------------------------------------------------
   if (view === 'detail' && selected) {
     return (
       <div className="space-y-4 animate-in fade-in duration-300">
@@ -233,10 +250,7 @@ export default function SchedulesManager({ canManage, activeYearName = '' }) {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
-      {/* Filter bar */}
       <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
-
-        {/* Toggle Internal/External */}
         <div className="inline-flex bg-zinc-100/80 p-1 rounded-md shrink-0 w-full sm:w-auto overflow-x-auto custom-scrollbar">
           {['Internal', 'External'].map(t => (
             <button key={t} onClick={() => setActiveTab(t)}
@@ -271,7 +285,6 @@ export default function SchedulesManager({ canManage, activeYearName = '' }) {
         </div>
       </div>
 
-      {/* List */}
       {loading ? (
         <div className="h-48 flex items-center justify-center">
           <Loader2 className="animate-spin size-6 text-primary" />
@@ -330,10 +343,9 @@ export default function SchedulesManager({ canManage, activeYearName = '' }) {
         </div>
       )}
 
-      {/* Modal */}
       {showModal && (
         <div className="fixed inset-0 z-50 bg-zinc-900/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-4xl max-h-[92vh] flex flex-col shadow-xl">
+          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-5xl max-h-[92vh] flex flex-col shadow-xl">
 
             <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50">
               <h2 className="text-lg font-semibold text-zinc-900">
@@ -345,21 +357,16 @@ export default function SchedulesManager({ canManage, activeYearName = '' }) {
             </div>
 
             <div className="p-5 sm:p-6 overflow-y-auto flex-1 space-y-6 custom-scrollbar">
-
-              {/* Top form */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <FormField label="Title" required>
                   <input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })}
                     placeholder="e.g. Final Term Exam" className={inputCls} />
                 </FormField>
-
                 <FormField label="Academic Year">
                   <input value={form.subtitle} readOnly tabIndex={-1}
                     placeholder="Set an active academic year under Academics"
                     className={`${inputCls} bg-zinc-50 text-zinc-600 cursor-not-allowed`} />
-                  <p className="text-[10px] text-zinc-400 mt-1">Filled automatically from the active academic year.</p>
                 </FormField>
-
                 <FormField label="Schedule Type">
                   <div className="relative">
                     <select value={form.exam_type} onChange={e => handleTypeChange(e.target.value)}
@@ -370,7 +377,6 @@ export default function SchedulesManager({ canManage, activeYearName = '' }) {
                     <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                   </div>
                 </FormField>
-
                 <FormField label="Class" required>
                   <div className="relative">
                     <select value={form.class_id}
@@ -386,14 +392,8 @@ export default function SchedulesManager({ canManage, activeYearName = '' }) {
                     <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                   </div>
                 </FormField>
-
-                <FormField label="Section (optional)">
-                  <input value={form.section} onChange={e => setForm({ ...form, section: e.target.value })}
-                    placeholder="Leave blank for all sections" className={inputCls} />
-                </FormField>
               </div>
 
-              {/* Row editor */}
               <div className="border-t border-zinc-100 pt-6">
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4">
                   <h3 className="font-semibold text-zinc-800 text-sm">Schedule Rows</h3>
@@ -444,24 +444,46 @@ export default function SchedulesManager({ canManage, activeYearName = '' }) {
                           </FormField>
                         </div>
                       ) : (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3 pr-6">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-4 pr-6 items-end">
                           <FormField label="Date" className="lg:col-span-3">
                             <input type="date" value={r.date}
                               onChange={e => updateRow(i, 'date', e.target.value)} className={inputCls} />
                           </FormField>
 
-                          <FormField label="Subject" className="lg:col-span-3">
+                          <FormField label="Subject" className="lg:col-span-2">
                             <input value={r.subject} onChange={e => updateRow(i, 'subject', e.target.value)}
                               placeholder="Maths" className={inputCls} />
                           </FormField>
 
-                          <FormField label="Time" className="lg:col-span-4">
-                            <div className="flex gap-2 items-center">
-                              <input type="time" value={r.time_from}
-                                onChange={e => updateRow(i, 'time_from', e.target.value)} className={`${inputCls} px-2 tabular-nums w-full min-w-0`} />
-                              <span className="text-zinc-400 text-xs shrink-0">-</span>
-                              <input type="time" value={r.time_to}
-                                onChange={e => updateRow(i, 'time_to', e.target.value)} className={`${inputCls} px-2 tabular-nums w-full min-w-0`} />
+                          <FormField label="Time" className="lg:col-span-5">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <div className="flex items-center gap-1">
+                                <input type="text" value={r.time_from} placeholder="09:00"
+                                  onChange={e => updateRow(i, 'time_from', e.target.value)}
+                                  className="h-9 w-20 bg-white border border-zinc-200 rounded-md text-center text-sm tabular-nums outline-none focus:ring-2 focus:ring-primary/20" />
+                                <div className="relative">
+                                  <select value={r.from_period} onChange={e => updateRow(i, 'from_period', e.target.value)}
+                                    className="h-9 w-16 pl-2 pr-6 bg-white border border-zinc-200 rounded-md text-[10px] font-bold appearance-none outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer">
+                                    <option value="AM">AM</option>
+                                    <option value="PM">PM</option>
+                                  </select>
+                                  <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 size-3 text-zinc-400 pointer-events-none" />
+                                </div>
+                              </div>
+                              <span className="text-zinc-400 text-xs">-</span>
+                              <div className="flex items-center gap-1">
+                                <input type="text" value={r.time_to} placeholder="12:00"
+                                  onChange={e => updateRow(i, 'time_to', e.target.value)}
+                                  className="h-9 w-20 bg-white border border-zinc-200 rounded-md text-center text-sm tabular-nums outline-none focus:ring-2 focus:ring-primary/20" />
+                                <div className="relative">
+                                  <select value={r.to_period} onChange={e => updateRow(i, 'to_period', e.target.value)}
+                                    className="h-9 w-16 pl-2 pr-6 bg-white border border-zinc-200 rounded-md text-[10px] font-bold appearance-none outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer">
+                                    <option value="AM">AM</option>
+                                    <option value="PM">PM</option>
+                                  </select>
+                                  <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 size-3 text-zinc-400 pointer-events-none" />
+                                </div>
+                              </div>
                             </div>
                           </FormField>
 
@@ -473,12 +495,6 @@ export default function SchedulesManager({ canManage, activeYearName = '' }) {
                       )}
                     </div>
                   ))}
-
-                  {form.rows.length === 0 && (
-                    <div className="border border-dashed border-zinc-300 rounded-lg p-8 text-center text-zinc-400 text-sm font-medium bg-zinc-50/50">
-                      Empty schedule - click "Add Row" above.
-                    </div>
-                  )}
                 </div>
               </div>
             </div>
@@ -494,7 +510,6 @@ export default function SchedulesManager({ canManage, activeYearName = '' }) {
                 {saving ? 'Saving...' : (editing ? 'Save Changes' : 'Create Schedule')}
               </button>
             </div>
-
           </div>
         </div>
       )}
@@ -502,11 +517,6 @@ export default function SchedulesManager({ canManage, activeYearName = '' }) {
   );
 }
 
-
-// =====================================================================
-//  ScheduleDetailView - read-only printable view of one schedule
-//  Also used by StudentSchedulesView
-// =====================================================================
 export function ScheduleDetailView({ schedule }) {
   const isExternal = schedule.exam_type === 'External';
   const rows = schedule.schedule_data || [];
@@ -520,13 +530,11 @@ export function ScheduleDetailView({ schedule }) {
 
   return (
     <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col">
-      {/* Header */}
       <div className="p-6 border-b border-zinc-100 text-center bg-zinc-50/50">
         <div className="inline-flex size-12 rounded-lg bg-primary/10 items-center justify-center mb-4 ring-1 ring-primary/20">
           <CalendarDays className="text-primary size-6" />
         </div>
         <h2 className="text-xl font-semibold text-zinc-900">{schedule.title}</h2>
-
         <div className="mt-2.5">
           <span className={`text-[10px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-md ring-1 ${
             isExternal ? 'bg-purple-50 text-purple-700 ring-purple-600/20' : 'bg-rose-50 text-rose-700 ring-rose-600/20'
@@ -534,7 +542,6 @@ export function ScheduleDetailView({ schedule }) {
             {isExternal ? 'Govt Schedule' : 'School Exam'}
           </span>
         </div>
-
         <div className="mt-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-xs text-zinc-600">
           {schedule.className && (
             <span className="font-medium bg-white ring-1 ring-zinc-200 px-2 py-0.5 rounded text-zinc-700">
@@ -556,31 +563,27 @@ export function ScheduleDetailView({ schedule }) {
         </div>
       </div>
 
-      {/* Table */}
       <div className="overflow-x-auto custom-scrollbar">
         <table className="w-full text-left border-collapse min-w-[600px]">
           <thead className="bg-white">
             <tr>
               {isExternal ? (
                 <>
-                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 whitespace-nowrap">Exam Name</th>
-                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 whitespace-nowrap">From</th>
-                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 whitespace-nowrap">To</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Exam Name</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">From</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">To</th>
                 </>
               ) : (
                 <>
-                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 whitespace-nowrap">Date</th>
-                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 whitespace-nowrap">Subject</th>
-                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 whitespace-nowrap">Time</th>
-                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 whitespace-nowrap">Room</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Date</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Subject</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Time</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Room</th>
                 </>
               )}
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-100">
-            {rows.length === 0 && (
-              <tr><td colSpan="4" className="px-5 py-8 text-center text-zinc-400 text-sm italic">Empty schedule</td></tr>
-            )}
             {rows.map((r, i) => {
               if (r.type === 'special') {
                 return (
@@ -625,9 +628,6 @@ export function ScheduleDetailView({ schedule }) {
   );
 }
 
-// -----------------------------------------------------------------
-// Helpers
-// -----------------------------------------------------------------
 const inputCls = 'h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors';
 
 function FormField({ label, required, children, className = '' }) {
@@ -639,26 +639,4 @@ function FormField({ label, required, children, className = '' }) {
       {children}
     </div>
   );
-}
-
-function timeTo24(t) {
-  if (!t) return '';
-  // "09:30 AM" -> "09:30"
-  const m = t.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
-  if (!m) return t;
-  let h = parseInt(m[1], 10);
-  const min = m[2];
-  const mod = m[3] || '';
-  if (mod.toUpperCase() === 'PM' && h < 12) h += 12;
-  if (mod.toUpperCase() === 'AM' && h === 12) h = 0;
-  return `${String(h).padStart(2, '0')}:${min}`;
-}
-
-function time12(t24) {
-  if (!t24) return '';
-  const [h24, min] = t24.split(':');
-  let h = parseInt(h24, 10);
-  const mod = h >= 12 ? 'PM' : 'AM';
-  h = h % 12 || 12;
-  return `${String(h).padStart(2, '0')}:${min} ${mod}`;
 }

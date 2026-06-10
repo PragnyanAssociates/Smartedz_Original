@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
-import { Video, PlayCircle, Search, X, Loader2, RefreshCw } from 'lucide-react';
+import { Video, PlayCircle, Search, X, Loader2, RefreshCw, Clock } from 'lucide-react';
 
 export default function StudentOnlineClasses() {
   const { user } = useAuth();
@@ -41,9 +41,8 @@ export default function StudentOnlineClasses() {
     if (c.class_type === 'live' && c.meet_link) {
       window.open(c.meet_link, '_blank');
     } else if (c.class_type === 'recorded') {
-      // Check for file first, fallback to link
-      if (c.video_path) {
-        window.open(`${API_BASE_URL.replace('/api', '')}${c.video_path}`, '_blank');
+      if (c.has_video_data) {
+        window.open(`${API_BASE_URL}/admin/online-classes/video/${c.id}`, '_blank');
       } else if (c.meet_link) {
         window.open(c.meet_link, '_blank');
       }
@@ -125,21 +124,33 @@ export default function StudentOnlineClasses() {
               <tbody className="divide-y divide-zinc-100">
                 {filtered.map(c => {
                   const dt = new Date(c.class_datetime);
+                  const isLive = c.class_type === 'live';
+                  const isExpired = isLive && (dt < new Date());
+                  const isActionable = !isExpired;
+
                   return (
                     <tr key={c.id} className="hover:bg-zinc-50/60 transition-colors group">
                       <td className="px-5 py-4 whitespace-nowrap">
                         <span className="text-primary font-semibold text-sm block">{dt.toLocaleDateString()}</span>
-                        <span className="text-zinc-500 text-[11px] font-medium mt-0.5 block">{dt.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                        <span className="text-zinc-500 text-[11px] font-medium mt-0.5 block flex items-center gap-1">
+                          <Clock className="size-3" />
+                          {dt.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                        </span>
                       </td>
                       <td className="px-5 py-4">
                         <div className="font-semibold text-zinc-900 text-sm mb-1.5 line-clamp-1">{c.title}</div>
-                        {c.topic ? (
-                          <span className="bg-primary/5 text-primary text-[10px] uppercase font-semibold tracking-wider px-2 py-0.5 rounded ring-1 ring-primary/20 inline-block">
-                            {c.topic}
-                          </span>
-                        ) : (
-                          <span className="text-zinc-400 text-xs italic">No topic</span>
-                        )}
+                        <div className="flex flex-wrap gap-2">
+                           {c.topic ? (
+                            <span className="bg-primary/5 text-primary text-[10px] uppercase font-semibold tracking-wider px-2 py-0.5 rounded ring-1 ring-primary/20 inline-block">
+                              {c.topic}
+                            </span>
+                          ) : (
+                            <span className="text-zinc-400 text-xs italic">No topic</span>
+                          )}
+                          {isExpired && (
+                            <span className="text-[10px] font-bold text-red-500 uppercase tracking-tight self-center">Date is Expired</span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-5 py-4 text-sm font-semibold text-zinc-900">
                         {c.subject_name}
@@ -148,11 +159,14 @@ export default function StudentOnlineClasses() {
                         {c.teacher_name}
                       </td>
                       <td className="px-5 py-4 text-right whitespace-nowrap">
-                        <button onClick={() => handleJoinOrWatch(c)} 
+                        <button 
+                          disabled={!isActionable}
+                          onClick={() => handleJoinOrWatch(c)} 
                           className={`h-8 px-4 rounded-md font-semibold text-xs text-white transition-colors inline-flex items-center justify-center gap-1.5 shadow-sm ${
-                            c.class_type === 'live' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-primary hover:bg-primary/90'
+                            !isActionable ? 'bg-zinc-300 text-zinc-500 cursor-not-allowed opacity-60' :
+                            isLive ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-primary hover:bg-primary/90'
                           }`}>
-                          {c.class_type === 'live' ? <><Video className="size-3.5"/> Join Live Class</> : <><PlayCircle className="size-3.5"/> Watch Recording</>}
+                          {isLive ? <><Video className="size-3.5"/> Join Live Class</> : <><PlayCircle className="size-3.5"/> Watch Recording</>}
                         </button>
                       </td>
                     </tr>

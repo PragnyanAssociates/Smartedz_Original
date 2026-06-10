@@ -27,13 +27,16 @@ export default function StudentPTM() {
   useEffect(() => { loadMeetings(); }, [loadMeetings]);
 
   const filtered = useMemo(() => {
-    if (!query.trim()) return meetings;
-    const q = query.toLowerCase();
-    return meetings.filter(m => 
-      (m.teacher_name || '').toLowerCase().includes(q) ||
-      (m.className || '').toLowerCase().includes(q) ||
-      (m.subject_focus || '').toLowerCase().includes(q)
-    );
+    let list = [...meetings];
+    if (query.trim()) {
+      const q = query.toLowerCase();
+      list = list.filter(m => 
+        (m.teacher_name || '').toLowerCase().includes(q) ||
+        (m.className || '').toLowerCase().includes(q) ||
+        (m.subject_focus || '').toLowerCase().includes(q)
+      );
+    }
+    return list;
   }, [query, meetings]);
 
   const handleJoinMeeting = (link) => {
@@ -98,8 +101,9 @@ export default function StudentPTM() {
               <tbody className="divide-y divide-zinc-100">
                 {filtered.map(item => {
                   const meetingDate = new Date(item.meeting_datetime);
+                  const isExpired = meetingDate < new Date();
                   const isCompleted = item.status === 'Completed';
-                  const isJoinable = item.status === 'Scheduled' && item.meeting_link;
+                  const isJoinable = item.status === 'Scheduled' && item.meeting_link && !isExpired;
 
                   return (
                     <tr key={item.id} className="hover:bg-zinc-50/60 transition-colors group">
@@ -132,14 +136,18 @@ export default function StudentPTM() {
                           <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ring-1 ring-inset ${
                             isCompleted ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' : 'bg-primary/10 text-primary ring-primary/20'
                           }`}>
-                            {item.status}
+                            {isExpired && item.status !== 'Completed' ? 'Expired' : item.status}
                           </span>
-                          {item.meeting_link && !isCompleted && !isJoinable && (
-                            <button onClick={() => handleJoinMeeting(item.meeting_link)} 
-                              className="text-xs font-semibold text-primary hover:text-primary/80 flex items-center gap-1 transition-colors">
+                          {isExpired && !isCompleted ? (
+                             <span className="text-[10px] font-bold text-red-500 uppercase tracking-tight">Date is Expired</span>
+                          ) : item.meeting_link && !isCompleted ? (
+                            <button 
+                              disabled={!isJoinable}
+                              onClick={() => handleJoinMeeting(item.meeting_link)} 
+                              className={`text-xs font-semibold flex items-center gap-1 transition-colors ${isJoinable ? 'text-primary hover:text-primary/80' : 'text-zinc-400 cursor-not-allowed opacity-50'}`}>
                               <LinkIcon className="size-3" /> Join Link
                             </button>
-                          )}
+                          ) : null}
                         </div>
                       </td>
                       <td className="px-5 py-4 text-right whitespace-nowrap">
@@ -149,6 +157,8 @@ export default function StudentPTM() {
                               className="h-8 px-4 rounded-md font-semibold text-xs text-white transition-colors inline-flex items-center justify-center gap-1.5 shadow-sm bg-primary hover:bg-primary/90">
                               <Video className="size-3.5"/> Join
                             </button>
+                          ) : isExpired ? (
+                            <span className="text-zinc-400 text-xs font-medium italic">Meeting Expired</span>
                           ) : (
                             <span className="text-zinc-400 text-xs font-medium">-</span>
                           )}

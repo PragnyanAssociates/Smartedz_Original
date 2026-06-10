@@ -4,18 +4,12 @@ import { usePermissions } from '../../Screens/PermissionsContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   UtensilsCrossed, Clock, CalendarDays, Plus, Trash2, Save,
-  Loader2, AlertCircle, Coffee, Sun, Moon, Cookie
+  Loader2, AlertCircle, Coffee, Sun, Moon, Cookie, ChevronDown
 } from 'lucide-react';
 
 // =====================================================================
 //  Meals - each school defines its own meal slots (Breakfast / Lunch /
 //  Snacks / Dinner - 1 to 4 of them), then fills a weekly menu grid.
-//
-//  Two tabs:
-//   • 'slots' - define the meal periods (edit access only)
-//   • 'menu'  - the Mon-Sun x slot grid of food items
-//
-//  Students / staff without edit access see the menu read-only.
 // =====================================================================
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -38,6 +32,26 @@ const fmtTime = (t) => {
   const ampm = hh >= 12 ? 'PM' : 'AM';
   const h12 = ((hh + 11) % 12) + 1;
   return `${h12}:${m || '00'} ${ampm}`;
+};
+
+// Helpers for manual 12h time entry
+const parse24to12 = (t) => {
+  if (!t) return { time: '09:00', period: 'AM' };
+  const [h, m] = t.split(':');
+  let hh = parseInt(h, 10);
+  const period = hh >= 12 ? 'PM' : 'AM';
+  hh = hh % 12 || 12;
+  return { time: `${String(hh).padStart(2, '0')}:${m}`, period };
+};
+
+const joinTo24 = (t, p) => {
+  if (!t || !t.includes(':')) return '00:00';
+  let [h, m] = t.split(':');
+  let hh = parseInt(h, 10);
+  if (isNaN(hh)) hh = 0;
+  if (p === 'PM' && hh < 12) hh += 12;
+  if (p === 'AM' && hh === 12) hh = 0;
+  return `${String(hh).padStart(2, '0')}:${(m || '00').padEnd(2, '0').slice(0, 2)}`;
 };
 
 export default function Meals() {
@@ -90,7 +104,6 @@ export default function Meals() {
         </p>
       </header>
 
-      {/* Only show the tab bar if the user can edit (others just see the menu) */}
       {canEdit && (
         <div className="flex justify-start">
           <div className="inline-flex bg-zinc-100/80 p-1 rounded-md overflow-x-auto custom-scrollbar max-w-full">
@@ -115,23 +128,29 @@ export default function Meals() {
   );
 }
 
-
 // =====================================================================
 //  TAB 1 - Meal Slots setup
 // =====================================================================
 function SlotsTab({ data, fetchData, user, canEdit }) {
   const [slots, setSlots] = useState(() =>
     data.slots.length > 0
-      ? data.slots.map(s => ({
-          id: s.id, name: s.name,
-          start_time: (s.start_time || '').slice(0, 5),
-          end_time:   (s.end_time   || '').slice(0, 5)
-        }))
-      : [{ id: null, name: 'Lunch', start_time: '12:30', end_time: '13:15' }]
+      ? data.slots.map(s => {
+          const start = parse24to12(s.start_time);
+          const end = parse24to12(s.end_time);
+          return {
+            id: s.id, 
+            name: s.name,
+            start_time: start.time,
+            start_period: start.period,
+            end_time: end.time,
+            end_period: end.period
+          };
+        })
+      : [{ id: null, name: 'Lunch', start_time: '12:30', start_period: 'PM', end_time: '01:15', end_period: 'PM' }]
   );
   const [saving, setSaving] = useState(false);
 
-  const addSlot = () => setSlots(p => [...p, { id: null, name: '', start_time: '', end_time: '' }]);
+  const addSlot = () => setSlots(p => [...p, { id: null, name: '', start_time: '09:00', start_period: 'AM', end_time: '09:45', end_period: 'AM' }]);
   const updateSlot = (i, key, val) => setSlots(p => p.map((s, idx) => idx === i ? { ...s, [key]: val } : s));
   const removeSlot = (i) => setSlots(p => p.filter((_, idx) => idx !== i));
 
@@ -140,12 +159,21 @@ function SlotsTab({ data, fetchData, user, canEdit }) {
       if (!s.name.trim()) return alert('Every meal slot needs a name.');
     }
     if (slots.length === 0) return alert('Add at least one meal slot.');
+    
+    // Prepare for backend (convert back to 24h)
+    const payload = slots.map(s => ({
+      id: s.id,
+      name: s.name,
+      start_time: joinTo24(s.start_time, s.start_period),
+      end_time: joinTo24(s.end_time, s.end_period)
+    }));
+
     setSaving(true);
     try {
       const res = await fetch(`${API_BASE_URL}/admin/meals/slots`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ institutionId: user.institutionId, slots })
+        body: JSON.stringify({ institutionId: user.institutionId, slots: payload })
       });
       if (!res.ok) throw new Error('Save failed');
       alert('Meal slots saved.');
@@ -155,27 +183,24 @@ function SlotsTab({ data, fetchData, user, canEdit }) {
   };
 
   return (
-    <div className="max-w-2xl">
+    <div className="max-w-4xl">
       <div className="bg-white rounded-lg ring-1 ring-black/5 p-5 sm:p-6 shadow-sm">
-        
         <div className="flex items-center gap-3 mb-6">
           <div className="size-10 bg-primary/10 rounded-md flex items-center justify-center text-primary ring-1 ring-primary/20">
             <Clock className="size-5" />
           </div>
           <div>
             <h3 className="text-sm font-semibold text-zinc-900">Meal Slots</h3>
-            <p className="text-[11px] text-zinc-500 mt-0.5">
-              Add the meals your school serves - one, two, three or four.
-            </p>
+            <p className="text-[11px] text-zinc-500 mt-0.5">Add the meals your school serves - one, two, three or four.</p>
           </div>
         </div>
 
-        <div className="space-y-3 mb-6">
+        <div className="space-y-4 mb-6">
           {slots.map((s, i) => {
             const Icon = slotIcon(s.name);
             return (
-              <div key={i} className="flex flex-col sm:flex-row gap-3 items-start sm:items-center p-4 rounded-md bg-zinc-50/50 ring-1 ring-zinc-200">
-                <div className="flex items-center gap-3 w-full sm:w-auto flex-1">
+              <div key={i} className="flex flex-col lg:flex-row gap-4 items-start lg:items-center p-4 rounded-md bg-zinc-50/50 ring-1 ring-zinc-200">
+                <div className="flex items-center gap-3 w-full lg:w-64">
                   <div className="size-6 rounded-full bg-white ring-1 ring-black/5 flex items-center justify-center text-zinc-400 shrink-0 shadow-sm">
                     <Icon className="size-3.5" />
                   </div>
@@ -184,17 +209,39 @@ function SlotsTab({ data, fetchData, user, canEdit }) {
                     className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
                 </div>
                 
-                <div className="flex items-center gap-2 w-full sm:w-auto shrink-0 pl-9 sm:pl-0">
-                  <input type="time" value={s.start_time}
-                    onChange={e => updateSlot(i, 'start_time', e.target.value)}
-                    className="h-9 w-full sm:w-28 bg-white border border-zinc-200 rounded-md px-2 text-sm tabular-nums text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
-                  <span className="text-zinc-400 text-xs">-</span>
-                  <input type="time" value={s.end_time}
-                    onChange={e => updateSlot(i, 'end_time', e.target.value)}
-                    className="h-9 w-full sm:w-28 bg-white border border-zinc-200 rounded-md px-2 text-sm tabular-nums text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
-                  
+                <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto">
+                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-tight ml-9 lg:ml-0">From</span>
+                  <div className="flex items-center gap-1.5">
+                    <input type="text" value={s.start_time} placeholder="00:00"
+                      onChange={e => updateSlot(i, 'start_time', e.target.value)}
+                      className="h-9 w-20 bg-white border border-zinc-200 rounded-md text-center text-sm tabular-nums text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 shadow-sm" />
+                    <div className="relative">
+                      <select value={s.start_period} onChange={e => updateSlot(i, 'start_period', e.target.value)}
+                        className="h-9 w-20 pl-3 pr-8 bg-white border border-zinc-200 rounded-md text-xs font-bold appearance-none outline-none focus:ring-2 focus:ring-primary/20 shadow-sm cursor-pointer">
+                        <option value="AM">AM</option>
+                        <option value="PM">PM</option>
+                      </select>
+                      <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 size-3 text-zinc-400 pointer-events-none" />
+                    </div>
+                  </div>
+
+                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-tight">To</span>
+                  <div className="flex items-center gap-1.5">
+                    <input type="text" value={s.end_time} placeholder="00:00"
+                      onChange={e => updateSlot(i, 'end_time', e.target.value)}
+                      className="h-9 w-20 bg-white border border-zinc-200 rounded-md text-center text-sm tabular-nums text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 shadow-sm" />
+                    <div className="relative">
+                      <select value={s.end_period} onChange={e => updateSlot(i, 'end_period', e.target.value)}
+                        className="h-9 w-20 pl-3 pr-8 bg-white border border-zinc-200 rounded-md text-xs font-bold appearance-none outline-none focus:ring-2 focus:ring-primary/20 shadow-sm cursor-pointer">
+                        <option value="AM">AM</option>
+                        <option value="PM">PM</option>
+                      </select>
+                      <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 size-3 text-zinc-400 pointer-events-none" />
+                    </div>
+                  </div>
+
                   <button onClick={() => removeSlot(i)}
-                    className="p-2 text-zinc-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors shrink-0">
+                    className="p-2 text-zinc-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors shrink-0 ml-auto lg:ml-0">
                     <Trash2 className="size-4" />
                   </button>
                 </div>
@@ -213,7 +260,6 @@ function SlotsTab({ data, fetchData, user, canEdit }) {
               className="h-9 px-4 bg-zinc-50 hover:bg-zinc-100 text-zinc-700 rounded-md font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors ring-1 ring-zinc-200 w-full sm:w-auto">
               <Plus className="size-3.5" /> Add Meal Slot
             </button>
-
             <button onClick={handleSave} disabled={saving} type="button"
               className="h-9 px-6 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md font-semibold text-xs transition-colors shadow-sm flex items-center justify-center gap-2 w-full sm:w-auto">
               {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
@@ -221,18 +267,15 @@ function SlotsTab({ data, fetchData, user, canEdit }) {
             </button>
           </div>
         </div>
-
       </div>
     </div>
   );
 }
 
-
 // =====================================================================
 //  TAB 2 - Weekly Menu grid
 // =====================================================================
 function MenuTab({ data, fetchData, user, canEdit }) {
-  // Build cell map: `${slotId}-${dayIndex}` -> items text
   const initialCells = useMemo(() => {
     const map = {};
     data.menu.forEach(m => { map[`${m.slot_id}-${m.day_index}`] = m.items || ''; });
@@ -274,7 +317,6 @@ function MenuTab({ data, fetchData, user, canEdit }) {
     setSaving(false);
   };
 
-  // --- No slots yet ----------------------------------------------
   if (data.slots.length === 0) {
     return (
       <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center max-w-2xl mx-auto flex flex-col items-center">
@@ -289,7 +331,6 @@ function MenuTab({ data, fetchData, user, canEdit }) {
     );
   }
 
-  // --- Read-only view (students / staff without edit access) -----
   if (!canEdit) {
     return (
       <div className="space-y-4">
@@ -334,7 +375,6 @@ function MenuTab({ data, fetchData, user, canEdit }) {
     );
   }
 
-  // --- Editable grid ---------------------------------------------
   return (
     <div className="space-y-4 sm:space-y-6">
       <div className="flex justify-end">
@@ -343,6 +383,11 @@ function MenuTab({ data, fetchData, user, canEdit }) {
           {saving ? <Loader2 className="size-4 animate-spin shrink-0" /> : <Save className="size-4 shrink-0" />}
           {saving ? 'Saving...' : 'Save Weekly Menu'}
         </button>
+      </div>
+
+      <div className="bg-blue-50/50 border border-blue-100 rounded-md p-4 text-[11px] font-medium text-blue-700 leading-relaxed flex gap-2">
+        <AlertCircle className="size-4 shrink-0 text-blue-500" />
+        <p>Type the food items for each meal, separated by commas. Leave a cell empty if there's no meal scheduled for that slot on that day.</p>
       </div>
 
       <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-x-auto custom-scrollbar">
@@ -394,11 +439,6 @@ function MenuTab({ data, fetchData, user, canEdit }) {
             ))}
           </tbody>
         </table>
-      </div>
-
-      <div className="bg-blue-50/50 border border-blue-100 rounded-md p-4 text-[11px] font-medium text-blue-700 leading-relaxed flex gap-2">
-        <AlertCircle className="size-4 shrink-0 text-blue-500" />
-        <p>Type the food items for each meal, separated by commas. Leave a cell empty if there's no meal scheduled for that slot on that day.</p>
       </div>
     </div>
   );

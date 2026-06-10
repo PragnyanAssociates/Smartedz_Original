@@ -6,6 +6,35 @@ import {
   Video, Edit, Trash2, Search, X, Link as LinkIcon, Plus, Loader2, ChevronDown, Save
 } from 'lucide-react';
 
+// --- Helpers for 12h Time Logic ---
+const parseDateTimeToParts = (dtString) => {
+  if (!dtString) {
+    const now = new Date();
+    return { 
+      date: now.toISOString().split('T')[0], 
+      time: '09:00', 
+      period: 'AM' 
+    };
+  }
+  const dt = new Date(dtString);
+  const date = dt.toISOString().split('T')[0];
+  let hh = dt.getHours();
+  const mm = String(dt.getMinutes()).padStart(2, '0');
+  const period = hh >= 12 ? 'PM' : 'AM';
+  hh = hh % 12 || 12;
+  const time = `${String(hh).padStart(2, '0')}:${mm}`;
+  return { date, time, period };
+};
+
+const joinPartsToDateTime = (date, time, period) => {
+  if (!date || !time) return '';
+  let [h, m] = time.split(':');
+  let hh = parseInt(h, 10) || 0;
+  if (period === 'PM' && hh < 12) hh += 12;
+  if (period === 'AM' && hh === 12) hh = 0;
+  return `${date} ${String(hh).padStart(2, '0')}:${(m || '00').padEnd(2, '0').slice(0, 2)}:00`;
+};
+
 export default function TeacherAdminPTM({ canEdit = false, canDelete = false }) {
   const { user } = useAuth();
   
@@ -13,22 +42,19 @@ export default function TeacherAdminPTM({ canEdit = false, canDelete = false }) 
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   
-  // Data for dropdowns
   const [classes, setClasses] = useState([]);
   const [teachers, setTeachers] = useState([]);
 
-  // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingMeeting, setEditingMeeting] = useState(null);
   const [saving, setSaving] = useState(false);
 
-  const emptyForm = {
-    meeting_datetime: '', teacher_id: '', class_id: '', 
+  const [form, setForm] = useState({
+    date: '', time: '09:00', period: 'AM',
+    teacher_id: '', class_id: '', 
     subject_focus: '', status: 'Scheduled', notes: '', meeting_link: ''
-  };
-  const [form, setForm] = useState(emptyForm);
+  });
 
-  // --- Load PTM list ---
   const loadMeetings = useCallback(async () => {
     if (!user?.institutionId) return;
     setLoading(true);
@@ -40,7 +66,6 @@ export default function TeacherAdminPTM({ canEdit = false, canDelete = false }) 
     setLoading(false);
   }, [user]);
 
-  // --- Load Teachers & Classes for the modal ---
   const loadFormData = useCallback(async () => {
     if (!user?.institutionId) return;
     try {
@@ -57,33 +82,45 @@ export default function TeacherAdminPTM({ canEdit = false, canDelete = false }) 
   }, [loadMeetings, loadFormData]);
 
   const filtered = useMemo(() => {
-    if (!query.trim()) return meetings;
-    const q = query.toLowerCase();
-    return meetings.filter(m => 
-      (m.teacher_name || '').toLowerCase().includes(q) ||
-      (m.className || '').toLowerCase().includes(q) ||
-      (m.subject_focus || '').toLowerCase().includes(q)
-    );
+    let list = [...meetings];
+    if (query.trim()) {
+      const q = query.toLowerCase();
+      list = list.filter(m => 
+        (m.teacher_name || '').toLowerCase().includes(q) ||
+        (m.className || '').toLowerCase().includes(q) ||
+        (m.subject_focus || '').toLowerCase().includes(q)
+      );
+    }
+    return list;
   }, [query, meetings]);
 
   const classLabel = (c) => `${c.className}${c.section ? ` - ${c.section}` : ''}`;
 
-  // --- Modal Handlers ---
   const openCreate = () => {
     setEditingMeeting(null);
-    const now = new Date();
-    const localNow = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().slice(0, 16);
-    setForm({ ...emptyForm, meeting_datetime: localNow });
+    const parts = parseDateTimeToParts(null);
+    setForm({
+      date: parts.date,
+      time: parts.time,
+      period: parts.period,
+      teacher_id: '',
+      class_id: '',
+      subject_focus: '',
+      status: 'Scheduled',
+      notes: '',
+      meeting_link: ''
+    });
     setIsModalOpen(true);
   };
 
   const openEdit = (m) => {
     setEditingMeeting(m);
-    const dt = new Date(m.meeting_datetime);
-    const localDt = new Date(dt.getTime() - (dt.getTimezoneOffset() * 60000)).toISOString().slice(0, 16);
+    const parts = parseDateTimeToParts(m.meeting_datetime);
     
     setForm({
-      meeting_datetime: localDt,
+      date: parts.date,
+      time: parts.time,
+      period: parts.period,
       teacher_id: m.teacher_id ? String(m.teacher_id) : '',
       class_id: m.class_id ? String(m.class_id) : '',
       subject_focus: m.subject_focus || '',
@@ -104,18 +141,21 @@ export default function TeacherAdminPTM({ canEdit = false, canDelete = false }) 
 
   const handleSave = async (e) => {
     e.preventDefault();
-    if (!form.meeting_datetime || !form.teacher_id || !form.subject_focus) {
-      return alert("Please fill in Date, Teacher, and Focus.");
+    if (!form.date || !form.time || !form.teacher_id || !form.subject_focus) {
+      return alert("Please fill in Date, Time, Teacher, and Focus.");
     }
     setSaving(true);
     try {
-      const formattedDate = form.meeting_datetime.replace('T', ' ') + ':00';
+      const fullDateTime = joinPartsToDateTime(form.date, form.time, form.period);
       const payload = {
-        ...form,
-        meeting_datetime: formattedDate,
-        institutionId: user.institutionId,
-        class_id: form.class_id ? parseInt(form.class_id, 10) : null,
+        meeting_datetime: fullDateTime,
         teacher_id: parseInt(form.teacher_id, 10),
+        class_id: form.class_id ? parseInt(form.class_id, 10) : null,
+        subject_focus: form.subject_focus,
+        status: form.status,
+        notes: form.notes,
+        meeting_link: form.meeting_link,
+        institutionId: user.institutionId,
         created_by: user.id
       };
 
@@ -201,8 +241,9 @@ export default function TeacherAdminPTM({ canEdit = false, canDelete = false }) 
               <tbody className="divide-y divide-zinc-100">
                 {filtered.map(item => {
                   const meetingDate = new Date(item.meeting_datetime);
+                  const isExpired = meetingDate < new Date();
                   const isCompleted = item.status === 'Completed';
-                  const isJoinable = item.status === 'Scheduled' && item.meeting_link;
+                  const isJoinable = item.status === 'Scheduled' && item.meeting_link && !isExpired;
 
                   return (
                     <tr key={item.id} className="hover:bg-zinc-50/60 transition-colors group">
@@ -235,24 +276,33 @@ export default function TeacherAdminPTM({ canEdit = false, canDelete = false }) 
                           <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ring-1 ring-inset ${
                             isCompleted ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' : 'bg-primary/10 text-primary ring-primary/20'
                           }`}>
-                            {item.status}
+                            {isExpired && item.status !== 'Completed' ? 'Expired' : item.status}
                           </span>
-                          {isJoinable && (
+                          {isExpired && !isCompleted ? (
+                            <span className="text-[10px] font-bold text-red-500 uppercase tracking-tight">Date is Expired</span>
+                          ) : isJoinable ? (
                             <button onClick={() => handleJoinMeeting(item.meeting_link)} 
                               className="text-xs font-semibold text-primary hover:text-primary/80 flex items-center gap-1 transition-colors">
                               <LinkIcon className="size-3" /> Join Link
                             </button>
-                          )}
+                          ) : item.meeting_link ? (
+                            <span className="text-zinc-400 text-[11px] flex items-center gap-1 cursor-not-allowed opacity-50">
+                               <LinkIcon className="size-3" /> Join Link
+                            </span>
+                          ) : null}
                         </div>
                       </td>
                       <td className="px-5 py-4 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-2">
-                          {isJoinable && (
-                            <button onClick={() => handleJoinMeeting(item.meeting_link)} 
-                              className="h-8 px-3 rounded-md font-semibold text-xs text-white transition-colors flex items-center justify-center gap-1.5 shadow-sm bg-primary hover:bg-primary/90">
-                              <Video className="size-3.5"/> Join
-                            </button>
-                          )}
+                          <button 
+                            disabled={!isJoinable}
+                            onClick={() => handleJoinMeeting(item.meeting_link)} 
+                            className={`h-8 px-3 rounded-md font-semibold text-xs text-white transition-colors flex items-center justify-center gap-1.5 shadow-sm ${
+                              isJoinable ? 'bg-primary hover:bg-primary/90' : 'bg-zinc-300 text-zinc-500 cursor-not-allowed opacity-60'
+                            }`}
+                          >
+                            <Video className="size-3.5"/> Join
+                          </button>
                           
                           {(canEdit || canDelete) && (
                             <div className="flex items-center gap-1 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity ml-1">
@@ -279,7 +329,6 @@ export default function TeacherAdminPTM({ canEdit = false, canDelete = false }) 
         )}
       </div>
 
-      {/* ---- MODAL ---- */}
       {isModalOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
           <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-2xl shadow-xl relative max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
@@ -297,8 +346,29 @@ export default function TeacherAdminPTM({ canEdit = false, canDelete = false }) 
               <div className="p-5 sm:p-6 overflow-y-auto custom-scrollbar space-y-6">
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
-                  <Field label="Date & Time" type="datetime-local" required value={form.meeting_datetime}
-                    onChange={v => setForm({ ...form, meeting_datetime: v })} />
+                  
+                  {/* Date & Time with manual logic */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Date & Time <span className="text-red-500">*</span></label>
+                    <div className="flex flex-col gap-2">
+                      <input type="date" value={form.date} required
+                        onChange={e => setForm({ ...form, date: e.target.value })}
+                        className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm outline-none focus:ring-2 focus:ring-primary/20 shadow-sm" />
+                      <div className="flex items-center gap-2">
+                        <input type="text" value={form.time} placeholder="09:00" required
+                          onChange={e => setForm({ ...form, time: e.target.value })}
+                          className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-center tabular-nums outline-none focus:ring-2 focus:ring-primary/20 shadow-sm" />
+                        <div className="relative shrink-0">
+                          <select value={form.period} onChange={e => setForm({ ...form, period: e.target.value })}
+                            className="h-9 w-20 pl-3 pr-8 bg-white border border-zinc-200 rounded-md text-xs font-bold appearance-none outline-none focus:ring-2 focus:ring-primary/20 shadow-sm cursor-pointer">
+                            <option value="AM">AM</option>
+                            <option value="PM">PM</option>
+                          </select>
+                          <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 size-3 text-zinc-400 pointer-events-none" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                     
                   <Field label="Teacher" type="select" required value={form.teacher_id}
                     onChange={v => setForm({ ...form, teacher_id: v })}
@@ -353,7 +423,6 @@ export default function TeacherAdminPTM({ canEdit = false, canDelete = false }) 
   );
 }
 
-// --- Shared Field Component ---
 function Field({ label, value, onChange, type = 'text', options, required, placeholder }) {
   const base = "h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm";
   return (

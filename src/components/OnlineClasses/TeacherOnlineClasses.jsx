@@ -3,8 +3,37 @@ import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import { 
   Video, PlayCircle, Plus, Edit, Trash2, X, Search, 
-  Loader2, Calendar as CalIcon, Clock, FileVideo, ChevronDown, Save, Link as LinkIcon // Added LinkIcon
+  Loader2, Calendar as CalIcon, Clock, FileVideo, ChevronDown, Save, Link as LinkIcon 
 } from 'lucide-react';
+
+// --- Helpers for 12h Time Logic ---
+const parseDateTimeToParts = (dtString) => {
+  if (!dtString) {
+    const now = new Date();
+    return { 
+      date: now.toISOString().split('T')[0], 
+      time: '09:00', 
+      period: 'AM' 
+    };
+  }
+  const dt = new Date(dtString.replace(' ', 'T'));
+  const date = dt.toISOString().split('T')[0];
+  let hh = dt.getHours();
+  const mm = String(dt.getMinutes()).padStart(2, '0');
+  const period = hh >= 12 ? 'PM' : 'AM';
+  hh = hh % 12 || 12;
+  const time = `${String(hh).padStart(2, '0')}:${mm}`;
+  return { date, time, period };
+};
+
+const joinPartsToDateTime = (date, time, period) => {
+  if (!date || !time) return '';
+  let [h, m] = time.split(':');
+  let hh = parseInt(h, 10) || 0;
+  if (period === 'PM' && hh < 12) hh += 12;
+  if (period === 'AM' && hh === 12) hh = 0;
+  return `${date} ${String(hh).padStart(2, '0')}:${(m || '00').padEnd(2, '0').slice(0, 2)}:00`;
+};
 
 export default function TeacherOnlineClasses({ canEdit = false, canDelete = false }) {
   const { user } = useAuth();
@@ -22,15 +51,14 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
   const [editingItem, setEditingItem] = useState(null);
   const [saving, setSaving] = useState(false);
   
-  // NEW: State to track if recorded class is using a file or a link
   const [videoSource, setVideoSource] = useState('upload'); 
   const [selectedVideo, setSelectedVideo] = useState(null);
 
-  const emptyForm = {
+  const [form, setForm] = useState({
     title: '', class_type: 'live', class_id: '', subject_id: '', 
-    teacher_id: '', class_datetime: '', meet_link: '', topic: '', description: ''
-  };
-  const [form, setForm] = useState(emptyForm);
+    teacher_id: '', date: '', time: '', period: '', 
+    meet_link: '', topic: '', description: ''
+  });
 
   const loadData = useCallback(async () => {
     if (!user?.institutionId) return;
@@ -70,36 +98,37 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
 
   const openCreate = () => {
     setEditingItem(null);
-    const now = new Date();
-    const localNow = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().slice(0, 16);
-    setForm({ ...emptyForm, class_datetime: localNow });
+    const parts = parseDateTimeToParts(null);
+    setForm({
+      title: '', class_type: view, class_id: '', subject_id: '', 
+      teacher_id: '', date: parts.date, time: parts.time, period: parts.period, 
+      meet_link: '', topic: '', description: ''
+    });
     setSelectedVideo(null);
-    setVideoSource('upload'); // Default for new recorded classes
+    setVideoSource('upload');
     setIsModalOpen(true);
   };
 
   const openEdit = (c) => {
     setEditingItem(c);
-    const dt = new Date(c.class_datetime);
-    const localDt = new Date(dt.getTime() - (dt.getTimezoneOffset() * 60000)).toISOString().slice(0, 16);
+    const parts = parseDateTimeToParts(c.class_datetime);
     setForm({
       title: c.title,
       class_type: c.class_type,
       class_id: c.class_id ? String(c.class_id) : '',
       subject_id: c.subject_id ? String(c.subject_id) : '',
       teacher_id: c.teacher_id ? String(c.teacher_id) : '',
-      class_datetime: localDt,
+      date: parts.date,
+      time: parts.time,
+      period: parts.period,
       meet_link: c.meet_link || '',
       topic: c.topic || '',
       description: c.description || ''
     });
     setSelectedVideo(null);
-    
-    // Determine video source if editing a recorded class
     if (c.class_type === 'recorded') {
-      setVideoSource(c.video_path ? 'upload' : 'link');
+      setVideoSource(c.has_video_data ? 'upload' : 'link');
     }
-    
     setIsModalOpen(true);
   };
 
@@ -113,16 +142,15 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
 
   const handleSave = async (e) => {
     e.preventDefault();
-    if (!form.title || !form.subject_id || !form.teacher_id) {
-      return alert("Title, Subject, and Teacher are required.");
+    if (!form.title || !form.subject_id || !form.teacher_id || !form.date || !form.time) {
+      return alert("Title, Subject, Teacher, and Time are required.");
     }
     
-    // UPDATED VALIDATION
     if (form.class_type === 'live' && !form.meet_link) {
       return alert("Meeting link required for live classes.");
     }
     if (form.class_type === 'recorded') {
-      if (videoSource === 'upload' && !selectedVideo && !editingItem?.video_path) {
+      if (videoSource === 'upload' && !selectedVideo && !editingItem?.has_video_data) {
         return alert("Video file required for recorded classes.");
       }
       if (videoSource === 'link' && !form.meet_link) {
@@ -132,6 +160,7 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
 
     setSaving(true);
     try {
+      const fullDateTime = joinPartsToDateTime(form.date, form.time, form.period);
       const formDataObj = new FormData();
       formDataObj.append('institutionId', user.institutionId);
       formDataObj.append('title', form.title);
@@ -139,21 +168,17 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
       if (form.class_id) formDataObj.append('class_id', form.class_id);
       formDataObj.append('subject_id', form.subject_id);
       formDataObj.append('teacher_id', form.teacher_id);
-      
-      const formattedDate = form.class_datetime.replace('T', ' ') + ':00';
-      formDataObj.append('class_datetime', formattedDate);
+      formDataObj.append('class_datetime', fullDateTime);
       if (form.topic) formDataObj.append('topic', form.topic);
       if (form.description) formDataObj.append('description', form.description);
       formDataObj.append('created_by', user.id);
 
-      // UPDATED PAYLOAD LOGIC
       if (form.class_type === 'live') {
         formDataObj.append('meet_link', form.meet_link);
       } else if (form.class_type === 'recorded') {
         if (videoSource === 'link') {
           formDataObj.append('meet_link', form.meet_link);
-          // Instruct backend to clear old video if switching from upload to link
-          if (editingItem?.video_path) formDataObj.append('clear_video', 'true');
+          formDataObj.append('clear_video', 'true');
         } else if (videoSource === 'upload' && selectedVideo) {
           formDataObj.append('videoFile', selectedVideo);
         }
@@ -179,12 +204,11 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
     setSaving(false);
   };
 
-  // UPDATED WATCH HANDLER
   const handleJoinOrWatch = (c) => {
     if (c.class_type === 'live' && c.meet_link) {
         window.open(c.meet_link, '_blank');
     } else if (c.class_type === 'recorded') {
-        if (c.video_path) window.open(`${API_BASE_URL.replace('/api', '')}${c.video_path}`, '_blank');
+        if (c.has_video_data) window.open(`${API_BASE_URL}/admin/online-classes/video/${c.id}`, '_blank');
         else if (c.meet_link) window.open(c.meet_link, '_blank');
     }
   };
@@ -259,21 +283,34 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
               <tbody className="divide-y divide-zinc-100">
                 {filtered.map(c => {
                   const dt = new Date(c.class_datetime);
+                  const isLive = c.class_type === 'live';
+                  // Date expiration logic ONLY for live classes
+                  const isExpired = isLive && (dt < new Date());
+                  const isJoinable = !isExpired;
+
                   return (
                     <tr key={c.id} className="hover:bg-zinc-50/60 transition-colors group">
                       <td className="px-5 py-4 whitespace-nowrap">
                         <span className="text-primary font-semibold text-sm block">{dt.toLocaleDateString()}</span>
-                        <span className="text-zinc-500 text-[11px] font-medium mt-0.5 block">{dt.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                        <span className="text-zinc-500 text-[11px] font-medium mt-0.5 block flex items-center gap-1">
+                          <Clock className="size-3" />
+                          {dt.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                        </span>
                       </td>
                       <td className="px-5 py-4">
                         <div className="font-semibold text-zinc-900 text-sm mb-1.5 line-clamp-1">{c.title}</div>
-                        {c.topic ? (
-                          <span className="bg-primary/5 text-primary text-[10px] uppercase font-semibold tracking-wider px-2 py-0.5 rounded ring-1 ring-primary/20 inline-block">
-                            {c.topic}
-                          </span>
-                        ) : (
-                          <span className="text-zinc-400 text-xs italic">No topic</span>
-                        )}
+                        <div className="flex flex-wrap gap-2">
+                           {c.topic ? (
+                            <span className="bg-primary/5 text-primary text-[10px] uppercase font-semibold tracking-wider px-2 py-0.5 rounded ring-1 ring-primary/20 inline-block">
+                              {c.topic}
+                            </span>
+                          ) : (
+                            <span className="text-zinc-400 text-xs italic">No topic</span>
+                          )}
+                          {isExpired && (
+                            <span className="text-[10px] font-bold text-red-500 uppercase tracking-tight self-center">Date is Expired</span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-5 py-4 text-sm font-medium text-zinc-600">
                         <div className="text-zinc-900 font-semibold">{c.subject_name}</div>
@@ -284,11 +321,14 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
                       </td>
                       <td className="px-5 py-4 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-2">
-                          <button onClick={() => handleJoinOrWatch(c)} 
+                          <button 
+                            disabled={!isJoinable}
+                            onClick={() => handleJoinOrWatch(c)} 
                             className={`h-8 px-3 rounded-md font-semibold text-xs text-white transition-colors flex items-center justify-center gap-1.5 shadow-sm ${
-                              c.class_type === 'live' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-primary hover:bg-primary/90'
+                              !isJoinable ? 'bg-zinc-300 text-zinc-500 cursor-not-allowed opacity-60' :
+                              isLive ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-primary hover:bg-primary/90'
                             }`}>
-                            {c.class_type === 'live' ? <><Video className="size-3.5"/> Join</> : <><PlayCircle className="size-3.5"/> Watch</>}
+                            {isLive ? <><Video className="size-3.5"/> Join</> : <><PlayCircle className="size-3.5"/> Watch</>}
                           </button>
                           
                           {(canEdit || canDelete) && (
@@ -316,7 +356,6 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
         )}
       </div>
 
-      {/* --- MODAL --- */}
       {isModalOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
           <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-2xl shadow-xl relative max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
@@ -350,12 +389,31 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
                   <Field label="Teacher" type="select" required value={form.teacher_id} onChange={v => setForm({...form, teacher_id: v})}
                     options={[ {value: '', label: 'Select Teacher'}, ...teachers.map(t => ({value: String(t.id), label: t.name})) ]} />
                   
-                  <Field label="Date & Time" type="datetime-local" required value={form.class_datetime} onChange={v => setForm({...form, class_datetime: v})} />
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Date & Time <span className="text-red-500">*</span></label>
+                    <div className="flex flex-col gap-2">
+                      <input type="date" value={form.date} required
+                        onChange={e => setForm({ ...form, date: e.target.value })}
+                        className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm outline-none focus:ring-2 focus:ring-primary/20 shadow-sm" />
+                      <div className="flex items-center gap-2">
+                        <input type="text" value={form.time} placeholder="09:00" required
+                          onChange={e => setForm({ ...form, time: e.target.value })}
+                          className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-center tabular-nums outline-none focus:ring-2 focus:ring-primary/20 shadow-sm" />
+                        <div className="relative shrink-0">
+                          <select value={form.period} onChange={e => setForm({ ...form, period: e.target.value })}
+                            className="h-9 w-20 pl-3 pr-8 bg-white border border-zinc-200 rounded-md text-xs font-bold appearance-none outline-none focus:ring-2 focus:ring-primary/20 shadow-sm cursor-pointer">
+                            <option value="AM">AM</option>
+                            <option value="PM">PM</option>
+                          </select>
+                          <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 size-3 text-zinc-400 pointer-events-none" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
                 <Field label="Topic" placeholder="e.g. Linear Equations" value={form.topic} onChange={v => setForm({...form, topic: v})} />
 
-                {/* DYNAMIC FIELD BASED ON CLASS TYPE */}
                 {form.class_type === 'live' ? (
                   <Field label="Meeting Link" type="url" required placeholder="https://meet.google.com/..." value={form.meet_link} onChange={v => setForm({...form, meet_link: v})} />
                 ) : (
@@ -379,7 +437,7 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
                         <div>
                           <input type="file" accept="video/*" onChange={e => setSelectedVideo(e.target.files[0])} 
                             className="block w-full text-sm text-zinc-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-zinc-100 file:text-zinc-700 hover:file:bg-zinc-200 cursor-pointer border border-zinc-200 rounded-md bg-white shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 h-9 leading-9" />
-                          {editingItem?.video_path && !selectedVideo && <p className="text-xs text-emerald-600 font-medium mt-1.5">Video currently uploaded. Select file only to replace.</p>}
+                          {editingItem?.has_video_data && !selectedVideo && <p className="text-xs text-emerald-600 font-medium mt-1.5">Video currently stored in DB. Select file only to replace.</p>}
                         </div>
                       ) : (
                         <Field label="Video Link URL" type="url" required={videoSource === 'link'} placeholder="https://youtube.com/... or https://vimeo.com/..." value={form.meet_link} onChange={v => setForm({...form, meet_link: v})} />
@@ -410,7 +468,6 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
   );
 }
 
-// --- Shared Field Component ---
 function Field({ label, value, onChange, type = 'text', options, required, placeholder }) {
   const base = "h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm";
   return (
