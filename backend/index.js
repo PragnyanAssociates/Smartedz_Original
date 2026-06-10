@@ -4153,9 +4153,10 @@ app.delete('/api/admin/ptm/:id', async (req, res) => {
 // === 22. ONLINE CLASSES ==============================================
 // =====================================================================
 
+// Use Memory Storage for storing directly in DB bytes
 const memoryUpload = multer({ 
     storage: multer.memoryStorage(), 
-    limits: { fileSize: 500 * 1024 * 1024 } // 500MB
+    limits: { fileSize: 500 * 1024 * 1024 } // 500MB limit
 });
 
 // --- 22.1 List Classes for Admin/Teacher ---
@@ -4165,21 +4166,36 @@ app.get('/api/admin/online-classes/:instId', async (req, res) => {
     if (!userId) return res.status(400).json({ error: 'userId is required' });
 
     try {
-        const [users] = await db.execute(`SELECT id, role, class_id, section FROM users WHERE id = ?`, [userId]);
+        const [users] = await db.execute(`SELECT id, role FROM users WHERE id = ?`, [userId]);
         if (users.length === 0) return res.status(404).json({ error: 'User not found' });
+
         const user = users[0];
         const roleName = user.role;
         const isSystemAdmin = (roleName === 'Super Admin' || roleName === 'Developer');
 
         let query = isSystemAdmin 
-          ? `SELECT o.*, IF(o.video_data IS NOT NULL, 1, 0) as has_video_data, c.className, c.section, s.name AS subject_name, t.name AS teacher_name
-             FROM online_classes o LEFT JOIN classes c ON c.id = o.class_id LEFT JOIN subjects s ON s.id = o.subject_id LEFT JOIN users t ON t.id = o.teacher_id
-             WHERE o.institutionId = ? ORDER BY o.class_datetime DESC`
-          : `SELECT o.*, IF(o.video_data IS NOT NULL, 1, 0) as has_video_data, c.className, c.section, s.name AS subject_name, t.name AS teacher_name
-             FROM online_classes o LEFT JOIN classes c ON c.id = o.class_id LEFT JOIN subjects s ON s.id = o.subject_id LEFT JOIN users t ON t.id = o.teacher_id
-             WHERE o.institutionId = ? AND o.created_by = ? ORDER BY o.class_datetime DESC`;
-             
-        const params = isSystemAdmin ? [instId] : [instId, user.id];
+            ? `SELECT o.id, o.title, o.class_type, o.class_id, o.subject_id, o.teacher_id, 
+                       o.class_datetime, o.meet_link, o.topic, o.description, o.created_by,
+                       IF(o.video_data IS NOT NULL, 1, 0) as has_video_data,
+                       c.className, c.section, s.name AS subject_name, t.name AS teacher_name
+                  FROM online_classes o
+                  LEFT JOIN classes c ON c.id = o.class_id
+                  LEFT JOIN subjects s ON s.id = o.subject_id
+                  LEFT JOIN users t ON t.id = o.teacher_id
+                 WHERE o.institutionId = ?
+                 ORDER BY o.class_datetime DESC`
+            : `SELECT o.id, o.title, o.class_type, o.class_id, o.subject_id, o.teacher_id, 
+                       o.class_datetime, o.meet_link, o.topic, o.description, o.created_by,
+                       IF(o.video_data IS NOT NULL, 1, 0) as has_video_data,
+                       c.className, c.section, s.name AS subject_name, t.name AS teacher_name
+                  FROM online_classes o
+                  LEFT JOIN classes c ON c.id = o.class_id
+                  LEFT JOIN subjects s ON s.id = o.subject_id
+                  LEFT JOIN users t ON t.id = o.teacher_id
+                 WHERE o.institutionId = ? AND o.created_by = ?
+                 ORDER BY o.class_datetime DESC`;
+
+        const params = isSystemAdmin ? [instId] : [instId, userId];
         const [rows] = await db.execute(query, params);
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -4190,35 +4206,49 @@ app.get('/api/admin/online-classes/student/:studentId', async (req, res) => {
     try {
         const [u] = await db.execute('SELECT institutionId, class_id FROM users WHERE id = ?', [req.params.studentId]);
         if (u.length === 0) return res.status(404).json({ error: 'Student not found' });
+        
         const [rows] = await db.execute(
-            `SELECT o.*, IF(o.video_data IS NOT NULL, 1, 0) as has_video_data, c.className, c.section, s.name AS subject_name, t.name AS teacher_name
-             FROM online_classes o LEFT JOIN classes c ON c.id = o.class_id LEFT JOIN subjects s ON s.id = o.subject_id LEFT JOIN users t ON t.id = o.teacher_id
-             WHERE o.institutionId = ? AND (o.class_id IS NULL OR o.class_id = ?) ORDER BY o.class_datetime DESC`,
+            `SELECT o.id, o.title, o.class_type, o.class_id, o.subject_id, o.teacher_id, 
+                    o.class_datetime, o.meet_link, o.topic, o.description,
+                    IF(o.video_data IS NOT NULL, 1, 0) as has_video_data,
+                    c.className, c.section, s.name AS subject_name, t.name AS teacher_name
+               FROM online_classes o
+               LEFT JOIN classes c ON c.id = o.class_id
+               LEFT JOIN subjects s ON s.id = o.subject_id
+               LEFT JOIN users t ON t.id = o.teacher_id
+              WHERE o.institutionId = ? AND (o.class_id IS NULL OR o.class_id = ?)
+              ORDER BY o.class_datetime DESC`,
             [u[0].institutionId, u[0].class_id || 0]
         );
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 22.3 Stream Video Data from DB ---
+// --- 22.3 Stream Video Bytes from DB ---
 app.get('/api/admin/online-classes/video/:id', async (req, res) => {
     try {
         const [rows] = await db.execute('SELECT video_data, mime_type FROM online_classes WHERE id = ?', [req.params.id]);
         if (!rows.length || !rows[0].video_data) return res.status(404).send('Not found');
+
         const data = rows[0].video_data;
         const mime = rows[0].mime_type || 'video/mp4';
         const total = data.length;
+
         const range = req.headers.range;
         if (range) {
-            const m = String(range).match(/bytes=(\d*)-(\d*)/);
-            let start = m && m[1] ? parseInt(m[1], 10) : 0;
-            let end = m && m[2] ? parseInt(m[2], 10) : total - 1;
+            const parts = range.replace(/bytes=/, "").split("-");
+            const start = parseInt(parts[0], 10);
+            const end = parts[1] ? parseInt(parts[1], 10) : total - 1;
             const chunk = data.slice(start, end + 1);
-            res.status(206).setHeader('Content-Range', `bytes ${start}-${end}/${total}`);
-            res.setHeader('Accept-Ranges', 'bytes').setHeader('Content-Length', chunk.length).setHeader('Content-Type', mime);
+            res.status(206).set({
+                'Content-Range': `bytes ${start}-${end}/${total}`,
+                'Accept-Ranges': 'bytes',
+                'Content-Length': chunk.length,
+                'Content-Type': mime,
+            });
             return res.end(chunk);
         }
-        res.setHeader('Content-Length', total).setHeader('Content-Type', mime).setHeader('Accept-Ranges', 'bytes');
+        res.set({ 'Content-Length': total, 'Content-Type': mime, 'Accept-Ranges': 'bytes' });
         return res.end(data);
     } catch (err) { res.status(500).send(err.message); }
 });
@@ -4228,8 +4258,14 @@ app.post('/api/admin/online-classes', memoryUpload.single('videoFile'), async (r
     const { institutionId, title, class_type, class_id, subject_id, teacher_id, class_datetime, meet_link, topic, description, created_by } = req.body;
     try {
         const [result] = await db.execute(
-            `INSERT INTO online_classes (institutionId, title, class_type, class_id, subject_id, teacher_id, class_datetime, meet_link, video_data, mime_type, topic, description, created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-            [institutionId, title, class_type, class_id || null, subject_id, teacher_id, class_datetime, meet_link || null, req.file ? req.file.buffer : null, req.file ? req.file.mimetype : null, topic || null, description || null, created_by]
+            `INSERT INTO online_classes 
+               (institutionId, title, class_type, class_id, subject_id, teacher_id, class_datetime, meet_link, video_data, mime_type, topic, description, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                institutionId, title, class_type, class_id || null, subject_id, teacher_id, 
+                class_datetime, meet_link || null, req.file ? req.file.buffer : null, 
+                req.file ? req.file.mimetype : null, topic || null, description || null, created_by
+            ]
         );
         res.json({ success: true, id: result.insertId });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -4241,9 +4277,17 @@ app.put('/api/admin/online-classes/:id', memoryUpload.single('videoFile'), async
     try {
         let sql = `UPDATE online_classes SET title=?, class_type=?, class_id=?, subject_id=?, teacher_id=?, class_datetime=?, meet_link=?, topic=?, description=?`;
         let params = [title, class_type, class_id || null, subject_id, teacher_id, class_datetime, meet_link || null, topic || null, description || null];
-        if (req.file) { sql += `, video_data=?, mime_type=?`; params.push(req.file.buffer, req.file.mimetype); }
-        else if (clear_video === 'true') { sql += `, video_data=NULL, mime_type=NULL`; }
-        sql += ` WHERE id=?`; params.push(req.params.id);
+
+        if (req.file) {
+            sql += `, video_data=?, mime_type=?`;
+            params.push(req.file.buffer, req.file.mimetype);
+        } else if (clear_video === 'true') {
+            sql += `, video_data=NULL, mime_type=NULL`;
+        }
+
+        sql += ` WHERE id=?`;
+        params.push(req.params.id);
+
         await db.execute(sql, params);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -4251,8 +4295,10 @@ app.put('/api/admin/online-classes/:id', memoryUpload.single('videoFile'), async
 
 // --- 22.6 Delete Class ---
 app.delete('/api/admin/online-classes/:id', async (req, res) => {
-    try { await db.execute('DELETE FROM online_classes WHERE id = ?', [req.params.id]); res.json({ success: true }); }
-    catch (err) { res.status(500).json({ error: err.message }); }
+    try {
+        await db.execute('DELETE FROM online_classes WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 
@@ -4485,6 +4531,9 @@ app.delete('/api/admin/labs/:id', async (req, res) => {
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+
+
 // --- Pre-Admissions Storage ---
 // =====================================================================
 // === 23. ADMISSIONS / DIRECTORY ======================================
