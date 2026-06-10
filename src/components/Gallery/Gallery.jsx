@@ -11,11 +11,9 @@ import {
 //  Helpers
 // =====================================================================
 
-// Media is now served from the database through the API by id.
 const mediaUrl = (id, download = false) =>
   `${API_BASE_URL}/admin/gallery/media/${id}${download ? '?download=1' : ''}`;
 
-// DD/MM/YYYY
 const fmtDMY = (val) => {
   if (!val) return '—';
   const d = new Date(val);
@@ -34,9 +32,6 @@ const MONTHS = [
   { value: '11', label: 'November' }, { value: '12', label: 'December' }
 ];
 
-// Decorative gradient covers for albums that have no photo. Full literal
-// class names so Tailwind's JIT picks them up. Chosen deterministically by
-// album title, so each album keeps a stable, pleasant cover.
 const COVER_GRADIENTS = [
   'from-rose-400 to-orange-300',
   'from-sky-400 to-indigo-400',
@@ -51,15 +46,8 @@ const hashStr = (s) => {
   return Math.abs(h);
 };
 
-// =====================================================================
-//  VideoThumb — shows a real frame from a video as its poster instead of
-//  a black box. The element is muted and never plays; on metadata load we
-//  seek ~20% into the clip (skipping a possibly-black first frame) and the
-//  browser renders that frame. No canvas, so no cross-origin tainting.
-// =====================================================================
 function VideoThumb({ src, className }) {
   const ref = useRef(null);
-
   const seekToFrame = useCallback(() => {
     const v = ref.current;
     if (!v) return;
@@ -70,7 +58,7 @@ function VideoThumb({ src, className }) {
       } else {
         v.currentTime = 0.1;
       }
-    } catch { /* seeking not ready yet — ignore */ }
+    } catch { }
   }, []);
 
   return (
@@ -87,11 +75,6 @@ function VideoThumb({ src, className }) {
   );
 }
 
-// =====================================================================
-//  DefaultCover — generated placeholder for albums with no photo.
-//  A tasteful gradient + the album's initial. No external image, no
-//  broken <img>, no stock photo.
-// =====================================================================
 function DefaultCover({ title }) {
   const grad = COVER_GRADIENTS[hashStr(title || '') % COVER_GRADIENTS.length];
   const initial = (title || '?').trim().charAt(0).toUpperCase() || '?';
@@ -102,13 +85,8 @@ function DefaultCover({ title }) {
   );
 }
 
-// =====================================================================
-//  AlbumCover — prefers a real photo from the album; otherwise shows the
-//  generated DefaultCover. Any image load error also falls back to it.
-// =====================================================================
 function AlbumCover({ album }) {
   const [imgError, setImgError] = useState(false);
-
   if (album.cover_type === 'photo' && album.cover_id != null && !imgError) {
     return (
       <img
@@ -133,77 +111,52 @@ export default function Gallery() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [monthFilter, setMonthFilter] = useState('all');
+  const [yearFilter, setYearFilter] = useState('all');
 
-  // Academic year scoping — mirrors the other modules.
-  const [academicYears, setAcademicYears] = useState([]);
-  const [yearId, setYearId] = useState('');     // selected academic_year_id ('' = let backend resolve active)
-
-  // Permission Check: Can this user add new albums/media?
   const canCreate = can('Gallery', 'edit');
-
-  const activeYear = useMemo(
-    () => (academicYears || []).find(y => y.isActive) || null,
-    [academicYears]
-  );
-
-  // Load the school's academic years (active one becomes the default scope).
-  useEffect(() => {
-    if (!user?.institutionId) return;
-    (async () => {
-      try {
-        const res = await fetch(`${API_BASE_URL}/admin/data/${user.institutionId}`);
-        const data = await res.json();
-        const ys = data.academicYears || [];
-        setAcademicYears(ys);
-        const active = ys.find(y => y.isActive);
-        if (active) setYearId(String(active.id));
-      } catch (e) { console.error('Academic years load:', e); }
-    })();
-  }, [user]);
 
   const fetchAlbums = useCallback(async () => {
     if (!user?.institutionId) return;
     setLoading(true);
     try {
-      const qs = yearId ? `?academic_year_id=${yearId}` : '';
-      const res = await fetch(`${API_BASE_URL}/admin/gallery/${user.institutionId}${qs}`);
+      const res = await fetch(`${API_BASE_URL}/admin/gallery/${user.institutionId}`);
       const data = await res.json();
       setAlbums(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error('Fetch albums error:', e);
     }
     setLoading(false);
-  }, [user, yearId]);
+  }, [user]);
 
   useEffect(() => { fetchAlbums(); }, [fetchAlbums]);
 
+  // Derive unique years from the available albums for the Year filter
+  const availableYears = useMemo(() => {
+    const years = albums.map(a => new Date(a.event_date).getFullYear());
+    return [...new Set(years)].sort((a, b) => b - a);
+  }, [albums]);
+
   const filteredAlbums = useMemo(() => {
     return albums.filter(a => {
-      // text search
+      const d = new Date(a.event_date);
       if (search && !a.title.toLowerCase().includes(search.toLowerCase())) return false;
-      // month filter (within the selected academic year)
-      if (monthFilter !== 'all') {
-        const d = new Date(a.event_date);
-        if (isNaN(d.getTime()) || (d.getMonth() + 1) !== Number(monthFilter)) return false;
-      }
+      if (monthFilter !== 'all' && (d.getMonth() + 1) !== Number(monthFilter)) return false;
+      if (yearFilter !== 'all' && d.getFullYear() !== Number(yearFilter)) return false;
       return true;
     });
-  }, [albums, search, monthFilter]);
+  }, [albums, search, monthFilter, yearFilter]);
 
   const clearFilters = () => {
     setMonthFilter('all');
-    setYearId(activeYear ? String(activeYear.id) : '');
+    setYearFilter('all');
   };
 
-  const filtersDirty = monthFilter !== 'all' ||
-    (activeYear && String(yearId) !== String(activeYear.id));
+  const filtersDirty = monthFilter !== 'all' || yearFilter !== 'all';
 
-  // Render Detailed View if an album is selected
   if (viewingAlbum) {
     return (
       <AlbumDetail
         albumTitle={viewingAlbum}
-        yearId={yearId}
         onBack={() => { setViewingAlbum(null); fetchAlbums(); }}
       />
     );
@@ -211,15 +164,11 @@ export default function Gallery() {
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-6 animate-in fade-in duration-500">
-
-      {/* Header Area */}
       <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-2">
         <div className="flex flex-col">
           <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Gallery</h1>
           <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">Memories and events captured in time.</p>
         </div>
-
-        {/* Search and Action Button - optimized for mobile horizontal space */}
         <div className="flex flex-row items-center gap-2 w-full sm:w-auto">
           <div className="relative flex-1 sm:w-64">
             <Search className="size-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -230,33 +179,25 @@ export default function Gallery() {
               className="h-9 w-full rounded-md border border-zinc-200 bg-white pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm"
             />
           </div>
-          {canCreate && <CreateAlbumModal yearId={yearId} onCreated={fetchAlbums} />}
+          {canCreate && <CreateAlbumModal onCreated={fetchAlbums} />}
         </div>
       </header>
 
-      {/* Period filter — Academic Year (scopes data, like other modules) + Month */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-2 bg-zinc-50/50 p-2 sm:p-2.5 rounded-md ring-1 ring-black/5 mb-4">
         <span className="hidden sm:inline-flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider pl-1 shrink-0">
-          <Calendar className="size-3.5" /> Filter by Period
+          <Calendar className="size-3.5" /> Filter by Date
         </span>
-
         <div className="grid grid-cols-2 sm:flex sm:flex-row gap-2 w-full sm:w-auto">
           <select
-            value={yearId}
-            onChange={(e) => setYearId(e.target.value)}
-            title="Academic Year"
+            value={yearFilter}
+            onChange={(e) => setYearFilter(e.target.value)}
             className="h-9 w-full sm:w-44 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm cursor-pointer">
-            {academicYears.length === 0 && <option value="">Active Year</option>}
-            {academicYears.map(y => (
-              <option key={y.id} value={y.id}>
-                {y.name}{y.isActive ? ' (Active)' : ''}
-              </option>
-            ))}
+            <option value="all">All Years</option>
+            {availableYears.map(y => <option key={y} value={y}>{y}</option>)}
           </select>
           <select
             value={monthFilter}
             onChange={(e) => setMonthFilter(e.target.value)}
-            title="Month"
             className="h-9 w-full sm:w-44 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm cursor-pointer">
             <option value="all">All Months</option>
             {MONTHS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
@@ -271,7 +212,6 @@ export default function Gallery() {
         </div>
       </div>
 
-      {/* Album Grid */}
       {loading ? (
         <div className="h-64 flex items-center justify-center">
           <Loader2 className="animate-spin text-primary size-8" />
@@ -280,7 +220,7 @@ export default function Gallery() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
           {filteredAlbums.map(album => (
             <div
-              key={album.title}
+              key={`${album.title}-${album.event_date}`}
               onClick={() => setViewingAlbum(album.title)}
               className="group bg-white rounded-lg ring-1 ring-black/5 overflow-hidden shadow-sm hover:ring-zinc-300 transition-all cursor-pointer flex flex-col"
             >
@@ -310,10 +250,7 @@ export default function Gallery() {
   );
 }
 
-// =====================================================================
-//  ALBUM DETAIL COMPONENT (VIEWING ITEMS INSIDE AN ALBUM)
-// =====================================================================
-function AlbumDetail({ albumTitle, yearId, onBack }) {
+function AlbumDetail({ albumTitle, onBack }) {
   const { user } = useAuth();
   const { can } = usePermissions();
   const [items, setItems] = useState([]);
@@ -327,13 +264,12 @@ function AlbumDetail({ albumTitle, yearId, onBack }) {
   const fetchItems = useCallback(async () => {
     setLoading(true);
     try {
-      const qs = yearId ? `?academic_year_id=${yearId}` : '';
-      const res = await fetch(`${API_BASE_URL}/admin/gallery/album/${user.institutionId}/${encodeURIComponent(albumTitle)}${qs}`);
+      const res = await fetch(`${API_BASE_URL}/admin/gallery/album/${user.institutionId}/${encodeURIComponent(albumTitle)}`);
       const data = await res.json();
       setItems(Array.isArray(data) ? data : []);
     } catch (e) { console.error('Fetch items error:', e); }
     setLoading(false);
-  }, [user, albumTitle, yearId]);
+  }, [user, albumTitle]);
 
   useEffect(() => { fetchItems(); }, [fetchItems]);
 
@@ -357,8 +293,6 @@ function AlbumDetail({ albumTitle, yearId, onBack }) {
     formData.append('event_date', items[0]?.event_date || new Date().toISOString().split('T')[0]);
     formData.append('institutionId', user.institutionId);
     formData.append('adminId', user.id);
-    // Keep the new media in the same academic year as the album being viewed.
-    if (yearId) formData.append('academic_year_id', yearId);
 
     try {
       const res = await fetch(`${API_BASE_URL}/admin/gallery/upload`, { method: 'POST', body: formData });
@@ -369,16 +303,13 @@ function AlbumDetail({ albumTitle, yearId, onBack }) {
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-6 animate-in slide-in-from-bottom-2 duration-300">
-
       <button onClick={onBack} className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
         <ChevronLeft className="size-4" /> Back to Gallery
       </button>
-
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <h2 className="text-lg font-semibold text-zinc-900 tracking-tight">{albumTitle}</h2>
-
         <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
-          <div className="inline-flex bg-zinc-100/80 p-1 rounded-md overflow-x-auto custom-scrollbar w-full sm:w-auto">
+          <div className="inline-flex bg-zinc-100/80 p-1 rounded-md overflow-x-auto w-full sm:w-auto">
             {['all', 'photo', 'video'].map(type => (
               <button
                 key={type}
@@ -391,7 +322,6 @@ function AlbumDetail({ albumTitle, yearId, onBack }) {
               </button>
             ))}
           </div>
-
           {canEdit && (
             <label className="h-9 w-full sm:w-auto bg-primary hover:bg-primary/90 text-white px-4 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer shadow-sm transition-colors shrink-0">
               <Plus className="size-4" /> Add Media
@@ -415,10 +345,7 @@ function AlbumDetail({ albumTitle, yearId, onBack }) {
                 <img src={mediaUrl(item.id)} className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-300" alt="" />
               ) : (
                 <>
-                  <VideoThumb
-                    src={mediaUrl(item.id)}
-                    className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-300"
-                  />
+                  <VideoThumb src={mediaUrl(item.id)} className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-300" />
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                     <div className="bg-white/15 p-2.5 rounded-full backdrop-blur-sm ring-1 ring-white/25">
                       <Play className="size-5 text-white fill-current" />
@@ -426,24 +353,13 @@ function AlbumDetail({ albumTitle, yearId, onBack }) {
                   </div>
                 </>
               )}
-
-              {/* Actions — small, top-right, revealed on hover (always shown on touch) */}
               <div className="absolute top-1.5 right-1.5 flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
                 {canDelete && (
-                  <button
-                    onClick={(e) => handleDelete(item.id, e)}
-                    title="Delete"
-                    className="p-1.5 bg-white/90 hover:bg-white text-zinc-600 hover:text-red-600 rounded-md shadow-sm ring-1 ring-black/5 transition-colors">
+                  <button onClick={(e) => handleDelete(item.id, e)} title="Delete" className="p-1.5 bg-white/90 hover:bg-white text-zinc-600 hover:text-red-600 rounded-md shadow-sm ring-1 ring-black/5">
                     <Trash2 className="size-3.5" />
                   </button>
                 )}
-                <a
-                  href={mediaUrl(item.id, true)}
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={e => e.stopPropagation()}
-                  title="Download"
-                  className="p-1.5 bg-white/90 hover:bg-white text-zinc-600 hover:text-primary rounded-md shadow-sm ring-1 ring-black/5 transition-colors">
+                <a href={mediaUrl(item.id, true)} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} title="Download" className="p-1.5 bg-white/90 hover:bg-white text-zinc-600 hover:text-primary rounded-md shadow-sm ring-1 ring-black/5">
                   <Download className="size-3.5" />
                 </a>
               </div>
@@ -457,17 +373,14 @@ function AlbumDetail({ albumTitle, yearId, onBack }) {
         </div>
       )}
 
-      {/* Lightbox Overlay */}
       {selectedMedia && (
         <div className="fixed inset-0 z-50 bg-zinc-900/95 backdrop-blur-sm flex items-center justify-center p-4 sm:p-8" onClick={() => setSelectedMedia(null)}>
-          <button className="absolute top-4 sm:top-6 right-4 sm:right-6 p-2 text-zinc-400 hover:text-white transition-colors bg-zinc-800/50 hover:bg-zinc-800 rounded-md">
-            <X className="size-6" />
-          </button>
+          <button className="absolute top-4 sm:top-6 right-4 sm:right-6 p-2 text-zinc-400 hover:text-white bg-zinc-800/50 rounded-md"><X className="size-6" /></button>
           <div className="max-w-5xl w-full max-h-full flex items-center justify-center" onClick={e => e.stopPropagation()}>
             {selectedMedia.file_type === 'photo' ? (
-              <img src={mediaUrl(selectedMedia.id)} className="max-w-full max-h-[85vh] rounded-lg shadow-2xl object-contain ring-1 ring-white/10" alt="" />
+              <img src={mediaUrl(selectedMedia.id)} className="max-w-full max-h-[85vh] rounded-lg shadow-2xl object-contain" alt="" />
             ) : (
-              <video controls autoPlay playsInline className="w-full rounded-lg shadow-2xl max-h-[85vh] ring-1 ring-white/10 outline-none">
+              <video controls autoPlay playsInline className="w-full rounded-lg shadow-2xl max-h-[85vh] outline-none">
                 <source src={mediaUrl(selectedMedia.id)} type={selectedMedia.mime_type || 'video/mp4'} />
               </video>
             )}
@@ -478,10 +391,7 @@ function AlbumDetail({ albumTitle, yearId, onBack }) {
   );
 }
 
-// =====================================================================
-//  CREATE ALBUM MODAL
-// =====================================================================
-function CreateAlbumModal({ yearId, onCreated }) {
+function CreateAlbumModal({ onCreated }) {
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ title: '', date: new Date().toISOString().split('T')[0], file: null });
@@ -497,7 +407,6 @@ function CreateAlbumModal({ yearId, onCreated }) {
     formData.append('event_date', form.date);
     formData.append('institutionId', user.institutionId);
     formData.append('adminId', user.id);
-    if (yearId) formData.append('academic_year_id', yearId);
 
     try {
       const res = await fetch(`${API_BASE_URL}/admin/gallery/upload`, { method: 'POST', body: formData });
@@ -505,9 +414,7 @@ function CreateAlbumModal({ yearId, onCreated }) {
         setOpen(false);
         onCreated();
         setForm({ title: '', date: new Date().toISOString().split('T')[0], file: null });
-      } else {
-        alert('Upload failed');
-      }
+      } else { alert('Upload failed'); }
     } catch (err) { alert('Failed to create'); }
     setLoading(false);
   };
@@ -522,39 +429,25 @@ function CreateAlbumModal({ yearId, onCreated }) {
 
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-md p-6 shadow-xl relative animate-in fade-in duration-200">
-            <button type="button" onClick={() => setOpen(false)} className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-700 transition-colors">
-              <X className="size-5 shrink-0" />
-            </button>
-
+          <div className="bg-white rounded-lg w-full max-w-md p-6 shadow-xl relative animate-in fade-in duration-200">
+            <button type="button" onClick={() => setOpen(false)} className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-700"><X className="size-5" /></button>
             <h2 className="text-lg font-semibold text-zinc-900 mb-6">Create Album</h2>
-
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider block mb-1.5">Album Title <span className="text-accent">*</span></label>
-                <input required placeholder="e.g. Annual Sports Day"
-                  className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors"
-                  value={form.title} onChange={e => setForm({...form, title: e.target.value})} />
+                <input required placeholder="e.g. Annual Sports Day" className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40" value={form.title} onChange={e => setForm({...form, title: e.target.value})} />
               </div>
-
               <div>
                 <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider block mb-1.5">Event Date <span className="text-accent">*</span></label>
-                <input type="date" required
-                  className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors"
-                  value={form.date} onChange={e => setForm({...form, date: e.target.value})} />
+                <input type="date" required className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40" value={form.date} onChange={e => setForm({...form, date: e.target.value})} />
               </div>
-
               <div>
                 <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider block mb-1.5">Cover Media <span className="text-accent">*</span></label>
-                <input type="file" required accept="image/*,video/*"
-                  className="w-full text-sm text-zinc-500 file:mr-4 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-primary/10 file:text-primary hover:file:bg-primary/20 transition-colors cursor-pointer"
-                  onChange={e => setForm({...form, file: e.target.files[0]})} />
+                <input type="file" required accept="image/*,video/*" className="w-full text-sm text-zinc-500 file:mr-4 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-primary/10 file:text-primary hover:file:bg-primary/20 cursor-pointer" onChange={e => setForm({...form, file: e.target.files[0]})} />
               </div>
-
               <div className="pt-2">
-                <button disabled={loading} type="submit"
-                  className="h-9 w-full bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors">
-                  {loading ? <Loader2 className="size-4 animate-spin shrink-0" /> : null}
+                <button disabled={loading} type="submit" className="h-9 w-full bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors">
+                  {loading ? <Loader2 className="size-4 animate-spin" /> : null}
                   {loading ? 'Creating...' : 'Create Album'}
                 </button>
               </div>
