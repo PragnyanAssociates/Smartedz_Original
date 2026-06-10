@@ -3,56 +3,69 @@ import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   Plus, Edit, Trash2, X, Search, Loader2, FlaskConical,
-  Video, LinkIcon, Radio, ChevronDown, Save
+  Video, LinkIcon, Radio, ChevronDown, Save, FileText, 
+  UploadCloud, ExternalLink, ArrowLeft, BookOpen, User, Clock
 } from 'lucide-react';
 
 // =====================================================================
-//  TeacherLabs - create / edit / delete digital labs.
-//  Each lab targets one class and bundles many resources:
-//    video  -> a video URL (YouTube etc.)
-//    link   -> a generic web link / document
-//    live   -> a live-class link (Zoom / Meet) with optional schedule
+//  Constants & Helpers
 // =====================================================================
 
 const RES_TYPES = [
-  { value: 'video', label: 'Video',       icon: Video },
-  { value: 'link',  label: 'Link',        icon: LinkIcon },
-  { value: 'live',  label: 'Live Class',  icon: Radio }
+  { value: 'video', label: 'Video', icon: Video, color: 'text-rose-600', bg: 'bg-rose-50' },
+  { value: 'pdf',   label: 'PDF Document', icon: FileText, color: 'text-orange-600', bg: 'bg-orange-50' },
+  { value: 'link',  label: 'Web Link', icon: LinkIcon, color: 'text-blue-600', bg: 'bg-blue-50' },
+  { value: 'live',  label: 'Live Class', icon: Radio, color: 'text-emerald-600', bg: 'bg-emerald-50' }
 ];
 
-const resTypeMeta = (t) => RES_TYPES.find(r => r.value === t) || RES_TYPES[1];
+const resTypeMeta = (t) => RES_TYPES.find(r => r.value === t) || RES_TYPES[2];
+
+const fmtDateTime = (dt) => {
+  if (!dt) return '';
+  const d = new Date(dt);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString(undefined, {
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit'
+  });
+};
 
 const isoLocal = (dt) => {
   if (!dt) return '';
   const d = new Date(dt);
   if (isNaN(d.getTime())) return '';
-  // for <input type="datetime-local">
   const pad = n => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 
+// =====================================================================
+//  MAIN COMPONENT
+// =====================================================================
+
 export default function TeacherLabs({ canManage = true }) {
   const { user } = useAuth();
 
-  const [labs, setLabs]       = useState([]);
+  const [labs, setLabs] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [query, setQuery]     = useState('');
+  const [query, setQuery] = useState('');
 
-  // class + subject options for the modal
-  const [classes, setClasses]       = useState([]);
-  const [subjects, setSubjects]     = useState([]);
-  const [subjectClasses, setSC]     = useState({});
+  // Data for Selects
+  const [classes, setClasses] = useState([]);
+  const [subjects, setSubjects] = useState([]);
+  const [subjectClasses, setSC] = useState({});
 
-  // modal state
+  // Navigation / Modal States
   const [modalOpen, setModalOpen] = useState(false);
-  const [editing, setEditing]     = useState(null);
-  const [saving, setSaving]       = useState(false);
+  const [viewingLab, setViewingLab] = useState(null); // Detail view state
+  const [editing, setEditing] = useState(null);
+  const [saving, setSaving] = useState(false);
 
-  const emptyForm = { title: '', description: '', class_id: '', subject_id: '' };
-  const [form, setForm]         = useState(emptyForm);
+  // Form State
+  const [form, setForm] = useState({ title: '', description: '', class_id: '', subject_id: '' });
   const [resources, setResources] = useState([]);
 
-  // --- Load labs -------------------------------------------------
+  // --- API Actions ---
+
   const load = useCallback(async () => {
     if (!user?.id) return;
     setLoading(true);
@@ -60,13 +73,10 @@ export default function TeacherLabs({ canManage = true }) {
       const res = await fetch(`${API_BASE_URL}/admin/labs/teacher/${user.id}`);
       const d = await res.json();
       setLabs(Array.isArray(d) ? d : []);
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error('Load Labs Error:', e); }
     setLoading(false);
   }, [user]);
 
-  useEffect(() => { load(); }, [load]);
-
-  // --- Load classes + subjects -----------------------------------
   const loadFormData = useCallback(async () => {
     if (!user?.institutionId) return;
     try {
@@ -75,42 +85,45 @@ export default function TeacherLabs({ canManage = true }) {
       setClasses(d.classes || []);
       setSubjects(d.subjects || []);
       setSC(d.subjectClasses || {});
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error('Load Form Data Error:', e); }
   }, [user]);
 
-  useEffect(() => { loadFormData(); }, [loadFormData]);
+  useEffect(() => { load(); loadFormData(); }, [load, loadFormData]);
 
-  // Subjects available for the chosen class (subject with no link = all)
+  // --- Filter Logic ---
+
   const subjectsForClass = useMemo(() => {
     if (!form.class_id) return subjects;
     const cid = parseInt(form.class_id, 10);
     return subjects.filter(s => {
       const links = subjectClasses[s.id];
-      if (!links || links.length === 0) return true;
-      return links.includes(cid);
+      return !links || links.length === 0 || links.includes(cid);
     });
   }, [subjects, subjectClasses, form.class_id]);
 
   const filtered = useMemo(() => {
-    if (!query.trim()) return labs;
-    const q = query.toLowerCase();
+    const q = query.toLowerCase().trim();
+    if (!q) return labs;
     return labs.filter(l =>
       (l.title || '').toLowerCase().includes(q) ||
       (l.class_group || '').toLowerCase().includes(q) ||
-      (l.subject_name || '').toLowerCase().includes(q));
+      (l.subject_name || '').toLowerCase().includes(q)
+    );
   }, [labs, query]);
 
   const classLabel = (c) => `${c.className}${c.section ? ' - ' + c.section : ''}`;
 
-  // --- Modal helpers ---------------------------------------------
+  // --- Modal / Resource Helpers ---
+
   const openCreate = () => {
     setEditing(null);
-    setForm(emptyForm);
+    setForm({ title: '', description: '', class_id: '', subject_id: '' });
     setResources([]);
     setModalOpen(true);
   };
 
-  const openEdit = async (lab) => {
+  const openEdit = async (lab, e) => {
+    if (e) e.stopPropagation(); // Don't trigger the detail view click
     setEditing(lab);
     setForm({
       title: lab.title || '',
@@ -122,105 +135,92 @@ export default function TeacherLabs({ canManage = true }) {
       const res = await fetch(`${API_BASE_URL}/admin/labs/${lab.id}`);
       const full = await res.json();
       setResources((full.resources || []).map(r => ({
-        resource_type: r.resource_type,
-        title: r.title,
-        url: r.url,
-        scheduled_at: isoLocal(r.scheduled_at)
+        ...r,
+        source: r.has_file ? 'file' : 'url',
+        scheduled_at: r.scheduled_at ? isoLocal(r.scheduled_at) : ''
       })));
     } catch { setResources([]); }
     setModalOpen(true);
   };
 
-  // --- Resource list editing -------------------------------------
-  const addResource = (type) =>
-    setResources(p => [...p, { resource_type: type, title: '', url: '', scheduled_at: '' }]);
-  const updateResource = (i, key, val) =>
-    setResources(p => p.map((r, idx) => idx === i ? { ...r, [key]: val } : r));
-  const removeResource = (i) =>
-    setResources(p => p.filter((_, idx) => idx !== i));
-
-  // --- Save ------------------------------------------------------
   const handleSave = async (e) => {
     e.preventDefault();
-    if (!form.title.trim() || !form.class_id) {
-      return alert('Title and Class are required.');
-    }
-    for (const r of resources) {
-      if (!r.title.trim() || !r.url.trim()) {
-        return alert('Every resource needs both a title and a URL.');
-      }
-    }
+    if (!form.title.trim() || !form.class_id) return alert('Title and Class are required.');
+    
     setSaving(true);
-    try {
-      const payload = {
-        institutionId: user.institutionId,
-        title: form.title.trim(),
-        description: form.description,
-        class_id: parseInt(form.class_id, 10),
-        subject_id: form.subject_id ? parseInt(form.subject_id, 10) : null,
-        created_by: user.id,
-        resources: resources.map(r => ({
-          resource_type: r.resource_type,
-          title: r.title.trim(),
-          url: r.url.trim(),
-          scheduled_at: r.resource_type === 'live' && r.scheduled_at
-            ? r.scheduled_at.replace('T', ' ') + ':00'
-            : null
-        }))
+    const fd = new FormData();
+    fd.append('institutionId', user.institutionId);
+    fd.append('title', form.title.trim());
+    fd.append('description', form.description);
+    fd.append('class_id', form.class_id);
+    fd.append('subject_id', form.subject_id);
+    fd.append('created_by', user.id);
+    if (editing) fd.append('id', editing.id);
+
+    const resMetadata = resources.map((r, i) => {
+      if (r.file) fd.append(`file_${i}`, r.file);
+      return {
+        resource_type: r.resource_type,
+        title: r.title.trim(),
+        url: r.url,
+        scheduled_at: r.resource_type === 'live' && r.scheduled_at ? r.scheduled_at.replace('T', ' ') + ':00' : null
       };
-      const url = editing
-        ? `${API_BASE_URL}/admin/labs/${editing.id}`
-        : `${API_BASE_URL}/admin/labs`;
-      const res = await fetch(url, {
-        method: editing ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const d = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(d.error || 'Save failed');
-      setModalOpen(false);
-      load();
+    });
+    fd.append('resources', JSON.stringify(resMetadata));
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/labs`, { method: 'POST', body: fd });
+      if (res.ok) { setModalOpen(false); load(); } 
+      else { const d = await res.json(); throw new Error(d.error || 'Save failed'); }
     } catch (e) { alert(e.message); }
     setSaving(false);
   };
 
-  const handleDelete = async (lab) => {
-    if (!window.confirm(`Delete lab "${lab.title}"? All its resources will be removed.`)) return;
+  const handleDelete = async (lab, e) => {
+    if (e) e.stopPropagation();
+    if (!window.confirm(`Delete lab "${lab.title}"?`)) return;
     try {
       const res = await fetch(`${API_BASE_URL}/admin/labs/${lab.id}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error('Delete failed');
-      load();
-    } catch (e) { alert(e.message); }
+      if (res.ok) load();
+    } catch (e) { alert('Delete failed'); }
   };
+
+  // --- Sub-View Navigation ---
+
+  if (viewingLab) {
+    return <LabDetailView lab={viewingLab} onBack={() => { setViewingLab(null); load(); }} canManage={canManage} onEdit={(l) => openEdit(l)} onDelete={(l) => handleDelete(l)} />;
+  }
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
       
-      <header className="flex flex-col mb-2 sm:mb-0">
-        <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
-          <FlaskConical className="text-primary size-5" />
-          Digital Labs
-        </h1>
-        <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
-          Post videos, links and live classes for your students.
-        </p>
-      </header>
-
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div className="relative w-full sm:w-72 shrink-0">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
-          <input value={query} onChange={e => setQuery(e.target.value)}
-            placeholder="Search labs..."
-            className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-4 text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors placeholder:text-zinc-400" />
+      <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div className="flex flex-col">
+          <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
+            <FlaskConical className="text-primary size-5" />
+            Digital Labs
+          </h1>
+          <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
+            Post videos, links and live classes for your students.
+          </p>
         </div>
-        
-        {canManage && (
-          <button onClick={openCreate}
-            className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full sm:w-auto shrink-0">
-            <Plus className="size-3.5" /> Create Lab
-          </button>
-        )}
-      </div>
+
+        <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+          <div className="relative w-full sm:w-72 shrink-0">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
+            <input value={query} onChange={e => setQuery(e.target.value)}
+              placeholder="Search labs..."
+              className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-4 text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors placeholder:text-zinc-400" />
+          </div>
+          
+          {canManage && (
+            <button onClick={openCreate}
+              className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full sm:w-auto shrink-0">
+              <Plus className="size-3.5" /> Create Lab
+            </button>
+          )}
+        </div>
+      </header>
 
       <div className="flex-1">
         {loading ? (
@@ -236,35 +236,54 @@ export default function TeacherLabs({ canManage = true }) {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
             {filtered.map(lab => (
-              <div key={lab.id} className="group bg-white rounded-lg ring-1 ring-black/5 shadow-sm flex flex-col hover:ring-primary/30 hover:shadow-md transition-all overflow-hidden p-4 sm:p-5">
+              <div 
+                key={lab.id} 
+                onClick={() => setViewingLab(lab)}
+                className="group bg-white rounded-lg ring-1 ring-black/5 shadow-sm flex flex-col hover:ring-primary/30 hover:shadow-md transition-all cursor-pointer overflow-hidden p-4 sm:p-5"
+              >
                 <div className="flex items-start justify-between gap-2 mb-3">
                   <div className="size-10 bg-primary/10 rounded-md flex items-center justify-center text-primary shrink-0 ring-1 ring-primary/20">
                     <FlaskConical className="size-5" />
                   </div>
                   {canManage && (
                     <div className="flex gap-1.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                      <button onClick={() => openEdit(lab)}
+                      <button onClick={(e) => openEdit(lab, e)}
                         className="size-7 bg-white hover:bg-zinc-50 text-zinc-600 hover:text-primary rounded-md shadow-sm ring-1 ring-black/5 flex items-center justify-center transition-colors">
                         <Edit className="size-3.5" />
                       </button>
-                      <button onClick={() => handleDelete(lab)}
+                      <button onClick={(e) => handleDelete(lab, e)}
                         className="size-7 bg-white hover:bg-zinc-50 text-zinc-600 hover:text-red-600 rounded-md shadow-sm ring-1 ring-black/5 flex items-center justify-center transition-colors">
                         <Trash2 className="size-3.5" />
                       </button>
                     </div>
                   )}
                 </div>
-                <h3 className="font-semibold text-zinc-900 text-base leading-tight line-clamp-1">{lab.title}</h3>
-                <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mt-1.5 line-clamp-1">
-                  {lab.class_group}{lab.subject_name ? ` - ${lab.subject_name}` : ''}
+                
+                <h3 className="font-semibold text-zinc-900 text-base leading-tight line-clamp-2 min-h-[2.5rem] group-hover:text-primary transition-colors">
+                  {lab.title}
+                </h3>
+                
+                <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mt-1">
+                  {lab.class_group} {lab.subject_name ? `• ${lab.subject_name}` : ''}
                 </p>
+
                 {lab.description && (
-                  <p className="text-xs text-zinc-500 mt-3 line-clamp-2 leading-relaxed">{lab.description}</p>
+                  <p className="text-xs text-zinc-500 mt-3 line-clamp-3 leading-relaxed">
+                    {lab.description}
+                  </p>
                 )}
-                <div className="mt-auto pt-4 flex items-center">
-                  <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider bg-zinc-100 text-zinc-600 px-2 py-1 rounded">
-                    {lab.resource_count} resource{lab.resource_count !== 1 ? 's' : ''}
-                  </span>
+
+                <div className="mt-auto pt-4 flex flex-col gap-3">
+                   {/* Visual indicators for resources */}
+                   <div className="flex flex-wrap gap-1.5">
+                      {lab.resource_count > 0 ? (
+                        <span className="text-[10px] font-bold bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded uppercase tracking-tighter">
+                          {lab.resource_count} Resource{lab.resource_count !== 1 ? 's' : ''}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-medium italic text-zinc-400">Empty Lab</span>
+                      )}
+                   </div>
                 </div>
               </div>
             ))}
@@ -274,7 +293,7 @@ export default function TeacherLabs({ canManage = true }) {
 
       {/* ---- CREATE / EDIT MODAL ---- */}
       {modalOpen && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
           <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-2xl shadow-xl relative max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
             
             <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 rounded-t-lg shrink-0">
@@ -289,18 +308,18 @@ export default function TeacherLabs({ canManage = true }) {
             <form onSubmit={handleSave} className="flex flex-col flex-1 overflow-hidden">
               <div className="p-5 sm:p-6 overflow-y-auto custom-scrollbar space-y-6">
                 
-                <Field label="Lab Title" required value={form.title}
-                  onChange={v => setForm({ ...form, title: v })}
-                  placeholder="e.g. Optics - Reflection & Refraction" />
+                <div className="space-y-1.5">
+                   <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Lab Title <span className="text-red-500">*</span></label>
+                   <input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })}
+                    placeholder="e.g. Optics - Reflection & Refraction" className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 shadow-sm" />
+                </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">
-                      Class <span className="text-red-500">*</span>
-                    </label>
+                    <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Class <span className="text-red-500">*</span></label>
                     <div className="relative">
                       <select value={form.class_id} onChange={e => setForm({ ...form, class_id: e.target.value, subject_id: '' })}
-                        className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors" required>
+                        className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 appearance-none shadow-sm cursor-pointer" required>
                         <option value="" disabled>Select a class</option>
                         {classes.map(c => (
                           <option key={c.id} value={String(c.id)}>{classLabel(c)}</option>
@@ -314,7 +333,7 @@ export default function TeacherLabs({ canManage = true }) {
                     <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Subject</label>
                     <div className="relative">
                       <select value={form.subject_id} onChange={e => setForm({ ...form, subject_id: e.target.value })}
-                        className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
+                        className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 appearance-none shadow-sm cursor-pointer">
                         <option value="">{form.class_id ? 'Select a subject' : 'Select a class first'}</option>
                         {subjectsForClass.map(s => (
                           <option key={s.id} value={String(s.id)}>{s.name}</option>
@@ -325,63 +344,80 @@ export default function TeacherLabs({ canManage = true }) {
                   </div>
                 </div>
 
-                <Field label="Description" type="textarea" value={form.description}
-                  onChange={v => setForm({ ...form, description: v })}
-                  placeholder="What this lab covers..." />
+                <div className="space-y-1.5">
+                   <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Description</label>
+                   <textarea rows={3} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })}
+                    placeholder="What this lab covers..." className="w-full bg-white border border-zinc-200 rounded-md p-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 shadow-sm resize-none" />
+                </div>
 
                 {/* Resources */}
                 <div className="pt-4 border-t border-zinc-100">
                   <div className="flex items-center justify-between mb-4">
-                    <label className="text-xs font-semibold text-zinc-800 tracking-tight">
-                      Resources
-                    </label>
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">{resources.length} added</span>
+                    <label className="text-xs font-bold text-zinc-800 tracking-tight">Resources</label>
+                    <span className="text-[10px] font-bold bg-primary/10 text-primary px-2 py-0.5 rounded-full uppercase">{resources.length} Added</span>
                   </div>
 
-                  <div className="space-y-3 mb-4">
+                  <div className="space-y-4 mb-6">
                     {resources.map((r, i) => {
                       const meta = resTypeMeta(r.resource_type);
                       const Icon = meta.icon;
                       return (
-                        <div key={i} className="bg-zinc-50 border border-zinc-200 rounded-md p-4 relative group">
-                          
-                          <button type="button" onClick={() => removeResource(i)}
-                            className="absolute top-2 right-2 p-1.5 text-zinc-400 hover:text-red-500 hover:bg-white rounded-md transition-colors shadow-sm ring-1 ring-black/5 sm:opacity-0 sm:group-hover:opacity-100">
+                        <div key={i} className="bg-zinc-50 border border-zinc-200 rounded-lg p-4 relative group">
+                          <button type="button" onClick={() => setResources(p => p.filter((_, idx) => idx !== i))}
+                            className="absolute top-3 right-3 p-1.5 text-zinc-400 hover:text-red-500 hover:bg-white rounded-md transition-colors shadow-sm ring-1 ring-black/5">
                             <Trash2 className="size-3.5" />
                           </button>
                           
-                          <div className="flex items-center gap-2.5 mb-3.5 pr-8">
-                            <div className="size-6 bg-white rounded-md flex items-center justify-center text-primary ring-1 ring-black/5 shadow-sm">
-                              <Icon className="size-3.5" />
-                            </div>
-                            <span className="text-[11px] font-semibold text-zinc-600 uppercase tracking-wider">
-                              {meta.label}
-                            </span>
+                          <div className="flex items-center gap-2 mb-4">
+                            <Icon className="size-4 text-primary" />
+                            <span className="text-[11px] font-bold uppercase text-zinc-600">{meta.label}</span>
                           </div>
                           
                           <div className="space-y-3">
                             <input value={r.title} required
-                              onChange={e => updateResource(i, 'title', e.target.value)}
-                              placeholder="Resource title"
-                              className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
+                              onChange={e => setResources(p => p.map((rs, idx) => idx === i ? { ...rs, title: e.target.value } : rs))}
+                              placeholder="Resource Title (e.g. Intro Video)"
+                              className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20" />
                             
-                            <input value={r.url} required
-                              onChange={e => updateResource(i, 'url', e.target.value)}
-                              placeholder={r.resource_type === 'video'
-                                ? 'Video URL (YouTube etc.)'
-                                : r.resource_type === 'live'
-                                  ? 'Live class link (Zoom / Meet)'
-                                  : 'Web link / document URL'}
-                              className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
+                            {/* Toggle Upload or Link for Video/PDF */}
+                            {(r.resource_type === 'video' || r.resource_type === 'pdf') && (
+                               <div className="flex bg-zinc-200/50 p-1 rounded-md w-full sm:w-fit">
+                                  <button type="button" 
+                                    onClick={() => setResources(p => p.map((rs, idx) => idx === i ? { ...rs, source: 'file', url: '' } : rs))}
+                                    className={`flex-1 sm:flex-none px-4 py-1.5 rounded text-[10px] font-bold uppercase transition-all ${r.source === 'file' ? 'bg-white shadow-sm text-zinc-900' : 'text-zinc-500 hover:text-zinc-700'}`}>
+                                    <UploadCloud className="size-3 mr-1 inline" /> Upload
+                                  </button>
+                                  <button type="button" 
+                                    onClick={() => setResources(p => p.map((rs, idx) => idx === i ? { ...rs, source: 'url', file: null } : rs))}
+                                    className={`flex-1 sm:flex-none px-4 py-1.5 rounded text-[10px] font-bold uppercase transition-all ${r.source === 'url' ? 'bg-white shadow-sm text-zinc-900' : 'text-zinc-500 hover:text-zinc-700'}`}>
+                                    <ExternalLink className="size-3 mr-1 inline" /> URL
+                                  </button>
+                               </div>
+                            )}
+
+                            {r.source === 'file' ? (
+                               <div className="relative h-9 flex items-center justify-center border border-dashed border-primary/30 rounded-md bg-primary/5 hover:bg-primary/10 transition-colors cursor-pointer px-3">
+                                  <input type="file" accept={r.resource_type === 'pdf' ? '.pdf' : 'video/*'} 
+                                    className="absolute inset-0 opacity-0 cursor-pointer" 
+                                    onChange={e => setResources(p => p.map((rs, idx) => idx === i ? { ...rs, file: e.target.files[0] } : rs))} />
+                                  <UploadCloud className="size-4 text-primary mr-2" />
+                                  <span className="text-xs text-primary truncate font-medium">
+                                    {r.file ? r.file.name : (r.has_file ? 'Existing File Attached' : 'Choose File')}
+                                  </span>
+                               </div>
+                            ) : (
+                              <input value={r.url || ''} required
+                                onChange={e => setResources(p => p.map((rs, idx) => idx === i ? { ...rs, url: e.target.value } : rs))}
+                                placeholder={r.resource_type === 'live' ? 'Meeting Link (Zoom/Meet)' : 'External URL'}
+                                className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20" />
+                            )}
                             
                             {r.resource_type === 'live' && (
                               <div className="pt-1">
-                                <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1.5 block">
-                                  Scheduled time (optional)
-                                </label>
+                                <label className="text-[10px] font-bold text-zinc-400 uppercase mb-1.5 block">Scheduled Time (Optional)</label>
                                 <input type="datetime-local" value={r.scheduled_at}
-                                  onChange={e => updateResource(i, 'scheduled_at', e.target.value)}
-                                  className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
+                                  onChange={e => setResources(p => p.map((rs, idx) => idx === i ? { ...rs, scheduled_at: e.target.value } : rs))}
+                                  className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20" />
                               </div>
                             )}
                           </div>
@@ -390,20 +426,16 @@ export default function TeacherLabs({ canManage = true }) {
                     })}
                   </div>
 
-                  {/* Add-resource buttons */}
                   <div className="flex flex-wrap gap-2">
-                    {RES_TYPES.map(rt => {
-                      const Icon = rt.icon;
-                      return (
-                        <button key={rt.value} type="button" onClick={() => addResource(rt.value)}
-                          className="h-8 inline-flex items-center justify-center gap-1.5 bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-700 px-3 rounded-md text-xs font-semibold transition-colors shadow-sm">
-                          <Plus className="size-3" /> <Icon className="size-3" /> {rt.label}
-                        </button>
-                      );
-                    })}
+                    {RES_TYPES.map(rt => (
+                      <button key={rt.value} type="button" 
+                        onClick={() => setResources(p => [...p, { resource_type: rt.value, title: '', url: '', source: 'url', file: null, scheduled_at: '' }])}
+                        className="h-8 inline-flex items-center gap-1.5 bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-700 px-3 rounded-md text-xs font-bold transition-colors shadow-sm">
+                        <Plus className="size-3" /> <rt.icon className="size-3" /> {rt.label}
+                      </button>
+                    ))}
                   </div>
                 </div>
-
               </div>
 
               <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
@@ -425,24 +457,118 @@ export default function TeacherLabs({ canManage = true }) {
   );
 }
 
-// -----------------------------------------------------------------
-// Subcomponents
-// -----------------------------------------------------------------
+// =====================================================================
+//  ENLARGED DETAIL VIEW COMPONENT
+// =====================================================================
 
-function Field({ label, value, onChange, type = 'text', required, placeholder }) {
-  const base = "h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm";
+function LabDetailView({ lab, onBack, canManage, onEdit, onDelete }) {
+  const [resources, setResources] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/admin/labs/${lab.id}`);
+        const data = await res.json();
+        setResources(data.resources || []);
+      } catch { setResources([]); }
+      setLoading(false);
+    })();
+  }, [lab.id]);
+
+  const ordered = useMemo(() => {
+    const rank = { live: 0, video: 1, pdf: 2, link: 3 };
+    return [...resources].sort((a, b) => (rank[a.resource_type] ?? 9) - (rank[b.resource_type] ?? 9));
+  }, [resources]);
+
   return (
-    <div className="space-y-1.5">
-      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">
-        {label} {required && <span className="text-red-500">*</span>}
-      </label>
-      {type === 'textarea' ? (
-        <textarea value={value || ''} onChange={e => onChange(e.target.value)} rows={3}
-          placeholder={placeholder} className={`${base} h-auto py-2.5 resize-none`} required={required} />
-      ) : (
-        <input type={type} value={value || ''} onChange={e => onChange(e.target.value)}
-          placeholder={placeholder} className={base} required={required} />
-      )}
+    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+      
+      <div className="flex items-center justify-between">
+        <button onClick={onBack}
+          className="inline-flex items-center gap-1.5 text-xs font-bold text-zinc-500 hover:text-zinc-900 transition-colors">
+          <ArrowLeft className="size-4" /> Back to Digital Labs
+        </button>
+        {canManage && (
+           <div className="flex gap-2">
+              <button onClick={() => onEdit(lab)} className="h-8 px-3 bg-white border border-zinc-200 text-zinc-600 rounded-md text-xs font-bold flex items-center gap-1.5 hover:bg-zinc-50"><Edit className="size-3.5" /> Edit Lab</button>
+              <button onClick={() => onDelete(lab)} className="h-8 px-3 bg-white border border-red-100 text-red-600 rounded-md text-xs font-bold flex items-center gap-1.5 hover:bg-red-50"><Trash2 className="size-3.5" /> Delete Lab</button>
+           </div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-2xl border border-zinc-200 p-6 sm:p-8 shadow-sm">
+        <div className="flex items-start gap-4 mb-6">
+          <div className="size-14 bg-primary text-white rounded-xl flex items-center justify-center shadow-lg ring-4 ring-primary/5 shrink-0">
+            <FlaskConical className="size-7" />
+          </div>
+          <div className="min-w-0">
+            <h1 className="text-2xl font-black text-zinc-900 tracking-tight leading-tight">{lab.title}</h1>
+            <div className="flex flex-wrap items-center gap-3 mt-2 text-xs font-bold text-zinc-400 uppercase tracking-widest">
+              <span className="flex items-center gap-1.5 bg-zinc-100 px-2.5 py-1 rounded-md text-zinc-600 border border-zinc-200/50">
+                <BookOpen className="size-3.5" /> {lab.subject_name || 'General'}
+              </span>
+              <span className="flex items-center gap-1.5 bg-zinc-100 px-2.5 py-1 rounded-md text-zinc-600 border border-zinc-200/50">
+                <User className="size-3.5" /> {lab.created_by_name || 'Teacher'}
+              </span>
+              <span className="bg-primary/10 text-primary px-2.5 py-1 rounded-md border border-primary/10 font-black">
+                {lab.class_group}
+              </span>
+            </div>
+          </div>
+        </div>
+        
+        {lab.description && (
+          <div className="mt-8 bg-zinc-50/50 p-6 rounded-xl border border-zinc-200/60">
+            <p className="text-sm sm:text-base text-zinc-700 leading-relaxed whitespace-pre-wrap">{lab.description}</p>
+          </div>
+        )}
+      </div>
+
+      <div className="space-y-4">
+        <h3 className="text-sm font-black text-zinc-900 uppercase tracking-widest pl-1">Lab Resources</h3>
+        {loading ? (
+          <div className="h-32 flex items-center justify-center"><Loader2 className="animate-spin text-primary" /></div>
+        ) : ordered.length === 0 ? (
+          <div className="bg-white p-12 rounded-xl border-dashed border-2 border-zinc-100 text-center"><p className="text-zinc-400 font-medium">No resources added to this lab yet.</p></div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {ordered.map(r => {
+              const meta = resTypeMeta(r.resource_type);
+              const clickUrl = r.has_file ? `${API_BASE_URL}/admin/labs/resource/${r.id}` : r.url;
+              return (
+                <div key={r.id} className="bg-white border border-zinc-200 rounded-xl p-5 flex items-center justify-between hover:shadow-md transition-all group">
+                  <div className="flex items-center gap-4 flex-1 min-w-0">
+                    <div className={`size-12 rounded-xl flex items-center justify-center shrink-0 ${meta.bg} ${meta.color} ring-1 ring-inset ring-black/5`}>
+                      <meta.icon className="size-6" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <span className={`text-[10px] font-black uppercase tracking-widest ${meta.color}`}>{meta.label}</span>
+                        {r.resource_type === 'live' && r.scheduled_at && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-zinc-400 bg-zinc-50 px-2 py-0.5 rounded border border-zinc-200">
+                             <Clock className="size-3" /> {fmtDateTime(r.scheduled_at)}
+                          </span>
+                        )}
+                      </div>
+                      <p className="font-bold text-zinc-900 truncate">{r.title}</p>
+                    </div>
+                  </div>
+                  <a href={clickUrl} target="_blank" rel="noreferrer" 
+                    className={`h-10 px-5 rounded-lg flex items-center justify-center gap-2 text-xs font-black text-white transition-all shadow-md ml-4 shrink-0 ${
+                      r.resource_type === 'live' ? 'bg-emerald-600 hover:bg-emerald-700' : 
+                      r.resource_type === 'video' ? 'bg-rose-600 hover:bg-rose-700' : 
+                      'bg-primary hover:bg-primary/90'
+                    }`}>
+                    {r.resource_type === 'video' ? 'Watch' : r.resource_type === 'live' ? 'Join' : 'Open'}
+                    <ExternalLink className="size-3.5" />
+                  </a>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

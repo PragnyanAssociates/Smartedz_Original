@@ -4304,42 +4304,27 @@ app.delete('/api/admin/online-classes/:id', async (req, res) => {
 
 
 // =====================================================================
-//  BACKEND — Section 21: DIGITAL LABS
-//
-//  Append this whole block to backend/index.js, just BEFORE the final
-//  `const PORT = ...` line.
-//
-//  ALSO add 'Digital Labs' to DEFAULT_MODULES at the top of index.js:
-//    const DEFAULT_MODULES = [
-//        'Overview','Manage Logins','Timetable','Academic Calendar',
-//        'Attendance','Exams','Reports','Performance','Homework',
-//        'Meals','Digital Labs'
-//    ];
-//
-//  A lab bundles many resources (video / link / live). One lab targets
-//  one class. Reuses nowSQL() from Section 16.
+// === 21. DIGITAL LABS ================================================
 // =====================================================================
 
+const labUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 100 * 1024 * 1024 } // 100MB limit
+});
 
-// --- 21.1 List labs for a teacher/admin -----------------------------
-//   GET /api/admin/labs/teacher/:userId
-//   Super Admin / Developer → ALL labs in the school
-//   Teacher (or other role) → only labs they created
+// --- 21.1 List labs for a teacher/admin ---
 app.get('/api/admin/labs/teacher/:userId', async (req, res) => {
     const { userId } = req.params;
     try {
-        const [users] = await db.execute(
-            'SELECT id, role, institutionId FROM users WHERE id = ?', [userId]);
+        const [users] = await db.execute('SELECT id, role, institutionId FROM users WHERE id = ?', [userId]);
         if (users.length === 0) return res.status(404).json({ error: 'User not found' });
         const me = users[0];
         const isAdmin = me.role === 'Super Admin' || me.role === 'Developer';
 
         const baseSelect = `
             SELECT l.id, l.title, l.description, l.class_id, l.subject_id,
-                   l.created_by, l.created_at,
-                   c.className, c.section,
-                   sub.name AS subject_name,
-                   u.name AS created_by_name,
+                   l.created_by, l.created_at, c.className, c.section,
+                   sub.name AS subject_name, u.name AS created_by_name,
                    (SELECT COUNT(*) FROM lab_resources r WHERE r.lab_id = l.id) AS resource_count
               FROM digital_labs l
               LEFT JOIN classes  c   ON c.id = l.class_id
@@ -4348,188 +4333,89 @@ app.get('/api/admin/labs/teacher/:userId', async (req, res) => {
 
         let rows;
         if (isAdmin) {
-            [rows] = await db.execute(
-                `${baseSelect} WHERE l.institutionId = ? ORDER BY l.created_at DESC`,
-                [me.institutionId]);
+            [rows] = await db.execute(`${baseSelect} WHERE l.institutionId = ? ORDER BY l.created_at DESC`, [me.institutionId]);
         } else {
-            [rows] = await db.execute(
-                `${baseSelect} WHERE l.created_by = ? ORDER BY l.created_at DESC`,
-                [userId]);
+            [rows] = await db.execute(`${baseSelect} WHERE l.created_by = ? ORDER BY l.created_at DESC`, [userId]);
         }
-        const decorated = rows.map(r => ({
-            ...r,
-            class_group: `${r.className || ''}${r.section ? ' - ' + r.section : ''}`
-        }));
-        res.json(decorated);
+        res.json(rows.map(r => ({ ...r, class_group: `${r.className || ''}${r.section ? ' - ' + r.section : ''}` })));
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-
-// --- 21.2 List labs for a student -----------------------------------
-//   GET /api/admin/labs/student/:studentId
-//   Returns labs targeted at the student's class, each with resources.
+// --- 21.2 List labs for a student ---
 app.get('/api/admin/labs/student/:studentId', async (req, res) => {
-    const { studentId } = req.params;
     try {
-        const [u] = await db.execute(
-            'SELECT institutionId, class_id FROM users WHERE id = ?', [studentId]);
-        if (u.length === 0) return res.status(404).json({ error: 'Student not found' });
-        if (!u[0].class_id) return res.json([]);
+        const [u] = await db.execute('SELECT institutionId, class_id FROM users WHERE id = ?', [req.params.studentId]);
+        if (u.length === 0 || !u[0].class_id) return res.json([]);
 
         const [labs] = await db.execute(
-            `SELECT l.id, l.title, l.description, l.class_id, l.subject_id,
-                    l.created_at, c.className, c.section,
-                    sub.name AS subject_name, usr.name AS created_by_name
-               FROM digital_labs l
-               LEFT JOIN classes  c   ON c.id = l.class_id
-               LEFT JOIN subjects sub ON sub.id = l.subject_id
-               LEFT JOIN users    usr ON usr.id = l.created_by
-              WHERE l.class_id = ?
-              ORDER BY l.created_at DESC`,
-            [u[0].class_id]
-        );
+            `SELECT l.*, sub.name AS subject_name, usr.name AS created_by_name
+             FROM digital_labs l 
+             LEFT JOIN subjects sub ON sub.id = l.subject_id
+             LEFT JOIN users usr ON usr.id = l.created_by
+             WHERE l.class_id = ? ORDER BY l.created_at DESC`, [u[0].class_id]);
+
         if (labs.length === 0) return res.json([]);
 
-        // Fetch all resources for these labs in one query
         const labIds = labs.map(l => l.id);
-        const placeholders = labIds.map(() => '?').join(',');
         const [resources] = await db.execute(
-            `SELECT * FROM lab_resources
-              WHERE lab_id IN (${placeholders})
-              ORDER BY resource_order, id`,
-            labIds
-        );
-        const resByLab = {};
-        resources.forEach(r => {
-            if (!resByLab[r.lab_id]) resByLab[r.lab_id] = [];
-            resByLab[r.lab_id].push(r);
-        });
+            `SELECT id, lab_id, resource_type, title, url, IF(file_data IS NOT NULL, 1, 0) as has_file 
+             FROM lab_resources WHERE lab_id IN (${labIds.map(() => '?').join(',')})`, labIds);
 
-        const decorated = labs.map(l => ({
-            ...l,
-            class_group: `${l.className || ''}${l.section ? ' - ' + l.section : ''}`,
-            resources: resByLab[l.id] || []
-        }));
-        res.json(decorated);
+        res.json(labs.map(l => ({ ...l, resources: resources.filter(r => r.lab_id === l.id) })));
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-
-// --- 21.3 Single lab with resources ---------------------------------
-app.get('/api/admin/labs/:id', async (req, res) => {
+// --- 21.3 Stream Resource File (Video/PDF) ---
+app.get('/api/admin/labs/resource/:id', async (req, res) => {
     try {
-        const [rows] = await db.execute(
-            `SELECT l.*, c.className, c.section, sub.name AS subject_name,
-                    u.name AS created_by_name
-               FROM digital_labs l
-               LEFT JOIN classes  c   ON c.id = l.class_id
-               LEFT JOIN subjects sub ON sub.id = l.subject_id
-               LEFT JOIN users    u   ON u.id = l.created_by
-              WHERE l.id = ?`,
-            [req.params.id]
-        );
-        if (rows.length === 0) return res.status(404).json({ error: 'Lab not found' });
+        const [rows] = await db.execute('SELECT file_data, mime_type FROM lab_resources WHERE id = ?', [req.params.id]);
+        if (!rows.length || !rows[0].file_data) return res.status(404).send('Not found');
 
-        const [resources] = await db.execute(
-            'SELECT * FROM lab_resources WHERE lab_id = ? ORDER BY resource_order, id',
-            [req.params.id]
-        );
-        const lab = rows[0];
-        res.json({
-            ...lab,
-            class_group: `${lab.className || ''}${lab.section ? ' - ' + lab.section : ''}`,
-            resources
-        });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+        const data = rows[0].file_data;
+        const mime = rows[0].mime_type || 'application/octet-stream';
+        
+        res.setHeader('Content-Type', mime);
+        res.setHeader('Content-Length', data.length);
+        res.send(data);
+    } catch (err) { res.status(500).send(err.message); }
 });
 
-
-// --- 21.4 Create lab (with resources) -------------------------------
-//   Body: { institutionId, title, description, class_id, subject_id,
-//           created_by, resources: [{ resource_type, title, url, scheduled_at }] }
-app.post('/api/admin/labs', async (req, res) => {
-    const {
-        institutionId, title, description, class_id, subject_id,
-        created_by, resources = []
-    } = req.body;
-    if (!institutionId || !title || !class_id) {
-        return res.status(400).json({ error: 'institutionId, title and class_id are required.' });
-    }
+// --- 21.4 Create/Update Lab (Multipart) ---
+app.post('/api/admin/labs', labUpload.any(), async (req, res) => {
+    const { id, institutionId, title, description, class_id, subject_id, created_by, resources: resourcesRaw } = req.body;
+    const resources = JSON.parse(resourcesRaw || '[]');
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
-        const [result] = await conn.execute(
-            `INSERT INTO digital_labs
-               (institutionId, title, description, class_id, subject_id, created_by)
-             VALUES (?, ?, ?, ?, ?, ?)`,
-            [institutionId, title, description || null, class_id,
-             subject_id || null, created_by || null]
-        );
-        const labId = result.insertId;
+        let labId = id;
 
-        for (let i = 0; i < resources.length; i++) {
-            const r = resources[i];
-            if (!r.title || !r.url) continue;
-            await conn.execute(
-                `INSERT INTO lab_resources
-                   (lab_id, resource_type, title, url, scheduled_at, resource_order)
-                 VALUES (?, ?, ?, ?, ?, ?)`,
-                [labId, r.resource_type || 'link', r.title, r.url,
-                 r.scheduled_at || null, i]
-            );
+        if (id) {
+            await conn.execute(`UPDATE digital_labs SET title=?, description=?, class_id=?, subject_id=? WHERE id=?`, 
+                [title, description, class_id, subject_id || null, id]);
+            await conn.execute('DELETE FROM lab_resources WHERE lab_id=?', [id]);
+        } else {
+            const [res] = await conn.execute(`INSERT INTO digital_labs (institutionId, title, description, class_id, subject_id, created_by) VALUES (?,?,?,?,?,?)`,
+                [institutionId, title, description, class_id, subject_id || null, created_by]);
+            labId = res.insertId;
         }
-        await conn.commit();
-        res.json({ success: true, id: labId });
-    } catch (err) {
-        await conn.rollback();
-        res.status(500).json({ error: err.message });
-    } finally { conn.release(); }
-});
 
-
-// --- 21.5 Update lab (replaces resources wholesale) -----------------
-app.put('/api/admin/labs/:id', async (req, res) => {
-    const {
-        title, description, class_id, subject_id, resources = []
-    } = req.body;
-    const conn = await db.getConnection();
-    try {
-        await conn.beginTransaction();
-        await conn.execute(
-            `UPDATE digital_labs
-                SET title = ?, description = ?, class_id = ?, subject_id = ?
-              WHERE id = ?`,
-            [title, description || null, class_id, subject_id || null, req.params.id]
-        );
-        // Replace resources
-        await conn.execute('DELETE FROM lab_resources WHERE lab_id = ?', [req.params.id]);
         for (let i = 0; i < resources.length; i++) {
             const r = resources[i];
-            if (!r.title || !r.url) continue;
+            const file = req.files.find(f => f.fieldname === `file_${i}`);
             await conn.execute(
-                `INSERT INTO lab_resources
-                   (lab_id, resource_type, title, url, scheduled_at, resource_order)
-                 VALUES (?, ?, ?, ?, ?, ?)`,
-                [req.params.id, r.resource_type || 'link', r.title, r.url,
-                 r.scheduled_at || null, i]
+                `INSERT INTO lab_resources (lab_id, resource_type, title, url, file_data, mime_type, scheduled_at, resource_order) VALUES (?,?,?,?,?,?,?,?)`,
+                [labId, r.resource_type, r.title, r.url || null, file ? file.buffer : null, file ? file.mimetype : null, r.scheduled_at || null, i]
             );
         }
         await conn.commit();
         res.json({ success: true });
-    } catch (err) {
-        await conn.rollback();
-        res.status(500).json({ error: err.message });
-    } finally { conn.release(); }
+    } catch (err) { await conn.rollback(); res.status(500).json({ error: err.message }); }
+    finally { conn.release(); }
 });
 
-
-// --- 21.6 Delete lab ------------------------------------------------
 app.delete('/api/admin/labs/:id', async (req, res) => {
-    try {
-        // lab_resources cascade-delete via FK
-        await db.execute('DELETE FROM digital_labs WHERE id = ?', [req.params.id]);
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    try { await db.execute('DELETE FROM digital_labs WHERE id=?', [req.params.id]); res.json({ success: true }); }
+    catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 
