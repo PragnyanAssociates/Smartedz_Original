@@ -127,8 +127,8 @@ export const MODULES = [
   {
     id: 'Meals',
     module_name: 'Meals', // Must match backend exactly
-    label: 'Meals',
-    title: 'Meals',
+    label: 'Food Menu',
+    title: 'Food Menu',
     imageSource: 'https://cdn-icons-png.flaticon.com/128/2515/2515189.png',
     navigateTo: '/Meals'
   },

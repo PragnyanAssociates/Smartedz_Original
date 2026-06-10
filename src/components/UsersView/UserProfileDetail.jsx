@@ -209,7 +209,10 @@ const humanize = (k) =>
 function BasicInfo({ profile, classes = [] }) {
   const role = profile.role || '';
   const isStudent = /student/i.test(role);
-  const isStaff = role === 'Super Admin' || /teacher/i.test(role);
+  // Employment details show for EVERY non-student role — Super Admin, Teacher,
+  // and any custom role (Principal, Librarian, Accountant…). Mirrors the
+  // User Management form, where every non-student role carries employment data.
+  const isStaff = role && !isStudent;
 
   // Resolve the real class label from class_id (the profile only carries
   // the numeric id, which previously rendered as e.g. "1" instead of "10").

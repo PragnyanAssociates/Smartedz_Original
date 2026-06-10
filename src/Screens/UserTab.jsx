@@ -16,7 +16,7 @@ export default function UserTab({ data, fetchData, user }) {
     class_id: '', section: '', status: 'active',
     dob: '', gender: '', address: '', profile_pic: '',
     subject_ids: [],
-    // staff (Super Admin / Teacher)
+    // staff (Super Admin / Teacher / custom roles)
     aadhar_no: '', joining_date: '', prev_salary: '', present_salary: '', experience: '',
     // student
     pen_no: '', parent_name: '', admission_date: '',
@@ -199,8 +199,11 @@ export default function UserTab({ data, fetchData, user }) {
 
   const isTeacherRole = form.role && form.role.toLowerCase().includes('teacher');
   const isStudentRole = form.role && form.role.toLowerCase().includes('student');
-  // Staff = Super Admin OR any teacher-type role -> show employment block
-  const isStaffRole   = form.role && (form.role === 'Super Admin' || form.role.toLowerCase().includes('teacher'));
+  // Employment block shows for EVERY non-student role — Super Admin, Teacher,
+  // and any custom role we create. Custom roles get the SAME employment fields
+  // as a teacher; the only teacher-only extra is the subject assignment
+  // (the Teaching Assignments block below, gated by isTeacherRole).
+  const isStaffRole   = form.role && !isStudentRole;
 
   // ------- Client-side validation (mirrors the backend rules) ---------
   const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -215,7 +218,7 @@ export default function UserTab({ data, fetchData, user }) {
     if (form.aadhar_no && !/^[0-9]{12}$/.test(form.aadhar_no))
       e.aadhar_no = 'Must be exactly 12 digits.';
 
-    // Staff joining date: not future
+    // Staff joining date: not future (applies to every non-student role)
     if (isStaffRole && form.joining_date && form.joining_date > todayStr())
       e.joining_date = 'Cannot be a future date.';
 
@@ -552,7 +555,8 @@ export default function UserTab({ data, fetchData, user }) {
                 </div>
               </Section>
 
-              {/* Employment details — Super Admin & Teacher only */}
+              {/* Employment details — every non-student role
+                  (Super Admin, Teacher, and custom roles) */}
               {isStaffRole && (
                 <Section title="Employment Details">
                   <Grid>
