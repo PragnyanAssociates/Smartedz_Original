@@ -4301,16 +4301,12 @@ app.delete('/api/admin/online-classes/:id', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-
-
 // =====================================================================
 // === 21. DIGITAL LABS ================================================
 // =====================================================================
 
-const labUpload = multer({
-    storage: multer.memoryStorage(),
-    limits: { fileSize: 100 * 1024 * 1024 } // 100MB limit
-});
+// Note: Multer and memoryStorage logic have been completely removed.
+// Files are now accepted as Base64 text strings directly in the JSON payload.
 
 // --- 21.1 List labs for a teacher/admin ---
 app.get('/api/admin/labs/teacher/:userId', async (req, res) => {
@@ -4327,9 +4323,9 @@ app.get('/api/admin/labs/teacher/:userId', async (req, res) => {
                    sub.name AS subject_name, u.name AS created_by_name,
                    (SELECT COUNT(*) FROM lab_resources r WHERE r.lab_id = l.id) AS resource_count
               FROM digital_labs l
-              LEFT JOIN classes  c   ON c.id = l.class_id
+              LEFT JOIN classes  c  ON c.id = l.class_id
               LEFT JOIN subjects sub ON sub.id = l.subject_id
-              LEFT JOIN users    u   ON u.id = l.created_by`;
+              LEFT JOIN users    u  ON u.id = l.created_by`;
 
         let rows;
         if (isAdmin) {
@@ -4371,19 +4367,28 @@ app.get('/api/admin/labs/resource/:id', async (req, res) => {
         const [rows] = await db.execute('SELECT file_data, mime_type FROM lab_resources WHERE id = ?', [req.params.id]);
         if (!rows.length || !rows[0].file_data) return res.status(404).send('Not found');
 
-        const data = rows[0].file_data;
+        let data = rows[0].file_data;
         const mime = rows[0].mime_type || 'application/octet-stream';
         
+        // Convert the Base64 string back into a binary stream for the frontend player
+        if (typeof data === 'string') {
+            if (data.includes('base64,')) {
+                data = data.split('base64,')[1];
+            }
+            data = Buffer.from(data, 'base64');
+        }
+
         res.setHeader('Content-Type', mime);
         res.setHeader('Content-Length', data.length);
         res.send(data);
     } catch (err) { res.status(500).send(err.message); }
 });
 
-// --- 21.4 Create/Update Lab (Multipart) ---
-app.post('/api/admin/labs', labUpload.any(), async (req, res) => {
-    const { id, institutionId, title, description, class_id, subject_id, created_by, resources: resourcesRaw } = req.body;
-    const resources = JSON.parse(resourcesRaw || '[]');
+// --- 21.4 Create/Update Lab (JSON + Base64) ---
+app.post('/api/admin/labs', async (req, res) => {
+    const { id, institutionId, title, description, class_id, subject_id, created_by, resources } = req.body;
+    
+    const parsedResources = typeof resources === 'string' ? JSON.parse(resources) : (resources || []);
     const conn = await db.getConnection();
     
     try {
@@ -4397,7 +4402,7 @@ app.post('/api/admin/labs', labUpload.any(), async (req, res) => {
                 [title, description, class_id, subject_id || null, id]
             );
             
-            // CRITICAL FIX: Fetch existing files into memory BEFORE deleting
+            // Fetch existing files into memory BEFORE deleting
             const [oldRes] = await conn.execute(
                 'SELECT id, file_data, mime_type FROM lab_resources WHERE lab_id=?', 
                 [id]
@@ -4413,30 +4418,29 @@ app.post('/api/admin/labs', labUpload.any(), async (req, res) => {
             labId = resData.insertId;
         }
 
-        for (let i = 0; i < resources.length; i++) {
-            const r = resources[i];
-            const file = req.files.find(f => f.fieldname === `file_${i}`);
+        for (let i = 0; i < parsedResources.length; i++) {
+            const r = parsedResources[i];
             
             // Map the frontend ID back to the existing database record
             const oldResource = existingResources.find(old => String(old.id) === String(r.id));
 
-            let finalBuffer = null;
+            let finalFileData = null;
             let finalMime = null;
 
-            // 1. If a brand new file was uploaded, use it
-            if (file) {
-                finalBuffer = file.buffer;
-                finalMime = file.mimetype;
+            // 1. If a brand new Base64 string was uploaded, use it
+            if (r.file_data) {
+                finalFileData = r.file_data; 
+                finalMime = r.mime_type || null;
             } 
             // 2. Otherwise, if it's supposed to be a file and we have old data, restore the old data
             else if (oldResource && r.source === 'file') {
-                finalBuffer = oldResource.file_data;
+                finalFileData = oldResource.file_data;
                 finalMime = oldResource.mime_type;
             }
 
             await conn.execute(
                 `INSERT INTO lab_resources (lab_id, resource_type, title, url, file_data, mime_type, scheduled_at, resource_order) VALUES (?,?,?,?,?,?,?,?)`,
-                [labId, r.resource_type, r.title, r.url || null, finalBuffer, finalMime, r.scheduled_at || null, i]
+                [labId, r.resource_type, r.title, r.url || null, finalFileData, finalMime, r.scheduled_at || null, i]
             );
         }
         
@@ -4449,12 +4453,12 @@ app.post('/api/admin/labs', labUpload.any(), async (req, res) => {
         conn.release(); 
     }
 });
+
 // --- 21.5 Get Single Lab Details ---
 app.get('/api/admin/labs/:id', async (req, res) => {
     try {
         const labId = req.params.id;
 
-        // 1. Fetch the lab details
         const [labs] = await db.execute(
             `SELECT l.*, sub.name AS subject_name, usr.name AS created_by_name,
                     c.className, c.section
@@ -4472,7 +4476,6 @@ app.get('/api/admin/labs/:id', async (req, res) => {
 
         const lab = labs[0];
 
-        // 2. Fetch the resources for this specific lab
         const [resources] = await db.execute(
             `SELECT id, lab_id, resource_type, title, url, scheduled_at, resource_order,
                     IF(file_data IS NOT NULL, 1, 0) as has_file
@@ -4482,7 +4485,6 @@ app.get('/api/admin/labs/:id', async (req, res) => {
             [labId]
         );
 
-        // 3. Attach resources to the lab object and return
         lab.resources = resources;
         res.json(lab);
 
@@ -4491,11 +4493,14 @@ app.get('/api/admin/labs/:id', async (req, res) => {
     }
 });
 
+// --- 21.6 Delete Lab ---
 app.delete('/api/admin/labs/:id', async (req, res) => {
-    try { await db.execute('DELETE FROM digital_labs WHERE id=?', [req.params.id]); res.json({ success: true }); }
+    try { 
+        await db.execute('DELETE FROM digital_labs WHERE id=?', [req.params.id]); 
+        res.json({ success: true }); 
+    }
     catch (err) { res.status(500).json({ error: err.message }); }
 });
-
 
 // --- Pre-Admissions Storage ---
 // =====================================================================
