@@ -4505,27 +4505,45 @@ app.delete('/api/admin/labs/:id', async (req, res) => {
     }
     catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+
+
 // --- Pre-Admissions Storage ---
 // =====================================================================
 // === 23. ADMISSIONS / DIRECTORY ======================================
+//
+//  REPLACE your whole Section 23 block with this.
+//
+//  Changes in this version:
+//   • The year filter now follows the ACADEMIC CALENDAR. The client sends
+//     the selected academic year's date range as `from` / `to` (YYYY-MM-DD)
+//     and records are scoped to applications submitted within that range
+//     (DATE(submission_date) BETWEEN from AND to). No schema change needed.
+//   • Removed the DUPLICATE GET route that previously sat after the POST.
+//     Express runs the first matching route only, so that second copy was
+//     dead code. This single route now also accepts the year range.
+//
+//  No migration required — pre_admissions is unchanged.
 // =====================================================================
 
-// --- 23.1 GET all records (Secured) ---
+// --- 23.1 GET all records (Secured, academic-year scoped) -----------
+//   GET /api/admin/preadmissions/:instId?userId=..&search=..&from=..&to=..
+//   `from`/`to` are the selected academic year's start/end dates.
 app.get('/api/admin/preadmissions/:instId', async (req, res) => {
     const { instId } = req.params;
-    const { search, year, userId } = req.query; 
+    const { search, from, to, userId } = req.query;
 
     if (!userId) return res.status(400).json({ error: 'userId required' });
 
     try {
         const [users] = await db.execute('SELECT role FROM users WHERE id = ?', [userId]);
         if (users.length === 0) return res.status(404).json({ error: 'User not found' });
-        
+
         const roleName = users[0].role;
         const isSystemAdmin = (roleName === 'Super Admin' || roleName === 'Developer');
 
         const [perms] = await db.execute(`
-            SELECT p.can_read 
+            SELECT p.can_read
               FROM permissions p
               JOIN roles r ON r.id = p.role_id
              WHERE r.role_name = ? AND r.institutionId = ? AND p.module_name = 'PreAdmissions'
@@ -4540,9 +4558,11 @@ app.get('/api/admin/preadmissions/:instId', async (req, res) => {
         let whereClauses = ["institutionId = ?"];
         const queryParams = [instId];
 
-        if (year && !isNaN(parseInt(year))) {
-            whereClauses.push("YEAR(submission_date) = ?");
-            queryParams.push(parseInt(year));
+        // Academic-year scoping: applications submitted within the selected
+        // academic year's date range (sent by the client as from/to).
+        if (from && to) {
+            whereClauses.push("DATE(submission_date) BETWEEN ? AND ?");
+            queryParams.push(from, to);
         }
 
         if (search) {
@@ -4553,14 +4573,14 @@ app.get('/api/admin/preadmissions/:instId', async (req, res) => {
 
         const query = `SELECT * FROM pre_admissions WHERE ${whereClauses.join(' AND ')} ORDER BY submission_date DESC LIMIT 1000`;
         const [records] = await db.query(query, queryParams);
-        
+
         res.status(200).json(records);
     } catch (error) {
         res.status(500).json({ message: "Failed to fetch admission records." });
     }
 });
 
-// --- 23.2 POST new record ---
+// --- 23.2 POST new record -------------------------------------------
 app.post('/api/admin/preadmissions', async (req, res) => {
     const fields = req.body;
 
@@ -4570,9 +4590,9 @@ app.post('/api/admin/preadmissions', async (req, res) => {
 
     const query = `
         INSERT INTO pre_admissions (
-            institutionId, admission_no, student_name, photo_url, dob, pen_no, phone_no, aadhar_no, 
-            parent_name, parent_phone, previous_institute, previous_grade, joining_grade, 
-            school_joined_date, school_joined_grade, school_outgoing_date, school_outgoing_grade, 
+            institutionId, admission_no, student_name, photo_url, dob, pen_no, phone_no, aadhar_no,
+            parent_name, parent_phone, previous_institute, previous_grade, joining_grade,
+            school_joined_date, school_joined_grade, school_outgoing_date, school_outgoing_grade,
             tc_issued_date, tc_number, address, status
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
@@ -4580,26 +4600,26 @@ app.post('/api/admin/preadmissions', async (req, res) => {
     const v = (val) => (val === '' || val === 'null' || val === undefined ? null : val);
 
     const params = [
-        fields.institutionId, 
-        fields.admission_no, 
-        fields.student_name, 
+        fields.institutionId,
+        fields.admission_no,
+        fields.student_name,
         fields.photo_url || null, // Directly using Base64 string from body
-        v(fields.dob), 
-        v(fields.pen_no), 
-        v(fields.phone_no), 
-        v(fields.aadhar_no), 
-        v(fields.parent_name), 
-        v(fields.parent_phone), 
-        v(fields.previous_institute), 
-        v(fields.previous_grade), 
+        v(fields.dob),
+        v(fields.pen_no),
+        v(fields.phone_no),
+        v(fields.aadhar_no),
+        v(fields.parent_name),
+        v(fields.parent_phone),
+        v(fields.previous_institute),
+        v(fields.previous_grade),
         fields.joining_grade,
-        v(fields.school_joined_date), 
-        v(fields.school_joined_grade), 
-        v(fields.school_outgoing_date), 
-        v(fields.school_outgoing_grade), 
-        v(fields.tc_issued_date), 
+        v(fields.school_joined_date),
+        v(fields.school_joined_grade),
+        v(fields.school_outgoing_date),
+        v(fields.school_outgoing_grade), // column kept; UI no longer sends it (stays null)
+        v(fields.tc_issued_date),
         v(fields.tc_number),
-        v(fields.address), 
+        v(fields.address),
         fields.status || 'Pending'
     ];
 
@@ -4613,78 +4633,18 @@ app.post('/api/admin/preadmissions', async (req, res) => {
         res.status(500).json({ message: "Failed to create record." });
     }
 });
-app.get('/api/admin/preadmissions/:instId', async (req, res) => {
-    const { instId } = req.params;
-    // 1. Capture 'class' from req.query (aliased as joiningClass)
-    const { search, year, status, class: joiningClass, userId } = req.query; 
 
-    if (!userId) return res.status(400).json({ error: 'userId required' });
-
-    try {
-        const [users] = await db.execute('SELECT role FROM users WHERE id = ?', [userId]);
-        if (users.length === 0) return res.status(404).json({ error: 'User not found' });
-        
-        const roleName = users[0].role;
-        const isSystemAdmin = (roleName === 'Super Admin' || roleName === 'Developer');
-
-        const [perms] = await db.execute(`
-            SELECT p.can_read 
-              FROM permissions p
-              JOIN roles r ON r.id = p.role_id
-             WHERE r.role_name = ? AND r.institutionId = ? AND p.module_name = 'PreAdmissions'
-        `, [roleName, instId]);
-
-        const hasAccess = isSystemAdmin || (perms.length > 0 && perms[0].can_read);
-
-        if (!hasAccess) {
-            return res.status(403).json({ message: "You do not have permission to view admissions." });
-        }
-
-        let whereClauses = ["institutionId = ?"];
-        const queryParams = [instId];
-
-        if (year && !isNaN(parseInt(year))) {
-            whereClauses.push("YEAR(submission_date) = ?");
-            queryParams.push(parseInt(year));
-        }
-
-        if (status && ['Pending', 'Approved', 'Rejected'].includes(status)) {
-            whereClauses.push("status = ?");
-            queryParams.push(status);
-        }
-
-        // --- NEW: Add the Academic Class filter mapping to 'joining_grade' ---
-        if (joiningClass) {
-            whereClauses.push("joining_grade = ?");
-            queryParams.push(joiningClass);
-        }
-
-        if (search) {
-            whereClauses.push("(student_name LIKE ? OR admission_no LIKE ? OR previous_institute LIKE ?)");
-            const searchTerm = `%${search}%`;
-            queryParams.push(searchTerm, searchTerm, searchTerm);
-        }
-
-        const query = `SELECT * FROM pre_admissions WHERE ${whereClauses.join(' AND ')} ORDER BY submission_date DESC LIMIT 1000`;
-        const [records] = await db.query(query, queryParams);
-        
-        res.status(200).json(records);
-    } catch (error) {
-        res.status(500).json({ message: "Failed to fetch admission records." });
-    }
-});
-// --- 23.3 PUT update record ---
+// --- 23.3 PUT update record -----------------------------------------
 app.put('/api/admin/preadmissions/:id', async (req, res) => {
     const { id } = req.params;
     const fields = req.body;
     let setClauses = [];
     let params = [];
 
-    // Added 'photo_url' to updatable fields so it updates naturally
     const updatableFields = [
-        'admission_no', 'student_name', 'photo_url', 'dob', 'pen_no', 'phone_no', 'aadhar_no', 
-        'parent_name', 'parent_phone', 'previous_institute', 'previous_grade', 
-        'joining_grade', 'school_joined_date', 'school_joined_grade', 
+        'admission_no', 'student_name', 'photo_url', 'dob', 'pen_no', 'phone_no', 'aadhar_no',
+        'parent_name', 'parent_phone', 'previous_institute', 'previous_grade',
+        'joining_grade', 'school_joined_date', 'school_joined_grade',
         'school_outgoing_date', 'school_outgoing_grade', 'tc_issued_date', 'tc_number',
         'address', 'status'
     ];
@@ -4710,19 +4670,18 @@ app.put('/api/admin/preadmissions/:id', async (req, res) => {
     }
 });
 
-// --- 23.4 DELETE record ---
+// --- 23.4 DELETE record ---------------------------------------------
 app.delete('/api/admin/preadmissions/:id', async (req, res) => {
     try {
-        // Because the photo is now LONGTEXT in MySQL, deleting the row deletes the photo data entirely.
         const [result] = await db.query("DELETE FROM pre_admissions WHERE id = ?", [req.params.id]);
-        
         if (result.affectedRows === 0) return res.status(404).json({ message: "Record not found." });
-
         res.status(200).json({ message: "Deleted successfully." });
     } catch (error) {
         res.status(500).json({ message: "Failed to delete record." });
     }
 });
+
+
 
 // =====================================================================
 // === 24. STUDY MATERIALS =============================================
