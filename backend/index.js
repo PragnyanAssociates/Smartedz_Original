@@ -4449,47 +4449,47 @@ app.post('/api/admin/labs', labUpload.any(), async (req, res) => {
         conn.release(); 
     }
 });
-// --- 21.5 Get Single Lab Details ---
-// app.get('/api/admin/labs/:id', async (req, res) => {
-//     try {
-//         const labId = req.params.id;
+--- 21.5 Get Single Lab Details ---
+app.get('/api/admin/labs/:id', async (req, res) => {
+    try {
+        const labId = req.params.id;
 
-//         // 1. Fetch the lab details
-//         const [labs] = await db.execute(
-//             `SELECT l.*, sub.name AS subject_name, usr.name AS created_by_name,
-//                     c.className, c.section
-//              FROM digital_labs l
-//              LEFT JOIN subjects sub ON sub.id = l.subject_id
-//              LEFT JOIN users usr ON usr.id = l.created_by
-//              LEFT JOIN classes c ON c.id = l.class_id
-//              WHERE l.id = ?`,
-//             [labId]
-//         );
+        // 1. Fetch the lab details
+        const [labs] = await db.execute(
+            `SELECT l.*, sub.name AS subject_name, usr.name AS created_by_name,
+                    c.className, c.section
+             FROM digital_labs l
+             LEFT JOIN subjects sub ON sub.id = l.subject_id
+             LEFT JOIN users usr ON usr.id = l.created_by
+             LEFT JOIN classes c ON c.id = l.class_id
+             WHERE l.id = ?`,
+            [labId]
+        );
 
-//         if (labs.length === 0) {
-//             return res.status(404).json({ error: 'Lab not found' });
-//         }
+        if (labs.length === 0) {
+            return res.status(404).json({ error: 'Lab not found' });
+        }
 
-//         const lab = labs[0];
+        const lab = labs[0];
 
-//         // 2. Fetch the resources for this specific lab
-//         const [resources] = await db.execute(
-//             `SELECT id, lab_id, resource_type, title, url, scheduled_at, resource_order,
-//                     IF(file_data IS NOT NULL, 1, 0) as has_file
-//              FROM lab_resources 
-//              WHERE lab_id = ? 
-//              ORDER BY resource_order ASC`,
-//             [labId]
-//         );
+        // 2. Fetch the resources for this specific lab
+        const [resources] = await db.execute(
+            `SELECT id, lab_id, resource_type, title, url, scheduled_at, resource_order,
+                    IF(file_data IS NOT NULL, 1, 0) as has_file
+             FROM lab_resources 
+             WHERE lab_id = ? 
+             ORDER BY resource_order ASC`,
+            [labId]
+        );
 
-//         // 3. Attach resources to the lab object and return
-//         lab.resources = resources;
-//         res.json(lab);
+        // 3. Attach resources to the lab object and return
+        lab.resources = resources;
+        res.json(lab);
 
-//     } catch (err) { 
-//         res.status(500).json({ error: err.message }); 
-//     }
-// });
+    } catch (err) { 
+        res.status(500).json({ error: err.message }); 
+    }
+});
 
 app.delete('/api/admin/labs/:id', async (req, res) => {
     try { await db.execute('DELETE FROM digital_labs WHERE id=?', [req.params.id]); res.json({ success: true }); }
