@@ -4449,7 +4449,7 @@ app.post('/api/admin/labs', labUpload.any(), async (req, res) => {
         conn.release(); 
     }
 });
---- 21.5 Get Single Lab Details ---
+// --- 21.5 Get Single Lab Details ---
 app.get('/api/admin/labs/:id', async (req, res) => {
     try {
         const labId = req.params.id;
