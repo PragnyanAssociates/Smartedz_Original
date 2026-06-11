@@ -122,10 +122,13 @@ export default function PreAdmissionsScreen() {
     }
   }, [user]);
 
-  useEffect(() => {
-    fetchData();
-    loadFormData();
-  }, [fetchData, loadFormData]);
+  // Load classes + academic years once per user. Kept SEPARATE from the data
+  // fetch: this sets `academicYears`, and `academicYears` is a dependency of
+  // fetchData — running both in one effect created an infinite refetch loop.
+  useEffect(() => { loadFormData(); }, [loadFormData]);
+
+  // Fetch applications whenever the query inputs (year/search) change.
+  useEffect(() => { fetchData(); }, [fetchData]);
 
   // Distinct class names (grades). Sections are not relevant to a grade,
   // so we collapse to unique className values.
