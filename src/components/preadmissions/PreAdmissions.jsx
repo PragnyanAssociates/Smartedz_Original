@@ -51,6 +51,7 @@ export default function PreAdmissionsScreen() {
   const isAdmin = isAllAccess;
 
   const [data, setData] = useState([]);
+  const [classes, setClasses] = useState([]); 
   const [loading, setLoading] = useState(true);
   const [modalVisible, setModalVisible] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -63,10 +64,11 @@ export default function PreAdmissionsScreen() {
   // Filters
   const [searchText, setSearchText] = useState('');
   const [filterYear, setFilterYear] = useState(getCurrentYear());
+  const [filterStatus, setFilterStatus] = useState(null);
+  const [filterClass, setFilterClass] = useState('');
 
   // --- Fetch Data ---
   const fetchData = useCallback(async () => {
-    // FIX: Allow fetch if user has canRead permission OR is an admin
     if (!user?.institutionId || (!canRead && !isAdmin)) return; 
     
     setLoading(true);
@@ -74,7 +76,10 @@ export default function PreAdmissionsScreen() {
       const url = new URL(`${API_BASE_URL}/admin/preadmissions/${user.institutionId}`);
       url.searchParams.append('year', filterYear);
       url.searchParams.append('userId', user.id);
+      
       if (searchText) url.searchParams.append('search', searchText);
+      if (filterStatus) url.searchParams.append('status', filterStatus);
+      if (filterClass) url.searchParams.append('class', filterClass);
 
       const res = await fetch(url);
       const records = await res.json();
@@ -84,9 +89,36 @@ export default function PreAdmissionsScreen() {
     } finally {
       setLoading(false);
     }
-  }, [user, isAdmin, canRead, filterYear, searchText]);
+  }, [user, isAdmin, canRead, filterYear, searchText, filterStatus, filterClass]); 
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  // --- Fetch Master List of Classes ---
+  const loadFormData = useCallback(async () => {
+    if (!user?.institutionId) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/data/${user.institutionId}`);
+      const d = await res.json();
+      setClasses(d.classes || []);
+    } catch (e) { 
+      console.error('Load Classes Error:', e); 
+    }
+  }, [user]);
+
+  useEffect(() => { 
+    fetchData(); 
+    loadFormData(); 
+  }, [fetchData, loadFormData]);
+
+  // Helper to format class name for dropdown
+  const classLabel = (c) => `${c.className}${c.section ? ' - ' + c.section : ''}`;
+
+  // Helper for status button color classes
+  const getFilterTabClass = (status, isActive) => {
+    if (!isActive) return 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200';
+    if (status === 'Pending') return 'bg-amber-500 text-white shadow-sm';
+    if (status === 'Approved') return 'bg-emerald-500 text-white shadow-sm';
+    if (status === 'Rejected') return 'bg-red-500 text-white shadow-sm';
+    return 'bg-primary text-white shadow-sm';
+  };
 
   // If not admin and no read permission, completely block the screen
   if (!canRead && !isAdmin) {
@@ -125,20 +157,16 @@ export default function PreAdmissionsScreen() {
     const file = e.target.files[0];
     if (!file) return;
     
-    // Optional: Add file size validation (e.g., max 3MB) to prevent database bloat
     if (file.size > 3 * 1024 * 1024) return alert('Picture must be under 3 MB.');
 
     const reader = new FileReader();
     reader.onloadend = () => {
-      // Save the base64 string directly into our formData
       setFormData(prev => ({ ...prev, photo_url: reader.result }));
-      // Keep this for immediate UI preview
       setSelectedImage({ uri: reader.result }); 
     };
     reader.readAsDataURL(file);
   };
 
-  // --- Strict Validation Logic ---
   const validateForm = () => {
       if (!formData.admission_no || !formData.student_name || !formData.joining_grade) {
           alert('Validation Error: Admission No, Name, and Joining Grade are required.');
@@ -176,12 +204,10 @@ export default function PreAdmissionsScreen() {
     setIsSaving(true);
     
     try {
-      // 1. Create a standard JavaScript object instead of FormData
       const payload = {
         institutionId: user.institutionId
       };
       
-      // 2. Add photo_url to the allowed fields list
       const allowedFields = [
         'admission_no', 'student_name', 'joining_grade', 'dob', 'phone_no', 'previous_institute', 
         'previous_grade', 'pen_no', 'aadhar_no', 'parent_name', 'parent_phone', 'address', 'status', 
@@ -198,7 +224,6 @@ export default function PreAdmissionsScreen() {
 
       const url = isEditing ? `${API_BASE_URL}/admin/preadmissions/${currentItem.id}` : `${API_BASE_URL}/admin/preadmissions`;
       
-      // 3. Send as application/json
       const res = await fetch(url, {
         method: isEditing ? 'PUT' : 'POST',
         headers: {
@@ -213,7 +238,7 @@ export default function PreAdmissionsScreen() {
       }
       
       setModalVisible(false);
-      setSelectedItem(null); // Fixes the right-panel bug
+      setSelectedItem(null); 
       fetchData();
     } catch (error) {
       alert(error.message);
@@ -250,21 +275,62 @@ export default function PreAdmissionsScreen() {
         
         {/* LEFT COLUMN: List */}
         <div className={`lg:col-span-4 xl:col-span-5 flex flex-col gap-4 ${selectedItem ? 'hidden lg:flex' : 'flex'}`}>
-          <div className="flex justify-between items-center bg-white p-2 rounded-lg shadow-sm ring-1 ring-black/5">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
-              <input type="text" value={searchText} onChange={e => setSearchText(e.target.value)} 
-                onKeyDown={e => e.key === 'Enter' && fetchData()} placeholder="Search name or ID..."
-                className="h-9 w-full bg-zinc-50/50 border border-transparent rounded-md pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:bg-white transition-colors placeholder:text-zinc-400" />
+          
+          {/* FILTER SECTION */}
+          <div className="bg-white p-2 rounded-lg shadow-sm ring-1 ring-black/5 flex flex-col gap-2">
+            
+            {/* ROW 1: Search & Year */}
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
+                <input type="text" value={searchText} onChange={e => setSearchText(e.target.value)} 
+                  onKeyDown={e => e.key === 'Enter' && fetchData()} placeholder="Search name or ID..."
+                  className="h-9 w-full bg-zinc-50/50 border border-transparent rounded-md pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:bg-white transition-colors placeholder:text-zinc-400" />
+              </div>
+              
+              <div className="relative shrink-0">
+                <select value={filterYear} onChange={e => { setFilterYear(e.target.value); fetchData(); }} 
+                  className="h-9 bg-zinc-50/50 border border-transparent rounded-md pl-3 pr-8 text-sm font-semibold text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer appearance-none">
+                  <option value={getCurrentYear()}>{getCurrentYear()}</option>
+                  <option value={parseInt(getCurrentYear()) - 1}>{parseInt(getCurrentYear()) - 1}</option>
+                </select>
+                <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
             </div>
-            <div className="relative ml-2 shrink-0">
-              <select value={filterYear} onChange={e => { setFilterYear(e.target.value); fetchData(); }} 
-                className="h-9 bg-zinc-50/50 border border-transparent rounded-md pl-3 pr-8 text-sm font-semibold text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer appearance-none">
-                <option value={getCurrentYear()}>{getCurrentYear()}</option>
-                <option value={parseInt(getCurrentYear()) - 1}>{parseInt(getCurrentYear()) - 1}</option>
-              </select>
-              <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            
+            {/* ROW 2: Status Tabs */}
+            <div className="flex gap-1">
+              {['Pending', 'Approved', 'Rejected'].map((status) => (
+                <button key={status} onClick={() => {
+                  if (filterStatus === status) {
+                    setFilterStatus(null);
+                    setFilterClass(''); // Reset class filter when hiding
+                  } else {
+                    setFilterStatus(status);
+                  }
+                }}
+                  className={`px-3 h-8 text-[10px] font-semibold rounded-md transition-colors flex-1 ${getFilterTabClass(status, filterStatus === status)}`}>
+                  {status}
+                </button>
+              ))}
             </div>
+
+            {/* ROW 3: Conditional Class Filter */}
+            {filterStatus && (
+              <div className="pt-2 mt-1 border-t border-zinc-100 flex items-center justify-between animate-in fade-in slide-in-from-top-1 duration-200">
+                <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider pl-1">Filter by Class:</span>
+                <div className="relative w-full sm:w-auto shrink-0">
+                  <select value={filterClass} onChange={e => setFilterClass(e.target.value)}
+                    className="h-8 w-full sm:w-auto min-w-[140px] bg-zinc-50/50 border border-transparent rounded-md pl-3 pr-8 text-xs outline-none focus:ring-2 focus:ring-primary/20 focus:bg-white appearance-none shadow-sm cursor-pointer transition-colors text-zinc-700 font-medium">
+                    <option value="">All Classes</option>
+                    {classes.map(c => (
+                      <option key={c.id} value={c.className}>{classLabel(c)}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="size-3 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col h-[70vh]">
@@ -285,10 +351,10 @@ export default function PreAdmissionsScreen() {
               ) : (
                 data.map(item => (
                   <div key={item.id} onClick={() => setSelectedItem(item)} className={`p-4 flex items-center cursor-pointer transition-colors ${selectedItem?.id === item.id ? 'bg-primary/5' : 'hover:bg-zinc-50/80'}`}>
-<img src={item.photo_url || '/default-avatar.png'} alt="" className="size-10 rounded-md object-cover bg-zinc-100 mr-3 ring-1 ring-black/5 shadow-sm" />
+                    <img src={item.photo_url || '/default-avatar.png'} alt="" className="size-10 rounded-md object-cover bg-zinc-100 mr-3 ring-1 ring-black/5 shadow-sm" />
                     <div className="flex-1 min-w-0 pr-2">
                       <h4 className={`font-semibold text-sm truncate ${selectedItem?.id === item.id ? 'text-primary' : 'text-zinc-900'}`}>{item.student_name}</h4>
-                      <p className="text-xs text-zinc-500 font-medium mt-0.5">ID: {item.admission_no}</p>
+                      <p className="text-xs text-zinc-500 font-medium mt-0.5">Grade: {item.joining_grade} • ID: {item.admission_no}</p>
                     </div>
                     <StatusPill status={item.status} />
                   </div>
@@ -312,7 +378,7 @@ export default function PreAdmissionsScreen() {
                 <button onClick={() => setSelectedItem(null)} className="lg:hidden p-1.5 bg-white rounded-md shadow-sm ring-1 ring-black/5 text-zinc-500 hover:text-zinc-900 transition-colors mt-1 sm:mt-0">
                   <X className="size-4" />
                 </button>
-              <img src={selectedItem.photo_url || '/default-avatar.png'} alt="" className="size-16 rounded-lg object-cover bg-zinc-100 ring-1 ring-black/5 shadow-sm shrink-0" />
+                <img src={selectedItem.photo_url || '/default-avatar.png'} alt="" className="size-16 rounded-lg object-cover bg-zinc-100 ring-1 ring-black/5 shadow-sm shrink-0" />
                 <div className="flex-1 min-w-0 mt-1 sm:mt-0">
                   <h3 className="text-lg font-semibold text-zinc-900 truncate">{selectedItem.student_name}</h3>
                   <p className="text-xs font-medium text-zinc-500 mt-1 truncate">Grade: {selectedItem.joining_grade} - ID: {selectedItem.admission_no}</p>
@@ -421,27 +487,36 @@ export default function PreAdmissionsScreen() {
                 <div className="md:col-span-2 mt-2">
                   <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-2 block">Status</label>
                   <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
-                    {['Pending', 'Approved', 'Rejected'].map(status => (
-                      <button key={status} onClick={() => setForm('status', status)}
-                        className={`h-9 flex-1 rounded-md text-xs font-semibold transition-colors ring-1 ring-inset flex items-center justify-center ${
-                          formData.status === status 
-                          ? 'bg-primary text-white ring-primary shadow-sm' 
-                          : 'bg-white text-zinc-600 ring-black/5 hover:bg-zinc-50'
-                        }`}>
-                        {status}
-                      </button>
-                    ))}
+                    {['Pending', 'Approved', 'Rejected'].map(status => {
+                      const isActive = formData.status === status;
+                      let activeClass = 'bg-primary text-white ring-primary shadow-sm';
+                      if (isActive) {
+                        if (status === 'Pending') activeClass = 'bg-amber-500 text-white ring-amber-600 shadow-sm';
+                        if (status === 'Approved') activeClass = 'bg-emerald-500 text-white ring-emerald-600 shadow-sm';
+                        if (status === 'Rejected') activeClass = 'bg-red-500 text-white ring-red-600 shadow-sm';
+                      }
+                      return (
+                        <button key={status} type="button" onClick={() => setForm('status', status)}
+                          className={`h-9 flex-1 rounded-md text-xs font-semibold transition-colors ring-1 ring-inset flex items-center justify-center ${
+                            isActive 
+                            ? activeClass
+                            : 'bg-white text-zinc-600 ring-black/5 hover:bg-zinc-50'
+                          }`}>
+                          {status}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               </div>
             </div>
 
             <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
-              <button onClick={() => setModalVisible(false)} disabled={isSaving}
+              <button type="button" onClick={() => setModalVisible(false)} disabled={isSaving}
                 className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 rounded-md font-semibold text-xs hover:bg-zinc-50 transition-colors w-full sm:w-auto">
                 Cancel
               </button>
-              <button onClick={handleSave} disabled={isSaving}
+              <button type="button" onClick={handleSave} disabled={isSaving}
                 className="h-9 px-6 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors w-full sm:w-auto min-w-[120px]">
                 {isSaving ? <Loader2 className="size-3.5 animate-spin shrink-0" /> : <Check className="size-3.5 shrink-0" />}
                 {isSaving ? 'Saving...' : 'Save Record'}

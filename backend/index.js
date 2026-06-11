@@ -4613,7 +4613,66 @@ app.post('/api/admin/preadmissions', async (req, res) => {
         res.status(500).json({ message: "Failed to create record." });
     }
 });
+app.get('/api/admin/preadmissions/:instId', async (req, res) => {
+    const { instId } = req.params;
+    // 1. Capture 'class' from req.query (aliased as joiningClass)
+    const { search, year, status, class: joiningClass, userId } = req.query; 
 
+    if (!userId) return res.status(400).json({ error: 'userId required' });
+
+    try {
+        const [users] = await db.execute('SELECT role FROM users WHERE id = ?', [userId]);
+        if (users.length === 0) return res.status(404).json({ error: 'User not found' });
+        
+        const roleName = users[0].role;
+        const isSystemAdmin = (roleName === 'Super Admin' || roleName === 'Developer');
+
+        const [perms] = await db.execute(`
+            SELECT p.can_read 
+              FROM permissions p
+              JOIN roles r ON r.id = p.role_id
+             WHERE r.role_name = ? AND r.institutionId = ? AND p.module_name = 'PreAdmissions'
+        `, [roleName, instId]);
+
+        const hasAccess = isSystemAdmin || (perms.length > 0 && perms[0].can_read);
+
+        if (!hasAccess) {
+            return res.status(403).json({ message: "You do not have permission to view admissions." });
+        }
+
+        let whereClauses = ["institutionId = ?"];
+        const queryParams = [instId];
+
+        if (year && !isNaN(parseInt(year))) {
+            whereClauses.push("YEAR(submission_date) = ?");
+            queryParams.push(parseInt(year));
+        }
+
+        if (status && ['Pending', 'Approved', 'Rejected'].includes(status)) {
+            whereClauses.push("status = ?");
+            queryParams.push(status);
+        }
+
+        // --- NEW: Add the Academic Class filter mapping to 'joining_grade' ---
+        if (joiningClass) {
+            whereClauses.push("joining_grade = ?");
+            queryParams.push(joiningClass);
+        }
+
+        if (search) {
+            whereClauses.push("(student_name LIKE ? OR admission_no LIKE ? OR previous_institute LIKE ?)");
+            const searchTerm = `%${search}%`;
+            queryParams.push(searchTerm, searchTerm, searchTerm);
+        }
+
+        const query = `SELECT * FROM pre_admissions WHERE ${whereClauses.join(' AND ')} ORDER BY submission_date DESC LIMIT 1000`;
+        const [records] = await db.query(query, queryParams);
+        
+        res.status(200).json(records);
+    } catch (error) {
+        res.status(500).json({ message: "Failed to fetch admission records." });
+    }
+});
 // --- 23.3 PUT update record ---
 app.put('/api/admin/preadmissions/:id', async (req, res) => {
     const { id } = req.params;
