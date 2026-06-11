@@ -462,6 +462,9 @@ export default function TeacherLabs({ canManage = true }) {
 // =====================================================================
 //  ENLARGED DETAIL VIEW COMPONENT
 // =====================================================================
+// =====================================================================
+//  ENLARGED DETAIL VIEW COMPONENT
+// =====================================================================
 
 function LabDetailView({ lab, onBack, canManage, onEdit, onDelete }) {
   const [resources, setResources] = useState([]);
@@ -487,8 +490,9 @@ function LabDetailView({ lab, onBack, canManage, onEdit, onDelete }) {
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
       
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        {/* UPDATED BACK BUTTON: Removed box styling, added text hover */}
         <button onClick={onBack}
-          className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 bg-white hover:bg-zinc-50 px-3 py-1.5 rounded-md ring-1 ring-inset ring-black/5 shadow-sm transition-colors">
+          className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
           <ArrowLeft className="size-4" /> Back to Digital Labs
         </button>
         {canManage && (

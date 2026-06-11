@@ -140,6 +140,9 @@ export default function StudentLabs() {
 // =====================================================================
 //  LAB DETAIL - all resources of one lab
 // =====================================================================
+// =====================================================================
+//  LAB DETAIL - all resources of one lab
+// =====================================================================
 function LabDetail({ lab, onBack }) {
   const resources = lab.resources || [];
 
@@ -152,8 +155,10 @@ function LabDetail({ lab, onBack }) {
 
   return (
     <div className="space-y-4 sm:space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300 p-4 sm:p-6 lg:p-8 max-w-[1440px] mx-auto w-full">
+      
+      {/* UPDATED BACK BUTTON: Removed box styling, padding, and background */}
       <button onClick={onBack}
-        className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors bg-white hover:bg-zinc-50 px-3 py-1.5 rounded-md ring-1 ring-black/5 shadow-sm">
+        className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
         <ArrowLeft className="size-4" /> Back to labs
       </button>
 
@@ -240,7 +245,6 @@ function LabDetail({ lab, onBack }) {
     </div>
   );
 }
-
 function ResourceTag({ type, count }) {
   const meta = resMeta(type);
   const Icon = meta.icon;
