@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Users, CircleArrowUp, Search, GraduationCap, ChevronDown } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
 import { useAuth } from '../context/AuthContext';
@@ -13,6 +13,20 @@ export default function PromotionTab({ data, fetchData }) {
   const [selectedStudents, setSelectedStudents] = useState([]);
   const [search, setSearch]                     = useState('');
 
+  // No more "All Classes" option — each class promotes to a different
+  // target, so a single real class must always be the source. We default
+  // to the first available class once the class list has loaded, and
+  // guard the list until that default lands (prevents a flash of every
+  // student before the source class is chosen).
+  const classesLoaded = Array.isArray(data.classes) && data.classes.length > 0;
+  const awaitingClass = classesLoaded && !sourceClassId;
+
+  useEffect(() => {
+    if (classesLoaded && !sourceClassId) {
+      setSourceClassId(String(data.classes[0].id));
+    }
+  }, [classesLoaded, sourceClassId, data.classes]);
+
   // Show only ACTIVE students — role-student AND not already passed out.
   const allStudents = useMemo(
     () => data.users.filter(u =>
@@ -23,6 +37,10 @@ export default function PromotionTab({ data, fetchData }) {
   );
 
   const visibleStudents = useMemo(() => {
+    // Until the source class is resolved, show nothing rather than every
+    // student in the institution.
+    if (awaitingClass) return [];
+
     let list = allStudents;
     if (sourceClassId) list = list.filter(s => String(s.class_id) === String(sourceClassId));
     if (search.trim()) {
@@ -41,7 +59,7 @@ export default function PromotionTab({ data, fetchData }) {
       if (ra !== rb) return ra - rb;
       return (a.name || '').localeCompare(b.name || '');
     });
-  }, [allStudents, sourceClassId, search]);
+  }, [allStudents, sourceClassId, search, awaitingClass]);
 
   const allVisibleIds = visibleStudents.map(s => s.id);
   const allSelected   = allVisibleIds.length > 0 && allVisibleIds.every(id => selectedStudents.includes(id));
@@ -176,7 +194,7 @@ const handlePromote = async () => {
                 value={sourceClassId}
                 onChange={e => { setSourceClassId(e.target.value); setSelectedStudents([]); }}
                 className="h-9 w-full rounded-md border border-zinc-200 bg-white pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none transition-colors">
-                <option value="">All Classes</option>
+                {data.classes.length === 0 && <option value="">No classes available</option>}
                 {data.classes.map(c => (
                   <option key={c.id} value={c.id}>{classLabel(c)}</option>
                 ))}
@@ -213,7 +231,11 @@ const handlePromote = async () => {
           </div>
 
           <div className="flex-1 overflow-y-auto max-h-[400px] space-y-2 pr-1 custom-scrollbar">
-            {visibleStudents.length > 0 ? visibleStudents.map(s => {
+            {awaitingClass ? (
+              <div className="flex items-center justify-center py-10">
+                <div className="size-6 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" />
+              </div>
+            ) : visibleStudents.length > 0 ? visibleStudents.map(s => {
               const cls = data.classes.find(c => c.id === s.class_id);
               const isOn = selectedStudents.includes(s.id);
               return (

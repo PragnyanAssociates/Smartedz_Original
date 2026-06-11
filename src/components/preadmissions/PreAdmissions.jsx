@@ -28,6 +28,11 @@ const toYYYYMMDD = (dateString) => {
 // Case-insensitive trimmed equality used by the client-side filters
 const eq = (a, b) => String(a ?? '').trim().toLowerCase() === String(b ?? '').trim().toLowerCase();
 
+// Normalise a grade/class so comparison works regardless of how it was stored:
+// "Class 9", "class9" and "9" all reduce to the same value. Lets the Joining
+// Class filter match records whether they hold "Class 9" or a bare "9".
+const normGrade = (s) => String(s ?? '').trim().toLowerCase().replace(/^class\s*/, '').trim();
+
 const StatusPill = ({ status }) => {
   const styles = {
     Pending: 'bg-amber-50 text-amber-700 ring-amber-600/20',
@@ -68,11 +73,9 @@ export default function PreAdmissionsScreen() {
   // Year filter now follows the ACADEMIC CALENDAR — it holds an academic
   // year id (defaults to the school's active year once loaded).
   const [filterAcademicYearId, setFilterAcademicYearId] = useState('');
-  const [filterStatus, setFilterStatus] = useState(null);
-  // Two independent class filters — Joining class and Previous class.
-  // '' means "All Classes" (the default for both).
+  const [filterStatus, setFilterStatus] = useState('Pending');
+  // Single class filter — Joining class. '' means "All Classes" (default).
   const [filterJoiningClass, setFilterJoiningClass] = useState('');
-  const [filterPreviousClass, setFilterPreviousClass] = useState('');
 
   // --- Fetch Data ---
   // Scoped to the selected academic year by submission_date range (from/to),
@@ -136,23 +139,25 @@ export default function PreAdmissionsScreen() {
     () => Array.from(new Set((classes || []).map(c => c.className).filter(Boolean))),
     [classes]
   );
-  // Options for the in-form grade dropdowns.
+  // Options for the in-form grade dropdowns AND the Joining-class filter —
+  // the SAME full class list shown while creating a pre-admission
+  // (e.g. Class 1 … Class 10, LKG, UKG), in the school's class order.
   const gradeSelectOptions = useMemo(
     () => [{ value: '', label: 'Select grade...' }, ...classOptions.map(n => ({ value: n, label: n }))],
     [classOptions]
   );
 
-  // --- FOOLPROOF FRONTEND FILTERING ---
-  // Status + the two class filters are applied here (independent of each
-  // other); the academic year is applied server-side via from/to.
+  // --- FRONTEND FILTERING ---
+  // Status + the Joining-class filter are applied here; the academic year
+  // is applied server-side via from/to. Joining class uses normGrade so it
+  // matches whether a record stored "Class 9" or just "9".
   const filteredData = useMemo(() => {
     return data.filter(item => {
-      const matchStatus   = filterStatus ? eq(item.status, filterStatus) : true;
-      const matchJoining  = filterJoiningClass ? eq(item.joining_grade, filterJoiningClass) : true;
-      const matchPrevious = filterPreviousClass ? eq(item.previous_grade, filterPreviousClass) : true;
-      return matchStatus && matchJoining && matchPrevious;
+      const matchStatus  = filterStatus ? eq(item.status, filterStatus) : true;
+      const matchJoining = filterJoiningClass ? normGrade(item.joining_grade) === normGrade(filterJoiningClass) : true;
+      return matchStatus && matchJoining;
     });
-  }, [data, filterStatus, filterJoiningClass, filterPreviousClass]);
+  }, [data, filterStatus, filterJoiningClass]);
 
   const getFilterTabClass = (status, isActive) => {
     if (!isActive) return 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200';
@@ -339,24 +344,12 @@ export default function PreAdmissionsScreen() {
               ))}
             </div>
 
-            {/* ROW 3: Two class filters — Joining class & Previous class.
-                 Both default to "All Classes" and filter independently. */}
-            <div className="pt-2 mt-1 border-t border-zinc-100 grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {/* ROW 3: Joining-class filter (defaults to "All Classes"). */}
+            <div className="pt-2 mt-1 border-t border-zinc-100">
               <div className="flex flex-col gap-1">
                 <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider pl-1">Joining Class</span>
                 <div className="relative">
                   <select value={filterJoiningClass} onChange={e => setFilterJoiningClass(e.target.value)}
-                    className="h-8 w-full bg-zinc-50/50 border border-transparent rounded-md pl-3 pr-8 text-xs outline-none focus:ring-2 focus:ring-primary/20 focus:bg-white appearance-none shadow-sm cursor-pointer transition-colors text-zinc-700 font-medium">
-                    <option value="">All Classes</option>
-                    {classOptions.map(n => <option key={n} value={n}>{n}</option>)}
-                  </select>
-                  <ChevronDown className="size-3 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                </div>
-              </div>
-              <div className="flex flex-col gap-1">
-                <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider pl-1">Previous Class</span>
-                <div className="relative">
-                  <select value={filterPreviousClass} onChange={e => setFilterPreviousClass(e.target.value)}
                     className="h-8 w-full bg-zinc-50/50 border border-transparent rounded-md pl-3 pr-8 text-xs outline-none focus:ring-2 focus:ring-primary/20 focus:bg-white appearance-none shadow-sm cursor-pointer transition-colors text-zinc-700 font-medium">
                     <option value="">All Classes</option>
                     {classOptions.map(n => <option key={n} value={n}>{n}</option>)}

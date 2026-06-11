@@ -39,9 +39,9 @@ export default function ManageLogin() {
     { id: 'users',       label: 'Users',       icon: Users },
     { id: 'roles',       label: 'Roles',       icon: ShieldCheck },
     { id: 'permissions', label: 'Permissions', icon: CircleCheck },
-    { id: 'academics',   label: 'Academics Year',   icon: Calendar },
     { id: 'classes',     label: 'Classes',     icon: Layers },
     { id: 'subjects',    label: 'Subjects',    icon: BookOpen },
+    { id: 'academics',   label: 'Academics Year',   icon: Calendar },
     { id: 'promotion',   label: 'Promotion',   icon: CircleArrowUp },
   ];
 
