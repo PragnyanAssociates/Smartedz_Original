@@ -4385,39 +4385,75 @@ app.post('/api/admin/labs', labUpload.any(), async (req, res) => {
     const { id, institutionId, title, description, class_id, subject_id, created_by, resources: resourcesRaw } = req.body;
     const resources = JSON.parse(resourcesRaw || '[]');
     const conn = await db.getConnection();
+    
     try {
         await conn.beginTransaction();
         let labId = id;
+        let existingResources = []; 
 
         if (id) {
-            await conn.execute(`UPDATE digital_labs SET title=?, description=?, class_id=?, subject_id=? WHERE id=?`, 
-                [title, description, class_id, subject_id || null, id]);
+            await conn.execute(
+                `UPDATE digital_labs SET title=?, description=?, class_id=?, subject_id=? WHERE id=?`, 
+                [title, description, class_id, subject_id || null, id]
+            );
+            
+            // CRITICAL FIX: Fetch existing files into memory BEFORE deleting
+            const [oldRes] = await conn.execute(
+                'SELECT id, file_data, mime_type FROM lab_resources WHERE lab_id=?', 
+                [id]
+            );
+            existingResources = oldRes;
+
             await conn.execute('DELETE FROM lab_resources WHERE lab_id=?', [id]);
         } else {
-            const [res] = await conn.execute(`INSERT INTO digital_labs (institutionId, title, description, class_id, subject_id, created_by) VALUES (?,?,?,?,?,?)`,
-                [institutionId, title, description, class_id, subject_id || null, created_by]);
-            labId = res.insertId;
+            const [resData] = await conn.execute(
+                `INSERT INTO digital_labs (institutionId, title, description, class_id, subject_id, created_by) VALUES (?,?,?,?,?,?)`,
+                [institutionId, title, description, class_id, subject_id || null, created_by]
+            );
+            labId = resData.insertId;
         }
 
         for (let i = 0; i < resources.length; i++) {
             const r = resources[i];
             const file = req.files.find(f => f.fieldname === `file_${i}`);
+            
+            // Map the frontend ID back to the existing database record
+            const oldResource = existingResources.find(old => String(old.id) === String(r.id));
+
+            let finalBuffer = null;
+            let finalMime = null;
+
+            // 1. If a brand new file was uploaded, use it
+            if (file) {
+                finalBuffer = file.buffer;
+                finalMime = file.mimetype;
+            } 
+            // 2. Otherwise, if it's supposed to be a file and we have old data, restore the old data
+            else if (oldResource && r.source === 'file') {
+                finalBuffer = oldResource.file_data;
+                finalMime = oldResource.mime_type;
+            }
+
             await conn.execute(
                 `INSERT INTO lab_resources (lab_id, resource_type, title, url, file_data, mime_type, scheduled_at, resource_order) VALUES (?,?,?,?,?,?,?,?)`,
-                [labId, r.resource_type, r.title, r.url || null, file ? file.buffer : null, file ? file.mimetype : null, r.scheduled_at || null, i]
+                [labId, r.resource_type, r.title, r.url || null, finalBuffer, finalMime, r.scheduled_at || null, i]
             );
         }
+        
         await conn.commit();
         res.json({ success: true });
-    } catch (err) { await conn.rollback(); res.status(500).json({ error: err.message }); }
-    finally { conn.release(); }
+    } catch (err) { 
+        await conn.rollback(); 
+        res.status(500).json({ error: err.message }); 
+    } finally { 
+        conn.release(); 
+    }
 });
 
 app.delete('/api/admin/labs/:id', async (req, res) => {
     try { await db.execute('DELETE FROM digital_labs WHERE id=?', [req.params.id]); res.json({ success: true }); }
     catch (err) { res.status(500).json({ error: err.message }); }
 });
-
 
 
 // --- Pre-Admissions Storage ---

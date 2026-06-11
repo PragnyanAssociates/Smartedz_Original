@@ -22,13 +22,13 @@ const fmtDateTime = (dt) => {
   });
 };
 
-// Meta for each resource type
+// STRICT ENTERPRISE PALETTE: Replaced all rose, orange, and emerald with zinc/primary
 function resMeta(type) {
   switch (type) {
-    case 'video': return { icon: Video,    label: 'Video',      color: 'text-rose-600',    bg: 'bg-rose-50' };
-    case 'pdf':   return { icon: FileText, label: 'PDF',        color: 'text-orange-600',  bg: 'bg-orange-50' };
-    case 'live':  return { icon: Radio,    label: 'Live Class', color: 'text-emerald-600', bg: 'bg-emerald-50' };
-    default:      return { icon: LinkIcon, label: 'Link',       color: 'text-blue-600',    bg: 'bg-blue-50' };
+    case 'video': return { icon: Video,    label: 'Video',      color: 'text-zinc-600', bg: 'bg-zinc-100' };
+    case 'pdf':   return { icon: FileText, label: 'PDF',        color: 'text-zinc-600', bg: 'bg-zinc-100' };
+    case 'live':  return { icon: Radio,    label: 'Live Class', color: 'text-zinc-600', bg: 'bg-zinc-100' };
+    default:      return { icon: LinkIcon, label: 'Link',       color: 'text-zinc-600', bg: 'bg-zinc-100' };
   }
 }
 
@@ -73,7 +73,7 @@ export default function StudentLabs() {
           <FlaskConical className="text-primary size-5" />
           Digital Labs
         </h1>
-        <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
+        <p className="text-sm text-zinc-500 mt-1 max-w-[56ch] font-medium">
           Watch lab videos, open resources and join live classes assigned to your class.
         </p>
       </header>
@@ -107,7 +107,7 @@ export default function StudentLabs() {
               return (
                 <button key={lab.id} onClick={() => setOpenLab(lab)}
                   className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm p-4 sm:p-5 flex flex-col text-left hover:ring-primary/30 hover:shadow-md transition-all h-full w-full group overflow-hidden">
-                  <div className="size-10 bg-primary/10 rounded-md flex items-center justify-center text-primary ring-1 ring-primary/20 shrink-0">
+                  <div className="size-10 bg-primary/10 rounded-md flex items-center justify-center text-primary ring-1 ring-inset ring-primary/20 shrink-0">
                     <FlaskConical className="size-5" />
                   </div>
                   <h3 className="font-semibold text-zinc-900 text-base leading-tight line-clamp-2 min-h-[2.5rem] mt-3 group-hover:text-primary transition-colors">{lab.title}</h3>
@@ -116,7 +116,7 @@ export default function StudentLabs() {
                     {lab.created_by_name ? ` - ${lab.created_by_name}` : ''}
                   </p>
                   {lab.description && (
-                    <p className="text-xs text-zinc-500 mt-3 line-clamp-2 leading-relaxed">{lab.description}</p>
+                    <p className="text-xs text-zinc-500 mt-3 line-clamp-2 leading-relaxed font-medium">{lab.description}</p>
                   )}
                   <div className="mt-auto pt-4 flex flex-wrap gap-1.5 w-full">
                     {['video', 'pdf', 'live', 'link'].map(t => counts[t] ? (
@@ -151,16 +151,16 @@ function LabDetail({ lab, onBack }) {
   }, [resources]);
 
   return (
-    <div className="space-y-4 sm:space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+    <div className="space-y-4 sm:space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300 p-4 sm:p-6 lg:p-8 max-w-[1440px] mx-auto w-full">
       <button onClick={onBack}
-        className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
+        className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors bg-white hover:bg-zinc-50 px-3 py-1.5 rounded-md ring-1 ring-black/5 shadow-sm">
         <ArrowLeft className="size-4" /> Back to labs
       </button>
 
       {/* Lab header */}
       <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm p-5 sm:p-6">
         <div className="flex items-start gap-4">
-          <div className="size-12 bg-primary/10 rounded-md flex items-center justify-center text-primary ring-1 ring-primary/20 shrink-0">
+          <div className="size-12 bg-primary/10 rounded-md flex items-center justify-center text-primary ring-1 ring-inset ring-primary/20 shrink-0">
             <FlaskConical className="size-6" />
           </div>
           <div className="min-w-0 flex-1">
@@ -179,14 +179,15 @@ function LabDetail({ lab, onBack }) {
         </div>
         {lab.description && (
           <div className="mt-5 bg-zinc-50/50 p-4 rounded-md border border-zinc-100">
-            <p className="text-sm text-zinc-700 leading-relaxed whitespace-pre-wrap">{lab.description}</p>
+            <p className="text-sm text-zinc-700 leading-relaxed whitespace-pre-wrap font-medium">{lab.description}</p>
           </div>
         )}
       </div>
 
       {/* Resources */}
       <div className="space-y-4">
-        <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-widest pl-1">Resources</h3>
+        <h3 className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider pl-1">Resources</h3>
+        
         {ordered.length === 0 ? (
           <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
             <p className="text-zinc-400 font-medium text-sm">This lab has no resources yet.</p>
@@ -215,25 +216,18 @@ function LabDetail({ lab, onBack }) {
                           {meta.label}
                         </span>
                         {r.resource_type === 'live' && r.scheduled_at && (
-                          <span className="inline-flex items-center gap-1 text-[10px] sm:text-[11px] font-medium text-zinc-500 bg-zinc-100 px-1.5 py-0.5 rounded">
+                          <span className="inline-flex items-center gap-1 text-[10px] sm:text-[11px] font-medium text-zinc-500 bg-zinc-100 px-1.5 py-0.5 rounded ring-1 ring-inset ring-black/5">
                             <Clock className="size-3" /> {fmtDateTime(r.scheduled_at)}
                           </span>
                         )}
                       </div>
-                      <p className="font-bold text-zinc-900 text-sm truncate">{r.title}</p>
+                      <p className="font-semibold text-zinc-900 text-sm truncate">{r.title}</p>
                     </div>
                   </div>
                   
+                  {/* UNIFIED PRIMARY ACTION BUTTON */}
                   <a href={clickUrl} target="_blank" rel="noopener noreferrer"
-                    className={`h-9 px-4 rounded-md font-semibold text-xs text-white transition-colors flex items-center justify-center gap-1.5 w-full sm:w-auto shrink-0 shadow-sm ${
-                      r.resource_type === 'live'
-                        ? 'bg-emerald-600 hover:bg-emerald-700'
-                        : r.resource_type === 'video'
-                          ? 'bg-rose-600 hover:bg-rose-700'
-                          : r.resource_type === 'pdf'
-                            ? 'bg-orange-600 hover:bg-orange-700'
-                            : 'bg-primary hover:bg-primary/90'
-                    }`}>
+                    className="h-9 px-4 rounded-md font-semibold text-xs text-white transition-colors flex items-center justify-center gap-1.5 w-full sm:w-auto shrink-0 shadow-sm bg-primary hover:bg-primary/90">
                     {r.resource_type === 'live' ? 'Join' : r.resource_type === 'video' ? 'Watch' : r.resource_type === 'pdf' ? 'Open PDF' : 'Open Link'}
                     <ExternalLink className="size-3.5" />
                   </a>
@@ -246,7 +240,6 @@ function LabDetail({ lab, onBack }) {
     </div>
   );
 }
-
 
 function ResourceTag({ type, count }) {
   const meta = resMeta(type);
