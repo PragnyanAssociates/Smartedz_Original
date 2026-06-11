@@ -4309,6 +4309,13 @@ app.delete('/api/admin/online-classes/:id', async (req, res) => {
 // Files are now accepted as Base64 text strings directly in the JSON payload.
 
 // --- 21.1 List labs for a teacher/admin ---
+// Initialize multer specifically for digital labs
+const labUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 100 * 1024 * 1024 } // 100MB limit
+});
+
+// --- 21.1 List labs for a teacher/admin ---
 app.get('/api/admin/labs/teacher/:userId', async (req, res) => {
     const { userId } = req.params;
     try {
@@ -4367,28 +4374,22 @@ app.get('/api/admin/labs/resource/:id', async (req, res) => {
         const [rows] = await db.execute('SELECT file_data, mime_type FROM lab_resources WHERE id = ?', [req.params.id]);
         if (!rows.length || !rows[0].file_data) return res.status(404).send('Not found');
 
-        let data = rows[0].file_data;
+        const data = rows[0].file_data;
         const mime = rows[0].mime_type || 'application/octet-stream';
         
-        // Convert the Base64 string back into a binary stream for the frontend player
-        if (typeof data === 'string') {
-            if (data.includes('base64,')) {
-                data = data.split('base64,')[1];
-            }
-            data = Buffer.from(data, 'base64');
-        }
-
+        // Data is sent directly as a buffer, no Base64 conversion needed
         res.setHeader('Content-Type', mime);
         res.setHeader('Content-Length', data.length);
         res.send(data);
     } catch (err) { res.status(500).send(err.message); }
 });
 
-// --- 21.4 Create/Update Lab (JSON + Base64) ---
-app.post('/api/admin/labs', async (req, res) => {
-    const { id, institutionId, title, description, class_id, subject_id, created_by, resources } = req.body;
+// --- 21.4 Create/Update Lab (Multipart via Multer) ---
+app.post('/api/admin/labs', labUpload.any(), async (req, res) => {
+    const { id, institutionId, title, description, class_id, subject_id, created_by, resources: resourcesRaw } = req.body;
     
-    const parsedResources = typeof resources === 'string' ? JSON.parse(resources) : (resources || []);
+    // Parse the stringified JSON array sent from the frontend
+    const resources = JSON.parse(resourcesRaw || '[]');
     const conn = await db.getConnection();
     
     try {
@@ -4418,29 +4419,32 @@ app.post('/api/admin/labs', async (req, res) => {
             labId = resData.insertId;
         }
 
-        for (let i = 0; i < parsedResources.length; i++) {
-            const r = parsedResources[i];
+        for (let i = 0; i < resources.length; i++) {
+            const r = resources[i];
+            
+            // Find the physical file in req.files matching the dynamic fieldname
+            const file = req.files && req.files.find(f => f.fieldname === `file_${i}`);
             
             // Map the frontend ID back to the existing database record
             const oldResource = existingResources.find(old => String(old.id) === String(r.id));
 
-            let finalFileData = null;
+            let finalBuffer = null;
             let finalMime = null;
 
-            // 1. If a brand new Base64 string was uploaded, use it
-            if (r.file_data) {
-                finalFileData = r.file_data; 
-                finalMime = r.mime_type || null;
+            // 1. If a brand new file was uploaded, use the multer buffer
+            if (file) {
+                finalBuffer = file.buffer;
+                finalMime = file.mimetype;
             } 
             // 2. Otherwise, if it's supposed to be a file and we have old data, restore the old data
             else if (oldResource && r.source === 'file') {
-                finalFileData = oldResource.file_data;
+                finalBuffer = oldResource.file_data;
                 finalMime = oldResource.mime_type;
             }
 
             await conn.execute(
                 `INSERT INTO lab_resources (lab_id, resource_type, title, url, file_data, mime_type, scheduled_at, resource_order) VALUES (?,?,?,?,?,?,?,?)`,
-                [labId, r.resource_type, r.title, r.url || null, finalFileData, finalMime, r.scheduled_at || null, i]
+                [labId, r.resource_type, r.title, r.url || null, finalBuffer, finalMime, r.scheduled_at || null, i]
             );
         }
         
@@ -4501,7 +4505,6 @@ app.delete('/api/admin/labs/:id', async (req, res) => {
     }
     catch (err) { res.status(500).json({ error: err.message }); }
 });
-
 // --- Pre-Admissions Storage ---
 // =====================================================================
 // === 23. ADMISSIONS / DIRECTORY ======================================

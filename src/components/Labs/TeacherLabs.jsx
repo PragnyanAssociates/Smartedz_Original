@@ -38,14 +38,6 @@ const isoLocal = (dt) => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 
-// Helper: Convert File to Base64
-const fileToBase64 = (file) => new Promise((resolve, reject) => {
-  const reader = new FileReader();
-  reader.readAsDataURL(file);
-  reader.onload = () => resolve(reader.result);
-  reader.onerror = error => reject(error);
-});
-
 // =====================================================================
 //  MAIN COMPONENT
 // =====================================================================
@@ -157,52 +149,40 @@ export default function TeacherLabs({ canManage = true }) {
     
     setSaving(true);
 
-    try {
-      // 1. Process resources and convert any attached files to Base64 strings asynchronously
-      const processedResources = await Promise.all(resources.map(async (r) => {
-        let base64Data = null;
-        let mimeType = null;
+    // Create standard FormData payload
+    const fd = new FormData();
+    fd.append('institutionId', user.institutionId);
+    fd.append('title', form.title.trim());
+    fd.append('description', form.description);
+    fd.append('class_id', form.class_id);
+    fd.append('subject_id', form.subject_id);
+    fd.append('created_by', user.id);
+    if (editing) fd.append('id', editing.id);
 
-        // If a new file was selected, convert it
-        if (r.file) {
-          base64Data = await fileToBase64(r.file);
-          mimeType = r.file.type;
-        }
-
-        return {
-          id: r.id,
-          resource_type: r.resource_type,
-          title: r.title.trim(),
-          url: r.url,
-          source: r.source,
-          file_data: base64Data, 
-          mime_type: mimeType,
-          scheduled_at: r.resource_type === 'live' && r.scheduled_at ? r.scheduled_at.replace('T', ' ') + ':00' : null
-        };
-      }));
-
-      // 2. Build the standard JSON payload
-      const payload = {
-        institutionId: user.institutionId,
-        title: form.title.trim(),
-        description: form.description,
-        class_id: form.class_id,
-        subject_id: form.subject_id,
-        created_by: user.id,
-        resources: processedResources
-      };
-
-      if (editing) {
-        payload.id = editing.id;
+    // Append actual File objects directly to the payload
+    const resMetadata = resources.map((r, i) => {
+      if (r.file) {
+        fd.append(`file_${i}`, r.file);
       }
+      
+      return {
+        id: r.id,
+        resource_type: r.resource_type,
+        title: r.title.trim(),
+        url: r.url,
+        source: r.source,
+        has_file: Boolean(r.file || r.has_file),
+        scheduled_at: r.resource_type === 'live' && r.scheduled_at ? r.scheduled_at.replace('T', ' ') + ':00' : null
+      };
+    });
 
-      // 3. Send as application/json instead of multipart/form-data
+    fd.append('resources', JSON.stringify(resMetadata));
+
+    try {
+      // Do NOT set Content-Type header. The browser does this automatically for FormData.
       const res = await fetch(`${API_BASE_URL}/admin/labs`, { 
         method: 'POST', 
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload) 
+        body: fd 
       });
 
       if (res.ok) { 

@@ -136,10 +136,6 @@ export default function StudentLabs() {
   );
 }
 
-
-// =====================================================================
-//  LAB DETAIL - all resources of one lab
-// =====================================================================
 // =====================================================================
 //  LAB DETAIL - all resources of one lab
 // =====================================================================
@@ -245,6 +241,7 @@ function LabDetail({ lab, onBack }) {
     </div>
   );
 }
+
 function ResourceTag({ type, count }) {
   const meta = resMeta(type);
   const Icon = meta.icon;
