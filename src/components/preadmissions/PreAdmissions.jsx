@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import { 
@@ -76,8 +76,10 @@ export default function PreAdmissionsScreen() {
       const url = new URL(`${API_BASE_URL}/admin/preadmissions/${user.institutionId}`);
       url.searchParams.append('year', filterYear);
       url.searchParams.append('userId', user.id);
-      
       if (searchText) url.searchParams.append('search', searchText);
+      
+      // We still pass these to the backend just in case it is configured, 
+      // but we will rely on frontend filtering below to be 100% safe.
       if (filterStatus) url.searchParams.append('status', filterStatus);
       if (filterClass) url.searchParams.append('class', filterClass);
 
@@ -108,10 +110,25 @@ export default function PreAdmissionsScreen() {
     loadFormData(); 
   }, [fetchData, loadFormData]);
 
-  // Helper to format class name for dropdown
   const classLabel = (c) => `${c.className}${c.section ? ' - ' + c.section : ''}`;
 
-  // Helper for status button color classes
+  // --- FOOLPROOF FRONTEND FILTERING ---
+  const filteredData = useMemo(() => {
+    return data.filter(item => {
+      // 1. Check Status: Convert both to lowercase strings to prevent matching errors
+      const matchStatus = filterStatus 
+        ? String(item.status || '').trim().toLowerCase() === String(filterStatus).trim().toLowerCase() 
+        : true;
+
+      // 2. Check Class: Convert both to strings because the DB might send an Integer (e.g. 10) but the select sends a String ("10")
+      const matchClass = filterClass 
+        ? String(item.joining_grade || '').trim() === String(filterClass).trim() 
+        : true;
+
+      return matchStatus && matchClass;
+    });
+  }, [data, filterStatus, filterClass]);
+
   const getFilterTabClass = (status, isActive) => {
     if (!isActive) return 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200';
     if (status === 'Pending') return 'bg-amber-500 text-white shadow-sm';
@@ -335,7 +352,7 @@ export default function PreAdmissionsScreen() {
 
           <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col h-[70vh]">
             <div className="p-4 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 shrink-0">
-              <h2 className="font-semibold text-zinc-800 text-sm">Applications ({data.length})</h2>
+              <h2 className="font-semibold text-zinc-800 text-sm">Applications ({filteredData.length})</h2>
               {(canEdit || isAdmin) && (
                 <button onClick={() => handleOpenModal()} className="h-8 w-8 bg-primary/10 hover:bg-primary/20 text-primary rounded-md flex items-center justify-center transition-colors">
                   <Plus className="size-4" />
@@ -346,10 +363,10 @@ export default function PreAdmissionsScreen() {
             <div className="overflow-y-auto custom-scrollbar flex-1 divide-y divide-zinc-100">
               {loading ? (
                 <div className="p-10 flex justify-center"><Loader2 className="animate-spin text-primary size-6" /></div> 
-              ) : data.length === 0 ? (
+              ) : filteredData.length === 0 ? (
                 <div className="p-10 text-center text-zinc-400 font-medium text-sm">No records found.</div>
               ) : (
-                data.map(item => (
+                filteredData.map(item => (
                   <div key={item.id} onClick={() => setSelectedItem(item)} className={`p-4 flex items-center cursor-pointer transition-colors ${selectedItem?.id === item.id ? 'bg-primary/5' : 'hover:bg-zinc-50/80'}`}>
                     <img src={item.photo_url || '/default-avatar.png'} alt="" className="size-10 rounded-md object-cover bg-zinc-100 mr-3 ring-1 ring-black/5 shadow-sm" />
                     <div className="flex-1 min-w-0 pr-2">
