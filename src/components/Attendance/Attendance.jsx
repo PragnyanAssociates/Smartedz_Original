@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   GraduationCap, Users as UsersIcon, UserCog, ClipboardCheck, History,
   Search, ChevronLeft, ChevronDown, BarChart3, CalendarCheck, CalendarX,
-  Clock, CalendarRange, List, PieChart
+  CalendarRange, List, PieChart
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
@@ -346,17 +346,16 @@ function HistoryPicker({ category, yearName }) {
   }, [sortedAll, search]);
 
   // ---- Per-user stats (for the "total / present" figure + Analysis) -
-  // "present" counts days attended (Present + Late); the denominator is
-  // the category's working days in the selected range.
+  // "present" counts days attended (Present); the denominator is the
+  // category's working days in the selected range.
   const workingDays = overview?.working_days || 0;
   const statsById = useMemo(() => {
     const m = {};
     (overview?.per_user || []).forEach(s => {
-      const attended = (s.present || 0) + (s.late || 0);
+      const attended = s.present || 0;
       m[s.user_id] = {
         present: attended,
         absent: s.absent || 0,
-        late: s.late || 0,
         total: workingDays,
         pct: workingDays > 0 ? Math.round((attended / workingDays) * 100) : 0
       };
@@ -483,7 +482,7 @@ function HistoryPicker({ category, yearName }) {
       </div>
 
       {/* Overview bar (below the search) */}
-      <OverviewBar overview={overview} loading={ovLoading} category={category} />
+      <OverviewBar overview={overview} loading={ovLoading} category={category} mode={mode} />
 
       {/* Body: Analysis graph OR person list */}
       {view === 'analysis' ? (
@@ -606,7 +605,7 @@ function HistoryPicker({ category, yearName }) {
 // =====================================================================
 //  OverviewBar — aggregate summary for the whole category
 // =====================================================================
-function OverviewBar({ overview, loading, category }) {
+function OverviewBar({ overview, loading, category, mode }) {
   if (loading) {
     return (
       <div className="bg-white rounded-lg ring-1 ring-black/5 p-4 flex items-center justify-center h-20">
@@ -616,12 +615,22 @@ function OverviewBar({ overview, loading, category }) {
   }
   if (!overview) return null;
 
+  // Daily view shows raw head-counts (e.g. 20 present of 21 students today).
+  // Monthly / Yearly / Custom span many days, so raw counts become summed
+  // student-days (confusing next to the student count). For those period
+  // views we instead show Present / Absent as a SHARE of all marked
+  // student-days, so the two add up to 100%.
+  const isDaily = mode === 'daily';
+  const present = overview.present ?? 0;
+  const absent  = overview.absent ?? 0;
+  const denom   = present + absent;
+  const share   = (n) => (denom > 0 ? `${((n / denom) * 100).toFixed(1)}%` : '0.0%');
+
   const cards = [
     { icon: CalendarRange,  label: 'Working Days', value: overview.working_days ?? 0, color: 'blue' },
     { icon: BarChart3,      label: 'Avg %',        value: `${overview.avg_percentage ?? '0.0'}%`, color: 'blue' },
-    { icon: CalendarCheck,  label: 'Present',      value: overview.present ?? 0, color: 'emerald' },
-    { icon: CalendarX,      label: 'Absent',       value: overview.absent ?? 0, color: 'red' },
-    { icon: Clock,          label: 'Late',         value: overview.late ?? 0, color: 'amber' },
+    { icon: CalendarCheck,  label: 'Present',      value: isDaily ? present : share(present), color: 'emerald' },
+    { icon: CalendarX,      label: 'Absent',       value: isDaily ? absent  : share(absent),  color: 'red' },
     { icon: GraduationCap,  label: category === 'students' ? 'Students' : (category === 'teachers' ? 'Teachers' : 'People'), value: overview.user_count ?? 0, color: 'zinc' }
   ];
 
@@ -635,7 +644,7 @@ function OverviewBar({ overview, loading, category }) {
 
   return (
     <div className="bg-white rounded-lg ring-1 ring-black/5 p-3 sm:p-4">
-      <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 sm:gap-3">
+      <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 sm:gap-3">
         {cards.map((c, i) => {
           const Icon = c.icon;
           return (

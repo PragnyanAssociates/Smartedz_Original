@@ -6,12 +6,12 @@ import { Calendar, Search, Loader2, CheckCheck, Save, Info, AlertTriangle, Chevr
 
 // =====================================================================
 //  RosterMarker — bulk attendance marker
+//  Statuses: P (Present) / A (Absent). (Late was removed.)
 // =====================================================================
 
 const STATUS_OPTIONS = [
   { code: 'P', label: 'P', full: 'Present', cls: 'bg-emerald-600 border-emerald-600 text-white shadow-sm',  idle: 'bg-white border-zinc-200 text-zinc-400 hover:border-emerald-300 hover:text-emerald-600 hover:bg-emerald-50' },
-  { code: 'A', label: 'A', full: 'Absent',  cls: 'bg-red-600 border-red-600 text-white shadow-sm',          idle: 'bg-white border-zinc-200 text-zinc-400 hover:border-red-300 hover:text-red-600 hover:bg-red-50' },
-  { code: 'L', label: 'L', full: 'Late',    cls: 'bg-amber-500 border-amber-500 text-white shadow-sm',      idle: 'bg-white border-zinc-200 text-zinc-400 hover:border-amber-300 hover:text-amber-600 hover:bg-amber-50' }
+  { code: 'A', label: 'A', full: 'Absent',  cls: 'bg-red-600 border-red-600 text-white shadow-sm',          idle: 'bg-white border-zinc-200 text-zinc-400 hover:border-red-300 hover:text-red-600 hover:bg-red-50' }
 ];
 
 // Backend (e.g. Railway) stores marked_at / updated_at in UTC as a naive
@@ -157,7 +157,7 @@ export default function RosterMarker({ category }) {
 
   const handleSubmit = async () => {
     const entries = Object.entries(edits)
-      .filter(([_, code]) => ['P', 'A', 'L'].includes(code))
+      .filter(([_, code]) => ['P', 'A'].includes(code))
       .map(([uid, code]) => ({ user_id: parseInt(uid, 10), status: code }));
 
     if (entries.length === 0) return alert('Mark at least one user before submitting.');
@@ -219,7 +219,6 @@ export default function RosterMarker({ category }) {
 
   const presentCount = Object.values(edits).filter(s => s === 'P').length;
   const absentCount  = Object.values(edits).filter(s => s === 'A').length;
-  const lateCount    = Object.values(edits).filter(s => s === 'L').length;
 
   return (
     <div className="space-y-4 sm:space-y-6 animate-in fade-in duration-500">
@@ -304,8 +303,7 @@ export default function RosterMarker({ category }) {
         <div className="mt-4 pt-3 border-t border-zinc-100 flex flex-wrap gap-1.5 sm:gap-3 text-[10px] sm:text-xs font-medium">
           <Stat color="emerald" label="Present"  value={presentCount} />
           <Stat color="red"     label="Absent"   value={absentCount} />
-          <Stat color="amber"   label="Late"     value={lateCount} />
-          <Stat color="zinc"    label="Unmarked" value={filtered.length - presentCount - absentCount - lateCount} />
+          <Stat color="zinc"    label="Unmarked" value={filtered.length - presentCount - absentCount} />
           <Stat color="zinc"    label="Total"    value={roster.length} />
         </div>
       </div>

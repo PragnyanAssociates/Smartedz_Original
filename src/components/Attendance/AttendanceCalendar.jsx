@@ -3,9 +3,9 @@ import React, { useMemo } from 'react';
 // =====================================================================
 //  AttendanceCalendar — month grid for a single person.
 //  Each day block is coloured by that day's attendance:
-//    Present → green · Late → amber · Absent → red · not marked → grey.
+//    Present → green · Absent → red · not marked → grey.
 //  Renders one month (monthly view) or several months (yearly / custom).
-//  Dependency-free.
+//  Dependency-free. (Late was removed — only Present / Absent now.)
 // =====================================================================
 
 const MONTHS_FULL = [
@@ -16,12 +16,11 @@ const DOW = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 
 const CELL = {
   P:      'bg-emerald-500 text-white ring-1 ring-emerald-600/30',
-  L:      'bg-amber-400 text-white ring-1 ring-amber-500/30',
   A:      'bg-red-500 text-white ring-1 ring-red-600/30',
   none:   'bg-zinc-50 text-zinc-400 ring-1 ring-zinc-200',
   future: 'bg-white text-zinc-300 ring-1 ring-zinc-100'
 };
-const STATUS_LABEL = { P: 'Present', L: 'Late', A: 'Absent' };
+const STATUS_LABEL = { P: 'Present', A: 'Absent' };
 
 function MonthGrid({ ym, statusByDate, todayStr }) {
   const [y, m] = ym.split('-').map(Number);
@@ -33,11 +32,11 @@ function MonthGrid({ ym, statusByDate, todayStr }) {
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
 
   // Per-month tally
-  let present = 0, late = 0, absent = 0;
+  let present = 0, absent = 0;
   Object.keys(statusByDate).forEach(k => {
     if (k.slice(0, 7) === ym) {
       const s = statusByDate[k];
-      if (s === 'P') present++; else if (s === 'L') late++; else if (s === 'A') absent++;
+      if (s === 'P') present++; else if (s === 'A') absent++;
     }
   });
 
@@ -46,7 +45,7 @@ function MonthGrid({ ym, statusByDate, todayStr }) {
       <div className="flex items-center justify-between mb-3">
         <h4 className="text-sm font-semibold text-zinc-900">{MONTHS_FULL[m - 1]} {y}</h4>
         <span className="text-[10px] font-medium text-zinc-400 tabular-nums">
-          {present + late}/{present + late + absent} present
+          {present}/{present + absent} present
         </span>
       </div>
 
@@ -64,7 +63,7 @@ function MonthGrid({ ym, statusByDate, todayStr }) {
           const isFuture = dateStr > todayStr;
           const cls = status ? CELL[status] : (isFuture ? CELL.future : CELL.none);
           const title = status
-            ? `${dateStr} — ${STATUS_LABEL[status]}`
+            ? `${dateStr} — ${STATUS_LABEL[status] || status}`
             : (isFuture ? dateStr : `${dateStr} — Not marked`);
           return (
             <div key={i} title={title}
@@ -100,7 +99,6 @@ export default function AttendanceCalendar({ rows = [], months = [] }) {
       {/* Legend */}
       <div className="flex flex-wrap items-center gap-3 sm:gap-4 text-[10px] font-medium text-zinc-500">
         <span className="flex items-center gap-1.5"><span className="size-3 rounded bg-emerald-500" /> Present</span>
-        <span className="flex items-center gap-1.5"><span className="size-3 rounded bg-amber-400" /> Late</span>
         <span className="flex items-center gap-1.5"><span className="size-3 rounded bg-red-500" /> Absent</span>
         <span className="flex items-center gap-1.5"><span className="size-3 rounded bg-zinc-100 ring-1 ring-zinc-200" /> Not marked</span>
       </div>

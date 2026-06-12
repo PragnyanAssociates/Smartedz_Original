@@ -3,9 +3,10 @@ import React, { useMemo } from 'react';
 // =====================================================================
 //  AttendanceChart — lightweight, dependency-free stacked bar chart.
 //  Each bar is one day; height is proportional to that day's total
-//  marks, split into Present (green) / Late (amber) / Absent (red).
+//  marks, split into Present (green) / Absent (red).
 //  Works for a whole category (many marks per day) or a single person
 //  (one mark per day). No charting library required.
+//  (Late was removed — only Present / Absent now.)
 // =====================================================================
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -41,7 +42,6 @@ export default function AttendanceChart({ series = [], height = 200, title }) {
       <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
         <div className="flex items-center gap-3 sm:gap-4 text-[10px] font-medium text-zinc-500">
           <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-emerald-500" /> Present</span>
-          <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-amber-400" /> Late</span>
           <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-red-500" /> Absent</span>
         </div>
         {title && <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">{title}</span>}
@@ -52,12 +52,10 @@ export default function AttendanceChart({ series = [], height = 200, title }) {
           {series.map((s, i) => {
             const total = Number(s.total) || 0;
             const present = Number(s.present) || 0;
-            const late = Number(s.late) || 0;
             const absent = Number(s.absent) || 0;
 
             const barH = total > 0 ? (total / maxTotal) * 100 : 0;
             const pPct = total > 0 ? (present / total) * 100 : 0;
-            const lPct = total > 0 ? (late / total) * 100 : 0;
             const aPct = total > 0 ? (absent / total) * 100 : 0;
 
             return (
@@ -65,9 +63,8 @@ export default function AttendanceChart({ series = [], height = 200, title }) {
                 <div
                   className="w-full rounded-t flex flex-col-reverse overflow-hidden bg-zinc-100"
                   style={{ height: `${barH}%`, minHeight: total > 0 ? 6 : 2 }}
-                  title={`${labelFor(s.date)} — Present ${present} · Late ${late} · Absent ${absent} (Total ${total})`}>
+                  title={`${labelFor(s.date)} — Present ${present} · Absent ${absent} (Total ${total})`}>
                   <div className="bg-emerald-500 w-full" style={{ height: `${pPct}%` }} />
-                  <div className="bg-amber-400 w-full" style={{ height: `${lPct}%` }} />
                   <div className="bg-red-500 w-full" style={{ height: `${aPct}%` }} />
                 </div>
                 <span className="text-[8px] text-zinc-400 mt-1.5 whitespace-nowrap tabular-nums h-3">

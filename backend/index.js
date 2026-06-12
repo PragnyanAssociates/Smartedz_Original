@@ -1424,7 +1424,7 @@ app.put('/api/profile/:id', async (req, res) => {
 // === 15. ATTENDANCE ==================================================
 //   One row per user per day. Tracks marker + last editor.
 //   Granularity: daily (no period/subject linkage).
-//   Status codes: P (Present), A (Absent), L (Late).
+//   Status codes: P (Present), A (Absent).  ← Late ('L') has been REMOVED.
 //
 //   NOTE ON TIME: marked_at / updated_at are stored in UTC (the server,
 //   e.g. on Railway, runs in UTC). The frontend tags these naive
@@ -1434,20 +1434,26 @@ app.put('/api/profile/:id', async (req, res) => {
 //   ACADEMIC YEAR: every attendance row carries academic_year_id, and
 //   every read/write scopes to the school's *active* academic year via
 //   the shared resolveYearId() helper (defined in the Timetable section).
-//   So when the admin switches the active year under Academics, the
-//   attendance data switches with it — exactly like the timetable. Each
-//   year keeps its own data (non-destructive); switching back restores it.
 //
-//   REQUIRES a one-time migration (run once in your DB):
+//   ------------------------------------------------------------------
+//   ONE-TIME MIGRATION — remove Late ('L') from attendance.
+//   Run BOTH statements once in your DB (Workbench safe-update mode may
+//   block the UPDATE; if so, run `SET SQL_SAFE_UPDATES=0;` first, or use
+//   the `id > 0` form below, then re-enable it):
+//
+//     -- 1) Convert every existing Late mark to Present
+//     UPDATE attendance SET status = 'P' WHERE status = 'L' AND id > 0;
+//
+//     -- 2) Drop 'L' from the status enum
 //     ALTER TABLE attendance
-//       ADD COLUMN academic_year_id INT NULL AFTER institutionId;
-//     UPDATE attendance a
-//       JOIN academic_years y
-//         ON y.institutionId = a.institutionId AND y.isActive = 1
-//       SET a.academic_year_id = y.id
-//      WHERE a.academic_year_id IS NULL;
-//     CREATE INDEX idx_attendance_year
-//       ON attendance (academic_year_id, attendance_date);
+//       MODIFY COLUMN status ENUM('P','A') NOT NULL DEFAULT 'P';
+//
+//   (The earlier academic_year_id migration, if not already applied:
+//     ALTER TABLE attendance ADD COLUMN academic_year_id INT NULL AFTER institutionId;
+//     UPDATE attendance a JOIN academic_years y
+//       ON y.institutionId = a.institutionId AND y.isActive = 1
+//       SET a.academic_year_id = y.id WHERE a.academic_year_id IS NULL;
+//     CREATE INDEX idx_attendance_year ON attendance (academic_year_id, attendance_date);)
 // =====================================================================
 
 // --- 15.1 Roster for marking ---------------------------------------
@@ -1546,8 +1552,7 @@ app.get('/api/admin/attendance/roster/:instId', async (req, res) => {
 // --- 15.2 Bulk mark / update attendance ----------------------------
 //   POST /api/admin/attendance/mark
 //   Body: { institutionId, date, actor_id, entries: [{user_id, status}] }
-//   Upserts each row. If row exists → updates status, updated_by, updated_at.
-//   If row doesn't exist → inserts with marked_by, marked_at.
+//   status must be 'P' or 'A'. Upserts each row.
 app.post('/api/admin/attendance/mark', async (req, res) => {
     const { institutionId, date, actor_id, entries } = req.body;
     if (!institutionId || !date || !actor_id || !Array.isArray(entries)) {
@@ -1564,7 +1569,7 @@ app.post('/api/admin/attendance/mark', async (req, res) => {
 
         await conn.beginTransaction();
         for (const e of entries) {
-            if (!e.user_id || !['P', 'A', 'L'].includes(e.status)) continue;
+            if (!e.user_id || !['P', 'A'].includes(e.status)) continue;
 
             // Does a row already exist for this user/date in this year?
             const [exists] = await conn.execute(
@@ -1603,7 +1608,7 @@ app.post('/api/admin/attendance/mark', async (req, res) => {
 //   GET /api/admin/attendance/history/:userId?from=YYYY-MM-DD&to=YYYY-MM-DD
 //   Scoped to the school's active academic year. from/to are OPTIONAL:
 //   when omitted, returns the whole active year (used by the "Yearly"
-//   filter). Returns each row in range plus summary stats.
+//   filter). Returns each row in range plus summary stats (P / A only).
 app.get('/api/admin/attendance/history/:userId', async (req, res) => {
     const { userId } = req.params;
     const { from, to } = req.query;
@@ -1636,11 +1641,10 @@ app.get('/api/admin/attendance/history/:userId', async (req, res) => {
         const summary = {
             total:   rows.length,
             present: rows.filter(r => r.status === 'P').length,
-            absent:  rows.filter(r => r.status === 'A').length,
-            late:    rows.filter(r => r.status === 'L').length
+            absent:  rows.filter(r => r.status === 'A').length
         };
         summary.percentage = summary.total > 0
-            ? (((summary.present + summary.late) / summary.total) * 100).toFixed(1)
+            ? ((summary.present / summary.total) * 100).toFixed(1)
             : '0.0';
         res.json({ academic_year_id: yearId, rows, summary });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -1677,9 +1681,9 @@ app.get('/api/admin/attendance/teacher-classes/:teacherId', async (req, res) => 
 //   (the "Yearly" filter omits them to cover the whole active year).
 //   Powers BOTH the overview summary bar and the Analysis bar graph.
 //   Returns aggregate totals for everyone in the category, a per-day
-//   time series (present / late / absent / total), AND a per_user
-//   breakdown — the latter feeds the "Total / Present" figure on each
-//   list row and the per-student Analysis bars.
+//   time series (present / absent / total), AND a per_user breakdown —
+//   the latter feeds the "Total / Present" figure on each list row and
+//   the per-student Analysis bars. (P / A only — Late removed.)
 app.get('/api/admin/attendance/overview/:instId', async (req, res) => {
     const { instId } = req.params;
     const { category = 'students', from, to, class_id } = req.query;
@@ -1707,7 +1711,7 @@ app.get('/api/admin/attendance/overview/:instId', async (req, res) => {
 
         const empty = {
             from, to, category, academic_year_id: yearId, user_count: userCount,
-            working_days: 0, present: 0, absent: 0, late: 0, total_marks: 0,
+            working_days: 0, present: 0, absent: 0, total_marks: 0,
             avg_percentage: '0.0', series: [], per_user: []
         };
         if (userCount === 0) return res.json(empty);
@@ -1736,22 +1740,20 @@ app.get('/api/admin/attendance/overview/:instId', async (req, res) => {
 
             // Aggregate status totals across the whole category
             const [tot] = await db.execute(
-                `SELECT SUM(status = 'P') AS p, SUM(status = 'A') AS a,
-                        SUM(status = 'L') AS l, COUNT(*) AS t
+                `SELECT SUM(status = 'P') AS p, SUM(status = 'A') AS a, COUNT(*) AS t
                    FROM attendance
                   WHERE ${attWhere}`,
                 attParams
             );
             const present = Number(tot[0]?.p || 0);
             const absent  = Number(tot[0]?.a || 0);
-            const late    = Number(tot[0]?.l || 0);
             const total_marks = Number(tot[0]?.t || 0);
 
             // Per-day series for the graph
             const [ser] = await db.execute(
                 `SELECT DATE_FORMAT(attendance_date, '%Y-%m-%d') AS date,
                         SUM(status = 'P') AS present, SUM(status = 'A') AS absent,
-                        SUM(status = 'L') AS late, COUNT(*) AS total
+                        COUNT(*) AS total
                    FROM attendance
                   WHERE ${attWhere}
                   GROUP BY attendance_date
@@ -1761,16 +1763,14 @@ app.get('/api/admin/attendance/overview/:instId', async (req, res) => {
             const series = ser.map(r => ({
                 date: r.date,
                 present: Number(r.present), absent: Number(r.absent),
-                late: Number(r.late), total: Number(r.total)
+                total: Number(r.total)
             }));
 
             // Per-user breakdown — powers the "Total / Present" figure on
-            // each list row and the per-student Analysis bar chart. This is
-            // what was missing: without it the rows have no per-person
-            // present count and render 0 for every teacher / other user.
+            // each list row and the per-student Analysis bar chart.
             const [pu] = await db.execute(
                 `SELECT user_id,
-                        SUM(status = 'P') AS present, SUM(status = 'L') AS late,
+                        SUM(status = 'P') AS present,
                         SUM(status = 'A') AS absent, COUNT(*) AS total
                    FROM attendance
                   WHERE ${attWhere}
@@ -1779,17 +1779,17 @@ app.get('/api/admin/attendance/overview/:instId', async (req, res) => {
             );
             const per_user = pu.map(r => ({
                 user_id: r.user_id,
-                present: Number(r.present), late: Number(r.late),
+                present: Number(r.present),
                 absent: Number(r.absent), total: Number(r.total)
             }));
 
             const avg_percentage = total_marks > 0
-                ? (((present + late) / total_marks) * 100).toFixed(1)
+                ? ((present / total_marks) * 100).toFixed(1)
                 : '0.0';
 
             res.json({
                 from, to, category, academic_year_id: yearId, user_count: userCount,
-                working_days, present, absent, late, total_marks,
+                working_days, present, absent, total_marks,
                 avg_percentage, series, per_user
             });
         } catch (attErr) {

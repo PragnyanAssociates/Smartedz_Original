@@ -12,6 +12,7 @@ import AttendanceCalendar from './AttendanceCalendar';
 //  Shows: summary cards + a per-person attendance CALENDAR + a list of
 //  daily entries with marker/editor info.
 //  Filters: Daily | Monthly | Yearly | Custom range.
+//  Statuses: P (Present) / A (Absent). (Late was removed.)
 // =====================================================================
 
 // Date-only formatter — parsed without timezone so it never drifts a day.
@@ -37,8 +38,7 @@ const fmtDateTime = (s) => {
 
 const STATUS_META = {
   P: { label: 'Present', text: 'text-emerald-600', bg: 'bg-emerald-50', ring: 'ring-emerald-600/20', icon: CheckCircle2 },
-  A: { label: 'Absent',  text: 'text-red-600',     bg: 'bg-red-50',     ring: 'ring-red-600/20',     icon: XCircle },
-  L: { label: 'Late',    text: 'text-amber-600',   bg: 'bg-amber-50',   ring: 'ring-amber-600/20',   icon: Clock }
+  A: { label: 'Absent',  text: 'text-red-600',     bg: 'bg-red-50',     ring: 'ring-red-600/20',     icon: XCircle }
 };
 
 export default function AttendanceHistory({ userId, userName, selfOnly = false, yearName = '' }) {
@@ -187,11 +187,10 @@ export default function AttendanceHistory({ userId, userName, selfOnly = false, 
 
       {/* Summary cards */}
       {summary && summary.total > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+        <div className="grid grid-cols-3 gap-3 sm:gap-4">
           <SumCard icon={BarChart3}     label="Attendance %"  value={`${summary.percentage}%`} color="blue" />
           <SumCard icon={CalendarCheck} label="Present"       value={summary.present} color="emerald" />
           <SumCard icon={CalendarX}     label="Absent"        value={summary.absent}  color="red" />
-          <SumCard icon={Clock}         label="Late"          value={summary.late}    color="amber" />
         </div>
       )}
 
@@ -199,7 +198,7 @@ export default function AttendanceHistory({ userId, userName, selfOnly = false, 
       {summary && summary.total > 0 && (
         <div className="text-[11px] text-zinc-500">
           <span className="font-medium text-zinc-700">{summary.total}</span> working day{summary.total !== 1 ? 's' : ''} in this period ·
-          {' '}<span className="font-medium text-emerald-700">{summary.present + summary.late}</span> present
+          {' '}<span className="font-medium text-emerald-700">{summary.present}</span> present
           {' '}(<span className="font-medium text-red-600">{summary.absent}</span> absent)
         </div>
       )}
@@ -313,7 +312,7 @@ function DailyBigCard({ row, date }) {
     );
   }
 
-  const meta = STATUS_META[row.status];
+  const meta = STATUS_META[row.status] || { label: 'Unknown', text: 'text-zinc-500', bg: 'bg-zinc-50', ring: 'ring-black/5', icon: Clock };
   const Icon = meta.icon;
 
   return (
