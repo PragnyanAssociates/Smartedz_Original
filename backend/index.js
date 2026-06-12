@@ -4515,23 +4515,44 @@ app.delete('/api/admin/labs/:id', async (req, res) => {
 //  REPLACE your whole Section 23 block with this.
 //
 //  Changes in this version:
-//   • The year filter now follows the ACADEMIC CALENDAR. The client sends
-//     the selected academic year's date range as `from` / `to` (YYYY-MM-DD)
-//     and records are scoped to applications submitted within that range
-//     (DATE(submission_date) BETWEEN from AND to). No schema change needed.
-//   • Removed the DUPLICATE GET route that previously sat after the POST.
-//     Express runs the first matching route only, so that second copy was
-//     dead code. This single route now also accepts the year range.
+//   • Reverted the year filter to a PLAIN CALENDAR YEAR. The academic-
+//     calendar (from/to) logic is gone. The client sends `year=YYYY` and
+//     records are scoped with YEAR(submission_date) = year. Omitting `year`
+//     (the "All Years" option) returns every year.
+//   • Added a lightweight endpoint that returns the distinct submission
+//     years present for an institution, so the client can build the year
+//     dropdown dynamically (a year only appears once data exists for it).
 //
 //  No migration required — pre_admissions is unchanged.
 // =====================================================================
 
-// --- 23.1 GET all records (Secured, academic-year scoped) -----------
-//   GET /api/admin/preadmissions/:instId?userId=..&search=..&from=..&to=..
-//   `from`/`to` are the selected academic year's start/end dates.
+// --- 23.0 Distinct submission years (for the year-filter dropdown) ---
+//   GET /api/admin/preadmissions/:instId/years
+//   Returns e.g. [2027, 2026] (newest first). Distinct path from
+//   /preadmissions/:instId, so it does not collide with the list route.
+app.get('/api/admin/preadmissions/:instId/years', async (req, res) => {
+    const { instId } = req.params;
+    try {
+        const [rows] = await db.query(
+            `SELECT DISTINCT YEAR(submission_date) AS yr
+               FROM pre_admissions
+              WHERE institutionId = ? AND submission_date IS NOT NULL
+              ORDER BY yr DESC`,
+            [instId]
+        );
+        res.status(200).json(rows.map(r => r.yr).filter(Boolean));
+    } catch (error) {
+        res.status(500).json({ message: "Failed to fetch submission years." });
+    }
+});
+
+// --- 23.1 GET all records (Secured, calendar-year scoped) -----------
+//   GET /api/admin/preadmissions/:instId?userId=..&search=..&year=YYYY
+//   `year` is a calendar year (filters YEAR(submission_date)); omit it to
+//   return all years.
 app.get('/api/admin/preadmissions/:instId', async (req, res) => {
     const { instId } = req.params;
-    const { search, from, to, userId } = req.query;
+    const { search, year, userId } = req.query;
 
     if (!userId) return res.status(400).json({ error: 'userId required' });
 
@@ -4558,11 +4579,11 @@ app.get('/api/admin/preadmissions/:instId', async (req, res) => {
         let whereClauses = ["institutionId = ?"];
         const queryParams = [instId];
 
-        // Academic-year scoping: applications submitted within the selected
-        // academic year's date range (sent by the client as from/to).
-        if (from && to) {
-            whereClauses.push("DATE(submission_date) BETWEEN ? AND ?");
-            queryParams.push(from, to);
+        // Calendar-year scoping: applications submitted in the selected year.
+        const yr = parseInt(year, 10);
+        if (year && year !== 'all' && !isNaN(yr)) {
+            whereClauses.push("YEAR(submission_date) = ?");
+            queryParams.push(yr);
         }
 
         if (search) {

@@ -58,7 +58,6 @@ export default function PreAdmissionsScreen() {
 
   const [data, setData] = useState([]);
   const [classes, setClasses] = useState([]);
-  const [academicYears, setAcademicYears] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modalVisible, setModalVisible] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -70,16 +69,19 @@ export default function PreAdmissionsScreen() {
 
   // Filters
   const [searchText, setSearchText] = useState('');
-  // Year filter now follows the ACADEMIC CALENDAR — it holds an academic
-  // year id (defaults to the school's active year once loaded).
-  const [filterAcademicYearId, setFilterAcademicYearId] = useState('');
+  // Plain calendar-year filter. The list of selectable years is built from
+  // the submission years that actually exist (plus the current year), with an
+  // "All Years" option. Defaults to the current year.
+  const currentYear = new Date().getFullYear();
+  const [availableYears, setAvailableYears] = useState([]); // years present in data
+  const [filterYear, setFilterYear] = useState(String(currentYear)); // a year, or 'all'
   const [filterStatus, setFilterStatus] = useState('Pending');
   // Single class filter — Joining class. '' means "All Classes" (default).
   const [filterJoiningClass, setFilterJoiningClass] = useState('');
 
   // --- Fetch Data ---
-  // Scoped to the selected academic year by submission_date range (from/to),
-  // matching the way every other module anchors to the academic calendar.
+  // Scoped to the selected calendar year via YEAR(submission_date) on the
+  // backend; 'all' sends no year filter.
   const fetchData = useCallback(async () => {
     if (!user?.institutionId || (!canRead && !isAdmin)) return;
 
@@ -88,12 +90,7 @@ export default function PreAdmissionsScreen() {
       const url = new URL(`${API_BASE_URL}/admin/preadmissions/${user.institutionId}`);
       url.searchParams.append('userId', user.id);
       if (searchText) url.searchParams.append('search', searchText);
-
-      const yr = academicYears.find(y => String(y.id) === String(filterAcademicYearId));
-      if (yr?.startDate && yr?.endDate) {
-        url.searchParams.append('from', String(yr.startDate).slice(0, 10));
-        url.searchParams.append('to', String(yr.endDate).slice(0, 10));
-      }
+      if (filterYear && filterYear !== 'all') url.searchParams.append('year', filterYear);
 
       const res = await fetch(url);
       const records = await res.json();
@@ -103,35 +100,41 @@ export default function PreAdmissionsScreen() {
     } finally {
       setLoading(false);
     }
-  }, [user, isAdmin, canRead, searchText, academicYears, filterAcademicYearId]);
+  }, [user, isAdmin, canRead, searchText, filterYear]);
 
-  // --- Fetch master list of classes + academic years -----------------
+  // --- Fetch master list of classes + the submission years present --------
   const loadFormData = useCallback(async () => {
     if (!user?.institutionId) return;
     try {
       const res = await fetch(`${API_BASE_URL}/admin/data/${user.institutionId}`);
       const d = await res.json();
       setClasses(d.classes || []);
-      const years = d.academicYears || [];
-      setAcademicYears(years);
-      // Default the year filter to the active academic year (once).
-      setFilterAcademicYearId(prev => {
-        if (prev) return prev;
-        const active = years.find(y => y.isActive) || years[0];
-        return active ? String(active.id) : '';
-      });
     } catch (e) {
-      console.error('Load data error:', e);
+      console.error('Load classes error:', e);
+    }
+    try {
+      const res2 = await fetch(`${API_BASE_URL}/admin/preadmissions/${user.institutionId}/years`);
+      const yrs = await res2.json();
+      setAvailableYears(Array.isArray(yrs) ? yrs.map(Number).filter(Boolean) : []);
+    } catch (e) {
+      console.error('Load years error:', e);
     }
   }, [user]);
 
-  // Load classes + academic years once per user. Kept SEPARATE from the data
-  // fetch: this sets `academicYears`, and `academicYears` is a dependency of
-  // fetchData — running both in one effect created an infinite refetch loop.
+  // Load classes + years once per user. (fetchData no longer depends on these,
+  // so there's no refetch loop.)
   useEffect(() => { loadFormData(); }, [loadFormData]);
 
   // Fetch applications whenever the query inputs (year/search) change.
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Year dropdown options: every year present in the data, plus the current
+  // year (so you can always filter the year you're adding to), newest first.
+  const yearOptions = useMemo(() => {
+    const set = new Set(availableYears);
+    set.add(currentYear);
+    return Array.from(set).sort((a, b) => b - a);
+  }, [availableYears, currentYear]);
 
   // Distinct class names (grades). Sections are not relevant to a grade,
   // so we collapse to unique className values.
@@ -139,7 +142,7 @@ export default function PreAdmissionsScreen() {
     () => Array.from(new Set((classes || []).map(c => c.className).filter(Boolean))),
     [classes]
   );
-  // Options for the in-form grade dropdowns AND the Joining-class filter —
+  // Options for the in-form grade dropdowns —
   // the SAME full class list shown while creating a pre-admission
   // (e.g. Class 1 … Class 10, LKG, UKG), in the school's class order.
   const gradeSelectOptions = useMemo(
@@ -148,9 +151,9 @@ export default function PreAdmissionsScreen() {
   );
 
   // --- FRONTEND FILTERING ---
-  // Status + the Joining-class filter are applied here; the academic year
-  // is applied server-side via from/to. Joining class uses normGrade so it
-  // matches whether a record stored "Class 9" or just "9".
+  // Status + the Joining-class filter are applied here; the year is applied
+  // server-side. Joining class uses normGrade so it matches whether a record
+  // stored "Class 9" or just "9".
   const filteredData = useMemo(() => {
     return data.filter(item => {
       const matchStatus  = filterStatus ? eq(item.status, filterStatus) : true;
@@ -313,7 +316,7 @@ export default function PreAdmissionsScreen() {
           {/* FILTER SECTION */}
           <div className="bg-white p-2 rounded-lg shadow-sm ring-1 ring-black/5 flex flex-col gap-2">
 
-            {/* ROW 1: Search & Academic Year */}
+            {/* ROW 1: Search & Year */}
             <div className="flex gap-2">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
@@ -323,12 +326,12 @@ export default function PreAdmissionsScreen() {
               </div>
 
               <div className="relative shrink-0">
-                <select value={filterAcademicYearId} onChange={e => setFilterAcademicYearId(e.target.value)}
-                  className="h-9 bg-zinc-50/50 border border-transparent rounded-md pl-3 pr-8 text-sm font-semibold text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer appearance-none max-w-[180px] truncate">
-                  {academicYears.length === 0 && <option value="">All</option>}
-                  {academicYears.map(y => (
-                    <option key={y.id} value={String(y.id)}>{y.name}{y.isActive ? ' (Active)' : ''}</option>
+                <select value={filterYear} onChange={e => setFilterYear(e.target.value)}
+                  className="h-9 bg-zinc-50/50 border border-transparent rounded-md pl-3 pr-8 text-sm font-semibold text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer appearance-none">
+                  {yearOptions.map(y => (
+                    <option key={y} value={String(y)}>{y}</option>
                   ))}
+                  <option value="all">All Years</option>
                 </select>
                 <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
