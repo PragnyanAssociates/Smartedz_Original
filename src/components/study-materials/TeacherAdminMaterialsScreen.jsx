@@ -8,13 +8,14 @@ import {
   Loader2, ChevronDown, BookOpen, Save, Eye
 } from 'lucide-react';
 
+// Updated aesthetics to support smaller icons and crisp ring borders for the new layout
 const getCardAesthetics = (type) => {
   switch(type) {
-    case "Video Lecture": return { bg: "bg-rose-50", icon: <Video className="size-10 text-rose-400" /> };
-    case "Presentation": return { bg: "bg-amber-50", icon: <MonitorPlay className="size-10 text-amber-400" /> };
-    case "Link": return { bg: "bg-sky-50", icon: <Link className="size-10 text-sky-400" /> };
-    case "Worksheet": return { bg: "bg-emerald-50", icon: <FileSpreadsheet className="size-10 text-emerald-400" /> };
-    default: return { bg: "bg-indigo-50", icon: <FileText className="size-10 text-indigo-400" /> };
+    case "Video Lecture": return { bg: "bg-rose-50 text-rose-600 ring-rose-600/20", icon: <Video className="size-5" /> };
+    case "Presentation": return { bg: "bg-amber-50 text-amber-600 ring-amber-600/20", icon: <MonitorPlay className="size-5" /> };
+    case "Link": return { bg: "bg-sky-50 text-sky-600 ring-sky-600/20", icon: <Link className="size-5" /> };
+    case "Worksheet": return { bg: "bg-emerald-50 text-emerald-600 ring-emerald-600/20", icon: <FileSpreadsheet className="size-5" /> };
+    default: return { bg: "bg-indigo-50 text-indigo-600 ring-indigo-600/20", icon: <FileText className="size-5" /> };
   }
 };
 
@@ -118,33 +119,40 @@ export default function TeacherAdminMaterialsScreen() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
             {filteredMaterials.map((item) => {
               const aesthetics = getCardAesthetics(item.material_type);
-              
-              // Base64 Safe Handlers
               const isBase64 = item.file_path && String(item.file_path).startsWith('data:');
               const fileUrl = isBase64 ? item.file_path : `${SERVER_URL.replace('/api','')}${item.file_path}`;
 
               return (
-                <div key={item.id} className="group bg-white rounded-lg ring-1 ring-black/5 shadow-sm flex flex-col hover:ring-primary/30 hover:shadow-md transition-all overflow-hidden">
-                  <div className={`h-32 ${aesthetics.bg} border-b border-zinc-100 flex items-center justify-center relative`}>
-                    {aesthetics.icon}
-                    <span className="absolute bottom-3 left-3 bg-white/90 text-zinc-700 text-[10px] uppercase font-semibold px-2 py-1 rounded shadow-sm tracking-wider">
-                      {item.material_type}
-                    </span>
-                    <div className="absolute top-3 right-3 flex gap-1.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                      {(canEdit || isAdmin) && (
-                        <button onClick={() => openModal(item)} className="size-7 bg-white/90 hover:bg-white text-zinc-600 hover:text-primary rounded-md shadow-sm ring-1 ring-black/5 flex items-center justify-center transition-colors">
-                          <Edit className="size-3.5"/>
-                        </button>
-                      )}
-                      {(canDelete || isAdmin) && (
-                        <button onClick={() => handleDelete(item.id)} className="size-7 bg-white/90 hover:bg-white text-zinc-600 hover:text-red-600 rounded-md shadow-sm ring-1 ring-black/5 flex items-center justify-center transition-colors">
-                          <Trash2 className="size-3.5"/>
-                        </button>
-                      )}
-                    </div>
+                <div key={item.id} className="group bg-white rounded-lg ring-1 ring-black/5 shadow-sm flex flex-col hover:ring-primary/30 hover:shadow-md transition-all overflow-hidden relative">
+                  
+                  {/* Floating Action Buttons */}
+                  <div className="absolute top-4 right-4 flex gap-1.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity z-10">
+                    {(canEdit || isAdmin) && (
+                      <button onClick={() => openModal(item)} className="size-7 bg-white hover:bg-zinc-50 text-zinc-500 hover:text-primary rounded-md shadow-sm ring-1 ring-black/5 flex items-center justify-center transition-colors">
+                        <Edit className="size-3.5"/>
+                      </button>
+                    )}
+                    {(canDelete || isAdmin) && (
+                      <button onClick={() => handleDelete(item.id)} className="size-7 bg-white hover:bg-zinc-50 text-zinc-500 hover:text-red-600 rounded-md shadow-sm ring-1 ring-black/5 flex items-center justify-center transition-colors">
+                        <Trash2 className="size-3.5"/>
+                      </button>
+                    )}
                   </div>
-                  <div className="p-4 sm:p-5 flex flex-col flex-grow bg-white">
-                    <h3 className="font-semibold text-zinc-900 text-base leading-tight line-clamp-1 mb-2">{item.title}</h3>
+
+                  <div className="p-4 sm:p-5 flex flex-col flex-grow">
+                    {/* Header: Icon + Title inline */}
+                    <div className="flex items-start gap-3 mb-4 pr-16">
+                      <div className={`size-10 rounded-lg flex items-center justify-center shrink-0 ring-1 ring-inset ${aesthetics.bg}`}>
+                        {aesthetics.icon}
+                      </div>
+                      <div className="flex flex-col min-w-0 pt-0.5">
+                        <h3 className="font-semibold text-zinc-900 text-[15px] leading-tight line-clamp-2">{item.title}</h3>
+                        <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mt-1">
+                          {item.material_type}
+                        </span>
+                      </div>
+                    </div>
+
                     <div className="flex flex-wrap gap-1.5 mb-3">
                       <span className="text-[10px] font-semibold uppercase tracking-wider bg-zinc-100 text-zinc-600 px-2 py-1 rounded">
                         {item.className} {item.section}
@@ -163,16 +171,12 @@ export default function TeacherAdminMaterialsScreen() {
                           <button 
                             onClick={() => {
                               if (isBase64) {
-                                // 1. Open the new tab immediately to bypass popup blockers
                                 const win = window.open('', '_blank');
                                 if (win) {
                                   win.document.body.innerHTML = '<div style="font-family: sans-serif; padding: 20px; text-align: center;">Loading document...</div>';
-                                  
-                                  // 2. Safely convert the massive Base64 string into a Browser Blob
                                   fetch(fileUrl)
                                     .then(res => res.blob())
                                     .then(blob => {
-                                      // 3. Create a temporary URL and redirect the new tab to it
                                       const blobUrl = URL.createObjectURL(blob);
                                       win.location.href = blobUrl;
                                     })
@@ -181,7 +185,6 @@ export default function TeacherAdminMaterialsScreen() {
                                     });
                                 }
                               } else {
-                                // Old file system logic
                                 const isOfficeFile = item.file_path.match(/\.(xlsx|xls|doc|docx|ppt|pptx)$/i);
                                 const viewUrl = isOfficeFile 
                                   ? `https://docs.google.com/viewer?url=${encodeURIComponent(fileUrl)}&embedded=true` 
@@ -189,7 +192,7 @@ export default function TeacherAdminMaterialsScreen() {
                                 window.open(viewUrl, "_blank");
                               }
                             }} 
-                            className="flex-1 h-9 bg-zinc-50 hover:bg-zinc-100 text-zinc-700 font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 ring-1 ring-inset ring-zinc-200 transition-colors"
+                            className="flex-1 h-9 bg-white hover:bg-zinc-50 text-zinc-700 font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 ring-1 ring-inset ring-zinc-200 shadow-sm transition-colors"
                           >
                             <Eye className="size-3.5" /> View
                           </button>
@@ -198,11 +201,9 @@ export default function TeacherAdminMaterialsScreen() {
                             onClick={(e) => {
                               e.preventDefault();
                               if (isBase64) {
-                                // 1. Convert massive Base64 string to a physical Blob file first
                                 fetch(fileUrl)
                                   .then(res => res.blob())
                                   .then(blob => {
-                                    // 2. Create a tiny, safe temporary URL for the download
                                     const blobUrl = URL.createObjectURL(blob);
                                     const link = document.createElement('a');
                                     link.href = blobUrl;
@@ -210,12 +211,10 @@ export default function TeacherAdminMaterialsScreen() {
                                     document.body.appendChild(link);
                                     link.click();
                                     document.body.removeChild(link);
-                                    // 3. Clean up browser memory
                                     URL.revokeObjectURL(blobUrl); 
                                   })
                                   .catch(() => alert("Failed to prepare file for download."));
                               } else {
-                                // Standard download logic for old/normal files
                                 const link = document.createElement('a');
                                 link.href = fileUrl;
                                 link.setAttribute('download', item.title || 'download');
@@ -231,7 +230,7 @@ export default function TeacherAdminMaterialsScreen() {
                         </>
                       ) : item.external_link ? (
                         <button onClick={() => window.open(item.external_link, "_blank")} 
-                          className="w-full h-9 bg-zinc-50 hover:bg-zinc-100 text-zinc-700 font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 ring-1 ring-inset ring-zinc-200 transition-colors">
+                          className="w-full h-9 bg-white hover:bg-zinc-50 text-zinc-700 font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 ring-1 ring-inset ring-zinc-200 shadow-sm transition-colors">
                           <ExternalLink className="size-3.5" /> Open Link
                         </button>
                       ) : null}
@@ -281,7 +280,6 @@ const MaterialFormModal = ({ material, onClose, onSave, dbClasses, dbSubjects })
     e.preventDefault();
     if (!formData.title || !formData.class_id) return alert("Title and Class are required.");
 
-    // Strict Size Limit for Base64 Database Storage (10MB)
     const MAX_SIZE = 10 * 1024 * 1024;
     if (file && file.size > MAX_SIZE) {
         alert("This file is too large. Please select a file under 10MB.");
@@ -300,7 +298,6 @@ const MaterialFormModal = ({ material, onClose, onSave, dbClasses, dbSubjects })
         try {
             const url = isEditMode ? `${API_BASE_URL}/admin/study-materials/${material.id}` : `${API_BASE_URL}/admin/study-materials`;
             
-            // Replaced FormData with JSON
             const res = await fetch(url, { 
                 method: isEditMode ? 'PUT' : 'POST', 
                 headers: {
@@ -320,7 +317,6 @@ const MaterialFormModal = ({ material, onClose, onSave, dbClasses, dbSubjects })
         }
     };
 
-    // If file exists, convert to Base64, else send as is
     if (file) {
         const reader = new FileReader();
         reader.onloadend = () => {

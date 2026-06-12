@@ -1,15 +1,11 @@
 "use client"
 
 import React, { useState } from 'react';
-import { Search, Plus, MessageSquare, Loader2, Megaphone } from 'lucide-react';
+import { Search, MessageSquare, Loader2, Megaphone } from 'lucide-react';
 import { getProfileImageSource } from '../../utils/imageHelpers';
-import { usePermissions } from '../../Screens/PermissionsContext';
 
-const GroupListScreen = ({ groups, onSelectGroup, selectedGroup, onCreateGroup, loading }) => {
+const GroupListScreen = ({ groups, onSelectGroup, selectedGroup, loading }) => {
     const [searchQuery, setSearchQuery] = useState('');
-    const { can, isAllAccess } = usePermissions();
-    
-    const hasCreateRights = isAllAccess || can('GroupChat', 'edit');
 
     const filteredGroups = groups.filter(g => 
         g.name?.toLowerCase().includes(searchQuery.toLowerCase())
@@ -27,21 +23,8 @@ const GroupListScreen = ({ groups, onSelectGroup, selectedGroup, onCreateGroup, 
 
     return (
         <div className="flex flex-col h-full bg-white">
-            {/* Header */}
-            <div className="px-4 py-3 bg-zinc-50 flex items-center justify-between border-b border-zinc-200 shrink-0">
-                <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Chats</h1>
-                {hasCreateRights && (
-                    <button 
-                        onClick={onCreateGroup}
-                        className="p-2 bg-primary/10 text-primary hover:bg-primary/20 rounded-full transition-colors shrink-0"
-                        title="New Group"
-                    >
-                        <Plus className="size-5" />
-                    </button>
-                )}
-            </div>
-
-            {/* Search */}
+            
+            {/* Search - Now sits perfectly at the top */}
             <div className="px-4 py-3 border-b border-zinc-100 shrink-0">
                 <div className="relative">
                     <Search className="size-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-zinc-400" />
@@ -75,10 +58,10 @@ const GroupListScreen = ({ groups, onSelectGroup, selectedGroup, onCreateGroup, 
                                 className={`flex items-center px-4 py-3 cursor-pointer transition-colors border-b border-zinc-50 ${isSelected ? 'bg-primary/5' : 'hover:bg-zinc-50'}`}
                             >
                                 <img 
-                                   src={group.group_dp_url 
-  ? getProfileImageSource(group.group_dp_url) 
-  : getProfileImageSource(null)  // your default avatar
-}
+                                    src={group.group_dp_url 
+                                        ? getProfileImageSource(group.group_dp_url) 
+                                        : getProfileImageSource(null)
+                                    }
                                     alt="Group DP" 
                                     className="size-12 rounded-full object-cover bg-zinc-100 border border-zinc-200 shrink-0" 
                                 />

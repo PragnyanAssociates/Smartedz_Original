@@ -1,3 +1,5 @@
+"use client"
+
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { API_BASE_URL, SERVER_URL } from '../../apiConfig';
 import { useAuth } from '../../context/AuthContext';
@@ -16,13 +18,14 @@ const getSubjectIcon = (subject) => {
   return Book;
 };
 
+// Clean, subtle pastel aesthetics matching the Teacher layout
 const getSubjectAesthetics = (subject) => {
   const lower = (subject || '').toLowerCase();
-  if (lower.includes("science")) return { bg: "bg-emerald-50", text: "text-emerald-500" };
-  if (lower.includes("math")) return { bg: "bg-sky-50", text: "text-sky-500" };
-  if (lower.includes("history")) return { bg: "bg-amber-50", text: "text-amber-500" };
-  if (lower.includes("english")) return { bg: "bg-rose-50", text: "text-rose-500" };
-  return { bg: "bg-indigo-50", text: "text-indigo-500" };
+  if (lower.includes("science")) return { bg: "bg-emerald-50 text-emerald-600 ring-emerald-600/20" };
+  if (lower.includes("math")) return { bg: "bg-sky-50 text-sky-600 ring-sky-600/20" };
+  if (lower.includes("history")) return { bg: "bg-amber-50 text-amber-600 ring-amber-600/20" };
+  if (lower.includes("english")) return { bg: "bg-rose-50 text-rose-600 ring-rose-600/20" };
+  return { bg: "bg-indigo-50 text-indigo-600 ring-indigo-600/20" };
 };
 
 export default function StudentMaterialsScreen() {
@@ -97,102 +100,103 @@ export default function StudentMaterialsScreen() {
               const fileUrl = isBase64 ? item.file_path : `${SERVER_URL.replace('/api','')}${item.file_path}`;
 
               return (
-                <div key={item.id} className="group bg-white rounded-lg ring-1 ring-black/5 shadow-sm flex flex-col hover:ring-primary/30 hover:shadow-md transition-all overflow-hidden">
-                  <div className={`h-32 ${aesthetics.bg} border-b border-zinc-100 flex items-center justify-center relative`}>
-                    <Icon className={`size-10 ${aesthetics.text}`} />
-                    <span className="absolute bottom-3 left-3 bg-white/90 text-zinc-700 text-[10px] uppercase font-semibold px-2 py-1 rounded shadow-sm tracking-wider">
-                      {item.material_type}
-                    </span>
+                <div key={item.id} className="group bg-white rounded-lg ring-1 ring-black/5 shadow-sm flex flex-col hover:ring-primary/30 hover:shadow-md transition-all overflow-hidden relative">
+                  
+                  {/* Main Content Area */}
+                  <div className="p-4 sm:p-5 flex flex-col flex-grow">
+                    {/* Header: Icon + Title inline */}
+                    <div className="flex items-start gap-3 mb-4">
+                      <div className={`size-10 rounded-lg flex items-center justify-center shrink-0 ring-1 ring-inset ${aesthetics.bg}`}>
+                        <Icon className="size-5" />
+                      </div>
+                      <div className="flex flex-col min-w-0 pt-0.5">
+                        <h3 className="font-semibold text-zinc-900 text-[15px] leading-tight line-clamp-2">{item.title}</h3>
+                        <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mt-1">
+                          {item.material_type}
+                        </span>
+                      </div>
+                    </div>
+
+                    {item.subject_name && (
+                      <div className="flex flex-wrap gap-1.5 mb-3">
+                        <span className="text-[10px] font-semibold uppercase tracking-wider bg-zinc-100 text-zinc-600 px-2 py-1 rounded">
+                          {item.subject_name}
+                        </span>
+                      </div>
+                    )}
+                    {item.description && <p className="text-xs text-zinc-500 line-clamp-2 leading-relaxed">{item.description}</p>}
                   </div>
                   
-                  <div className="p-4 sm:p-5 flex flex-col flex-grow bg-white">
-                    <h3 className="font-semibold text-zinc-900 text-base leading-tight line-clamp-1 mb-1">{item.title}</h3>
-                    {item.subject_name && (
-                      <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-3">
-                        {item.subject_name}
-                      </p>
-                    )}
-                    {item.description && <p className="text-xs text-zinc-500 line-clamp-2 mb-4 leading-relaxed">{item.description}</p>}
-                    
-                    <div className="mt-auto pt-4 border-t border-zinc-100 flex gap-2">
-                      {item.file_path ? (
-                        <>
-                          <button 
-                            onClick={() => {
-                              if (isBase64) {
-                                // 1. Open the new tab immediately to bypass popup blockers
-                                const win = window.open('', '_blank');
-                                if (win) {
-                                  win.document.body.innerHTML = '<div style="font-family: sans-serif; padding: 20px; text-align: center;">Loading document...</div>';
-                                  
-                                  // 2. Safely convert the massive Base64 string into a Browser Blob
-                                  fetch(fileUrl)
-                                    .then(res => res.blob())
-                                    .then(blob => {
-                                      // 3. Create a temporary URL and redirect the new tab to it
-                                      const blobUrl = URL.createObjectURL(blob);
-                                      win.location.href = blobUrl;
-                                    })
-                                    .catch(() => {
-                                      win.document.body.innerHTML = '<div style="font-family: sans-serif; padding: 20px; color: red; text-align: center;">Failed to load document.</div>';
-                                    });
-                                }
-                              } else {
-                                // Old file system logic
-                                const isOfficeFile = item.file_path.match(/\.(xlsx|xls|doc|docx|ppt|pptx)$/i);
-                                const viewUrl = isOfficeFile 
-                                  ? `https://docs.google.com/viewer?url=${encodeURIComponent(fileUrl)}&embedded=true` 
-                                  : fileUrl;
-                                window.open(viewUrl, "_blank");
-                              }
-                            }} 
-                            className="flex-1 h-9 bg-zinc-50 hover:bg-zinc-100 text-zinc-700 font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 ring-1 ring-inset ring-zinc-200 transition-colors"
-                          >
-                            <Eye className="size-3.5" /> View
-                          </button>
-                          
-                          <button 
-                            onClick={(e) => {
-                              e.preventDefault();
-                              if (isBase64) {
-                                // 1. Convert massive Base64 string to a physical Blob file first
+                  {/* Footer Area (Subtle Gray) */}
+                  <div className="bg-zinc-50/80 border-t border-zinc-100 p-3 sm:p-4 flex gap-2 shrink-0 mt-auto">
+                    {item.file_path ? (
+                      <>
+                        <button 
+                          onClick={() => {
+                            if (isBase64) {
+                              const win = window.open('', '_blank');
+                              if (win) {
+                                win.document.body.innerHTML = '<div style="font-family: sans-serif; padding: 20px; text-align: center;">Loading document...</div>';
                                 fetch(fileUrl)
                                   .then(res => res.blob())
                                   .then(blob => {
-                                    // 2. Create a tiny, safe temporary URL for the download
                                     const blobUrl = URL.createObjectURL(blob);
-                                    const link = document.createElement('a');
-                                    link.href = blobUrl;
-                                    link.setAttribute('download', item.title || 'download');
-                                    document.body.appendChild(link);
-                                    link.click();
-                                    document.body.removeChild(link);
-                                    // 3. Clean up browser memory
-                                    URL.revokeObjectURL(blobUrl); 
+                                    win.location.href = blobUrl;
                                   })
-                                  .catch(() => alert("Failed to prepare file for download."));
-                              } else {
-                                // Standard download logic for old/normal files
-                                const link = document.createElement('a');
-                                link.href = fileUrl;
-                                link.setAttribute('download', item.title || 'download');
-                                document.body.appendChild(link);
-                                link.click();
-                                document.body.removeChild(link);
+                                  .catch(() => {
+                                    win.document.body.innerHTML = '<div style="font-family: sans-serif; padding: 20px; color: red; text-align: center;">Failed to load document.</div>';
+                                  });
                               }
-                            }} 
-                            className="flex-1 h-9 bg-primary hover:bg-primary/90 text-white font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 shadow-sm transition-colors"
-                          >
-                            <Download className="size-3.5" /> Download
-                          </button>
-                        </>
-                      ) : item.external_link ? (
-                        <button onClick={() => window.open(item.external_link, "_blank")} 
-                          className="w-full h-9 bg-zinc-50 hover:bg-zinc-100 text-zinc-700 font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 ring-1 ring-inset ring-zinc-200 transition-colors">
-                          <ExternalLink className="size-3.5" /> Open Link
+                            } else {
+                              const isOfficeFile = item.file_path.match(/\.(xlsx|xls|doc|docx|ppt|pptx)$/i);
+                              const viewUrl = isOfficeFile 
+                                ? `https://docs.google.com/viewer?url=${encodeURIComponent(fileUrl)}&embedded=true` 
+                                : fileUrl;
+                              window.open(viewUrl, "_blank");
+                            }
+                          }} 
+                          className="flex-1 h-9 bg-white hover:bg-zinc-50 text-zinc-700 font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 ring-1 ring-inset ring-zinc-200 shadow-sm transition-colors"
+                        >
+                          <Eye className="size-3.5" /> View
                         </button>
-                      ) : null}
-                    </div>
+                        
+                        <button 
+                          onClick={(e) => {
+                            e.preventDefault();
+                            if (isBase64) {
+                              fetch(fileUrl)
+                                .then(res => res.blob())
+                                .then(blob => {
+                                  const blobUrl = URL.createObjectURL(blob);
+                                  const link = document.createElement('a');
+                                  link.href = blobUrl;
+                                  link.setAttribute('download', item.title || 'download');
+                                  document.body.appendChild(link);
+                                  link.click();
+                                  document.body.removeChild(link);
+                                  URL.revokeObjectURL(blobUrl); 
+                                })
+                                .catch(() => alert("Failed to prepare file for download."));
+                            } else {
+                              const link = document.createElement('a');
+                              link.href = fileUrl;
+                              link.setAttribute('download', item.title || 'download');
+                              document.body.appendChild(link);
+                              link.click();
+                              document.body.removeChild(link);
+                            }
+                          }} 
+                          className="flex-1 h-9 bg-primary hover:bg-primary/90 text-white font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 shadow-sm transition-colors"
+                        >
+                          <Download className="size-3.5" /> Download
+                        </button>
+                      </>
+                    ) : item.external_link ? (
+                      <button onClick={() => window.open(item.external_link, "_blank")} 
+                        className="w-full h-9 bg-white hover:bg-zinc-50 text-zinc-700 font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 ring-1 ring-inset ring-zinc-200 shadow-sm transition-colors">
+                        <ExternalLink className="size-3.5" /> Open Link
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               );
