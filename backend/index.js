@@ -6784,7 +6784,7 @@ app.delete('/api/notifications/:userId/clear', async (req, res) => {
 //  Put these three consts ONCE, near the top of index.js (with your other
 //  top-level consts) — not inside any section that might be re-pasted.
 const LINK_HOMEWORK   = 'Homework';
-const LINK_LAB        = 'Digital Labs';   // <-- confirm against Modules.js
+const LINK_LAB = 'DigitalLabs';   // <-- confirm against Modules.js
 const LINK_LESSONPLAN = 'LessonPlan';
 
 
