@@ -1157,22 +1157,59 @@ app.delete('/api/notifications/:userId/clear', async (req, res) => {
 });
 
 // =====================================================================
-//  NOTIFICATION TRIGGERS — drop-in replacements for 3 existing routes
+//  BACKEND — NOTIFICATION TRIGGERS  (Homework · Digital Labs · Lesson Plan)
 //
-//  These are your EXISTING routes with a notification fan-out added.
-//  Replace each one in index.js with the version here. They depend on the
-//  helpers defined in Section 25 (createNotifications / studentIdsForClass
-//  / allActiveUserIds) — keep Section 25 in the same file. Order does not
-//  matter: the whole file loads before any request runs.
+//  Drop-in replacements for THREE existing routes. Each is your current
+//  route with a notification fan-out added. Replace each one in index.js
+//  with the version here.
 //
-//  Each notify block is wrapped in its own try/catch so a notification
+//  Depends on the Section 25 helpers (createNotifications /
+//  studentIdsForClass / allActiveUserIds) — keep Section 25 in the same
+//  file. This block adds ONE new helper (staffUserIds), used by the
+//  Lesson Plan trigger; place it next to the other Section 25 helpers.
+//
+//  NOTE: the homework route below is identical in behaviour to the
+//  homework trigger you already added in Section 25 — it's repeated here
+//  only so all three module triggers live together. Keep just ONE copy
+//  of POST /api/admin/homework in index.js (remove the older one).
+//
+//  The calendar + marks triggers from Section 25 are unchanged.
+//
+//  Every notify block is wrapped in its own try/catch so a notification
 //  problem can NEVER break the actual create/save.
 // =====================================================================
 
 
+// --- Dashboard tab ids the notification 'link' opens on click -------
+//  'Homework' and 'LessonPlan' match your existing module names.
+//  CONFIRM LINK_LAB matches the Digital Labs entry in Screens/Modules.js
+//  (i.e. the id your dashboard switches on). Change the one string if not.
+const LINK_HOMEWORK   = 'Homework';
+const LINK_LAB        = 'Digital Labs';   // <-- confirm against Modules.js
+const LINK_LESSONPLAN = 'LessonPlan';
+
+
+// --- 25.0b  NEW shared helper (place beside the Section 25 helpers) --
+//  Active staff = every active, non-student user in the institution.
+//  Used to notify staff about a Lesson Plan guideline update (students
+//  don't have that module).
+async function staffUserIds(institutionId) {
+    if (!institutionId) return [];
+    const [rows] = await db.execute(
+        `SELECT id FROM users
+          WHERE institutionId = ?
+            AND LOWER(TRIM(role)) <> 'student'
+            AND (status IS NULL OR LOWER(TRIM(status)) = 'active')`,
+        [institutionId]
+    );
+    return rows.map(r => r.id);
+}
+
+
 // =====================================================================
 //  REPLACE Section 19.4  (POST /api/admin/homework)
-//  Adds: notify the class's active students that homework was assigned.
+//  Notify the class's active students that homework was assigned.
+//  Clicking the notification opens the Homework tab.
 // =====================================================================
 app.post('/api/admin/homework', async (req, res) => {
     const {
@@ -1196,13 +1233,13 @@ app.post('/api/admin/homework', async (req, res) => {
              created_by || null]
         );
 
-        // 🔔 Notify the class's students. Clicking opens the Homework tab.
+        // 🔔 Notify the class's students.
         try {
             const recipients = await studentIdsForClass(class_id);
             await createNotifications({
                 institutionId, recipientIds: recipients, type: 'homework',
                 title: 'New homework assigned', body: title,
-                link: 'Homework', entity_id: result.insertId, actor_id: created_by
+                link: LINK_HOMEWORK, entity_id: result.insertId, actor_id: created_by
             });
         } catch (e) { console.warn('[notify homework]', e.message); }
 
@@ -1212,83 +1249,129 @@ app.post('/api/admin/homework', async (req, res) => {
 
 
 // =====================================================================
-//  REPLACE Section 13's create route  (POST /api/admin/calendar)
-//  Adds: notify everyone active in the institution that an event was added.
-//  (calendar_events has no audience column, so it goes school-wide.)
+//  REPLACE Section 21.4  (POST /api/admin/labs)
+//  Notify the class's active students ONLY when a NEW lab is created
+//  (req.body.id is empty). Editing an existing lab does NOT re-notify,
+//  to avoid spamming students on every resource tweak.
+//  Everything else is byte-for-byte your existing Section 21.4 route.
 // =====================================================================
-app.post('/api/admin/calendar', async (req, res) => {
-    const { institutionId, name, event_date, time, description, type, adminId } = req.body;
-    try {
-        const [result] = await db.execute(
-            'INSERT INTO calendar_events (institutionId, name, event_date, time, description, type, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [institutionId, name, event_date, time || null, description || null, type, adminId]
-        );
+app.post('/api/admin/labs', labUpload.any(), async (req, res) => {
+    const { id, institutionId, title, description, class_id, subject_id, created_by, resources: resourcesRaw } = req.body;
 
-        // 🔔 Notify everyone active. Clicking opens the Academic Calendar tab.
-        try {
-            const recipients = await allActiveUserIds(institutionId);
-            await createNotifications({
-                institutionId, recipientIds: recipients, type: 'event',
-                title: 'New event added', body: name,
-                link: 'academic-calendar', entity_id: result.insertId, actor_id: adminId
-            });
-        } catch (e) { console.warn('[notify event]', e.message); }
+    // Parse the stringified JSON array sent from the frontend
+    const resources = JSON.parse(resourcesRaw || '[]');
+    const conn = await db.getConnection();
+
+    try {
+        await conn.beginTransaction();
+        let labId = id;
+        let existingResources = [];
+
+        if (id) {
+            await conn.execute(
+                `UPDATE digital_labs SET title=?, description=?, class_id=?, subject_id=? WHERE id=?`,
+                [title, description, class_id, subject_id || null, id]
+            );
+
+            // Fetch existing files into memory BEFORE deleting
+            const [oldRes] = await conn.execute(
+                'SELECT id, file_data, mime_type FROM lab_resources WHERE lab_id=?',
+                [id]
+            );
+            existingResources = oldRes;
+
+            await conn.execute('DELETE FROM lab_resources WHERE lab_id=?', [id]);
+        } else {
+            const [resData] = await conn.execute(
+                `INSERT INTO digital_labs (institutionId, title, description, class_id, subject_id, created_by) VALUES (?,?,?,?,?,?)`,
+                [institutionId, title, description, class_id, subject_id || null, created_by]
+            );
+            labId = resData.insertId;
+        }
+
+        for (let i = 0; i < resources.length; i++) {
+            const r = resources[i];
+
+            // Find the physical file in req.files matching the dynamic fieldname
+            const file = req.files && req.files.find(f => f.fieldname === `file_${i}`);
+
+            // Map the frontend ID back to the existing database record
+            const oldResource = existingResources.find(old => String(old.id) === String(r.id));
+
+            let finalBuffer = null;
+            let finalMime = null;
+
+            // 1. If a brand new file was uploaded, use the multer buffer
+            if (file) {
+                finalBuffer = file.buffer;
+                finalMime = file.mimetype;
+            }
+            // 2. Otherwise, if it's supposed to be a file and we have old data, restore the old data
+            else if (oldResource && r.source === 'file') {
+                finalBuffer = oldResource.file_data;
+                finalMime = oldResource.mime_type;
+            }
+
+            await conn.execute(
+                `INSERT INTO lab_resources (lab_id, resource_type, title, url, file_data, mime_type, scheduled_at, resource_order) VALUES (?,?,?,?,?,?,?,?)`,
+                [labId, r.resource_type, r.title, r.url || null, finalBuffer, finalMime, r.scheduled_at || null, i]
+            );
+        }
+
+        await conn.commit();
+
+        // 🔔 New lab only (no id): notify the class's students.
+        if (!id) {
+            try {
+                const recipients = await studentIdsForClass(class_id);
+                await createNotifications({
+                    institutionId, recipientIds: recipients, type: 'lab',
+                    title: 'New digital lab posted', body: title,
+                    link: LINK_LAB, entity_id: labId, actor_id: created_by
+                });
+            } catch (e) { console.warn('[notify lab]', e.message); }
+        }
 
         res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally {
+        conn.release();
+    }
 });
 
 
 // =====================================================================
-//  REPLACE Section 17.D.2  (POST /api/admin/reports/marks/bulk)
-//  Adds: result notification to the students in the batch — but ONLY when
-//  the caller passes `notify: true`. Marks save fires on every edit, so the
-//  notification is gated behind an explicit release to avoid spamming.
-//  Send notify:true from a "Publish / Release results" action.
+//  REPLACE Section 14's upload route  (POST /api/admin/lesson-plans)
+//  Notify active staff (non-students) that the guideline template was
+//  updated. The client now sends actor_id (see the LessonPlan.jsx change)
+//  so the uploader isn't notified about their own upload. If actor_id is
+//  absent the notification still fires to all staff — it just won't
+//  self-exclude.
 // =====================================================================
-app.post('/api/admin/reports/marks/bulk', async (req, res) => {
-    const { institutionId, class_id, actor_id, entries = [], notify } = req.body;
-    if (!institutionId || !class_id || !Array.isArray(entries)) {
-        return res.status(400).json({ error: 'institutionId, class_id and entries[] required.' });
-    }
-    const conn = await db.getConnection();
+app.post('/api/admin/lesson-plans', async (req, res) => {
+    const { institutionId, image_data, actor_id } = req.body;
     try {
-        const yearId = await resolveYearId(institutionId, req.body.academic_year_id);
-        if (!yearId) throw new Error('No active academic year. Activate one under Academics first.');
-        await conn.beginTransaction();
-        for (const e of entries) {
-            if (!e.student_id || !e.subject_id || !e.exam_type_id) continue;
-            const val = (e.marks_obtained === '' || e.marks_obtained === null || e.marks_obtained === undefined)
-                ? null : parseFloat(e.marks_obtained);
-            await conn.execute(
-                `INSERT INTO student_marks
-                   (institutionId, academic_year_id, student_id, class_id, subject_id, exam_type_id, marks_obtained, entered_by)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                 ON DUPLICATE KEY UPDATE marks_obtained = VALUES(marks_obtained),
-                                         entered_by = VALUES(entered_by)`,
-                [institutionId, yearId, e.student_id, class_id, e.subject_id, e.exam_type_id,
-                 val, actor_id || null]
-            );
-        }
-        await conn.commit();
+        // We simply insert a new one, and the GET request always picks the latest
+        const [result] = await db.execute(
+            'INSERT INTO lesson_plans (institutionId, image_data, title) VALUES (?, ?, ?)',
+            [institutionId, image_data, 'Active Guideline']
+        );
 
-        // 🔔 Result notification — only on an explicit release (notify:true).
-        if (notify) {
-            try {
-                const studentIds = [...new Set(entries.map(e => e.student_id).filter(Boolean))];
-                await createNotifications({
-                    institutionId, recipientIds: studentIds, type: 'result',
-                    title: 'Results published', body: 'Your exam marks have been updated.',
-                    link: 'reports', entity_id: null, actor_id
-                });
-            } catch (e) { console.warn('[notify marks]', e.message); }
-        }
+        // 🔔 Notify staff.
+        try {
+            const recipients = await staffUserIds(institutionId);
+            await createNotifications({
+                institutionId, recipientIds: recipients, type: 'lesson_plan',
+                title: 'Lesson plan guidelines updated',
+                body: 'The lesson plan guideline template has been updated.',
+                link: LINK_LESSONPLAN, entity_id: result.insertId, actor_id
+            });
+        } catch (e) { console.warn('[notify lesson plan]', e.message); }
 
-        res.json({ success: true, count: entries.length, academic_year_id: yearId });
-    } catch (err) {
-        await conn.rollback();
-        res.status(500).json({ error: err.message });
-    } finally { conn.release(); }
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 

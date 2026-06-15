@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { API_BASE_URL } from '../apiConfig';
 import {
-  Bell, BookOpen, CalendarDays, Award, CheckCheck, Trash2, Loader2, Inbox
+  Bell, BookOpen, CalendarDays, Award, CheckCheck, Trash2, Loader2, Inbox,
+  FlaskConical, BookMarked
 } from 'lucide-react';
 
 // =====================================================================
@@ -11,7 +12,7 @@ import {
 //    tabs (filtered client-side from a single fetch).
 //  • Clicking a row marks it read and jumps to the source module via
 //    onNavigate(tabId) — the `link` field holds the dashboard tab id
-//    (e.g. 'Homework', 'academic-calendar', 'reports').
+//    (e.g. 'Homework', 'Digital Labs', 'LessonPlan', 'academic-calendar').
 //  • Mark-all-read and delete one are supported.
 //
 //  Props: onNavigate(tabId) — switches the dashboard's active tab.
@@ -19,9 +20,11 @@ import {
 
 // Per-type icon + colour. Unknown types fall back to a generic bell.
 const TYPE_META = {
-  homework: { icon: BookOpen,    bg: 'bg-indigo-50',  text: 'text-indigo-600',  ring: 'ring-indigo-600/20',  label: 'Homework' },
-  event:    { icon: CalendarDays,bg: 'bg-emerald-50', text: 'text-emerald-600', ring: 'ring-emerald-600/20', label: 'Event' },
-  result:   { icon: Award,       bg: 'bg-amber-50',   text: 'text-amber-600',   ring: 'ring-amber-600/20',   label: 'Result' }
+  homework:    { icon: BookOpen,     bg: 'bg-indigo-50',  text: 'text-indigo-600',  ring: 'ring-indigo-600/20',  label: 'Homework' },
+  event:       { icon: CalendarDays, bg: 'bg-emerald-50', text: 'text-emerald-600', ring: 'ring-emerald-600/20', label: 'Event' },
+  result:      { icon: Award,        bg: 'bg-amber-50',   text: 'text-amber-600',   ring: 'ring-amber-600/20',   label: 'Result' },
+  lab:         { icon: FlaskConical, bg: 'bg-sky-50',     text: 'text-sky-600',     ring: 'ring-sky-600/20',     label: 'Lab' },
+  lesson_plan: { icon: BookMarked,   bg: 'bg-violet-50',  text: 'text-violet-600',  ring: 'ring-violet-600/20',  label: 'Lesson Plan' }
 };
 const FALLBACK_META = { icon: Bell, bg: 'bg-zinc-100', text: 'text-zinc-600', ring: 'ring-zinc-200', label: 'Notification' };
 
@@ -154,7 +157,7 @@ export default function NotificationsScreen({ onNavigate }) {
           <Inbox className="size-10 text-zinc-300 mb-3" />
           <p className="text-zinc-500 text-sm font-medium">{emptyText}</p>
           <p className="text-zinc-400 text-xs mt-1.5">
-            You'll be notified here about homework, events and results.
+            You'll be notified here about homework, labs, events and results.
           </p>
         </div>
       ) : (

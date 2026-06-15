@@ -59,6 +59,9 @@ export default function LessonPlan() {
         body: JSON.stringify({
           institutionId: user.institutionId,
           image_data: preview,
+          // actor_id lets the backend skip notifying the uploader about
+          // their own guideline update.
+          actor_id: user?.id,
         })
       });
       if (res.ok) {
