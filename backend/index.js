@@ -4138,6 +4138,22 @@ app.delete('/api/admin/ptm/:id', async (req, res) => {
 
 // =====================================================================
 // === 22. ONLINE CLASSES ==============================================
+//
+//  REPLACE your whole Section 22 block with this. Changes:
+//    • 22.4 (create) and 22.5 (update) now notify the relevant students
+//      (built INTO the routes — no separate trigger). An update re-notifies
+//      because the class time / meet link may have changed.
+//  22.1, 22.2, 22.3, 22.6 are unchanged.
+//
+//  Uses createNotifications / studentIdsForClass from Section 25. No
+//  transaction in these routes (single statement), so createNotifications
+//  is called with the global db; it swallows its own errors, so a notify
+//  problem can never break the save.
+//
+//  Recipients: a class-scoped online class (class_id set) → that class's
+//  active students; a school-wide one (class_id NULL, visible to all per
+//  22.2) → every active student in the institution. The creator/editor is
+//  staff, not a student, so they're naturally not in the recipient list.
 // =====================================================================
 
 // Use Memory Storage for storing directly in DB bytes
@@ -4145,6 +4161,21 @@ const memoryUpload = multer({
     storage: multer.memoryStorage(), 
     limits: { fileSize: 500 * 1024 * 1024 } // 500MB limit
 });
+
+// Who should hear about an online class:
+//   class_id set   -> active students of that class
+//   class_id NULL  -> every active student in the institution (school-wide)
+async function onlineClassRecipientIds(institutionId, classId) {
+    if (classId) return studentIdsForClass(classId);
+    if (!institutionId) return [];
+    const [rows] = await db.execute(
+        `SELECT id FROM users
+          WHERE institutionId = ? AND LOWER(TRIM(role)) = 'student'
+            AND (status IS NULL OR LOWER(TRIM(status)) = 'active')`,
+        [institutionId]
+    );
+    return rows.map(r => r.id);
+}
 
 // --- 22.1 List Classes for Admin/Teacher ---
 app.get('/api/admin/online-classes/:instId', async (req, res) => {
@@ -4240,7 +4271,7 @@ app.get('/api/admin/online-classes/video/:id', async (req, res) => {
     } catch (err) { res.status(500).send(err.message); }
 });
 
-// --- 22.4 Create Class ---
+// --- 22.4 Create Class (+ notify students) ---
 app.post('/api/admin/online-classes', memoryUpload.single('videoFile'), async (req, res) => {
     const { institutionId, title, class_type, class_id, subject_id, teacher_id, class_datetime, meet_link, topic, description, created_by } = req.body;
     try {
@@ -4254,13 +4285,24 @@ app.post('/api/admin/online-classes', memoryUpload.single('videoFile'), async (r
                 req.file ? req.file.mimetype : null, topic || null, description || null, created_by
             ]
         );
+
+        // 🔔 Notify the relevant students. 'OnlineClasses' is the module id
+        //    from Screens/Modules.js. Helper self-catches, so it can't break
+        //    the create.
+        const recipients = await onlineClassRecipientIds(institutionId, class_id || null);
+        await createNotifications({
+            institutionId, recipientIds: recipients, type: 'online_class',
+            title: 'New online class scheduled', body: title,
+            link: 'OnlineClasses', entity_id: result.insertId, actor_id: created_by
+        });
+
         res.json({ success: true, id: result.insertId });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 22.5 Update Class ---
+// --- 22.5 Update Class (+ re-notify students; time/link may have changed) ---
 app.put('/api/admin/online-classes/:id', memoryUpload.single('videoFile'), async (req, res) => {
-    const { title, class_type, class_id, subject_id, teacher_id, class_datetime, meet_link, topic, description, clear_video } = req.body;
+    const { title, class_type, class_id, subject_id, teacher_id, class_datetime, meet_link, topic, description, clear_video, actor_id } = req.body;
     try {
         let sql = `UPDATE online_classes SET title=?, class_type=?, class_id=?, subject_id=?, teacher_id=?, class_datetime=?, meet_link=?, topic=?, description=?`;
         let params = [title, class_type, class_id || null, subject_id, teacher_id, class_datetime, meet_link || null, topic || null, description || null];
@@ -4276,6 +4318,21 @@ app.put('/api/admin/online-classes/:id', memoryUpload.single('videoFile'), async
         params.push(req.params.id);
 
         await db.execute(sql, params);
+
+        // 🔔 Re-notify students. institutionId isn't in the body on update,
+        //    so read it from the row. class_id comes from the (updated) body.
+        const [ocRows] = await db.execute(
+            'SELECT institutionId FROM online_classes WHERE id = ?', [req.params.id]);
+        if (ocRows.length) {
+            const instId = ocRows[0].institutionId;
+            const recipients = await onlineClassRecipientIds(instId, class_id || null);
+            await createNotifications({
+                institutionId: instId, recipientIds: recipients, type: 'online_class',
+                title: 'Online class updated', body: title,
+                link: 'OnlineClasses', entity_id: req.params.id, actor_id
+            });
+        }
+
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -4297,8 +4354,9 @@ app.delete('/api/admin/online-classes/:id', async (req, res) => {
 //
 //  Changes vs your current Section 21:
 //    • 21.4 now fans out a notification to the class's active students
-//      when a NEW lab is created (built INTO the route — no separate
-//      trigger). Editing a lab does not re-notify.
+//      on BOTH create and edit (built INTO the route — no separate
+//      trigger). An edit re-notifies too, since it may change a
+//      live-class time students need to know about.
 //    • Everything else (21.1, 21.2, 21.3, 21.5, 21.6) is unchanged.
 //
 //  Uses the Section 25 helpers createNotifications / studentIdsForClass
@@ -4396,8 +4454,9 @@ app.get('/api/admin/labs/resource/:id', async (req, res) => {
 });
 
 // --- 21.4 Create/Update Lab (Multipart via Multer) ---
-//   On a NEW lab (no id), notify the class's active students. Editing an
-//   existing lab does not re-notify.
+//   Notify the class's active students on BOTH create and edit (an edit
+//   may change a live-class time, so students need to know). The title
+//   reflects which it was; clicking opens the lab to see the new details.
 app.post('/api/admin/labs', labUpload.any(), async (req, res) => {
     const { id, institutionId, title, description, class_id, subject_id, created_by, resources: resourcesRaw } = req.body;
 
@@ -4462,16 +4521,17 @@ app.post('/api/admin/labs', labUpload.any(), async (req, res) => {
             );
         }
 
-        // 🔔 New lab only (no id): notify the class's active students,
+        // 🔔 Notify the class's active students on create AND edit,
         //    INSIDE this transaction (pass conn). createNotifications
-        //    swallows its own errors, so it can never break the lab create.
+        //    swallows its own errors, so it can never break the lab save.
         //    'DigitalLabs' is the module id from Screens/Modules.js (the tab
         //    the dashboard opens on click) — NOT the "Digital Labs" label.
-        if (!id) {
+        {
             const recipients = await studentIdsForClass(class_id);
             await createNotifications({
                 institutionId, recipientIds: recipients, type: 'lab',
-                title: 'New digital lab posted', body: title,
+                title: id ? 'Digital lab updated' : 'New digital lab posted',
+                body: title,
                 link: 'DigitalLabs', entity_id: labId, actor_id: created_by
             }, conn);
         }
