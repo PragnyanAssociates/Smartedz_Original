@@ -4310,12 +4310,29 @@ app.delete('/api/admin/online-classes/:id', async (req, res) => {
 //
 //  REPLACE your whole Section 21 block with this.
 //
-//  Fix in this version:
-//    • 21.6 DELETE now removes the lab's child rows in lab_resources
-//      FIRST, then the lab — inside a transaction. Previously it deleted
-//      only digital_labs, which failed with a foreign-key constraint
-//      error (and surfaced as "Delete failed") for any lab that still had
-//      resources. Nothing else changed.
+//  Changes vs your current Section 21:
+//    • 21.4 now fans out a notification to the class's active students
+//      when a NEW lab is created (built INTO the route — no separate
+//      trigger). Editing a lab does not re-notify.
+//    • Everything else (21.1, 21.2, 21.3, 21.5, 21.6) is unchanged.
+//
+//  Uses the Section 25 helpers createNotifications / studentIdsForClass
+//  (keep Section 25 in this file). The notify runs INSIDE the transaction
+//  (conn is passed to createNotifications); the helper swallows its own
+//  errors, so a notification problem can never break the lab create.
+//  REQUIRES the updated createNotifications that accepts (fields, conn).
+//
+//  ------------------------------------------------------------------
+//  ONE-TIME MIGRATION — fixes "url cannot be null" on uploaded files.
+//  An uploaded PDF/video resource has NO url, so the column must allow
+//  NULL. Run once (safe to re-run; no-op if already nullable):
+//
+//    ALTER TABLE lab_resources MODIFY url VARCHAR(2048) NULL DEFAULT NULL;
+//
+//  If your `url` column is a different type/length, just restate that
+//  type with NULL — the only goal is dropping NOT NULL, e.g.
+//    ALTER TABLE lab_resources MODIFY url TEXT NULL;
+//  ------------------------------------------------------------------
 // =====================================================================
 
 // Files are accepted as multipart uploads (multer) and stored as bytes.
@@ -4394,6 +4411,8 @@ app.get('/api/admin/labs/resource/:id', async (req, res) => {
 });
 
 // --- 21.4 Create/Update Lab (Multipart via Multer) ---
+//   On a NEW lab (no id), notify the class's active students. Editing an
+//   existing lab does not re-notify.
 app.post('/api/admin/labs', labUpload.any(), async (req, res) => {
     const { id, institutionId, title, description, class_id, subject_id, created_by, resources: resourcesRaw } = req.body;
 
@@ -4451,10 +4470,25 @@ app.post('/api/admin/labs', labUpload.any(), async (req, res) => {
                 finalMime = oldResource.mime_type;
             }
 
+            // url is NULL for uploaded files (column must allow NULL — see migration above)
             await conn.execute(
                 `INSERT INTO lab_resources (lab_id, resource_type, title, url, file_data, mime_type, scheduled_at, resource_order) VALUES (?,?,?,?,?,?,?,?)`,
                 [labId, r.resource_type, r.title, r.url || null, finalBuffer, finalMime, r.scheduled_at || null, i]
             );
+        }
+
+        // 🔔 New lab only (no id): notify the class's active students,
+        //    INSIDE this transaction (pass conn). createNotifications
+        //    swallows its own errors, so it can never break the lab create.
+        //    'DigitalLabs' is the module id from Screens/Modules.js (the tab
+        //    the dashboard opens on click) — NOT the "Digital Labs" label.
+        if (!id) {
+            const recipients = await studentIdsForClass(class_id);
+            await createNotifications({
+                institutionId, recipientIds: recipients, type: 'lab',
+                title: 'New digital lab posted', body: title,
+                link: 'DigitalLabs', entity_id: labId, actor_id: created_by
+            }, conn);
         }
 
         await conn.commit();
@@ -6573,28 +6607,25 @@ app.delete('/api/admin/lesson-plans/:id', async (req, res) => {
 
 
 // =====================================================================
-//  BACKEND — Section 25: NOTIFICATIONS
+//  BACKEND — Section 25: NOTIFICATIONS  (CORE ONLY)
 //
-//  Append this whole block to backend/index.js, just BEFORE the final
-//  `const PORT = ...` line.
+//  REPLACE your entire current Section 25 with this block. Compared to
+//  what you have now, this version DELETES the "NOTIFICATION TRIGGERS"
+//  sub-block (the homework/labs/lesson-plan routes) and the LINK_* consts.
 //
-//  ALSO add 'Notifications' to DEFAULT_MODULES at the top of index.js
-//  ONLY if you want it permission-gated. It is NOT required — the bell is
-//  a universal quick-action in the sidebar, shown to every role.
+//  WHY: each module now fires its own notification from INSIDE its own
+//  route (Digital Labs is already done in Section 21). Keeping trigger
+//  routes here too created duplicate app.post() handlers — the first one
+//  registered won, so the notify version never ran. With this section
+//  holding zero module routes, there is nothing left to collide with.
 //
-//  MODEL — fan-out: one row per recipient. When homework is created for a
-//  class, we insert one notification row per active student in that class.
-//  Reads are then trivial (WHERE recipient_id = ?) and the unread badge is
-//  a single COUNT. `link` holds the target dashboard tab id so the client
-//  can jump straight to the source module on click; `entity_id` is the
-//  source row id (homework id, event id…) for optional deep-linking.
-//
-//  Helpers below (createNotifications / studentIdsForClass /
-//  allActiveUserIds) are also used by the trigger routes in
-//  notification_triggers.js — keep this section in the same file.
+//  Contents:
+//    • Helpers: createNotifications (conn-aware, self-catching),
+//      studentIdsForClass, allActiveUserIds, staffUserIds
+//    • CRUD the bell + Notifications screen call: 25.1–25.6
 //
 //  ------------------------------------------------------------------
-//  ONE-TIME MIGRATION — create the table once in your DB:
+//  ONE-TIME MIGRATION — create the table once (skip if it already exists):
 //
 //    CREATE TABLE notifications (
 //      id            INT AUTO_INCREMENT PRIMARY KEY,
@@ -6618,14 +6649,19 @@ app.delete('/api/admin/lesson-plans/:id', async (req, res) => {
 // =====================================================================
 
 
-// --- 25.0 Shared helpers (used here + by the trigger routes) --------
+// --- 25.0 Shared helpers --------------------------------------------
 
-// Fan-out insert: one row per recipient. recipientIds is an array of user
-// ids; the actor (actor_id) is never notified about their own action.
-// Never throws fatally for the caller — callers still wrap it in try/catch
-// so a notification hiccup can't break the underlying create.
-async function createNotifications({ institutionId, recipientIds, type, title, body, link, entity_id, actor_id }) {
+// Fan-out insert: one row per recipient. The actor (actor_id) is never
+// notified about their own action. Pass a transaction connection as the
+// 2nd arg to insert INSIDE that transaction (defaults to the global db).
+// Swallows its own DB errors (logs, never throws) so a notification
+// problem can never break the create that called it.
+async function createNotifications(
+    { institutionId, recipientIds, type, title, body, link, entity_id, actor_id },
+    dbOrConnection = db
+) {
     if (!institutionId || !type || !title) return 0;
+
     const actor = parseInt(actor_id, 10);
     const ids = [...new Set((recipientIds || []).map(n => parseInt(n, 10)).filter(Boolean))]
         .filter(id => id !== actor);
@@ -6637,13 +6673,19 @@ async function createNotifications({ institutionId, recipientIds, type, title, b
         cap(link, 120), entity_id || null, actor_id || null
     ]));
 
-    // Bulk multi-row insert (mysql2 expands the nested array for `VALUES ?`).
-    await db.query(
-        `INSERT INTO notifications
-           (institutionId, recipient_id, type, title, body, link, entity_id, actor_id)
-         VALUES ?`,
-        [rows]
-    );
+    try {
+        // Bulk multi-row insert. .query (not .execute) — execute can't
+        // expand the nested array for `VALUES ?`.
+        await dbOrConnection.query(
+            `INSERT INTO notifications
+               (institutionId, recipient_id, type, title, body, link, entity_id, actor_id)
+             VALUES ?`,
+            [rows]
+        );
+    } catch (e) {
+        console.error('[NOTIFICATION ERROR] bulk insert:', e.message);
+        return 0;
+    }
     return ids.length;
 }
 
@@ -6664,6 +6706,20 @@ async function allActiveUserIds(institutionId) {
     const [rows] = await db.execute(
         `SELECT id FROM users
           WHERE institutionId = ?
+            AND (status IS NULL OR LOWER(TRIM(status)) = 'active')`,
+        [institutionId]
+    );
+    return rows.map(r => r.id);
+}
+
+// Active staff = every active, non-student user in the institution.
+// (Used by the Lesson Plan route when you wire it up.)
+async function staffUserIds(institutionId) {
+    if (!institutionId) return [];
+    const [rows] = await db.execute(
+        `SELECT id FROM users
+          WHERE institutionId = ?
+            AND LOWER(TRIM(role)) <> 'student'
             AND (status IS NULL OR LOWER(TRIM(status)) = 'active')`,
         [institutionId]
     );
@@ -6746,218 +6802,6 @@ app.delete('/api/notifications/:id', async (req, res) => {
 app.delete('/api/notifications/:userId/clear', async (req, res) => {
     try {
         await db.execute('DELETE FROM notifications WHERE recipient_id = ?', [req.params.userId]);
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// =====================================================================
-//  NOTIFICATION TRIGGERS — Homework · Digital Labs · Lesson Plan
-//
-//  ⚠️ READ THIS — these are IN-PLACE replacements, NOT a block to append.
-//
-//  Do NOT paste this whole file as one new block at the bottom of
-//  index.js. That created a SECOND `app.post('/api/admin/labs', …)` whose
-//  `labUpload.any()` runs above the `const labUpload = multer(...)` in
-//  Section 21 → "Cannot access 'labUpload' before initialization", which
-//  crashes the server at startup (so every route, incl. lesson-plans,
-//  stops responding).
-//
-//  Instead, for each of the three routes below:
-//    1. Find the EXISTING route of the same method+path in index.js.
-//    2. Replace that existing route's code with the version here.
-//    3. Make sure no second copy of the same route remains anywhere.
-//
-//  The labs route MUST stay inside Section 21, directly under
-//  `const labUpload = multer(...)`. The homework/lesson-plan routes stay
-//  in their own sections (19 / 14).
-//
-//  Helpers used: createNotifications / studentIdsForClass from Section 25
-//  (keep them), plus the new staffUserIds below — add it next to the
-//  other Section 25 helpers (it's a function declaration, so placement
-//  among the helpers is safe).
-// =====================================================================
-
-
-// --- Dashboard tab ids the notification 'link' opens on click -------
-//  'Homework' and 'LessonPlan' match your existing module names.
-//  CONFIRM LINK_LAB matches the Digital Labs entry in Screens/Modules.js.
-//  Put these three consts ONCE, near the top of index.js (with your other
-//  top-level consts) — not inside any section that might be re-pasted.
-const LINK_HOMEWORK   = 'Homework';
-const LINK_LAB = 'DigitalLabs';   // <-- confirm against Modules.js
-const LINK_LESSONPLAN = 'LessonPlan';
-
-
-// =====================================================================
-//  ADD TO SECTION 25 (helpers) — new helper, place beside the others
-//  Active staff = every active, non-student user in the institution.
-// =====================================================================
-async function staffUserIds(institutionId) {
-    if (!institutionId) return [];
-    const [rows] = await db.execute(
-        `SELECT id FROM users
-          WHERE institutionId = ?
-            AND LOWER(TRIM(role)) <> 'student'
-            AND (status IS NULL OR LOWER(TRIM(status)) = 'active')`,
-        [institutionId]
-    );
-    return rows.map(r => r.id);
-}
-
-
-// =====================================================================
-//  SECTION 19.4 — REPLACE your existing POST /api/admin/homework
-//  Notifies the class's active students. (If your Section 25 already has
-//  a homework trigger, this is the same behaviour — just keep ONE copy.)
-// =====================================================================
-app.post('/api/admin/homework', async (req, res) => {
-    const {
-        institutionId, title, description, homework_type,
-        class_id, subject_id, due_date, questions, attachments, created_by
-    } = req.body;
-    if (!institutionId || !title || !class_id || !due_date) {
-        return res.status(400).json({ error: 'institutionId, title, class_id and due_date are required.' });
-    }
-    try {
-        const yearId = await resolveYearId(institutionId, req.body.academic_year_id);
-
-        const [result] = await db.execute(
-            `INSERT INTO homework
-               (institutionId, academic_year_id, title, description, homework_type,
-                class_id, subject_id, due_date, questions, attachments, created_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [institutionId, yearId, title, description || null, homework_type || 'PDF',
-             class_id, subject_id || null, due_date,
-             JSON.stringify(questions || []), JSON.stringify(attachments || []),
-             created_by || null]
-        );
-
-        // 🔔 Notify the class's students.
-        try {
-            const recipients = await studentIdsForClass(class_id);
-            await createNotifications({
-                institutionId, recipientIds: recipients, type: 'homework',
-                title: 'New homework assigned', body: title,
-                link: LINK_HOMEWORK, entity_id: result.insertId, actor_id: created_by
-            });
-        } catch (e) { console.warn('[notify homework]', e.message); }
-
-        res.json({ success: true, id: result.insertId });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-
-// =====================================================================
-//  SECTION 21.4 — REPLACE your existing POST /api/admin/labs
-//  Keep this INSIDE Section 21, directly under `const labUpload`.
-//  Notifies the class's students ONLY when a NEW lab is created (no id);
-//  editing an existing lab does not re-notify. Lab logic is otherwise
-//  unchanged from your current 21.4.
-// =====================================================================
-app.post('/api/admin/labs', labUpload.any(), async (req, res) => {
-    const { id, institutionId, title, description, class_id, subject_id, created_by, resources: resourcesRaw } = req.body;
-
-    const resources = JSON.parse(resourcesRaw || '[]');
-    const conn = await db.getConnection();
-
-    try {
-        await conn.beginTransaction();
-        let labId = id;
-        let existingResources = [];
-
-        if (id) {
-            await conn.execute(
-                `UPDATE digital_labs SET title=?, description=?, class_id=?, subject_id=? WHERE id=?`,
-                [title, description, class_id, subject_id || null, id]
-            );
-
-            const [oldRes] = await conn.execute(
-                'SELECT id, file_data, mime_type FROM lab_resources WHERE lab_id=?',
-                [id]
-            );
-            existingResources = oldRes;
-
-            await conn.execute('DELETE FROM lab_resources WHERE lab_id=?', [id]);
-        } else {
-            const [resData] = await conn.execute(
-                `INSERT INTO digital_labs (institutionId, title, description, class_id, subject_id, created_by) VALUES (?,?,?,?,?,?)`,
-                [institutionId, title, description, class_id, subject_id || null, created_by]
-            );
-            labId = resData.insertId;
-        }
-
-        for (let i = 0; i < resources.length; i++) {
-            const r = resources[i];
-            const file = req.files && req.files.find(f => f.fieldname === `file_${i}`);
-            const oldResource = existingResources.find(old => String(old.id) === String(r.id));
-
-            let finalBuffer = null;
-            let finalMime = null;
-
-            if (file) {
-                finalBuffer = file.buffer;
-                finalMime = file.mimetype;
-            } else if (oldResource && r.source === 'file') {
-                finalBuffer = oldResource.file_data;
-                finalMime = oldResource.mime_type;
-            }
-
-            await conn.execute(
-                `INSERT INTO lab_resources (lab_id, resource_type, title, url, file_data, mime_type, scheduled_at, resource_order) VALUES (?,?,?,?,?,?,?,?)`,
-                [labId, r.resource_type, r.title, r.url || null, finalBuffer, finalMime, r.scheduled_at || null, i]
-            );
-        }
-
-        await conn.commit();
-
-        // 🔔 New lab only (no id): notify the class's students.
-        if (!id) {
-            try {
-                const recipients = await studentIdsForClass(class_id);
-                await createNotifications({
-                    institutionId, recipientIds: recipients, type: 'lab',
-                    title: 'New digital lab posted', body: title,
-                    link: LINK_LAB, entity_id: labId, actor_id: created_by
-                });
-            } catch (e) { console.warn('[notify lab]', e.message); }
-        }
-
-        res.json({ success: true });
-    } catch (err) {
-        await conn.rollback();
-        res.status(500).json({ error: err.message });
-    } finally {
-        conn.release();
-    }
-});
-
-
-// =====================================================================
-//  SECTION 14 — REPLACE your existing POST /api/admin/lesson-plans
-//  Notifies active staff (non-students). Reads actor_id from the body
-//  (sent by the updated LessonPlan.jsx) to skip the uploader. If actor_id
-//  is missing it still notifies all staff; it just won't self-exclude.
-//  The GET and DELETE routes in Section 14 are unchanged — leave them.
-// =====================================================================
-app.post('/api/admin/lesson-plans', async (req, res) => {
-    const { institutionId, image_data, actor_id } = req.body;
-    try {
-        const [result] = await db.execute(
-            'INSERT INTO lesson_plans (institutionId, image_data, title) VALUES (?, ?, ?)',
-            [institutionId, image_data, 'Active Guideline']
-        );
-
-        // 🔔 Notify staff.
-        try {
-            const recipients = await staffUserIds(institutionId);
-            await createNotifications({
-                institutionId, recipientIds: recipients, type: 'lesson_plan',
-                title: 'Lesson plan guidelines updated',
-                body: 'The lesson plan guideline template has been updated.',
-                link: LINK_LESSONPLAN, entity_id: result.insertId, actor_id
-            });
-        } catch (e) { console.warn('[notify lesson plan]', e.message); }
-
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
