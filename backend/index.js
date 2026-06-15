@@ -6571,6 +6571,20 @@ app.get('/api/admin/alumni/candidates/:instId/:classId', async (req, res) => {
 
 // =====================================================================
 // === 14. LESSON PLAN MODULE ==========================================
+//
+//  REPLACE your whole Section 14 block with this. Only the POST changed:
+//  it now notifies active staff that the guideline was updated. GET and
+//  DELETE are unchanged.
+//
+//  Uses createNotifications / staffUserIds from Section 25 (the core-only
+//  version). No transaction here (single insert), so createNotifications
+//  is called with the global db; it swallows its own errors, so a notify
+//  problem can never break the upload.
+//
+//  NOTE: recipients are active NON-students (staff), and the uploader is
+//  excluded (actor_id, sent by LessonPlan.jsx). If you are the ONLY staff
+//  account, the list empties after self-exclusion and nothing inserts —
+//  test with a second teacher/admin to see the notification land.
 // =====================================================================
 
 // Get the single latest Guideline image for the school
@@ -6584,15 +6598,26 @@ app.get('/api/admin/lesson-plans/:instId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Update/Upload the Guideline image
+// Update/Upload the Guideline image (+ notify active staff)
 app.post('/api/admin/lesson-plans', async (req, res) => {
-    const { institutionId, image_data } = req.body;
+    const { institutionId, image_data, actor_id } = req.body;
     try {
         // We simply insert a new one, and the GET request always picks the latest
-        await db.execute(
+        const [result] = await db.execute(
             'INSERT INTO lesson_plans (institutionId, image_data, title) VALUES (?, ?, ?)',
             [institutionId, image_data, 'Active Guideline']
         );
+
+        // 🔔 Notify active staff (non-students). 'LessonPlan' is the module
+        //    id from Screens/Modules.js (the tab the dashboard opens on click).
+        const recipients = await staffUserIds(institutionId);
+        await createNotifications({
+            institutionId, recipientIds: recipients, type: 'lesson_plan',
+            title: 'Lesson plan guidelines updated',
+            body: 'The lesson plan guideline template has been updated.',
+            link: 'LessonPlan', entity_id: result.insertId, actor_id
+        });
+
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
