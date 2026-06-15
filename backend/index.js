@@ -977,6 +977,322 @@ app.post('/api/admin/promote', async (req, res) => {
 app.get('/', (req, res) => res.json({ status: 'ok', service: 'SmartEdz ERP', time: new Date().toISOString() }));
 
 
+
+// =====================================================================
+//  BACKEND — Section 25: NOTIFICATIONS
+//
+//  Append this whole block to backend/index.js, just BEFORE the final
+//  `const PORT = ...` line.
+//
+//  ALSO add 'Notifications' to DEFAULT_MODULES at the top of index.js
+//  ONLY if you want it permission-gated. It is NOT required — the bell is
+//  a universal quick-action in the sidebar, shown to every role.
+//
+//  MODEL — fan-out: one row per recipient. When homework is created for a
+//  class, we insert one notification row per active student in that class.
+//  Reads are then trivial (WHERE recipient_id = ?) and the unread badge is
+//  a single COUNT. `link` holds the target dashboard tab id so the client
+//  can jump straight to the source module on click; `entity_id` is the
+//  source row id (homework id, event id…) for optional deep-linking.
+//
+//  Helpers below (createNotifications / studentIdsForClass /
+//  allActiveUserIds) are also used by the trigger routes in
+//  notification_triggers.js — keep this section in the same file.
+//
+//  ------------------------------------------------------------------
+//  ONE-TIME MIGRATION — create the table once in your DB:
+//
+//    CREATE TABLE notifications (
+//      id            INT AUTO_INCREMENT PRIMARY KEY,
+//      institutionId INT NOT NULL,
+//      recipient_id  INT NOT NULL,
+//      type          VARCHAR(40)  NOT NULL,
+//      title         VARCHAR(255) NOT NULL,
+//      body          VARCHAR(500) DEFAULT NULL,
+//      link          VARCHAR(120) DEFAULT NULL,
+//      entity_id     INT DEFAULT NULL,
+//      actor_id      INT DEFAULT NULL,
+//      is_read       TINYINT(1) NOT NULL DEFAULT 0,
+//      created_at    TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+//      KEY idx_recipient (recipient_id, is_read, created_at),
+//      KEY idx_inst (institutionId),
+//      CONSTRAINT fk_notif_inst FOREIGN KEY (institutionId)
+//        REFERENCES institutions (id) ON DELETE CASCADE,
+//      CONSTRAINT fk_notif_recipient FOREIGN KEY (recipient_id)
+//        REFERENCES users (id) ON DELETE CASCADE
+//    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+// =====================================================================
+
+
+// --- 25.0 Shared helpers (used here + by the trigger routes) --------
+
+// Fan-out insert: one row per recipient. recipientIds is an array of user
+// ids; the actor (actor_id) is never notified about their own action.
+// Never throws fatally for the caller — callers still wrap it in try/catch
+// so a notification hiccup can't break the underlying create.
+async function createNotifications({ institutionId, recipientIds, type, title, body, link, entity_id, actor_id }) {
+    if (!institutionId || !type || !title) return 0;
+    const actor = parseInt(actor_id, 10);
+    const ids = [...new Set((recipientIds || []).map(n => parseInt(n, 10)).filter(Boolean))]
+        .filter(id => id !== actor);
+    if (ids.length === 0) return 0;
+
+    const cap = (s, n) => (s == null ? null : String(s).slice(0, n));
+    const rows = ids.map(rid => ([
+        institutionId, rid, cap(type, 40), cap(title, 255), cap(body, 500),
+        cap(link, 120), entity_id || null, actor_id || null
+    ]));
+
+    // Bulk multi-row insert (mysql2 expands the nested array for `VALUES ?`).
+    await db.query(
+        `INSERT INTO notifications
+           (institutionId, recipient_id, type, title, body, link, entity_id, actor_id)
+         VALUES ?`,
+        [rows]
+    );
+    return ids.length;
+}
+
+// Active students of a class (excludes alumni / inactive).
+async function studentIdsForClass(classId) {
+    if (!classId) return [];
+    const [rows] = await db.execute(
+        `SELECT id FROM users
+          WHERE class_id = ? AND LOWER(TRIM(role)) = 'student'
+            AND (status IS NULL OR LOWER(TRIM(status)) = 'active')`,
+        [classId]
+    );
+    return rows.map(r => r.id);
+}
+
+// Every active user in the institution (excludes alumni / inactive).
+async function allActiveUserIds(institutionId) {
+    const [rows] = await db.execute(
+        `SELECT id FROM users
+          WHERE institutionId = ?
+            AND (status IS NULL OR LOWER(TRIM(status)) = 'active')`,
+        [institutionId]
+    );
+    return rows.map(r => r.id);
+}
+
+
+// --- 25.1 List a user's notifications -------------------------------
+//   GET /api/notifications/:userId?filter=all|unread&limit=50
+app.get('/api/notifications/:userId', async (req, res) => {
+    const { userId } = req.params;
+    const { filter = 'all', limit = 50 } = req.query;
+    try {
+        let where = 'recipient_id = ?';
+        if (filter === 'unread') where += ' AND is_read = 0';
+        const lim = Math.min(parseInt(limit, 10) || 50, 100);
+        const [rows] = await db.query(
+            `SELECT id, type, title, body, link, entity_id, actor_id, is_read,
+                    DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%s') AS created_at
+               FROM notifications
+              WHERE ${where}
+              ORDER BY created_at DESC
+              LIMIT ${lim}`,
+            [userId]
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 25.2 Unread count (for the bell badge) -------------------------
+//   GET /api/notifications/:userId/unread-count
+app.get('/api/notifications/:userId/unread-count', async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            'SELECT COUNT(*) AS count FROM notifications WHERE recipient_id = ? AND is_read = 0',
+            [req.params.userId]
+        );
+        res.json({ count: Number(rows[0]?.count || 0) });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 25.3 Mark one notification read --------------------------------
+//   PUT /api/notifications/:id/read
+app.put('/api/notifications/:id/read', async (req, res) => {
+    try {
+        await db.execute('UPDATE notifications SET is_read = 1 WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 25.4 Mark ALL of a user's notifications read -------------------
+//   PUT /api/notifications/:userId/read-all
+//   (distinct literal segment 'read-all' — never collides with :id/read)
+app.put('/api/notifications/:userId/read-all', async (req, res) => {
+    try {
+        await db.execute(
+            'UPDATE notifications SET is_read = 1 WHERE recipient_id = ? AND is_read = 0',
+            [req.params.userId]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 25.5 Delete one notification -----------------------------------
+//   DELETE /api/notifications/:id
+app.delete('/api/notifications/:id', async (req, res) => {
+    try {
+        await db.execute('DELETE FROM notifications WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 25.6 Clear ALL of a user's notifications -----------------------
+//   DELETE /api/notifications/:userId/clear
+app.delete('/api/notifications/:userId/clear', async (req, res) => {
+    try {
+        await db.execute('DELETE FROM notifications WHERE recipient_id = ?', [req.params.userId]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// =====================================================================
+//  NOTIFICATION TRIGGERS — drop-in replacements for 3 existing routes
+//
+//  These are your EXISTING routes with a notification fan-out added.
+//  Replace each one in index.js with the version here. They depend on the
+//  helpers defined in Section 25 (createNotifications / studentIdsForClass
+//  / allActiveUserIds) — keep Section 25 in the same file. Order does not
+//  matter: the whole file loads before any request runs.
+//
+//  Each notify block is wrapped in its own try/catch so a notification
+//  problem can NEVER break the actual create/save.
+// =====================================================================
+
+
+// =====================================================================
+//  REPLACE Section 19.4  (POST /api/admin/homework)
+//  Adds: notify the class's active students that homework was assigned.
+// =====================================================================
+app.post('/api/admin/homework', async (req, res) => {
+    const {
+        institutionId, title, description, homework_type,
+        class_id, subject_id, due_date, questions, attachments, created_by
+    } = req.body;
+    if (!institutionId || !title || !class_id || !due_date) {
+        return res.status(400).json({ error: 'institutionId, title, class_id and due_date are required.' });
+    }
+    try {
+        const yearId = await resolveYearId(institutionId, req.body.academic_year_id);
+
+        const [result] = await db.execute(
+            `INSERT INTO homework
+               (institutionId, academic_year_id, title, description, homework_type,
+                class_id, subject_id, due_date, questions, attachments, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [institutionId, yearId, title, description || null, homework_type || 'PDF',
+             class_id, subject_id || null, due_date,
+             JSON.stringify(questions || []), JSON.stringify(attachments || []),
+             created_by || null]
+        );
+
+        // 🔔 Notify the class's students. Clicking opens the Homework tab.
+        try {
+            const recipients = await studentIdsForClass(class_id);
+            await createNotifications({
+                institutionId, recipientIds: recipients, type: 'homework',
+                title: 'New homework assigned', body: title,
+                link: 'Homework', entity_id: result.insertId, actor_id: created_by
+            });
+        } catch (e) { console.warn('[notify homework]', e.message); }
+
+        res.json({ success: true, id: result.insertId });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// =====================================================================
+//  REPLACE Section 13's create route  (POST /api/admin/calendar)
+//  Adds: notify everyone active in the institution that an event was added.
+//  (calendar_events has no audience column, so it goes school-wide.)
+// =====================================================================
+app.post('/api/admin/calendar', async (req, res) => {
+    const { institutionId, name, event_date, time, description, type, adminId } = req.body;
+    try {
+        const [result] = await db.execute(
+            'INSERT INTO calendar_events (institutionId, name, event_date, time, description, type, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [institutionId, name, event_date, time || null, description || null, type, adminId]
+        );
+
+        // 🔔 Notify everyone active. Clicking opens the Academic Calendar tab.
+        try {
+            const recipients = await allActiveUserIds(institutionId);
+            await createNotifications({
+                institutionId, recipientIds: recipients, type: 'event',
+                title: 'New event added', body: name,
+                link: 'academic-calendar', entity_id: result.insertId, actor_id: adminId
+            });
+        } catch (e) { console.warn('[notify event]', e.message); }
+
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// =====================================================================
+//  REPLACE Section 17.D.2  (POST /api/admin/reports/marks/bulk)
+//  Adds: result notification to the students in the batch — but ONLY when
+//  the caller passes `notify: true`. Marks save fires on every edit, so the
+//  notification is gated behind an explicit release to avoid spamming.
+//  Send notify:true from a "Publish / Release results" action.
+// =====================================================================
+app.post('/api/admin/reports/marks/bulk', async (req, res) => {
+    const { institutionId, class_id, actor_id, entries = [], notify } = req.body;
+    if (!institutionId || !class_id || !Array.isArray(entries)) {
+        return res.status(400).json({ error: 'institutionId, class_id and entries[] required.' });
+    }
+    const conn = await db.getConnection();
+    try {
+        const yearId = await resolveYearId(institutionId, req.body.academic_year_id);
+        if (!yearId) throw new Error('No active academic year. Activate one under Academics first.');
+        await conn.beginTransaction();
+        for (const e of entries) {
+            if (!e.student_id || !e.subject_id || !e.exam_type_id) continue;
+            const val = (e.marks_obtained === '' || e.marks_obtained === null || e.marks_obtained === undefined)
+                ? null : parseFloat(e.marks_obtained);
+            await conn.execute(
+                `INSERT INTO student_marks
+                   (institutionId, academic_year_id, student_id, class_id, subject_id, exam_type_id, marks_obtained, entered_by)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE marks_obtained = VALUES(marks_obtained),
+                                         entered_by = VALUES(entered_by)`,
+                [institutionId, yearId, e.student_id, class_id, e.subject_id, e.exam_type_id,
+                 val, actor_id || null]
+            );
+        }
+        await conn.commit();
+
+        // 🔔 Result notification — only on an explicit release (notify:true).
+        if (notify) {
+            try {
+                const studentIds = [...new Set(entries.map(e => e.student_id).filter(Boolean))];
+                await createNotifications({
+                    institutionId, recipientIds: studentIds, type: 'result',
+                    title: 'Results published', body: 'Your exam marks have been updated.',
+                    link: 'reports', entity_id: null, actor_id
+                });
+            } catch (e) { console.warn('[notify marks]', e.message); }
+        }
+
+        res.json({ success: true, count: entries.length, academic_year_id: yearId });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally { conn.release(); }
+});
+
+
+
 // =====================================================================
 // === 11. TIMETABLE ===================================================
 // =====================================================================
@@ -4301,15 +4617,23 @@ app.delete('/api/admin/online-classes/:id', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
+
 // =====================================================================
 // === 21. DIGITAL LABS ================================================
+//
+//  REPLACE your whole Section 21 block with this.
+//
+//  Fix in this version:
+//    • 21.6 DELETE now removes the lab's child rows in lab_resources
+//      FIRST, then the lab — inside a transaction. Previously it deleted
+//      only digital_labs, which failed with a foreign-key constraint
+//      error (and surfaced as "Delete failed") for any lab that still had
+//      resources. Nothing else changed.
 // =====================================================================
 
-// Note: Multer and memoryStorage logic have been completely removed.
-// Files are now accepted as Base64 text strings directly in the JSON payload.
+// Files are accepted as multipart uploads (multer) and stored as bytes.
 
-// --- 21.1 List labs for a teacher/admin ---
-// Initialize multer specifically for digital labs
 const labUpload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 100 * 1024 * 1024 } // 100MB limit
@@ -4376,8 +4700,7 @@ app.get('/api/admin/labs/resource/:id', async (req, res) => {
 
         const data = rows[0].file_data;
         const mime = rows[0].mime_type || 'application/octet-stream';
-        
-        // Data is sent directly as a buffer, no Base64 conversion needed
+
         res.setHeader('Content-Type', mime);
         res.setHeader('Content-Length', data.length);
         res.send(data);
@@ -4387,25 +4710,25 @@ app.get('/api/admin/labs/resource/:id', async (req, res) => {
 // --- 21.4 Create/Update Lab (Multipart via Multer) ---
 app.post('/api/admin/labs', labUpload.any(), async (req, res) => {
     const { id, institutionId, title, description, class_id, subject_id, created_by, resources: resourcesRaw } = req.body;
-    
+
     // Parse the stringified JSON array sent from the frontend
     const resources = JSON.parse(resourcesRaw || '[]');
     const conn = await db.getConnection();
-    
+
     try {
         await conn.beginTransaction();
         let labId = id;
-        let existingResources = []; 
+        let existingResources = [];
 
         if (id) {
             await conn.execute(
-                `UPDATE digital_labs SET title=?, description=?, class_id=?, subject_id=? WHERE id=?`, 
+                `UPDATE digital_labs SET title=?, description=?, class_id=?, subject_id=? WHERE id=?`,
                 [title, description, class_id, subject_id || null, id]
             );
-            
+
             // Fetch existing files into memory BEFORE deleting
             const [oldRes] = await conn.execute(
-                'SELECT id, file_data, mime_type FROM lab_resources WHERE lab_id=?', 
+                'SELECT id, file_data, mime_type FROM lab_resources WHERE lab_id=?',
                 [id]
             );
             existingResources = oldRes;
@@ -4421,10 +4744,10 @@ app.post('/api/admin/labs', labUpload.any(), async (req, res) => {
 
         for (let i = 0; i < resources.length; i++) {
             const r = resources[i];
-            
+
             // Find the physical file in req.files matching the dynamic fieldname
             const file = req.files && req.files.find(f => f.fieldname === `file_${i}`);
-            
+
             // Map the frontend ID back to the existing database record
             const oldResource = existingResources.find(old => String(old.id) === String(r.id));
 
@@ -4435,7 +4758,7 @@ app.post('/api/admin/labs', labUpload.any(), async (req, res) => {
             if (file) {
                 finalBuffer = file.buffer;
                 finalMime = file.mimetype;
-            } 
+            }
             // 2. Otherwise, if it's supposed to be a file and we have old data, restore the old data
             else if (oldResource && r.source === 'file') {
                 finalBuffer = oldResource.file_data;
@@ -4447,14 +4770,14 @@ app.post('/api/admin/labs', labUpload.any(), async (req, res) => {
                 [labId, r.resource_type, r.title, r.url || null, finalBuffer, finalMime, r.scheduled_at || null, i]
             );
         }
-        
+
         await conn.commit();
         res.json({ success: true });
-    } catch (err) { 
-        await conn.rollback(); 
-        res.status(500).json({ error: err.message }); 
-    } finally { 
-        conn.release(); 
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally {
+        conn.release();
     }
 });
 
@@ -4492,18 +4815,30 @@ app.get('/api/admin/labs/:id', async (req, res) => {
         lab.resources = resources;
         res.json(lab);
 
-    } catch (err) { 
-        res.status(500).json({ error: err.message }); 
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
 });
 
 // --- 21.6 Delete Lab ---
+//   Delete the lab's resources FIRST, then the lab itself, in one
+//   transaction. This avoids the foreign-key constraint error that made
+//   deleting a lab with resources fail ("Delete failed"). Works whether or
+//   not the lab_resources -> digital_labs FK is set to ON DELETE CASCADE.
 app.delete('/api/admin/labs/:id', async (req, res) => {
-    try { 
-        await db.execute('DELETE FROM digital_labs WHERE id=?', [req.params.id]); 
-        res.json({ success: true }); 
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        await conn.execute('DELETE FROM lab_resources WHERE lab_id = ?', [req.params.id]);
+        await conn.execute('DELETE FROM digital_labs WHERE id = ?', [req.params.id]);
+        await conn.commit();
+        res.json({ success: true });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally {
+        conn.release();
     }
-    catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 

@@ -21,6 +21,7 @@ import Syllabus from '../components/Syllabus/Syllabus';
 import WhatsAppLayout from '../components/chat/WhatsAppLayout';
 import Alumni from '../components/Alumni/Alumni';
 import LessonPlan from '../components/LessonPlan/LessonPlan';
+import NotificationsScreen from './NotificationsScreen';
 import Profile from './Profile';
 import OnlineClasses from '../components/OnlineClasses/OnlineClasses';
 
@@ -102,6 +103,7 @@ function DashboardShell() {
       case 'GroupChat':         return <WhatsAppLayout/>;
       case 'Alumni':            return <Alumni/>;
       case 'LessonPlan':        return <LessonPlan/>;
+      case 'notifications':     return <NotificationsScreen onNavigate={setActiveTab} />;
     
       default:
         return (

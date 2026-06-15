@@ -204,8 +204,17 @@ export default function TeacherLabs({ canManage = true }) {
     if (!window.confirm(`Delete lab "${lab.title}"?`)) return;
     try {
       const res = await fetch(`${API_BASE_URL}/admin/labs/${lab.id}`, { method: 'DELETE' });
-      if (res.ok) load();
-    } catch (e) { alert('Delete failed'); }
+      if (!res.ok) {
+        // Surface the real server reason instead of a silent failure.
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || `Delete failed (HTTP ${res.status})`);
+      }
+      // If we were viewing this lab in the detail screen, go back to the list.
+      if (viewingLab && viewingLab.id === lab.id) setViewingLab(null);
+      load();
+    } catch (err) {
+      alert(err.message || 'Delete failed');
+    }
   };
 
   // --- Sub-View Navigation ---

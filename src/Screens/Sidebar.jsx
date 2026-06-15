@@ -1,13 +1,15 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { usePermissions } from './PermissionsContext';
 import { MODULES } from './Modules';
+import { API_BASE_URL } from '../apiConfig';
 import { Search, LogOut, X, Bell, Calendar } from 'lucide-react';
 
 export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMobileOpen }) {
   const { user, logout } = useAuth();
   const { isVisible, loading } = usePermissions();
   const [query, setQuery] = useState('');
+  const [unreadCount, setUnreadCount] = useState(0);
 
   const visibleItems = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -18,6 +20,23 @@ export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMo
       return true;
     });
   }, [query, isVisible]);
+
+  // Poll the unread notification count for the bell badge. Re-fetches when
+  // the active tab changes too, so opening Notifications updates it quickly.
+  useEffect(() => {
+    if (!user?.id) return;
+    let active = true;
+    const loadCount = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/notifications/${user.id}/unread-count`);
+        const d = await res.json();
+        if (active) setUnreadCount(d.count || 0);
+      } catch (e) { /* silent — badge just stays as-is */ }
+    };
+    loadCount();
+    const t = setInterval(loadCount, 20000);
+    return () => { active = false; clearInterval(t); };
+  }, [user, activeTab]);
 
   // Intercept tab clicks to close the mobile menu automatically
   const handleTabClick = (id) => {
@@ -65,7 +84,11 @@ export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMo
                 title="Notifications"
               >
                 <Bell className="size-4" />
-                <span className="absolute top-1.5 right-1.5 size-1.5 bg-red-500 rounded-full ring-2 ring-white"></span>
+                {unreadCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 min-w-[15px] h-[15px] px-1 bg-red-500 text-white text-[8px] font-bold rounded-full ring-2 ring-white flex items-center justify-center leading-none">
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
               </button>
 
               {/* Mobile Close Button */}
