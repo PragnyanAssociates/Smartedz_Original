@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import { API_BASE_URL } from '../../apiConfig';
@@ -11,7 +11,10 @@ import AlumniDetail from './AlumniDetail';
 
 // =====================================================================
 //  Alumni - card list of passed-out students.
-//  • Academic-year filter (from the Academic Year module) + search bar.
+//  • Plain calendar-year filter (auto, like Pre-Admissions): the year list
+//    is built from the years that actually have alumni (YEAR(created_at)),
+//    plus the current year, with an "All Years" option. Defaults to the
+//    current year. + search bar.
 //  • Each card: photo/initials, name, phone, email, current status,
 //    occupation, passout year. Click -> full detail (AlumniDetail).
 // =====================================================================
@@ -22,19 +25,23 @@ export default function Alumni() {
   const canEdit = can('Alumni', 'edit');
 
   const [list, setList]       = useState([]);
-  const [years, setYears]     = useState([]);
   const [loading, setLoading] = useState(true);
-  const [yearId, setYearId]   = useState('');
   const [query, setQuery]     = useState('');
   const [openId, setOpenId]   = useState(null);    // alumni id in detail view
 
-  // Year filter options come from the Academic Year module.
+  // Calendar-year filter. Selectable years come from the data (plus the
+  // current year); 'all' means every year. Defaults to the current year.
+  const currentYear = new Date().getFullYear();
+  const [availableYears, setAvailableYears] = useState([]); // years present in data
+  const [filterYear, setFilterYear] = useState(String(currentYear)); // a year, or 'all'
+
+  // Year filter options — distinct YEAR(created_at) present in the data.
   const loadYears = useCallback(async () => {
     if (!user?.institutionId) return;
     try {
       const res = await fetch(`${API_BASE_URL}/admin/alumni/years/${user.institutionId}`);
       const d = await res.json();
-      setYears(Array.isArray(d) ? d : []);
+      setAvailableYears(Array.isArray(d) ? d.map(Number).filter(Boolean) : []);
     } catch (e) { console.error(e); }
   }, [user]);
 
@@ -44,7 +51,7 @@ export default function Alumni() {
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      if (yearId) params.set('yearId', yearId);
+      if (filterYear && filterYear !== 'all') params.set('year', filterYear);
       if (query.trim()) params.set('q', query.trim());
       const res = await fetch(
         `${API_BASE_URL}/admin/alumni/${user.institutionId}?${params.toString()}`);
@@ -52,7 +59,7 @@ export default function Alumni() {
       setList(Array.isArray(d) ? d : []);
     } catch (e) { console.error(e); }
     setLoading(false);
-  }, [user, yearId, query]);
+  }, [user, filterYear, query]);
 
   useEffect(() => { loadYears(); }, [loadYears]);
 
@@ -62,10 +69,16 @@ export default function Alumni() {
     return () => clearTimeout(t);
   }, [loadList]);
 
-  const yearLabel = (y) => {
-    const base = y.year_name || y.passout_year || '-';
-    return y.isActive ? `${base} (Active)` : base;
-  };
+  // Year dropdown options: every year present in the data, plus the current
+  // year (so you can always filter the year you're adding to), newest first.
+  const yearOptions = useMemo(() => {
+    const set = new Set(availableYears);
+    set.add(currentYear);
+    return Array.from(set).sort((a, b) => b - a);
+  }, [availableYears, currentYear]);
+
+  // Whether any filter is narrowing the list (controls the empty-state copy).
+  const hasFilter = query.trim() || filterYear !== 'all';
 
   // detail view takes over the whole module
   if (openId) {
@@ -94,14 +107,12 @@ export default function Alumni() {
         <div className="flex items-center gap-2 w-full sm:w-auto">
           <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider shrink-0">Year</span>
           <div className="relative w-full sm:w-48">
-            <select value={yearId} onChange={e => setYearId(e.target.value)}
+            <select value={filterYear} onChange={e => setFilterYear(e.target.value)}
               className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm font-medium text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
-              <option value="">All Years</option>
-              {years.map(y => (
-                <option key={y.academic_year_id || y.passout_year} value={y.academic_year_id || ''}>
-                  {yearLabel(y)}
-                </option>
+              {yearOptions.map(y => (
+                <option key={y} value={String(y)}>{y}</option>
               ))}
+              <option value="all">All Years</option>
             </select>
             <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
@@ -122,9 +133,9 @@ export default function Alumni() {
         <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
           <GraduationCap className="size-10 text-zinc-300 mb-3" />
           <p className="text-zinc-500 text-sm font-medium">
-            {query || yearId ? 'No alumni match your filters.' : 'No alumni yet.'}
+            {hasFilter ? 'No alumni match your filters.' : 'No alumni yet.'}
           </p>
-          {!query && !yearId && (
+          {!hasFilter && (
             <p className="text-zinc-400 text-xs mt-1.5">
               Students appear here when promoted to "Alumni (Passout)" in the Promotion tab.
             </p>

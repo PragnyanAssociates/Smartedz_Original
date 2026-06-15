@@ -6241,6 +6241,7 @@ socket.on('sendMessage', async (data) => {
     });
 }); 
 
+
 // =====================================================================
 //  BACKEND — Section 23: ALUMNI
 //
@@ -6248,45 +6249,49 @@ socket.on('sendMessage', async (data) => {
 //  `const PORT = ...` line. (Replaces your previous Section 23.)
 //
 //  Changes in this version:
-//    • 23.1 year filter now comes from the ACADEMIC YEAR module
-//      (the academic_years table), not from distinct rows in alumni.
-//    • New 23.3b endpoint streams an alumni's photo by id, so the cards
-//      can show the DP without bloating the list payload.
-//    • 23.5 promote now anchors passout to the institution's ACTIVE
-//      academic year (authoritative on the server).
+//    • The year filter is now a PLAIN CALENDAR YEAR (auto), mirroring
+//      Pre-Admissions. The academic-year (academic_years) logic is gone.
+//      - 23.1 returns the distinct YEAR(created_at) values present in the
+//        alumni table (newest first) so the dropdown is built from data.
+//      - 23.2 filters with YEAR(created_at) = ? when a numeric `year` is
+//        passed; omit it (or pass `all`) to return every year.
+//    • 23.3b streams an alumni's photo by id (unchanged).
+//    • 23.5 promote still anchors passout to the institution's ACTIVE
+//      academic year (unchanged — that drives the displayed passout_year,
+//      not the new filter).
 //
+//  No migration required — alumni already has created_at (CURRENT_TIMESTAMP).
 //  Reuses nowSQL() from Section 16.
 // =====================================================================
 
 
-// --- 23.1 Years for the filter — from the Academic Year module ------
+// --- 23.1 Years for the filter — distinct calendar years from data --
 //   GET /api/admin/alumni/years/:instId
-//   Lists the institution's academic years (active one flagged), so the
-//   filter is consistent with the rest of the system.
+//   Returns e.g. [2027, 2026] (newest first), taken from YEAR(created_at).
+//   A year only appears once at least one alumni record exists for it.
 app.get('/api/admin/alumni/years/:instId', async (req, res) => {
     try {
         const [rows] = await db.execute(
-            `SELECT id   AS academic_year_id,
-                    name AS year_name,
-                    name AS passout_year,
-                    isActive
-               FROM academic_years
-              WHERE institutionId = ?
-              ORDER BY startDate DESC, id DESC`,
+            `SELECT DISTINCT YEAR(created_at) AS yr
+               FROM alumni
+              WHERE institutionId = ? AND created_at IS NOT NULL
+              ORDER BY yr DESC`,
             [req.params.instId]
         );
-        res.json(rows);
+        res.json(rows.map(r => r.yr).filter(Boolean));
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 
 // --- 23.2 Alumni list (card data) -----------------------------------
-//   GET /api/admin/alumni/:instId?yearId=optional&q=optional
-//   Light payload for the cards — excludes the heavy profile_pic/notes,
-//   but tells the card whether a photo exists via has_pic.
+//   GET /api/admin/alumni/:instId?year=YYYY&q=optional
+//   `year` is a calendar year (filters YEAR(created_at)); omit it or pass
+//   `all` to return every year. Light payload for the cards — excludes the
+//   heavy profile_pic/notes, but tells the card whether a photo exists via
+//   has_pic.
 app.get('/api/admin/alumni/:instId', async (req, res) => {
     const { instId } = req.params;
-    const { yearId, q } = req.query;
+    const { year, q } = req.query;
     try {
         let sql = `
             SELECT id, user_id, academic_year_id, passout_year, final_class,
@@ -6295,7 +6300,13 @@ app.get('/api/admin/alumni/:instId', async (req, res) => {
               FROM alumni
              WHERE institutionId = ?`;
         const params = [instId];
-        if (yearId) { sql += ' AND academic_year_id = ?'; params.push(yearId); }
+
+        const yr = parseInt(year, 10);
+        if (year && year !== 'all' && !isNaN(yr)) {
+            sql += ' AND YEAR(created_at) = ?';
+            params.push(yr);
+        }
+
         if (q && q.trim()) {
             sql += ` AND (name LIKE ? OR email LIKE ? OR phone LIKE ?
                           OR roll_no LIKE ? OR current_status LIKE ?)`;
