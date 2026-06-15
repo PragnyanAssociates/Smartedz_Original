@@ -4942,6 +4942,8 @@ app.delete('/api/admin/study-materials/:id', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
+
 // =====================================================================
 //  BACKEND — Section 22: SYLLABUS  (v5 — fast viewer, self-contained)
 //
@@ -5301,29 +5303,29 @@ app.get('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
 
 // --- 22.8 Upload textbook -> detect chapters -> pre-slice each ------
 app.put('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
-    const { doc_name, doc_data, page_offset } = req.body;
+    const { doc_name, doc_data, page_offset, actor_id } = req.body;
     const syllabusId = req.params.syllabusId;
     if (!doc_data) return res.status(400).json({ error: 'doc_data is required.' });
-
+ 
     try {
         const base64 = String(doc_data).replace(/^data:[^;]+;base64,/, '');
         const buffer = Buffer.from(base64, 'base64');
         const offset = parseInt(page_offset, 10) || 0;
-
+ 
         const { total, chapters } = await detectChapters(buffer);
-
+ 
         await db.execute(
             `UPDATE syllabus
                 SET doc_name = ?, doc_data = ?, doc_pages = ?, page_offset = ?, updated_at = ?
               WHERE id = ?`,
             [doc_name || null, doc_data, total, offset, nowSQL(), syllabusId]
         );
-
+ 
         await db.execute('DELETE FROM syllabus_chapters WHERE syllabus_id = ?', [syllabusId]);
-
+ 
         const ranges = chapters.map(c => [c.page_from + offset, c.page_to + offset]);
         const { slices } = await sliceAll(buffer, ranges);
-
+ 
         let order = 0;
         for (let i = 0; i < chapters.length; i++) {
             const ch = chapters[i];
@@ -5336,7 +5338,30 @@ app.put('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
                 [syllabusId, order++, ch.title, ch.page_from, ch.page_to, doc_name || null, dataUri, pages]
             );
         }
-
+ 
+        // 🔔 Notify the class's active students that material is available.
+        //    Own try/catch so a notify-side issue can't fail the upload.
+        try {
+            const [info] = await db.execute(
+                `SELECT s.institutionId, s.class_id, sub.name AS subject_name
+                   FROM syllabus s
+                   LEFT JOIN subjects sub ON sub.id = s.subject_id
+                  WHERE s.id = ?`,
+                [syllabusId]
+            );
+            if (info.length && info[0].class_id) {
+                const recipients = await studentIdsForClass(info[0].class_id);
+                await createNotifications({
+                    institutionId: info[0].institutionId, recipientIds: recipients, type: 'syllabus',
+                    title: 'Syllabus material updated',
+                    body: info[0].subject_name
+                        ? `New material is available for ${info[0].subject_name}.`
+                        : 'New syllabus material is available.',
+                    link: 'Syllabus', entity_id: syllabusId, actor_id
+                });
+            }
+        } catch (e) { console.warn('[notify syllabus]', e.message); }
+ 
         res.json({ success: true, total_pages: total, chapters: chapters.length });
     } catch (err) {
         console.error('Textbook detection failed:', err);
@@ -5484,6 +5509,8 @@ app.delete('/api/admin/syllabus/keywords/:keywordId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
+
 // ====================================================================
 // === GROUP CHAT MODULE (UNIFIED PERMISSIONS & MULTI-TENANT) ========
 // ====================================================================
@@ -5621,27 +5648,27 @@ app.post('/api/groups', checkGroupPermission('edit'), async (req, res) => {
             userId, institutionId, name, description,
             selectedCategories = [], selectedUserIds = [], backgroundColor, isReadOnly
         } = req.body;
-
+ 
         if (!userId || !institutionId || !name || (selectedCategories.length === 0 && selectedUserIds.length === 0)) {
             return res.status(400).json({ message: 'userId, institutionId, name and at least one member or category are required.' });
         }
-
+ 
         let memberIds = [];
-
+ 
         // --- STEP 1: Process Categories (Roles/Classes) if any ---
         if (selectedCategories.length > 0) {
             let finalCategories = selectedCategories;
-
+ 
             if (!req.isAdminEquivalent) {
                 finalCategories = selectedCategories.filter(cat =>
                     cat !== 'All' && cat !== 'Super Admin' && cat !== 'Developer' && cat !== 'Teacher'
                 );
             }
-
+ 
             if (finalCategories.length > 0) {
                 let whereClauses = [];
                 let queryParams = [];
-
+ 
                 finalCategories.forEach(category => {
                     if (category === 'All' && req.isAdminEquivalent) {
                         whereClauses.push('u.institutionId = ?');
@@ -5655,35 +5682,35 @@ app.post('/api/groups', checkGroupPermission('edit'), async (req, res) => {
                         queryParams.push(category, category, category, institutionId);
                     }
                 });
-
+ 
                 const finalWhereClause = whereClauses.join(' OR ');
-
+ 
                 const getUsersQuery = `
                     SELECT DISTINCT u.id
                       FROM users u
                       LEFT JOIN classes c ON u.class_id = c.id
                      WHERE ${finalWhereClause}
                 `;
-
+ 
                 const [usersToAdd] = await db.execute(getUsersQuery, queryParams);
                 memberIds = usersToAdd.map(u => u.id);
             }
         }
-
+ 
         // --- STEP 2: Process Explicit User IDs ---
         const explicitUserIds = Array.isArray(selectedUserIds) ? selectedUserIds.map(id => parseInt(id, 10)) : [];
-
+ 
         // --- STEP 3: Combine and Deduplicate ---
         const allMemberIds = [...new Set([parseInt(userId, 10), ...memberIds, ...explicitUserIds])];
-
+ 
         if (allMemberIds.length === 0) {
             return res.status(400).json({ message: 'No valid members found to add.' });
         }
-
+ 
         const conn = await db.getConnection();
         try {
             await conn.beginTransaction();
-
+ 
             const [groupResult] = await conn.execute(
                 `INSERT INTO \`groups\`
                    (institutionId, name, description, created_by, background_color, is_read_only)
@@ -5692,14 +5719,23 @@ app.post('/api/groups', checkGroupPermission('edit'), async (req, res) => {
                  backgroundColor || '#e5ddd5', isReadOnly ? 1 : 0]
             );
             const groupId = groupResult.insertId;
-
+ 
             for (const memberId of allMemberIds) {
                 await conn.execute(
                     'INSERT IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)',
                     [groupId, memberId]
                 );
             }
-
+ 
+            // 🔔 Notify everyone added to the group (creator excluded via
+            //    actor_id). Inside the transaction (conn); self-catching, so
+            //    it can never break the group creation.
+            await createNotifications({
+                institutionId, recipientIds: allMemberIds, type: 'group_chat',
+                title: 'Added to a group', body: name,
+                link: 'GroupChat', entity_id: groupId, actor_id: userId
+            }, conn);
+ 
             await conn.commit();
             res.status(201).json({ message: 'Group created successfully!', groupId });
         } catch (err) {
