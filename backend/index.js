@@ -978,403 +978,6 @@ app.get('/', (req, res) => res.json({ status: 'ok', service: 'SmartEdz ERP', tim
 
 
 
-// =====================================================================
-//  BACKEND — Section 25: NOTIFICATIONS
-//
-//  Append this whole block to backend/index.js, just BEFORE the final
-//  `const PORT = ...` line.
-//
-//  ALSO add 'Notifications' to DEFAULT_MODULES at the top of index.js
-//  ONLY if you want it permission-gated. It is NOT required — the bell is
-//  a universal quick-action in the sidebar, shown to every role.
-//
-//  MODEL — fan-out: one row per recipient. When homework is created for a
-//  class, we insert one notification row per active student in that class.
-//  Reads are then trivial (WHERE recipient_id = ?) and the unread badge is
-//  a single COUNT. `link` holds the target dashboard tab id so the client
-//  can jump straight to the source module on click; `entity_id` is the
-//  source row id (homework id, event id…) for optional deep-linking.
-//
-//  Helpers below (createNotifications / studentIdsForClass /
-//  allActiveUserIds) are also used by the trigger routes in
-//  notification_triggers.js — keep this section in the same file.
-//
-//  ------------------------------------------------------------------
-//  ONE-TIME MIGRATION — create the table once in your DB:
-//
-//    CREATE TABLE notifications (
-//      id            INT AUTO_INCREMENT PRIMARY KEY,
-//      institutionId INT NOT NULL,
-//      recipient_id  INT NOT NULL,
-//      type          VARCHAR(40)  NOT NULL,
-//      title         VARCHAR(255) NOT NULL,
-//      body          VARCHAR(500) DEFAULT NULL,
-//      link          VARCHAR(120) DEFAULT NULL,
-//      entity_id     INT DEFAULT NULL,
-//      actor_id      INT DEFAULT NULL,
-//      is_read       TINYINT(1) NOT NULL DEFAULT 0,
-//      created_at    TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-//      KEY idx_recipient (recipient_id, is_read, created_at),
-//      KEY idx_inst (institutionId),
-//      CONSTRAINT fk_notif_inst FOREIGN KEY (institutionId)
-//        REFERENCES institutions (id) ON DELETE CASCADE,
-//      CONSTRAINT fk_notif_recipient FOREIGN KEY (recipient_id)
-//        REFERENCES users (id) ON DELETE CASCADE
-//    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-// =====================================================================
-
-
-// --- 25.0 Shared helpers (used here + by the trigger routes) --------
-
-// Fan-out insert: one row per recipient. recipientIds is an array of user
-// ids; the actor (actor_id) is never notified about their own action.
-// Never throws fatally for the caller — callers still wrap it in try/catch
-// so a notification hiccup can't break the underlying create.
-async function createNotifications({ institutionId, recipientIds, type, title, body, link, entity_id, actor_id }) {
-    if (!institutionId || !type || !title) return 0;
-    const actor = parseInt(actor_id, 10);
-    const ids = [...new Set((recipientIds || []).map(n => parseInt(n, 10)).filter(Boolean))]
-        .filter(id => id !== actor);
-    if (ids.length === 0) return 0;
-
-    const cap = (s, n) => (s == null ? null : String(s).slice(0, n));
-    const rows = ids.map(rid => ([
-        institutionId, rid, cap(type, 40), cap(title, 255), cap(body, 500),
-        cap(link, 120), entity_id || null, actor_id || null
-    ]));
-
-    // Bulk multi-row insert (mysql2 expands the nested array for `VALUES ?`).
-    await db.query(
-        `INSERT INTO notifications
-           (institutionId, recipient_id, type, title, body, link, entity_id, actor_id)
-         VALUES ?`,
-        [rows]
-    );
-    return ids.length;
-}
-
-// Active students of a class (excludes alumni / inactive).
-async function studentIdsForClass(classId) {
-    if (!classId) return [];
-    const [rows] = await db.execute(
-        `SELECT id FROM users
-          WHERE class_id = ? AND LOWER(TRIM(role)) = 'student'
-            AND (status IS NULL OR LOWER(TRIM(status)) = 'active')`,
-        [classId]
-    );
-    return rows.map(r => r.id);
-}
-
-// Every active user in the institution (excludes alumni / inactive).
-async function allActiveUserIds(institutionId) {
-    const [rows] = await db.execute(
-        `SELECT id FROM users
-          WHERE institutionId = ?
-            AND (status IS NULL OR LOWER(TRIM(status)) = 'active')`,
-        [institutionId]
-    );
-    return rows.map(r => r.id);
-}
-
-
-// --- 25.1 List a user's notifications -------------------------------
-//   GET /api/notifications/:userId?filter=all|unread&limit=50
-app.get('/api/notifications/:userId', async (req, res) => {
-    const { userId } = req.params;
-    const { filter = 'all', limit = 50 } = req.query;
-    try {
-        let where = 'recipient_id = ?';
-        if (filter === 'unread') where += ' AND is_read = 0';
-        const lim = Math.min(parseInt(limit, 10) || 50, 100);
-        const [rows] = await db.query(
-            `SELECT id, type, title, body, link, entity_id, actor_id, is_read,
-                    DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%s') AS created_at
-               FROM notifications
-              WHERE ${where}
-              ORDER BY created_at DESC
-              LIMIT ${lim}`,
-            [userId]
-        );
-        res.json(rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-
-// --- 25.2 Unread count (for the bell badge) -------------------------
-//   GET /api/notifications/:userId/unread-count
-app.get('/api/notifications/:userId/unread-count', async (req, res) => {
-    try {
-        const [rows] = await db.execute(
-            'SELECT COUNT(*) AS count FROM notifications WHERE recipient_id = ? AND is_read = 0',
-            [req.params.userId]
-        );
-        res.json({ count: Number(rows[0]?.count || 0) });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-
-// --- 25.3 Mark one notification read --------------------------------
-//   PUT /api/notifications/:id/read
-app.put('/api/notifications/:id/read', async (req, res) => {
-    try {
-        await db.execute('UPDATE notifications SET is_read = 1 WHERE id = ?', [req.params.id]);
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-
-// --- 25.4 Mark ALL of a user's notifications read -------------------
-//   PUT /api/notifications/:userId/read-all
-//   (distinct literal segment 'read-all' — never collides with :id/read)
-app.put('/api/notifications/:userId/read-all', async (req, res) => {
-    try {
-        await db.execute(
-            'UPDATE notifications SET is_read = 1 WHERE recipient_id = ? AND is_read = 0',
-            [req.params.userId]
-        );
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-
-// --- 25.5 Delete one notification -----------------------------------
-//   DELETE /api/notifications/:id
-app.delete('/api/notifications/:id', async (req, res) => {
-    try {
-        await db.execute('DELETE FROM notifications WHERE id = ?', [req.params.id]);
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-
-// --- 25.6 Clear ALL of a user's notifications -----------------------
-//   DELETE /api/notifications/:userId/clear
-app.delete('/api/notifications/:userId/clear', async (req, res) => {
-    try {
-        await db.execute('DELETE FROM notifications WHERE recipient_id = ?', [req.params.userId]);
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// =====================================================================
-//  BACKEND — NOTIFICATION TRIGGERS  (Homework · Digital Labs · Lesson Plan)
-//
-//  Drop-in replacements for THREE existing routes. Each is your current
-//  route with a notification fan-out added. Replace each one in index.js
-//  with the version here.
-//
-//  Depends on the Section 25 helpers (createNotifications /
-//  studentIdsForClass / allActiveUserIds) — keep Section 25 in the same
-//  file. This block adds ONE new helper (staffUserIds), used by the
-//  Lesson Plan trigger; place it next to the other Section 25 helpers.
-//
-//  NOTE: the homework route below is identical in behaviour to the
-//  homework trigger you already added in Section 25 — it's repeated here
-//  only so all three module triggers live together. Keep just ONE copy
-//  of POST /api/admin/homework in index.js (remove the older one).
-//
-//  The calendar + marks triggers from Section 25 are unchanged.
-//
-//  Every notify block is wrapped in its own try/catch so a notification
-//  problem can NEVER break the actual create/save.
-// =====================================================================
-
-
-// --- Dashboard tab ids the notification 'link' opens on click -------
-//  'Homework' and 'LessonPlan' match your existing module names.
-//  CONFIRM LINK_LAB matches the Digital Labs entry in Screens/Modules.js
-//  (i.e. the id your dashboard switches on). Change the one string if not.
-const LINK_HOMEWORK   = 'Homework';
-const LINK_LAB        = 'Digital Labs';   // <-- confirm against Modules.js
-const LINK_LESSONPLAN = 'LessonPlan';
-
-
-// --- 25.0b  NEW shared helper (place beside the Section 25 helpers) --
-//  Active staff = every active, non-student user in the institution.
-//  Used to notify staff about a Lesson Plan guideline update (students
-//  don't have that module).
-async function staffUserIds(institutionId) {
-    if (!institutionId) return [];
-    const [rows] = await db.execute(
-        `SELECT id FROM users
-          WHERE institutionId = ?
-            AND LOWER(TRIM(role)) <> 'student'
-            AND (status IS NULL OR LOWER(TRIM(status)) = 'active')`,
-        [institutionId]
-    );
-    return rows.map(r => r.id);
-}
-
-
-// =====================================================================
-//  REPLACE Section 19.4  (POST /api/admin/homework)
-//  Notify the class's active students that homework was assigned.
-//  Clicking the notification opens the Homework tab.
-// =====================================================================
-app.post('/api/admin/homework', async (req, res) => {
-    const {
-        institutionId, title, description, homework_type,
-        class_id, subject_id, due_date, questions, attachments, created_by
-    } = req.body;
-    if (!institutionId || !title || !class_id || !due_date) {
-        return res.status(400).json({ error: 'institutionId, title, class_id and due_date are required.' });
-    }
-    try {
-        const yearId = await resolveYearId(institutionId, req.body.academic_year_id);
-
-        const [result] = await db.execute(
-            `INSERT INTO homework
-               (institutionId, academic_year_id, title, description, homework_type,
-                class_id, subject_id, due_date, questions, attachments, created_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [institutionId, yearId, title, description || null, homework_type || 'PDF',
-             class_id, subject_id || null, due_date,
-             JSON.stringify(questions || []), JSON.stringify(attachments || []),
-             created_by || null]
-        );
-
-        // 🔔 Notify the class's students.
-        try {
-            const recipients = await studentIdsForClass(class_id);
-            await createNotifications({
-                institutionId, recipientIds: recipients, type: 'homework',
-                title: 'New homework assigned', body: title,
-                link: LINK_HOMEWORK, entity_id: result.insertId, actor_id: created_by
-            });
-        } catch (e) { console.warn('[notify homework]', e.message); }
-
-        res.json({ success: true, id: result.insertId });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-
-// =====================================================================
-//  REPLACE Section 21.4  (POST /api/admin/labs)
-//  Notify the class's active students ONLY when a NEW lab is created
-//  (req.body.id is empty). Editing an existing lab does NOT re-notify,
-//  to avoid spamming students on every resource tweak.
-//  Everything else is byte-for-byte your existing Section 21.4 route.
-// =====================================================================
-app.post('/api/admin/labs', labUpload.any(), async (req, res) => {
-    const { id, institutionId, title, description, class_id, subject_id, created_by, resources: resourcesRaw } = req.body;
-
-    // Parse the stringified JSON array sent from the frontend
-    const resources = JSON.parse(resourcesRaw || '[]');
-    const conn = await db.getConnection();
-
-    try {
-        await conn.beginTransaction();
-        let labId = id;
-        let existingResources = [];
-
-        if (id) {
-            await conn.execute(
-                `UPDATE digital_labs SET title=?, description=?, class_id=?, subject_id=? WHERE id=?`,
-                [title, description, class_id, subject_id || null, id]
-            );
-
-            // Fetch existing files into memory BEFORE deleting
-            const [oldRes] = await conn.execute(
-                'SELECT id, file_data, mime_type FROM lab_resources WHERE lab_id=?',
-                [id]
-            );
-            existingResources = oldRes;
-
-            await conn.execute('DELETE FROM lab_resources WHERE lab_id=?', [id]);
-        } else {
-            const [resData] = await conn.execute(
-                `INSERT INTO digital_labs (institutionId, title, description, class_id, subject_id, created_by) VALUES (?,?,?,?,?,?)`,
-                [institutionId, title, description, class_id, subject_id || null, created_by]
-            );
-            labId = resData.insertId;
-        }
-
-        for (let i = 0; i < resources.length; i++) {
-            const r = resources[i];
-
-            // Find the physical file in req.files matching the dynamic fieldname
-            const file = req.files && req.files.find(f => f.fieldname === `file_${i}`);
-
-            // Map the frontend ID back to the existing database record
-            const oldResource = existingResources.find(old => String(old.id) === String(r.id));
-
-            let finalBuffer = null;
-            let finalMime = null;
-
-            // 1. If a brand new file was uploaded, use the multer buffer
-            if (file) {
-                finalBuffer = file.buffer;
-                finalMime = file.mimetype;
-            }
-            // 2. Otherwise, if it's supposed to be a file and we have old data, restore the old data
-            else if (oldResource && r.source === 'file') {
-                finalBuffer = oldResource.file_data;
-                finalMime = oldResource.mime_type;
-            }
-
-            await conn.execute(
-                `INSERT INTO lab_resources (lab_id, resource_type, title, url, file_data, mime_type, scheduled_at, resource_order) VALUES (?,?,?,?,?,?,?,?)`,
-                [labId, r.resource_type, r.title, r.url || null, finalBuffer, finalMime, r.scheduled_at || null, i]
-            );
-        }
-
-        await conn.commit();
-
-        // 🔔 New lab only (no id): notify the class's students.
-        if (!id) {
-            try {
-                const recipients = await studentIdsForClass(class_id);
-                await createNotifications({
-                    institutionId, recipientIds: recipients, type: 'lab',
-                    title: 'New digital lab posted', body: title,
-                    link: LINK_LAB, entity_id: labId, actor_id: created_by
-                });
-            } catch (e) { console.warn('[notify lab]', e.message); }
-        }
-
-        res.json({ success: true });
-    } catch (err) {
-        await conn.rollback();
-        res.status(500).json({ error: err.message });
-    } finally {
-        conn.release();
-    }
-});
-
-
-// =====================================================================
-//  REPLACE Section 14's upload route  (POST /api/admin/lesson-plans)
-//  Notify active staff (non-students) that the guideline template was
-//  updated. The client now sends actor_id (see the LessonPlan.jsx change)
-//  so the uploader isn't notified about their own upload. If actor_id is
-//  absent the notification still fires to all staff — it just won't
-//  self-exclude.
-// =====================================================================
-app.post('/api/admin/lesson-plans', async (req, res) => {
-    const { institutionId, image_data, actor_id } = req.body;
-    try {
-        // We simply insert a new one, and the GET request always picks the latest
-        const [result] = await db.execute(
-            'INSERT INTO lesson_plans (institutionId, image_data, title) VALUES (?, ?, ?)',
-            [institutionId, image_data, 'Active Guideline']
-        );
-
-        // 🔔 Notify staff.
-        try {
-            const recipients = await staffUserIds(institutionId);
-            await createNotifications({
-                institutionId, recipientIds: recipients, type: 'lesson_plan',
-                title: 'Lesson plan guidelines updated',
-                body: 'The lesson plan guideline template has been updated.',
-                link: LINK_LESSONPLAN, entity_id: result.insertId, actor_id
-            });
-        } catch (e) { console.warn('[notify lesson plan]', e.message); }
-
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-
 
 // =====================================================================
 // === 11. TIMETABLE ===================================================
@@ -6963,6 +6566,398 @@ app.post('/api/admin/lesson-plans', async (req, res) => {
 app.delete('/api/admin/lesson-plans/:id', async (req, res) => {
     try {
         await db.execute('DELETE FROM lesson_plans WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+
+// =====================================================================
+//  BACKEND — Section 25: NOTIFICATIONS
+//
+//  Append this whole block to backend/index.js, just BEFORE the final
+//  `const PORT = ...` line.
+//
+//  ALSO add 'Notifications' to DEFAULT_MODULES at the top of index.js
+//  ONLY if you want it permission-gated. It is NOT required — the bell is
+//  a universal quick-action in the sidebar, shown to every role.
+//
+//  MODEL — fan-out: one row per recipient. When homework is created for a
+//  class, we insert one notification row per active student in that class.
+//  Reads are then trivial (WHERE recipient_id = ?) and the unread badge is
+//  a single COUNT. `link` holds the target dashboard tab id so the client
+//  can jump straight to the source module on click; `entity_id` is the
+//  source row id (homework id, event id…) for optional deep-linking.
+//
+//  Helpers below (createNotifications / studentIdsForClass /
+//  allActiveUserIds) are also used by the trigger routes in
+//  notification_triggers.js — keep this section in the same file.
+//
+//  ------------------------------------------------------------------
+//  ONE-TIME MIGRATION — create the table once in your DB:
+//
+//    CREATE TABLE notifications (
+//      id            INT AUTO_INCREMENT PRIMARY KEY,
+//      institutionId INT NOT NULL,
+//      recipient_id  INT NOT NULL,
+//      type          VARCHAR(40)  NOT NULL,
+//      title         VARCHAR(255) NOT NULL,
+//      body          VARCHAR(500) DEFAULT NULL,
+//      link          VARCHAR(120) DEFAULT NULL,
+//      entity_id     INT DEFAULT NULL,
+//      actor_id      INT DEFAULT NULL,
+//      is_read       TINYINT(1) NOT NULL DEFAULT 0,
+//      created_at    TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+//      KEY idx_recipient (recipient_id, is_read, created_at),
+//      KEY idx_inst (institutionId),
+//      CONSTRAINT fk_notif_inst FOREIGN KEY (institutionId)
+//        REFERENCES institutions (id) ON DELETE CASCADE,
+//      CONSTRAINT fk_notif_recipient FOREIGN KEY (recipient_id)
+//        REFERENCES users (id) ON DELETE CASCADE
+//    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+// =====================================================================
+
+
+// --- 25.0 Shared helpers (used here + by the trigger routes) --------
+
+// Fan-out insert: one row per recipient. recipientIds is an array of user
+// ids; the actor (actor_id) is never notified about their own action.
+// Never throws fatally for the caller — callers still wrap it in try/catch
+// so a notification hiccup can't break the underlying create.
+async function createNotifications({ institutionId, recipientIds, type, title, body, link, entity_id, actor_id }) {
+    if (!institutionId || !type || !title) return 0;
+    const actor = parseInt(actor_id, 10);
+    const ids = [...new Set((recipientIds || []).map(n => parseInt(n, 10)).filter(Boolean))]
+        .filter(id => id !== actor);
+    if (ids.length === 0) return 0;
+
+    const cap = (s, n) => (s == null ? null : String(s).slice(0, n));
+    const rows = ids.map(rid => ([
+        institutionId, rid, cap(type, 40), cap(title, 255), cap(body, 500),
+        cap(link, 120), entity_id || null, actor_id || null
+    ]));
+
+    // Bulk multi-row insert (mysql2 expands the nested array for `VALUES ?`).
+    await db.query(
+        `INSERT INTO notifications
+           (institutionId, recipient_id, type, title, body, link, entity_id, actor_id)
+         VALUES ?`,
+        [rows]
+    );
+    return ids.length;
+}
+
+// Active students of a class (excludes alumni / inactive).
+async function studentIdsForClass(classId) {
+    if (!classId) return [];
+    const [rows] = await db.execute(
+        `SELECT id FROM users
+          WHERE class_id = ? AND LOWER(TRIM(role)) = 'student'
+            AND (status IS NULL OR LOWER(TRIM(status)) = 'active')`,
+        [classId]
+    );
+    return rows.map(r => r.id);
+}
+
+// Every active user in the institution (excludes alumni / inactive).
+async function allActiveUserIds(institutionId) {
+    const [rows] = await db.execute(
+        `SELECT id FROM users
+          WHERE institutionId = ?
+            AND (status IS NULL OR LOWER(TRIM(status)) = 'active')`,
+        [institutionId]
+    );
+    return rows.map(r => r.id);
+}
+
+
+// --- 25.1 List a user's notifications -------------------------------
+//   GET /api/notifications/:userId?filter=all|unread&limit=50
+app.get('/api/notifications/:userId', async (req, res) => {
+    const { userId } = req.params;
+    const { filter = 'all', limit = 50 } = req.query;
+    try {
+        let where = 'recipient_id = ?';
+        if (filter === 'unread') where += ' AND is_read = 0';
+        const lim = Math.min(parseInt(limit, 10) || 50, 100);
+        const [rows] = await db.query(
+            `SELECT id, type, title, body, link, entity_id, actor_id, is_read,
+                    DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%s') AS created_at
+               FROM notifications
+              WHERE ${where}
+              ORDER BY created_at DESC
+              LIMIT ${lim}`,
+            [userId]
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 25.2 Unread count (for the bell badge) -------------------------
+//   GET /api/notifications/:userId/unread-count
+app.get('/api/notifications/:userId/unread-count', async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            'SELECT COUNT(*) AS count FROM notifications WHERE recipient_id = ? AND is_read = 0',
+            [req.params.userId]
+        );
+        res.json({ count: Number(rows[0]?.count || 0) });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 25.3 Mark one notification read --------------------------------
+//   PUT /api/notifications/:id/read
+app.put('/api/notifications/:id/read', async (req, res) => {
+    try {
+        await db.execute('UPDATE notifications SET is_read = 1 WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 25.4 Mark ALL of a user's notifications read -------------------
+//   PUT /api/notifications/:userId/read-all
+//   (distinct literal segment 'read-all' — never collides with :id/read)
+app.put('/api/notifications/:userId/read-all', async (req, res) => {
+    try {
+        await db.execute(
+            'UPDATE notifications SET is_read = 1 WHERE recipient_id = ? AND is_read = 0',
+            [req.params.userId]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 25.5 Delete one notification -----------------------------------
+//   DELETE /api/notifications/:id
+app.delete('/api/notifications/:id', async (req, res) => {
+    try {
+        await db.execute('DELETE FROM notifications WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 25.6 Clear ALL of a user's notifications -----------------------
+//   DELETE /api/notifications/:userId/clear
+app.delete('/api/notifications/:userId/clear', async (req, res) => {
+    try {
+        await db.execute('DELETE FROM notifications WHERE recipient_id = ?', [req.params.userId]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// =====================================================================
+//  NOTIFICATION TRIGGERS — Homework · Digital Labs · Lesson Plan
+//
+//  ⚠️ READ THIS — these are IN-PLACE replacements, NOT a block to append.
+//
+//  Do NOT paste this whole file as one new block at the bottom of
+//  index.js. That created a SECOND `app.post('/api/admin/labs', …)` whose
+//  `labUpload.any()` runs above the `const labUpload = multer(...)` in
+//  Section 21 → "Cannot access 'labUpload' before initialization", which
+//  crashes the server at startup (so every route, incl. lesson-plans,
+//  stops responding).
+//
+//  Instead, for each of the three routes below:
+//    1. Find the EXISTING route of the same method+path in index.js.
+//    2. Replace that existing route's code with the version here.
+//    3. Make sure no second copy of the same route remains anywhere.
+//
+//  The labs route MUST stay inside Section 21, directly under
+//  `const labUpload = multer(...)`. The homework/lesson-plan routes stay
+//  in their own sections (19 / 14).
+//
+//  Helpers used: createNotifications / studentIdsForClass from Section 25
+//  (keep them), plus the new staffUserIds below — add it next to the
+//  other Section 25 helpers (it's a function declaration, so placement
+//  among the helpers is safe).
+// =====================================================================
+
+
+// --- Dashboard tab ids the notification 'link' opens on click -------
+//  'Homework' and 'LessonPlan' match your existing module names.
+//  CONFIRM LINK_LAB matches the Digital Labs entry in Screens/Modules.js.
+//  Put these three consts ONCE, near the top of index.js (with your other
+//  top-level consts) — not inside any section that might be re-pasted.
+const LINK_HOMEWORK   = 'Homework';
+const LINK_LAB        = 'Digital Labs';   // <-- confirm against Modules.js
+const LINK_LESSONPLAN = 'LessonPlan';
+
+
+// =====================================================================
+//  ADD TO SECTION 25 (helpers) — new helper, place beside the others
+//  Active staff = every active, non-student user in the institution.
+// =====================================================================
+async function staffUserIds(institutionId) {
+    if (!institutionId) return [];
+    const [rows] = await db.execute(
+        `SELECT id FROM users
+          WHERE institutionId = ?
+            AND LOWER(TRIM(role)) <> 'student'
+            AND (status IS NULL OR LOWER(TRIM(status)) = 'active')`,
+        [institutionId]
+    );
+    return rows.map(r => r.id);
+}
+
+
+// =====================================================================
+//  SECTION 19.4 — REPLACE your existing POST /api/admin/homework
+//  Notifies the class's active students. (If your Section 25 already has
+//  a homework trigger, this is the same behaviour — just keep ONE copy.)
+// =====================================================================
+app.post('/api/admin/homework', async (req, res) => {
+    const {
+        institutionId, title, description, homework_type,
+        class_id, subject_id, due_date, questions, attachments, created_by
+    } = req.body;
+    if (!institutionId || !title || !class_id || !due_date) {
+        return res.status(400).json({ error: 'institutionId, title, class_id and due_date are required.' });
+    }
+    try {
+        const yearId = await resolveYearId(institutionId, req.body.academic_year_id);
+
+        const [result] = await db.execute(
+            `INSERT INTO homework
+               (institutionId, academic_year_id, title, description, homework_type,
+                class_id, subject_id, due_date, questions, attachments, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [institutionId, yearId, title, description || null, homework_type || 'PDF',
+             class_id, subject_id || null, due_date,
+             JSON.stringify(questions || []), JSON.stringify(attachments || []),
+             created_by || null]
+        );
+
+        // 🔔 Notify the class's students.
+        try {
+            const recipients = await studentIdsForClass(class_id);
+            await createNotifications({
+                institutionId, recipientIds: recipients, type: 'homework',
+                title: 'New homework assigned', body: title,
+                link: LINK_HOMEWORK, entity_id: result.insertId, actor_id: created_by
+            });
+        } catch (e) { console.warn('[notify homework]', e.message); }
+
+        res.json({ success: true, id: result.insertId });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// =====================================================================
+//  SECTION 21.4 — REPLACE your existing POST /api/admin/labs
+//  Keep this INSIDE Section 21, directly under `const labUpload`.
+//  Notifies the class's students ONLY when a NEW lab is created (no id);
+//  editing an existing lab does not re-notify. Lab logic is otherwise
+//  unchanged from your current 21.4.
+// =====================================================================
+app.post('/api/admin/labs', labUpload.any(), async (req, res) => {
+    const { id, institutionId, title, description, class_id, subject_id, created_by, resources: resourcesRaw } = req.body;
+
+    const resources = JSON.parse(resourcesRaw || '[]');
+    const conn = await db.getConnection();
+
+    try {
+        await conn.beginTransaction();
+        let labId = id;
+        let existingResources = [];
+
+        if (id) {
+            await conn.execute(
+                `UPDATE digital_labs SET title=?, description=?, class_id=?, subject_id=? WHERE id=?`,
+                [title, description, class_id, subject_id || null, id]
+            );
+
+            const [oldRes] = await conn.execute(
+                'SELECT id, file_data, mime_type FROM lab_resources WHERE lab_id=?',
+                [id]
+            );
+            existingResources = oldRes;
+
+            await conn.execute('DELETE FROM lab_resources WHERE lab_id=?', [id]);
+        } else {
+            const [resData] = await conn.execute(
+                `INSERT INTO digital_labs (institutionId, title, description, class_id, subject_id, created_by) VALUES (?,?,?,?,?,?)`,
+                [institutionId, title, description, class_id, subject_id || null, created_by]
+            );
+            labId = resData.insertId;
+        }
+
+        for (let i = 0; i < resources.length; i++) {
+            const r = resources[i];
+            const file = req.files && req.files.find(f => f.fieldname === `file_${i}`);
+            const oldResource = existingResources.find(old => String(old.id) === String(r.id));
+
+            let finalBuffer = null;
+            let finalMime = null;
+
+            if (file) {
+                finalBuffer = file.buffer;
+                finalMime = file.mimetype;
+            } else if (oldResource && r.source === 'file') {
+                finalBuffer = oldResource.file_data;
+                finalMime = oldResource.mime_type;
+            }
+
+            await conn.execute(
+                `INSERT INTO lab_resources (lab_id, resource_type, title, url, file_data, mime_type, scheduled_at, resource_order) VALUES (?,?,?,?,?,?,?,?)`,
+                [labId, r.resource_type, r.title, r.url || null, finalBuffer, finalMime, r.scheduled_at || null, i]
+            );
+        }
+
+        await conn.commit();
+
+        // 🔔 New lab only (no id): notify the class's students.
+        if (!id) {
+            try {
+                const recipients = await studentIdsForClass(class_id);
+                await createNotifications({
+                    institutionId, recipientIds: recipients, type: 'lab',
+                    title: 'New digital lab posted', body: title,
+                    link: LINK_LAB, entity_id: labId, actor_id: created_by
+                });
+            } catch (e) { console.warn('[notify lab]', e.message); }
+        }
+
+        res.json({ success: true });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally {
+        conn.release();
+    }
+});
+
+
+// =====================================================================
+//  SECTION 14 — REPLACE your existing POST /api/admin/lesson-plans
+//  Notifies active staff (non-students). Reads actor_id from the body
+//  (sent by the updated LessonPlan.jsx) to skip the uploader. If actor_id
+//  is missing it still notifies all staff; it just won't self-exclude.
+//  The GET and DELETE routes in Section 14 are unchanged — leave them.
+// =====================================================================
+app.post('/api/admin/lesson-plans', async (req, res) => {
+    const { institutionId, image_data, actor_id } = req.body;
+    try {
+        const [result] = await db.execute(
+            'INSERT INTO lesson_plans (institutionId, image_data, title) VALUES (?, ?, ?)',
+            [institutionId, image_data, 'Active Guideline']
+        );
+
+        // 🔔 Notify staff.
+        try {
+            const recipients = await staffUserIds(institutionId);
+            await createNotifications({
+                institutionId, recipientIds: recipients, type: 'lesson_plan',
+                title: 'Lesson plan guidelines updated',
+                body: 'The lesson plan guideline template has been updated.',
+                link: LINK_LESSONPLAN, entity_id: result.insertId, actor_id
+            });
+        } catch (e) { console.warn('[notify lesson plan]', e.message); }
+
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
