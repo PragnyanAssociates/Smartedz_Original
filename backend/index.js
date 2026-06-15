@@ -3582,47 +3582,33 @@ app.delete('/api/admin/gallery/album/:instId/:title', async (req, res) => {
 // =====================================================================
 //  BACKEND — Section 19: HOMEWORK
 //
-//  Append this whole block to backend/index.js, just BEFORE the final
-//  `const PORT = ...` line.
+//  REPLACE your whole Section 19 block with this. Only 19.4 (create)
+//  changed: it now notifies the class's active students. Everything else
+//  is unchanged.
 //
-//  ALSO add 'Homework' to DEFAULT_MODULES at the top of index.js:
-//    const DEFAULT_MODULES = [
-//        'Overview','Manage Logins','Timetable','Academic Calendar',
-//        'Attendance','Exams','Reports','Performance','Homework'
-//    ];
+//  Uses createNotifications / studentIdsForClass from Section 25. No
+//  transaction in 19.4 (single insert), so createNotifications is called
+//  with the global db; it swallows its own errors, so a notify problem
+//  can never break the create.
 //
-//  Files are stored as base64 JSON in the rows — no filesystem needed.
-//  Reuses parseJsonSafe() and nowSQL() defined in Section 16, and the
-//  shared resolveYearId() helper defined in the Timetable section.
+//  Reuses parseJsonSafe() and nowSQL() (Section 16) and resolveYearId()
+//  (Timetable section).
 //
 //  ------------------------------------------------------------------
-//  ONE-TIME MIGRATION (run once on the database) — adds academic-year
-//  scoping to homework, exactly like the other temporal modules:
+//  ONE-TIME MIGRATION (run once) — academic-year scoping for homework:
 //
 //    ALTER TABLE homework
 //      ADD COLUMN academic_year_id INT NULL AFTER institutionId;
-//
-//    -- Backfill existing homework to each school's active year:
 //    UPDATE homework h
 //      JOIN academic_years y
 //        ON y.institutionId = h.institutionId AND y.isActive = 1
 //       SET h.academic_year_id = y.id
 //     WHERE h.academic_year_id IS NULL;
-//
 //    CREATE INDEX idx_homework_year ON homework (academic_year_id);
-//
-//  No FK is added (kept consistent with the other modules' year column).
-//  homework is now scoped to the ACTIVE academic year on every read,
-//  and stamped with it on create. Switching the active year under
-//  Academics switches the visible homework automatically.
 // =====================================================================
 
 
 // --- 19.1 List homework for a teacher/admin -------------------------
-//   GET /api/admin/homework/teacher/:userId
-//   Super Admin / Developer  → ALL homework in the school
-//   Teacher (or other role)  → only homework they created
-//   Scoped to the school's ACTIVE academic year.
 app.get('/api/admin/homework/teacher/:userId', async (req, res) => {
     const { userId } = req.params;
     try {
@@ -3672,9 +3658,6 @@ app.get('/api/admin/homework/teacher/:userId', async (req, res) => {
 
 
 // --- 19.2 List homework for a student -------------------------------
-//   GET /api/admin/homework/student/:studentId
-//   Returns homework for the student's class (in the ACTIVE academic
-//   year), each with that student's submission status merged in.
 app.get('/api/admin/homework/student/:studentId', async (req, res) => {
     const { studentId } = req.params;
     try {
@@ -3736,12 +3719,10 @@ app.get('/api/admin/homework/:id', async (req, res) => {
 });
 
 
-// --- 19.4 Create homework -------------------------------------------
+// --- 19.4 Create homework (+ notify the class's active students) ----
 //   Body: { institutionId, title, description, homework_type, class_id,
 //           subject_id, due_date, questions[], attachments[], created_by,
 //           academic_year_id? }
-//   Stamped with the school's ACTIVE academic year (unless one is
-//   explicitly supplied).
 app.post('/api/admin/homework', async (req, res) => {
     const {
         institutionId, title, description, homework_type,
@@ -3763,14 +3744,23 @@ app.post('/api/admin/homework', async (req, res) => {
              JSON.stringify(questions || []), JSON.stringify(attachments || []),
              created_by || null]
         );
+
+        // 🔔 Notify the class's active students. 'Homework' is the module
+        //    id from Screens/Modules.js. createNotifications swallows its
+        //    own errors, so it can't break the create.
+        const recipients = await studentIdsForClass(class_id);
+        await createNotifications({
+            institutionId, recipientIds: recipients, type: 'homework',
+            title: 'New homework assigned', body: title,
+            link: 'Homework', entity_id: result.insertId, actor_id: created_by
+        });
+
         res.json({ success: true, id: result.insertId });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 
 // --- 19.5 Update homework -------------------------------------------
-//   academic_year_id is left untouched on edit (a homework stays in the
-//   year it was created in).
 app.put('/api/admin/homework/:id', async (req, res) => {
     const {
         title, description, homework_type,
@@ -3803,9 +3793,6 @@ app.delete('/api/admin/homework/:id', async (req, res) => {
 
 
 // --- 19.7 Roster of submissions for one homework (teacher view) -----
-//   GET /api/admin/homework/:id/submissions
-//   Returns EVERY active student in the class, with their submission
-//   (or null). Ordered roll-number-wise (numeric).
 app.get('/api/admin/homework/:id/submissions', async (req, res) => {
     try {
         const [hw] = await db.execute(
@@ -3837,7 +3824,6 @@ app.get('/api/admin/homework/:id/submissions', async (req, res) => {
 
 
 // --- 19.8 Student submits (or resubmits) homework -------------------
-//   Body: { student_id, written_answer, files[] }
 app.post('/api/admin/homework/:id/submit', async (req, res) => {
     const { id } = req.params;
     const { student_id, written_answer, files } = req.body;
@@ -3875,7 +3861,6 @@ app.delete('/api/admin/homework/submission/:submissionId', async (req, res) => {
 
 
 // --- 19.10 Teacher grades a submission ------------------------------
-//   Body: { grade, remarks, graded_by }
 app.put('/api/admin/homework/grade/:submissionId', async (req, res) => {
     const { grade, remarks, graded_by } = req.body;
     try {
@@ -6573,18 +6558,17 @@ app.get('/api/admin/alumni/candidates/:instId/:classId', async (req, res) => {
 // === 14. LESSON PLAN MODULE ==========================================
 //
 //  REPLACE your whole Section 14 block with this. Only the POST changed:
-//  it now notifies active staff that the guideline was updated. GET and
-//  DELETE are unchanged.
+//  it now notifies EVERY active user that the guideline was updated.
+//  GET and DELETE are unchanged.
 //
-//  Uses createNotifications / staffUserIds from Section 25 (the core-only
-//  version). No transaction here (single insert), so createNotifications
-//  is called with the global db; it swallows its own errors, so a notify
-//  problem can never break the upload.
+//  Uses createNotifications / allActiveUserIds from Section 25. No
+//  transaction here (single insert), so createNotifications is called
+//  with the global db; it swallows its own errors, so a notify problem
+//  can never break the upload.
 //
-//  NOTE: recipients are active NON-students (staff), and the uploader is
-//  excluded (actor_id, sent by LessonPlan.jsx). If you are the ONLY staff
-//  account, the list empties after self-exclusion and nothing inserts —
-//  test with a second teacher/admin to see the notification land.
+//  Audience: allActiveUserIds = every active user in the institution
+//  (students + staff). The uploader is still excluded via actor_id (sent
+//  by LessonPlan.jsx) so they aren't notified about their own upload.
 // =====================================================================
 
 // Get the single latest Guideline image for the school
@@ -6598,7 +6582,7 @@ app.get('/api/admin/lesson-plans/:instId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Update/Upload the Guideline image (+ notify active staff)
+// Update/Upload the Guideline image (+ notify all active users)
 app.post('/api/admin/lesson-plans', async (req, res) => {
     const { institutionId, image_data, actor_id } = req.body;
     try {
@@ -6608,9 +6592,9 @@ app.post('/api/admin/lesson-plans', async (req, res) => {
             [institutionId, image_data, 'Active Guideline']
         );
 
-        // 🔔 Notify active staff (non-students). 'LessonPlan' is the module
-        //    id from Screens/Modules.js (the tab the dashboard opens on click).
-        const recipients = await staffUserIds(institutionId);
+        // 🔔 Notify every active user (uploader excluded via actor_id).
+        //    'LessonPlan' is the module id from Screens/Modules.js.
+        const recipients = await allActiveUserIds(institutionId);
         await createNotifications({
             institutionId, recipientIds: recipients, type: 'lesson_plan',
             title: 'Lesson plan guidelines updated',
