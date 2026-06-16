@@ -3432,6 +3432,14 @@ app.get('/api/admin/performance/teacher/:teacherId', async (req, res) => {
 
 // =====================================================================
 // === 19. GALLERY =====================================================
+//
+//  REPLACE your whole Gallery section with this. Only 19.3 (upload)
+//  changed: it notifies all active users when a NEW album is started
+//  (the first item of a new title). Subsequent uploads to the same album
+//  do NOT re-notify — otherwise a multi-file upload would spam everyone.
+//
+//  Uses createNotifications / allActiveUserIds from Section 25.
+//  'Gallery' is the module id from Screens/Modules.js.
 // =====================================================================
 
 const galleryUpload = multer({
@@ -3493,12 +3501,36 @@ app.post('/api/admin/gallery/upload', galleryUpload.single('media'), async (req,
     const file_type = mime.startsWith('image') ? 'photo' : 'video';
 
     try {
+        // Is this the first item of a (new) album title? Check BEFORE insert.
+        let isNewAlbum = false;
+        try {
+            const [exist] = await db.execute(
+                'SELECT COUNT(*) AS c FROM gallery WHERE institutionId = ? AND title = ?',
+                [institutionId, title]
+            );
+            isNewAlbum = !exist.length || Number(exist[0].c) === 0;
+        } catch (_) { isNewAlbum = false; }
+
         const [result] = await db.execute(
             `INSERT INTO gallery
                (institutionId, title, file_path, file_data, mime_type, file_type, event_date, created_by)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
             [institutionId, title, null, req.file.buffer, mime, file_type, event_date, adminId || null]
         );
+
+        // 🔔 Notify everyone only when a NEW album is started. Own try/catch
+        //    so a notify issue can't fail the upload.
+        if (isNewAlbum) {
+            try {
+                const recipients = await allActiveUserIds(institutionId);
+                await createNotifications({
+                    institutionId, recipientIds: recipients, type: 'gallery',
+                    title: 'New gallery album', body: title,
+                    link: 'Gallery', entity_id: result.insertId, actor_id: adminId
+                });
+            } catch (e) { console.warn('[notify gallery]', e.message); }
+        }
+
         res.json({ success: true, insertId: result.insertId });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -3880,23 +3912,18 @@ app.put('/api/admin/homework/grade/:submissionId', async (req, res) => {
 // =====================================================================
 //  BACKEND — Section 20: MEALS
 //
-//  Append this whole block to backend/index.js, just BEFORE the final
-//  `const PORT = ...` line.
+//  REPLACE your whole Section 20 block with this. Only 20.3 (save menu)
+//  changed: after the weekly menu is saved it notifies all active users
+//  that the food menu was updated. One notification per save (not per
+//  cell), so it isn't spammy. 20.1 and 20.2 are unchanged.
 //
-//  ALSO add 'Meals' to DEFAULT_MODULES at the top of index.js:
-//    const DEFAULT_MODULES = [
-//        'Overview','Manage Logins','Timetable','Academic Calendar',
-//        'Attendance','Exams','Reports','Performance','Homework','Meals'
-//    ];
-//
-//  Weekly repeating menu — day_index 0=Mon ... 6=Sun.
+//  Uses createNotifications / allActiveUserIds from Section 25.
+//  'Meals' is the module id from Screens/Modules.js. Reads optional
+//  actor_id from the body if your frontend sends it.
 // =====================================================================
 
 
 // --- 20.1 Full meals data for a school ------------------------------
-//   GET /api/admin/meals/:instId
-//   Returns the school's slots + every menu cell. The frontend builds
-//   the weekly grid from this single bundle.
 app.get('/api/admin/meals/:instId', async (req, res) => {
     const { instId } = req.params;
     try {
@@ -3916,11 +3943,6 @@ app.get('/api/admin/meals/:instId', async (req, res) => {
 
 
 // --- 20.2 Save the school's meal slots ------------------------------
-//   POST /api/admin/meals/slots
-//   Body: { institutionId, slots: [{ id?, name, start_time, end_time }] }
-//   Replaces the whole slot set. Slots no longer present are deleted
-//   (their menu cells cascade-delete). Existing slots keep their id so
-//   their menu cells survive.
 app.post('/api/admin/meals/slots', async (req, res) => {
     const { institutionId, slots } = req.body;
     if (!institutionId || !Array.isArray(slots)) {
@@ -3930,19 +3952,16 @@ app.post('/api/admin/meals/slots', async (req, res) => {
     try {
         await conn.beginTransaction();
 
-        // Which existing slot ids should survive?
         const keepIds = slots.filter(s => s.id).map(s => parseInt(s.id, 10));
         const [existing] = await conn.execute(
             'SELECT id FROM meal_slots WHERE institutionId = ?', [institutionId]);
 
-        // Delete slots that were removed in the UI
         for (const row of existing) {
             if (!keepIds.includes(row.id)) {
                 await conn.execute('DELETE FROM meal_slots WHERE id = ?', [row.id]);
             }
         }
 
-        // Upsert each slot in order
         for (let i = 0; i < slots.length; i++) {
             const s = slots[i];
             const name = (s.name || '').trim();
@@ -3971,12 +3990,9 @@ app.post('/api/admin/meals/slots', async (req, res) => {
 });
 
 
-// --- 20.3 Save the weekly menu --------------------------------------
-//   POST /api/admin/meals/menu
-//   Body: { institutionId, entries: [{ slot_id, day_index, items }] }
-//   Upserts each cell. An empty `items` clears that cell.
+// --- 20.3 Save the weekly menu (+ notify all active users) ----------
 app.post('/api/admin/meals/menu', async (req, res) => {
-    const { institutionId, entries } = req.body;
+    const { institutionId, entries, actor_id } = req.body;
     if (!institutionId || !Array.isArray(entries)) {
         return res.status(400).json({ error: 'institutionId and entries[] required.' });
     }
@@ -3987,7 +4003,6 @@ app.post('/api/admin/meals/menu', async (req, res) => {
             if (!e.slot_id || e.day_index === undefined || e.day_index === null) continue;
             const items = (e.items || '').trim();
             if (items === '') {
-                // Empty cell — remove any existing row
                 await conn.execute(
                     'DELETE FROM meal_menu WHERE slot_id = ? AND day_index = ?',
                     [e.slot_id, e.day_index]
@@ -4002,6 +4017,19 @@ app.post('/api/admin/meals/menu', async (req, res) => {
             }
         }
         await conn.commit();
+
+        // 🔔 One notification per save (not per cell). Own try/catch so a
+        //    notify issue can't fail the save.
+        try {
+            const recipients = await allActiveUserIds(institutionId);
+            await createNotifications({
+                institutionId, recipientIds: recipients, type: 'meals',
+                title: 'Food menu updated',
+                body: 'The weekly food menu has been updated.',
+                link: 'Meals', entity_id: null, actor_id
+            });
+        } catch (e) { console.warn('[notify meals]', e.message); }
+
         res.json({ success: true });
     } catch (err) {
         await conn.rollback();
@@ -4013,7 +4041,29 @@ app.post('/api/admin/meals/menu', async (req, res) => {
 
 // =====================================================================
 // === 21. PARENT TEACHER MEETINGS (PTM) ===============================
+//
+//  REPLACE your whole PTM section with this. 21.3 (create) and 21.4
+//  (update) now notify the targeted students. An update re-notifies
+//  because the meeting time may change. Recipients respect class + section
+//  targeting (NULL = everyone / every section), matching the 21.2 student
+//  query. Uses createNotifications from Section 25. 'PTM' is the module id
+//  from Screens/Modules.js.
 // =====================================================================
+
+// Who a PTM is for:
+//   class_id NULL -> all active students in the institution
+//   class_id set  -> that class's active students (optionally one section)
+async function ptmRecipientIds(institutionId, classId, section) {
+    if (!institutionId) return [];
+    let sql = `SELECT id FROM users
+                WHERE institutionId = ? AND LOWER(TRIM(role)) = 'student'
+                  AND (status IS NULL OR LOWER(TRIM(status)) = 'active')`;
+    const params = [institutionId];
+    if (classId) { sql += ' AND class_id = ?'; params.push(classId); }
+    if (section) { sql += ' AND section = ?'; params.push(section); }
+    const [rows] = await db.execute(sql, params);
+    return rows.map(r => r.id);
+}
 
 // --- 21.1 List PTMs for a School (Admin/Teacher view) ---
 app.get('/api/admin/ptm/:instId', async (req, res) => {
@@ -4077,7 +4127,7 @@ app.get('/api/admin/ptm/student/:studentId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 21.3 Create PTM ---
+// --- 21.3 Create PTM (+ notify targeted students) ---
 app.post('/api/admin/ptm', async (req, res) => {
     const {
         institutionId, meeting_datetime, teacher_id, class_id,
@@ -4099,15 +4149,28 @@ app.post('/api/admin/ptm', async (req, res) => {
                 status || 'Scheduled', created_by || null
             ]
         );
+
+        // 🔔 Notify the targeted students. Own try/catch so a notify issue
+        //    can't fail the create.
+        try {
+            const recipients = await ptmRecipientIds(institutionId, class_id || null, section || null);
+            await createNotifications({
+                institutionId, recipientIds: recipients, type: 'ptm',
+                title: 'Parent-teacher meeting scheduled',
+                body: subject_focus || 'A PTM has been scheduled.',
+                link: 'PTM', entity_id: result.insertId, actor_id: created_by
+            });
+        } catch (e) { console.warn('[notify ptm]', e.message); }
+
         res.json({ success: true, id: result.insertId });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 21.4 Update PTM ---
+// --- 21.4 Update PTM (+ re-notify; time may have changed) ---
 app.put('/api/admin/ptm/:id', async (req, res) => {
     const {
         meeting_datetime, teacher_id, class_id, section,
-        subject_focus, notes, meeting_link, status
+        subject_focus, notes, meeting_link, status, actor_id
     } = req.body;
     try {
         await db.execute(
@@ -4121,6 +4184,23 @@ app.put('/api/admin/ptm/:id', async (req, res) => {
                 req.params.id
             ]
         );
+
+        // 🔔 Re-notify. institutionId isn't in the body, so read it from row.
+        try {
+            const [rows] = await db.execute(
+                'SELECT institutionId FROM ptm_meetings WHERE id = ?', [req.params.id]);
+            if (rows.length) {
+                const instId = rows[0].institutionId;
+                const recipients = await ptmRecipientIds(instId, class_id || null, section || null);
+                await createNotifications({
+                    institutionId: instId, recipientIds: recipients, type: 'ptm',
+                    title: 'PTM updated',
+                    body: subject_focus || 'A PTM has been updated.',
+                    link: 'PTM', entity_id: req.params.id, actor_id
+                });
+            }
+        } catch (e) { console.warn('[notify ptm]', e.message); }
+
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -4806,10 +4886,14 @@ app.delete('/api/admin/preadmissions/:id', async (req, res) => {
 
 // =====================================================================
 // === 24. STUDY MATERIALS =============================================
+//
+//  REPLACE your whole Section 24 block with this. Only 24.3 (create)
+//  changed: it now notifies the class's active students. Files are still
+//  Base64 in the JSON payload; everything else is unchanged.
+//
+//  Uses createNotifications / studentIdsForClass from Section 25.
+//  'StudyMaterials' is the module id from Screens/Modules.js.
 // =====================================================================
-
-// Note: Multer and fs logic have been completely removed. Files are now 
-// accepted as Base64 text strings directly in the JSON payload.
 
 // --- 24.1 List Materials (Admin/Teacher) ---
 app.get('/api/admin/study-materials/:instId', async (req, res) => {
@@ -4881,7 +4965,7 @@ app.get('/api/admin/study-materials/student/:studentId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 24.3 Create Material ---
+// --- 24.3 Create Material (+ notify the class's students) ---
 app.post('/api/admin/study-materials', async (req, res) => {
     const { 
         institutionId, title, description, class_id, subject_id, 
@@ -4898,6 +4982,20 @@ app.post('/api/admin/study-materials', async (req, res) => {
                 material_type || 'Notes', materialFile || null, external_link || null, uploaded_by
             ]
         );
+
+        // 🔔 Notify the class's active students. Own try/catch so a notify
+        //    issue can't fail the create.
+        try {
+            if (class_id) {
+                const recipients = await studentIdsForClass(class_id);
+                await createNotifications({
+                    institutionId, recipientIds: recipients, type: 'study_material',
+                    title: 'New study material', body: title,
+                    link: 'StudyMaterials', entity_id: result.insertId, actor_id: uploaded_by
+                });
+            }
+        } catch (e) { console.warn('[notify study material]', e.message); }
+
         res.json({ success: true, id: result.insertId });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });

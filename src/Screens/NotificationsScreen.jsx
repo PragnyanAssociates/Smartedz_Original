@@ -3,7 +3,8 @@ import { useAuth } from '../context/AuthContext';
 import { API_BASE_URL } from '../apiConfig';
 import {
   Bell, BookOpen, CalendarDays, Award, CheckCheck, Trash2, Loader2, Inbox,
-  FlaskConical, BookMarked
+  FlaskConical, BookMarked, Video, MessagesSquare, BookText, FileText,
+  Users, Images, Utensils
 } from 'lucide-react';
 
 // =====================================================================
@@ -12,7 +13,9 @@ import {
 //    tabs (filtered client-side from a single fetch).
 //  • Clicking a row marks it read and jumps to the source module via
 //    onNavigate(tabId) — the `link` field holds the dashboard tab id
-//    (e.g. 'Homework', 'Digital Labs', 'LessonPlan', 'academic-calendar').
+//    (the module `id` from Screens/Modules.js, e.g. 'Homework',
+//    'DigitalLabs', 'LessonPlan', 'OnlineClasses', 'GroupChat',
+//    'Syllabus', 'StudyMaterials', 'PTM', 'Gallery', 'Meals').
 //  • Mark-all-read and delete one are supported.
 //
 //  Props: onNavigate(tabId) — switches the dashboard's active tab.
@@ -20,11 +23,18 @@ import {
 
 // Per-type icon + colour. Unknown types fall back to a generic bell.
 const TYPE_META = {
-  homework:    { icon: BookOpen,     bg: 'bg-indigo-50',  text: 'text-indigo-600',  ring: 'ring-indigo-600/20',  label: 'Homework' },
-  event:       { icon: CalendarDays, bg: 'bg-emerald-50', text: 'text-emerald-600', ring: 'ring-emerald-600/20', label: 'Event' },
-  result:      { icon: Award,        bg: 'bg-amber-50',   text: 'text-amber-600',   ring: 'ring-amber-600/20',   label: 'Result' },
-  lab:         { icon: FlaskConical, bg: 'bg-sky-50',     text: 'text-sky-600',     ring: 'ring-sky-600/20',     label: 'Lab' },
-  lesson_plan: { icon: BookMarked,   bg: 'bg-violet-50',  text: 'text-violet-600',  ring: 'ring-violet-600/20',  label: 'Lesson Plan' }
+  homework:       { icon: BookOpen,      bg: 'bg-indigo-50',  text: 'text-indigo-600',  ring: 'ring-indigo-600/20',  label: 'Homework' },
+  event:          { icon: CalendarDays,  bg: 'bg-emerald-50', text: 'text-emerald-600', ring: 'ring-emerald-600/20', label: 'Event' },
+  result:         { icon: Award,         bg: 'bg-amber-50',   text: 'text-amber-600',   ring: 'ring-amber-600/20',   label: 'Result' },
+  lab:            { icon: FlaskConical,  bg: 'bg-sky-50',     text: 'text-sky-600',     ring: 'ring-sky-600/20',     label: 'Lab' },
+  lesson_plan:    { icon: BookMarked,    bg: 'bg-violet-50',  text: 'text-violet-600',  ring: 'ring-violet-600/20',  label: 'Lesson Plan' },
+  online_class:   { icon: Video,         bg: 'bg-rose-50',    text: 'text-rose-600',    ring: 'ring-rose-600/20',    label: 'Online Class' },
+  group_chat:     { icon: MessagesSquare,bg: 'bg-teal-50',    text: 'text-teal-600',    ring: 'ring-teal-600/20',    label: 'Group' },
+  syllabus:       { icon: BookText,      bg: 'bg-blue-50',    text: 'text-blue-600',    ring: 'ring-blue-600/20',    label: 'Syllabus' },
+  study_material: { icon: FileText,      bg: 'bg-cyan-50',    text: 'text-cyan-600',    ring: 'ring-cyan-600/20',    label: 'Study Material' },
+  ptm:            { icon: Users,         bg: 'bg-fuchsia-50', text: 'text-fuchsia-600', ring: 'ring-fuchsia-600/20', label: 'PTM' },
+  gallery:        { icon: Images,        bg: 'bg-pink-50',    text: 'text-pink-600',    ring: 'ring-pink-600/20',    label: 'Gallery' },
+  meals:          { icon: Utensils,      bg: 'bg-orange-50',  text: 'text-orange-600',  ring: 'ring-orange-600/20',  label: 'Food Menu' }
 };
 const FALLBACK_META = { icon: Bell, bg: 'bg-zinc-100', text: 'text-zinc-600', ring: 'ring-zinc-200', label: 'Notification' };
 
@@ -157,7 +167,7 @@ export default function NotificationsScreen({ onNavigate }) {
           <Inbox className="size-10 text-zinc-300 mb-3" />
           <p className="text-zinc-500 text-sm font-medium">{emptyText}</p>
           <p className="text-zinc-400 text-xs mt-1.5">
-            You'll be notified here about homework, labs, events and results.
+            You'll be notified here about homework, labs, classes, results and more.
           </p>
         </div>
       ) : (
