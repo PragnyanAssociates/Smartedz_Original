@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { API_BASE_URL } from '../apiConfig';
-import { Check, ShieldCheck } from 'lucide-react';
+import { Check, ShieldCheck, CalendarDays } from 'lucide-react';
 
 export default function Overview() {
   const { user } = useAuth();
@@ -43,61 +43,70 @@ export default function Overview() {
   return (
   <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto">
       
-      {/* 1. Page Header */}
-      <header className="mb-6 lg:mb-8 flex flex-col gap-2">
-        <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">
-          Welcome back, {user?.name?.split(' ')[0]}
-        </h1>
-        <p className="text-sm text-zinc-500 max-w-[56ch]">
-          Here is what is happening at {data.institution?.name || 'your institution'} today.
-        </p>
+      {/* 1. Page Header — title on the left, active-year pill on the right */}
+      <header className="mb-6 lg:mb-8 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+        <div className="flex flex-col gap-2">
+          <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">
+            Welcome back, {user?.name?.split(' ')[0]}
+          </h1>
+          <p className="text-sm text-zinc-500 max-w-[56ch]">
+            Here is what is happening at {data.institution?.name || 'your institution'} today.
+          </p>
+        </div>
+
+        {/* Active Academic Year pill (mirrors the Attendance screen) */}
+        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-primary/5 ring-1 ring-primary/15 text-primary text-xs font-semibold self-start whitespace-nowrap shrink-0"
+             title={activeYear?.name ? `Active academic year: ${activeYear.name}` : 'No active academic year'}>
+          <CalendarDays className="size-4 shrink-0" />
+          Academic Year: {activeYear?.name || 'None'}
+        </div>
       </header>
 
-      {/* 2. KPI Row - Mobile Responsive Grid */}
+      {/* 2. KPI Row — every box colour-tinted. Total Users is the solid hero. */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4 mb-6 lg:mb-8">
         
-        {/* Primary-Hero: Students */}
+        {/* Hero: Total Users */}
         <div className="p-4 rounded-md flex flex-col gap-1 bg-primary text-white shadow-sm ring-1 ring-primary/40">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-white/80 truncate">Students</span>
-          <span className="text-2xl font-semibold tabular-nums text-white">{totalStudents}</span>
-          <span className="text-[10px] font-medium uppercase tracking-wide text-white/80 truncate">Enrolled</span>
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-white/80 truncate">Total Users</span>
+          <span className="text-2xl font-semibold tabular-nums text-white">{data.users.length}</span>
+          <span className="text-[10px] font-medium uppercase tracking-wide text-white/80 truncate">System wide</span>
         </div>
 
-        {/* Accent-Tint: Staff */}
+        {/* Accent: Students */}
         <div className="p-4 ring-1 ring-accent/20 bg-accent/5 rounded-md flex flex-col gap-1 border-l-2 border-accent">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-accent truncate">Staff</span>
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-accent truncate">Students</span>
+          <span className="text-2xl font-semibold tabular-nums text-zinc-900">{totalStudents}</span>
+          <span className="text-[10px] font-medium uppercase tracking-wide text-accent truncate">Enrolled</span>
+        </div>
+
+        {/* Emerald: Teachers / Staff */}
+        <div className="p-4 ring-1 ring-emerald-200 bg-emerald-50 rounded-md flex flex-col gap-1 border-l-2 border-emerald-400">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700 truncate">Teachers / Staff</span>
           <span className="text-2xl font-semibold tabular-nums text-zinc-900">{totalStaff}</span>
-          <span className="text-[10px] font-medium uppercase tracking-wide text-accent truncate">Active members</span>
+          <span className="text-[10px] font-medium uppercase tracking-wide text-emerald-600 truncate">Active members</span>
         </div>
 
-        {/* Neutral: Total Users */}
-        <div className="p-4 ring-1 ring-black/5 bg-white rounded-md flex flex-col gap-1 hover:ring-zinc-200 transition-all">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 truncate">Total Users</span>
-          <span className="text-2xl font-semibold tabular-nums text-zinc-900">{data.users.length}</span>
-          <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 truncate">System wide</span>
-        </div>
-
-        {/* Neutral: Classes */}
-        <div className="p-4 ring-1 ring-black/5 bg-white rounded-md flex flex-col gap-1 hover:ring-zinc-200 transition-all">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 truncate">Classes</span>
+        {/* Violet: Classes */}
+        <div className="p-4 ring-1 ring-violet-200 bg-violet-50 rounded-md flex flex-col gap-1 border-l-2 border-violet-400">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-violet-700 truncate">Classes</span>
           <span className="text-2xl font-semibold tabular-nums text-zinc-900">{data.classes.length}</span>
-          <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 truncate">Configured</span>
+          <span className="text-[10px] font-medium uppercase tracking-wide text-violet-600 truncate">Configured</span>
         </div>
 
-        {/* Neutral: Roles */}
-        <div className="p-4 ring-1 ring-black/5 bg-white rounded-md flex flex-col gap-1 hover:ring-zinc-200 transition-all">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 truncate">Roles Defined</span>
+        {/* Amber: Roles */}
+        <div className="p-4 ring-1 ring-amber-200 bg-amber-50 rounded-md flex flex-col gap-1 border-l-2 border-amber-400">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-700 truncate">Roles Defined</span>
           <span className="text-2xl font-semibold tabular-nums text-zinc-900">{data.roles.length}</span>
-          <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 truncate">RBAC</span>
+          <span className="text-[10px] font-medium uppercase tracking-wide text-amber-600 truncate">RBAC</span>
         </div>
 
-        {/* Neutral: Active Year */}
-        <div className="p-4 ring-1 ring-black/5 bg-white rounded-md flex flex-col gap-1 hover:ring-zinc-200 transition-all">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 truncate">Active Year</span>
+        {/* Sky: Active Year (same as before — shows the year name, not a count) */}
+        <div className="p-4 ring-1 ring-sky-200 bg-sky-50 rounded-md flex flex-col gap-1 border-l-2 border-sky-400">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-sky-700 truncate">Active Year</span>
           <span className="text-xl font-semibold text-zinc-900 truncate" title={activeYear?.name || 'None'}>
             {activeYear?.name || 'None'}
           </span>
-          <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 truncate">Current term</span>
+          <span className="text-[10px] font-medium uppercase tracking-wide text-sky-600 truncate">Current term</span>
         </div>
       </div>
 
