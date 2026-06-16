@@ -19,10 +19,7 @@ import { v4 as uuidv4 } from 'uuid';
 const THEME = { myMessageBg: "bg-primary/10 ring-1 ring-primary/20 shadow-sm", otherMessageBg: "bg-white ring-1 ring-black/5 shadow-sm" };
 const MESSAGES_PER_PAGE = 20; 
 
-const getLocalISOString = () => {
-  const now = new Date(); const offsetMs = now.getTimezoneOffset() * 60 * 1000;
-  return new Date(now.getTime() - offsetMs).toISOString().slice(0, 19); 
-};
+const getLocalISOString = () => new Date().toISOString();
 
 const formatDateSeparator = (dateString) => {
   const messageDate = new Date(dateString);

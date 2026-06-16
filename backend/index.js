@@ -6012,7 +6012,7 @@ app.get('/api/groups', async (req, res) => {
                 g.id,
                 g.name,
                 g.description,
-                g.created_at,
+        DATE_FORMAT(g.created_at, '%Y-%m-%dT%H:%i:%sZ') AS created_at,
                 g.created_by,
                 g.group_dp_url,
                 g.background_color,
@@ -6029,7 +6029,7 @@ app.get('/api/groups', async (req, res) => {
                     END
                 ) AS last_message_text,
                 
-                DATE_FORMAT(lm.timestamp, '%Y-%m-%dT%H:%i:%s') AS last_message_timestamp,
+             DATE_FORMAT(lm.timestamp, '%Y-%m-%dT%H:%i:%sZ') AS last_message_timestamp,
                 (
                     SELECT COUNT(*)
                       FROM group_chat_messages unread_m
@@ -6311,7 +6311,7 @@ app.get('/api/groups/:groupId/history', async (req, res) => {
             SELECT
                 m.id,
                 m.message_text,
-                DATE_FORMAT(m.timestamp, '%Y-%m-%dT%H:%i:%s') AS timestamp,
+              DATE_FORMAT(m.timestamp, '%Y-%m-%dT%H:%i:%sZ') AS timestamp,
                 m.user_id,
                 m.group_id,
                 m.message_type,
@@ -6466,7 +6466,7 @@ socket.on('sendMessage', async (data) => {
         const [rows] = await conn.execute(`
             SELECT
                 m.id, m.message_text,
-                DATE_FORMAT(m.timestamp, '%Y-%m-%dT%H:%i:%s') AS timestamp,
+              DATE_FORMAT(m.timestamp, '%Y-%m-%dT%H:%i:%sZ') AS timestamp,
                 m.user_id, m.group_id, m.message_type,
                 m.file_url, m.file_size, m.file_mime_type,
                 m.is_edited, m.is_deleted, m.deleted_by,
@@ -6572,7 +6572,7 @@ socket.on('sendMessage', async (data) => {
                 SELECT
                     m.id,
                     m.message_text,
-                    DATE_FORMAT(m.timestamp, '%Y-%m-%dT%H:%i:%s') AS timestamp,
+                    DATE_FORMAT(m.timestamp, '%Y-%m-%dT%H:%i:%sZ') AS timestamp,
                     m.user_id,
                     m.group_id,
                     m.message_type,
