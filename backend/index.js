@@ -981,6 +981,21 @@ app.get('/', (req, res) => res.json({ status: 'ok', service: 'SmartEdz ERP', tim
 
 // =====================================================================
 // === 11. TIMETABLE ===================================================
+//
+//   REPLACE your whole Section 11 block with this. Notifications added:
+//     • entries/bulk          (class timetable saved) -> notify that
+//                              class's active students.
+//     • teacher-entries/bulk  (admin assigns a teacher) -> notify the
+//                              teacher AND the students of every class
+//                              the teacher was assigned to.
+//   The single-cell `entry` route intentionally does NOT notify, so a
+//   student isn't pinged on every cell change while a grid is built —
+//   the bulk save is the "timetable updated" moment. Everything else is
+//   unchanged.
+//
+//   Uses createNotifications / studentIdsForClass from Section 25.
+//   'Timetable' is the module id from Screens/Modules.js. Each notify is
+//   wrapped so it can never fail the underlying save.
 // =====================================================================
 async function resolveYearId(instId, requestedYearId) {
     if (requestedYearId) return parseInt(requestedYearId, 10);
@@ -1019,12 +1034,6 @@ app.get('/api/admin/timetable/:instId', async (req, res) => {
 
 // ---------------------------------------------------------------------
 //  11.b  PERSONAL TIMETABLE  ->  GET /api/timetable/my/:userId
-//
-//  Used by the read-only "My Timetable" screen for students & teachers.
-//   • Student -> the full timetable of THEIR class (subject + teacher).
-//   • Teacher -> the periods assigned to THEM (class + subject + room).
-//  Always anchored to the institution's ACTIVE academic year, so it
-//  follows the same year-switching rules as everything else.
 // ---------------------------------------------------------------------
 app.get('/api/timetable/my/:userId', async (req, res) => {
     try {
@@ -1050,7 +1059,6 @@ app.get('/api/timetable/my/:userId', async (req, res) => {
         let class_label = null;
 
         if (mode === 'teacher') {
-            // Periods assigned to this teacher, with class + subject names.
             const [rows] = await db.execute(
                 `SELECT e.day_id, e.period_id, e.room_no, e.class_id, e.subject_id,
                         c.className, c.section,
@@ -1063,7 +1071,6 @@ app.get('/api/timetable/my/:userId', async (req, res) => {
             );
             entries = rows;
         } else {
-            // Student: the timetable of their assigned class, with subject + teacher names.
             if (me.class_id) {
                 const [crows] = await db.execute('SELECT className, section FROM classes WHERE id = ? LIMIT 1', [me.class_id]);
                 if (crows.length) {
@@ -1127,6 +1134,9 @@ app.post('/api/admin/timetable/periods', async (req, res) => {
     } finally { conn.release(); }
 });
 
+// Single-cell upsert/clear. Intentionally does NOT notify (too granular —
+// students would be pinged on every cell change). The bulk save below is
+// the "timetable updated" notify point.
 app.post('/api/admin/timetable/entry', async (req, res) => {
     const { institutionId, class_id, day_id, period_id, subject_id, teacher_id, room_no } = req.body;
     try {
@@ -1161,6 +1171,18 @@ app.post('/api/admin/timetable/entries/bulk', async (req, res) => {
                 [institutionId, yearId, class_id, e.day_id, e.period_id, e.subject_id || null, e.teacher_id || null, e.room_no || null]);
         }
         await conn.commit();
+
+        // 🔔 Notify this class's active students that their timetable changed.
+        try {
+            const recipients = await studentIdsForClass(class_id);
+            await createNotifications({
+                institutionId, recipientIds: recipients, type: 'timetable',
+                title: 'Timetable updated',
+                body: 'Your class timetable has been updated.',
+                link: 'Timetable', entity_id: class_id, actor_id: req.body.actor_id
+            });
+        } catch (e) { console.warn('[notify timetable class]', e.message); }
+
         res.json({ success: true });
     } catch (err) {
         await conn.rollback();
@@ -1170,20 +1192,6 @@ app.post('/api/admin/timetable/entries/bulk', async (req, res) => {
 
 // ---------------------------------------------------------------------
 //  11.c  TEACHER TIMETABLE SAVE  ->  POST /api/admin/timetable/teacher-entries/bulk
-//
-//  Saves ONE teacher's whole weekly grid. Body:
-//    { institutionId, academic_year_id, teacher_id,
-//      entries: [{ class_id, day_id, period_id, subject_id, room_no }] }
-//
-//  Conflict rules (both reported back as HTTP 409):
-//    1. The teacher cannot be put in two classes in the same day/period
-//       (checked within the submitted set).
-//    2. A target class period already held by ANOTHER teacher is rejected,
-//       and we return who holds it + which subject.
-//
-//  Save strategy: clear this teacher from every slot they currently hold
-//  (then drop rows that became empty), validate, then upsert the new set.
-//  Keyed on (class_id, day_id, period_id) like the single-entry route.
 // ---------------------------------------------------------------------
 app.post('/api/admin/timetable/teacher-entries/bulk', async (req, res) => {
     const { institutionId, teacher_id, entries } = req.body;
@@ -1212,8 +1220,6 @@ app.post('/api/admin/timetable/teacher-entries/bulk', async (req, res) => {
 
         await conn.beginTransaction();
 
-        // Release this teacher from every slot they currently hold for the year,
-        // then delete rows that are now completely empty.
         await conn.execute(
             'UPDATE timetable_entries SET teacher_id = NULL WHERE institutionId = ? AND academic_year_id = ? AND teacher_id = ?',
             [institutionId, yearId, teacher_id]
@@ -1253,7 +1259,6 @@ app.post('/api/admin/timetable/teacher-entries/bulk', async (req, res) => {
             });
         }
 
-        // Upsert each assignment for this teacher.
         for (const e of list) {
             await conn.execute(
                 `INSERT INTO timetable_entries (institutionId, academic_year_id, class_id, day_id, period_id, subject_id, teacher_id, room_no)
@@ -1264,12 +1269,44 @@ app.post('/api/admin/timetable/teacher-entries/bulk', async (req, res) => {
         }
 
         await conn.commit();
+
+        // 🔔 Notify the assigned teacher, then the students of every class
+        //    this teacher was just assigned to. Each wrapped so a notify
+        //    issue can't fail the save.
+        try {
+            await createNotifications({
+                institutionId, recipientIds: [teacher_id], type: 'timetable',
+                title: 'Timetable updated',
+                body: 'Your teaching timetable has been updated.',
+                link: 'Timetable', entity_id: teacher_id, actor_id: req.body.actor_id
+            });
+        } catch (e) { console.warn('[notify timetable teacher]', e.message); }
+
+        try {
+            const classIds = [...new Set(list.map(e => e.class_id).filter(Boolean))];
+            let studentRecipients = [];
+            for (const cid of classIds) {
+                const ids = await studentIdsForClass(cid);
+                studentRecipients = studentRecipients.concat(ids);
+            }
+            studentRecipients = [...new Set(studentRecipients)];
+            if (studentRecipients.length) {
+                await createNotifications({
+                    institutionId, recipientIds: studentRecipients, type: 'timetable',
+                    title: 'Timetable updated',
+                    body: 'A teacher has been assigned to your class timetable.',
+                    link: 'Timetable', entity_id: null, actor_id: req.body.actor_id
+                });
+            }
+        } catch (e) { console.warn('[notify timetable teacher-class]', e.message); }
+
         res.json({ success: true, saved: list.length });
     } catch (err) {
         await conn.rollback();
         res.status(500).json({ error: err.message });
     } finally { conn.release(); }
 });
+
 
 
 // =====================================================================
@@ -1425,58 +1462,37 @@ app.put('/api/profile/:id', async (req, res) => {
 // =====================================================================
 // === 15. ATTENDANCE ==================================================
 //   One row per user per day. Tracks marker + last editor.
-//   Granularity: daily (no period/subject linkage).
-//   Status codes: P (Present), A (Absent).  ← Late ('L') has been REMOVED.
+//   Status codes: P (Present), A (Absent).
 //
-//   NOTE ON TIME: marked_at / updated_at are stored in UTC (the server,
-//   e.g. on Railway, runs in UTC). The frontend tags these naive
-//   datetimes as UTC and localises them for display, so no server-side
-//   timezone change is needed here.
+//   REPLACE your whole Section 15 block with this. Only 15.2 (bulk mark)
+//   changed: each user is notified when their attendance is marked. To
+//   avoid spamming on every re-save, a user is notified ONLY when their
+//   row is newly created for that date OR their status actually changes.
+//   Present and absent both notify, with a matching message.
 //
-//   ACADEMIC YEAR: every attendance row carries academic_year_id, and
-//   every read/write scopes to the school's *active* academic year via
-//   the shared resolveYearId() helper (defined in the Timetable section).
+//   Uses createNotifications from Section 25. 'Attendance' is the module
+//   id from Screens/Modules.js. The notify is wrapped so it can never
+//   fail the marking. The marker (actor_id) is excluded automatically.
 //
-//   ------------------------------------------------------------------
-//   ONE-TIME MIGRATION — remove Late ('L') from attendance.
-//   Run BOTH statements once in your DB (Workbench safe-update mode may
-//   block the UPDATE; if so, run `SET SQL_SAFE_UPDATES=0;` first, or use
-//   the `id > 0` form below, then re-enable it):
+//   >> Want ABSENT-ONLY notifications? Delete the `presentIds` block in
+//      15.2 (clearly marked) — that's the only change needed.
 //
-//     -- 1) Convert every existing Late mark to Present
-//     UPDATE attendance SET status = 'P' WHERE status = 'L' AND id > 0;
-//
-//     -- 2) Drop 'L' from the status enum
-//     ALTER TABLE attendance
-//       MODIFY COLUMN status ENUM('P','A') NOT NULL DEFAULT 'P';
-//
-//   (The earlier academic_year_id migration, if not already applied:
-//     ALTER TABLE attendance ADD COLUMN academic_year_id INT NULL AFTER institutionId;
-//     UPDATE attendance a JOIN academic_years y
-//       ON y.institutionId = a.institutionId AND y.isActive = 1
-//       SET a.academic_year_id = y.id WHERE a.academic_year_id IS NULL;
-//     CREATE INDEX idx_attendance_year ON attendance (academic_year_id, attendance_date);)
+//   (Migrations unchanged — Late removed, academic_year_id added.)
 // =====================================================================
 
 // --- 15.1 Roster for marking ---------------------------------------
-//   GET /api/admin/attendance/roster/:instId?category=students|teachers|other&date=YYYY-MM-DD&class_id=<id>
-//   Returns the list of users in that category along with each user's
-//   current status for the given date (or null if not marked yet).
 app.get('/api/admin/attendance/roster/:instId', async (req, res) => {
     const { instId } = req.params;
     const { category = 'students', date, class_id } = req.query;
     const targetDate = date || new Date().toISOString().slice(0, 10);
  
     try {
-        // Active academic year — scopes the attendance lookup below.
         const yearId = await resolveYearId(instId, req.query.academic_year_id);
 
-        // ---- Build the WHERE clause for users ------------------------
         let where = 'u.institutionId = ?';
         const params = [parseInt(instId, 10)];
  
         if (category === 'students') {
-            // Match 'Student', 'student', ' Student ' — trim + lower for safety
             where += " AND LOWER(TRIM(u.role)) = 'student'";
             if (class_id) {
                 where += ' AND u.class_id = ?';
@@ -1488,11 +1504,8 @@ app.get('/api/admin/attendance/roster/:instId', async (req, res) => {
             where += " AND LOWER(TRIM(u.role)) NOT LIKE '%teacher%' "
                   +  " AND LOWER(TRIM(u.role)) NOT IN ('student','super admin','developer')";
         }
-        // Status filter — accept active and also rows where status is NULL
-        // (legacy users created before status column was non-null)
         where += " AND (u.status IS NULL OR LOWER(TRIM(u.status)) = 'active')";
  
-        // ---- Query 1: Users ------------------------------------------
         const userSql = `
             SELECT u.id, u.name, u.username, u.role, u.profile_pic,
                    u.roll_no, u.class_id, u.section, u.status
@@ -1502,8 +1515,6 @@ app.get('/api/admin/attendance/roster/:instId', async (req, res) => {
  
         const [users] = await db.execute(userSql, params);
  
-        // ---- Query 2: Attendance for those users on the given date ---
-        // If this fails (e.g. table missing), we keep going.
         const attMap = {};
         let attendanceWarning = null;
         if (users.length > 0) {
@@ -1529,10 +1540,8 @@ app.get('/api/admin/attendance/roster/:instId', async (req, res) => {
             }
         }
  
-        // ---- Merge user + attendance --------------------------------
         const merged = users.map(u => ({ ...u, ...(attMap[u.id] || {}) }));
  
-        // Diagnostic log so backend console tells us what happened
         console.log(`[attendance roster] inst=${instId} year=${yearId} category=${category} class_id=${class_id || '—'} date=${targetDate} → ${merged.length} users`);
  
         res.json({
@@ -1543,7 +1552,6 @@ app.get('/api/admin/attendance/roster/:instId', async (req, res) => {
             warning: attendanceWarning
         });
     } catch (err) {
-        // Real DB error — surface it instead of hiding behind an empty list
         console.error('[attendance roster] FATAL:', err);
         res.status(500).json({ error: err.message, users: [] });
     }
@@ -1551,7 +1559,7 @@ app.get('/api/admin/attendance/roster/:instId', async (req, res) => {
 
 
 
-// --- 15.2 Bulk mark / update attendance ----------------------------
+// --- 15.2 Bulk mark / update attendance (+ notify marked users) -----
 //   POST /api/admin/attendance/mark
 //   Body: { institutionId, date, actor_id, entries: [{user_id, status}] }
 //   status must be 'P' or 'A'. Upserts each row.
@@ -1564,10 +1572,13 @@ app.post('/api/admin/attendance/mark', async (req, res) => {
 
     const conn = await db.getConnection();
     try {
-        // All marks are stamped with the active academic year, so the data
-        // belongs to whichever year is current when it's recorded.
         const yearId = await resolveYearId(institutionId, req.body.academic_year_id);
         if (!yearId) throw new Error('No active academic year. Create/activate one under Academics first.');
+
+        // Collect users to notify — only those NEWLY marked or whose status
+        // actually changed, so re-saving the roster doesn't re-ping everyone.
+        const presentIds = [];
+        const absentIds = [];
 
         await conn.beginTransaction();
         for (const e of entries) {
@@ -1575,7 +1586,7 @@ app.post('/api/admin/attendance/mark', async (req, res) => {
 
             // Does a row already exist for this user/date in this year?
             const [exists] = await conn.execute(
-                'SELECT id FROM attendance WHERE user_id = ? AND attendance_date = ? AND academic_year_id = ?',
+                'SELECT id, status FROM attendance WHERE user_id = ? AND attendance_date = ? AND academic_year_id = ?',
                 [e.user_id, date, yearId]
             );
 
@@ -1587,17 +1598,45 @@ app.post('/api/admin/attendance/mark', async (req, res) => {
                      VALUES (?, ?, ?, ?, ?, ?, ?)`,
                     [institutionId, yearId, e.user_id, date, e.status, actor_id, now]
                 );
+                (e.status === 'A' ? absentIds : presentIds).push(e.user_id);
             } else {
-                // Row exists — record the edit
+                // Row exists — record the edit, and flag for notify only if
+                // the status actually changed.
+                const changed = exists[0].status !== e.status;
                 await conn.execute(
                     `UPDATE attendance
                         SET status = ?, updated_by = ?, updated_at = ?
                       WHERE user_id = ? AND attendance_date = ? AND academic_year_id = ?`,
                     [e.status, actor_id, now, e.user_id, date, yearId]
                 );
+                if (changed) (e.status === 'A' ? absentIds : presentIds).push(e.user_id);
             }
         }
         await conn.commit();
+
+        // 🔔 Notify the marked users. Grouped by status (≤2 calls). Wrapped
+        //    so a notify issue can't fail the marking; actor is excluded.
+        try {
+            if (absentIds.length) {
+                await createNotifications({
+                    institutionId, recipientIds: absentIds, type: 'attendance',
+                    title: 'Marked absent',
+                    body: `You were marked absent on ${date}.`,
+                    link: 'Attendance', entity_id: null, actor_id
+                });
+            }
+            // --- ABSENT-ONLY? Delete from here ... ---
+            if (presentIds.length) {
+                await createNotifications({
+                    institutionId, recipientIds: presentIds, type: 'attendance',
+                    title: 'Attendance marked',
+                    body: `You were marked present on ${date}.`,
+                    link: 'Attendance', entity_id: null, actor_id
+                });
+            }
+            // --- ... to here, to stop notifying on Present. ---
+        } catch (e) { console.warn('[notify attendance]', e.message); }
+
         res.json({ success: true, count: entries.length, academic_year_id: yearId });
     } catch (err) {
         await conn.rollback();
@@ -1607,20 +1646,14 @@ app.post('/api/admin/attendance/mark', async (req, res) => {
 
 
 // --- 15.3 History for one user -------------------------------------
-//   GET /api/admin/attendance/history/:userId?from=YYYY-MM-DD&to=YYYY-MM-DD
-//   Scoped to the school's active academic year. from/to are OPTIONAL:
-//   when omitted, returns the whole active year (used by the "Yearly"
-//   filter). Returns each row in range plus summary stats (P / A only).
 app.get('/api/admin/attendance/history/:userId', async (req, res) => {
     const { userId } = req.params;
     const { from, to } = req.query;
     try {
-        // Resolve the active year from the user's institution.
         const [uRows] = await db.execute('SELECT institutionId FROM users WHERE id = ? LIMIT 1', [userId]);
         const instId = uRows[0]?.institutionId;
         const yearId = await resolveYearId(instId, req.query.academic_year_id);
 
-        // Build the WHERE dynamically so date range is optional.
         let where = 'a.user_id = ? AND a.academic_year_id = ?';
         const params = [userId, yearId];
         if (from && to) {
@@ -1654,9 +1687,6 @@ app.get('/api/admin/attendance/history/:userId', async (req, res) => {
 
 
 // --- 15.4 Teacher's marking scope ----------------------------------
-//   GET /api/admin/attendance/teacher-classes/:teacherId
-//   Returns the set of distinct classes this teacher is timetabled into.
-//   Frontend uses this to scope the class dropdown.
 app.get('/api/admin/attendance/teacher-classes/:teacherId', async (req, res) => {
     const { teacherId } = req.params;
     try {
@@ -1674,27 +1704,13 @@ app.get('/api/admin/attendance/teacher-classes/:teacherId', async (req, res) => 
 
 
 // --- 15.5 Category overview + analysis series ----------------------
-//   GET /api/admin/attendance/overview/:instId
-//        ?category=students|teachers|other
-//        &from=YYYY-MM-DD&to=YYYY-MM-DD
-//        &class_id=<optional, students only>
-//
-//   Scoped to the school's active academic year. from/to are OPTIONAL
-//   (the "Yearly" filter omits them to cover the whole active year).
-//   Powers BOTH the overview summary bar and the Analysis bar graph.
-//   Returns aggregate totals for everyone in the category, a per-day
-//   time series (present / absent / total), AND a per_user breakdown —
-//   the latter feeds the "Total / Present" figure on each list row and
-//   the per-student Analysis bars. (P / A only — Late removed.)
 app.get('/api/admin/attendance/overview/:instId', async (req, res) => {
     const { instId } = req.params;
     const { category = 'students', from, to, class_id } = req.query;
 
     try {
-        // Active academic year scopes every attendance query below.
         const yearId = await resolveYearId(instId, req.query.academic_year_id);
 
-        // ---- Resolve the users in this category (mirror the roster) ----
         let where = 'u.institutionId = ?';
         const params = [parseInt(instId, 10)];
         if (category === 'students') {
@@ -1721,8 +1737,6 @@ app.get('/api/admin/attendance/overview/:instId', async (req, res) => {
         const ids = users.map(u => u.id);
         const ph = ids.map(() => '?').join(',');
 
-        // Shared attendance filter: this year's rows for these users,
-        // optionally narrowed to a date range.
         let attWhere = `user_id IN (${ph}) AND academic_year_id = ?`;
         const attParams = [...ids, yearId];
         if (from && to) {
@@ -1731,7 +1745,6 @@ app.get('/api/admin/attendance/overview/:instId', async (req, res) => {
         }
 
         try {
-            // Distinct days on which attendance was recorded for this category
             const [wd] = await db.execute(
                 `SELECT COUNT(DISTINCT attendance_date) AS d
                    FROM attendance
@@ -1740,7 +1753,6 @@ app.get('/api/admin/attendance/overview/:instId', async (req, res) => {
             );
             const working_days = Number(wd[0]?.d || 0);
 
-            // Aggregate status totals across the whole category
             const [tot] = await db.execute(
                 `SELECT SUM(status = 'P') AS p, SUM(status = 'A') AS a, COUNT(*) AS t
                    FROM attendance
@@ -1751,7 +1763,6 @@ app.get('/api/admin/attendance/overview/:instId', async (req, res) => {
             const absent  = Number(tot[0]?.a || 0);
             const total_marks = Number(tot[0]?.t || 0);
 
-            // Per-day series for the graph
             const [ser] = await db.execute(
                 `SELECT DATE_FORMAT(attendance_date, '%Y-%m-%d') AS date,
                         SUM(status = 'P') AS present, SUM(status = 'A') AS absent,
@@ -1768,8 +1779,6 @@ app.get('/api/admin/attendance/overview/:instId', async (req, res) => {
                 total: Number(r.total)
             }));
 
-            // Per-user breakdown — powers the "Total / Present" figure on
-            // each list row and the per-student Analysis bar chart.
             const [pu] = await db.execute(
                 `SELECT user_id,
                         SUM(status = 'P') AS present,
@@ -1795,7 +1804,6 @@ app.get('/api/admin/attendance/overview/:instId', async (req, res) => {
                 avg_percentage, series, per_user
             });
         } catch (attErr) {
-            // Attendance table missing or query failed — degrade gracefully
             console.warn('[attendance overview] lookup failed:', attErr.message);
             res.json({ ...empty, warning: attErr.message });
         }
@@ -1810,9 +1818,11 @@ app.get('/api/admin/attendance/overview/:instId', async (req, res) => {
 // =====================================================================
 // === 16. EXAMS & EXAM SCHEDULES =======================================
 //
-//   REPLACE your whole Section 16 block with this. Notifications added:
+//   REPLACE your whole Section 16 block with this. Notifications:
 //     • 16.A.4 create exam schedule  -> notify the class/section students
+//     • 16.A.5 EDIT exam schedule    -> re-notify them (date may change)
 //     • 16.B.4 create online exam    -> notify them (only if published)
+//     • 16.B.4 EDIT online exam      -> re-notify them (only if published)
 //     • 16.C.6 grade an attempt      -> notify that ONE student (result)
 //   Everything else (listing, attempts, auto-grade) is unchanged.
 //
@@ -1954,7 +1964,7 @@ app.post('/api/admin/exam-schedules', async (req, res) => {
 
 // --- 16.A.5 Update schedule ---------------------------------------
 app.put('/api/admin/exam-schedules/:id', async (req, res) => {
-    const { title, subtitle, exam_type, class_id, section, schedule_data } = req.body;
+    const { title, subtitle, exam_type, class_id, section, schedule_data, actor_id } = req.body;
     try {
         await db.execute(
             `UPDATE exam_schedules
@@ -1963,6 +1973,23 @@ app.put('/api/admin/exam-schedules/:id', async (req, res) => {
             [title, subtitle || null, exam_type || 'Internal',
              class_id || null, section || null, JSON.stringify(schedule_data || []), req.params.id]
         );
+
+        // 🔔 Re-notify the targeted students (the exam date/time may have
+        //    changed). institutionId isn't in the body, so read it from row.
+        try {
+            const [rows] = await db.execute(
+                'SELECT institutionId FROM exam_schedules WHERE id = ?', [req.params.id]);
+            if (rows.length) {
+                const instId = rows[0].institutionId;
+                const recipients = await examRecipientIds(instId, class_id || null, section || null);
+                await createNotifications({
+                    institutionId: instId, recipientIds: recipients, type: 'exam',
+                    title: 'Exam timetable updated', body: title,
+                    link: 'Exams', entity_id: req.params.id, actor_id
+                });
+            }
+        } catch (e) { console.warn('[notify exam-schedule update]', e.message); }
+
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -2130,7 +2157,7 @@ app.post('/api/admin/exams', async (req, res) => {
 app.put('/api/admin/exams/:examId', async (req, res) => {
     const {
         title, description, class_id, section, subject_id,
-        time_limit_mins, status, questions = []
+        time_limit_mins, status, questions = [], actor_id
     } = req.body;
     const conn = await db.getConnection();
     try {
@@ -2163,6 +2190,25 @@ app.put('/api/admin/exams/:examId', async (req, res) => {
             );
         }
         await conn.commit();
+
+        // 🔔 Re-notify the class/section students if the exam is published.
+        //    institutionId isn't in the body, so read it from the row.
+        try {
+            if ((status || 'published') === 'published') {
+                const [rows] = await db.execute(
+                    'SELECT institutionId FROM online_exams WHERE id = ?', [req.params.examId]);
+                if (rows.length) {
+                    const instId = rows[0].institutionId;
+                    const recipients = await examRecipientIds(instId, class_id, section || null);
+                    await createNotifications({
+                        institutionId: instId, recipientIds: recipients, type: 'exam',
+                        title: 'Exam updated', body: title,
+                        link: 'Exams', entity_id: req.params.examId, actor_id
+                    });
+                }
+            }
+        } catch (e) { console.warn('[notify exam update]', e.message); }
+
         res.json({ success: true });
     } catch (err) {
         await conn.rollback();
@@ -2799,6 +2845,21 @@ app.post('/api/admin/reports/marks/bulk', async (req, res) => {
             );
         }
         await conn.commit();
+ 
+        // 🔔 Notify each student whose marks were saved. Distinct students;
+        //    createNotifications de-dups recipients and drops the actor.
+        try {
+            const studentIds = [...new Set(entries.map(e => e.student_id).filter(Boolean))];
+            if (studentIds.length) {
+                await createNotifications({
+                    institutionId, recipientIds: studentIds, type: 'result',
+                    title: 'Report card updated',
+                    body: 'Your marks have been updated.',
+                    link: 'Reports', entity_id: class_id, actor_id
+                });
+            }
+        } catch (e) { console.warn('[notify marks]', e.message); }
+ 
         res.json({ success: true, count: entries.length, academic_year_id: yearId });
     } catch (err) {
         await conn.rollback();

@@ -4,7 +4,7 @@ import { API_BASE_URL } from '../apiConfig';
 import {
   Bell, BookOpen, CalendarDays, Award, CheckCheck, Trash2, Loader2, Inbox,
   FlaskConical, BookMarked, Video, MessagesSquare, BookText, FileText,
-  Users, Images, Utensils, ClipboardList
+  Users, Images, Utensils, ClipboardList, CalendarClock
 } from 'lucide-react';
 
 // =====================================================================
@@ -25,6 +25,7 @@ import {
 const TYPE_META = {
   homework:       { icon: BookOpen,      bg: 'bg-indigo-50',  text: 'text-indigo-600',  ring: 'ring-indigo-600/20',  label: 'Homework' },
   event:          { icon: CalendarDays,  bg: 'bg-emerald-50', text: 'text-emerald-600', ring: 'ring-emerald-600/20', label: 'Event' },
+  timetable:      { icon: CalendarClock, bg: 'bg-lime-50',    text: 'text-lime-600',    ring: 'ring-lime-600/20',    label: 'Timetable' },
   result:         { icon: Award,         bg: 'bg-amber-50',   text: 'text-amber-600',   ring: 'ring-amber-600/20',   label: 'Result' },
   exam:           { icon: ClipboardList, bg: 'bg-red-50',     text: 'text-red-600',     ring: 'ring-red-600/20',     label: 'Exam' },
   lab:            { icon: FlaskConical,  bg: 'bg-sky-50',     text: 'text-sky-600',     ring: 'ring-sky-600/20',     label: 'Lab' },
