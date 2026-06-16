@@ -1179,7 +1179,7 @@ app.post('/api/admin/timetable/entries/bulk', async (req, res) => {
                 institutionId, recipientIds: recipients, type: 'timetable',
                 title: 'Timetable updated',
                 body: 'Your class timetable has been updated.',
-                link: 'Timetable', entity_id: class_id, actor_id: req.body.actor_id
+                link: 'timetable', entity_id: class_id, actor_id: req.body.actor_id
             });
         } catch (e) { console.warn('[notify timetable class]', e.message); }
 
@@ -1278,7 +1278,7 @@ app.post('/api/admin/timetable/teacher-entries/bulk', async (req, res) => {
                 institutionId, recipientIds: [teacher_id], type: 'timetable',
                 title: 'Timetable updated',
                 body: 'Your teaching timetable has been updated.',
-                link: 'Timetable', entity_id: teacher_id, actor_id: req.body.actor_id
+                link: 'timetable', entity_id: teacher_id, actor_id: req.body.actor_id
             });
         } catch (e) { console.warn('[notify timetable teacher]', e.message); }
 
@@ -1295,7 +1295,7 @@ app.post('/api/admin/timetable/teacher-entries/bulk', async (req, res) => {
                     institutionId, recipientIds: studentRecipients, type: 'timetable',
                     title: 'Timetable updated',
                     body: 'A teacher has been assigned to your class timetable.',
-                    link: 'Timetable', entity_id: null, actor_id: req.body.actor_id
+                    link: 'timetable', entity_id: null, actor_id: req.body.actor_id
                 });
             }
         } catch (e) { console.warn('[notify timetable teacher-class]', e.message); }
@@ -1622,7 +1622,7 @@ app.post('/api/admin/attendance/mark', async (req, res) => {
                     institutionId, recipientIds: absentIds, type: 'attendance',
                     title: 'Marked absent',
                     body: `You were marked absent on ${date}.`,
-                    link: 'Attendance', entity_id: null, actor_id
+                    link: 'attendance', entity_id: null, actor_id
                 });
             }
             // --- ABSENT-ONLY? Delete from here ... ---
@@ -1631,7 +1631,7 @@ app.post('/api/admin/attendance/mark', async (req, res) => {
                     institutionId, recipientIds: presentIds, type: 'attendance',
                     title: 'Attendance marked',
                     body: `You were marked present on ${date}.`,
-                    link: 'Attendance', entity_id: null, actor_id
+                    link: 'attendance', entity_id: null, actor_id
                 });
             }
             // --- ... to here, to stop notifying on Present. ---
@@ -2855,7 +2855,7 @@ app.post('/api/admin/reports/marks/bulk', async (req, res) => {
                     institutionId, recipientIds: studentIds, type: 'result',
                     title: 'Report card updated',
                     body: 'Your marks have been updated.',
-                    link: 'Reports', entity_id: class_id, actor_id
+                    link: 'reports', entity_id: class_id, actor_id
                 });
             }
         } catch (e) { console.warn('[notify marks]', e.message); }
