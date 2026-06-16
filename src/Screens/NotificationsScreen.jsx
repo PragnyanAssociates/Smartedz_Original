@@ -4,7 +4,7 @@ import { API_BASE_URL } from '../apiConfig';
 import {
   Bell, BookOpen, CalendarDays, Award, CheckCheck, Trash2, Loader2, Inbox,
   FlaskConical, BookMarked, Video, MessagesSquare, BookText, FileText,
-  Users, Images, Utensils, ClipboardList, CalendarClock
+  Users, Images, Utensils, ClipboardList, CalendarClock, ClipboardCheck
 } from 'lucide-react';
 
 // =====================================================================
@@ -12,10 +12,8 @@ import {
 //  • Lists the logged-in user's notifications with All / Unread / Read
 //    tabs (filtered client-side from a single fetch).
 //  • Clicking a row marks it read and jumps to the source module via
-//    onNavigate(tabId) — the `link` field holds the dashboard tab id
-//    (the module `id` from Screens/Modules.js, e.g. 'Homework',
-//    'DigitalLabs', 'LessonPlan', 'OnlineClasses', 'GroupChat',
-//    'Syllabus', 'StudyMaterials', 'PTM', 'Gallery', 'Meals').
+//    onNavigate(tabId). The `link` field holds the dashboard tab id
+//    (the module `id` from Screens/Modules.js).
 //  • Mark-all-read and delete one are supported.
 //
 //  Props: onNavigate(tabId) — switches the dashboard's active tab.
@@ -26,6 +24,7 @@ const TYPE_META = {
   homework:       { icon: BookOpen,      bg: 'bg-indigo-50',  text: 'text-indigo-600',  ring: 'ring-indigo-600/20',  label: 'Homework' },
   event:          { icon: CalendarDays,  bg: 'bg-emerald-50', text: 'text-emerald-600', ring: 'ring-emerald-600/20', label: 'Event' },
   timetable:      { icon: CalendarClock, bg: 'bg-lime-50',    text: 'text-lime-600',    ring: 'ring-lime-600/20',    label: 'Timetable' },
+  attendance:     { icon: ClipboardCheck,bg: 'bg-green-50',   text: 'text-green-700',   ring: 'ring-green-600/20',   label: 'Attendance' },
   result:         { icon: Award,         bg: 'bg-amber-50',   text: 'text-amber-600',   ring: 'ring-amber-600/20',   label: 'Result' },
   exam:           { icon: ClipboardList, bg: 'bg-red-50',     text: 'text-red-600',     ring: 'ring-red-600/20',     label: 'Exam' },
   lab:            { icon: FlaskConical,  bg: 'bg-sky-50',     text: 'text-sky-600',     ring: 'ring-sky-600/20',     label: 'Lab' },
@@ -39,6 +38,27 @@ const TYPE_META = {
   meals:          { icon: Utensils,      bg: 'bg-orange-50',  text: 'text-orange-600',  ring: 'ring-orange-600/20',  label: 'Food Menu' }
 };
 const FALLBACK_META = { icon: Bell, bg: 'bg-zinc-100', text: 'text-zinc-600', ring: 'ring-zinc-200', label: 'Notification' };
+
+// The notification `link` must be a module `id` from Modules.js for
+// onNavigate to switch tabs. A few modules have a lower/kebab-case id but
+// a capitalised module_name (Attendance->attendance, Timetable->timetable,
+// Reports->reports, etc.), and some older notifications were stored with
+// the module_name. Normalise those here so navigation always lands —
+// anything already matching an id falls through unchanged.
+const LINK_ALIASES = {
+  attendance:           'attendance',
+  timetable:            'timetable',
+  reports:              'reports',
+  overview:             'overview',
+  'manage logins':      'manage-login',
+  'academic calendar':  'academic-calendar',
+  profile:              'profile',
+  notifications:        'notifications'
+};
+const resolveLink = (link) => {
+  if (!link) return link;
+  return LINK_ALIASES[String(link).trim().toLowerCase()] || link;
+};
 
 // created_at comes back as a naive UTC string (server runs UTC). Tag it as
 // UTC so the browser localises the relative time correctly.
@@ -95,7 +115,8 @@ export default function NotificationsScreen({ onNavigate }) {
 
   const handleClick = async (n) => {
     if (!n.is_read) await markRead(n.id);
-    if (n.link && typeof onNavigate === 'function') onNavigate(n.link);
+    const target = resolveLink(n.link);
+    if (target && typeof onNavigate === 'function') onNavigate(target);
   };
 
   const markAll = async () => {
