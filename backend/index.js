@@ -1810,6 +1810,17 @@ app.get('/api/admin/attendance/overview/:instId', async (req, res) => {
 // =====================================================================
 // === 16. EXAMS & EXAM SCHEDULES =======================================
 //
+//   REPLACE your whole Section 16 block with this. Notifications added:
+//     • 16.A.4 create exam schedule  -> notify the class/section students
+//     • 16.B.4 create online exam    -> notify them (only if published)
+//     • 16.C.6 grade an attempt      -> notify that ONE student (result)
+//   Everything else (listing, attempts, auto-grade) is unchanged.
+//
+//   Uses createNotifications from Section 25. 'Exams' is the module id
+//   from Screens/Modules.js — adjust the link string if your Exams tab
+//   uses a different id. The 'result' type already exists in your
+//   NotificationsScreen; 'exam' is new (icon added in the updated screen).
+//
 //   Two related features:
 //     • exam_schedules: printable exam timetables (date/subject/time/room)
 //     • online_exams:   actual assessments students attempt in-browser
@@ -1825,13 +1836,27 @@ const parseJsonSafe = (val, fallback = []) => {
 
 const nowSQL = () => new Date().toISOString().slice(0, 19).replace('T', ' ');
 
+// Which students an exam / schedule targets:
+//   class_id NULL -> all active students in the institution (schedules)
+//   class_id set  -> that class's active students (optionally one section)
+async function examRecipientIds(institutionId, classId, section) {
+    if (!institutionId) return [];
+    let sql = `SELECT id FROM users
+                WHERE institutionId = ? AND LOWER(TRIM(role)) = 'student'
+                  AND (status IS NULL OR LOWER(TRIM(status)) = 'active')`;
+    const params = [institutionId];
+    if (classId) { sql += ' AND class_id = ?'; params.push(classId); }
+    if (section) { sql += ' AND section = ?'; params.push(section); }
+    const [rows] = await db.execute(sql, params);
+    return rows.map(r => r.id);
+}
+
 
 // =====================================================================
 // === 16.A EXAM SCHEDULES =============================================
 // =====================================================================
 
 // --- 16.A.1 List all schedules for a school -----------------------
-//   GET /api/admin/exam-schedules/:instId
 app.get('/api/admin/exam-schedules/:instId', async (req, res) => {
     try {
         const [rows] = await db.execute(
@@ -1852,9 +1877,6 @@ app.get('/api/admin/exam-schedules/:instId', async (req, res) => {
 });
 
 // --- 16.A.2 List schedules visible to a student -------------------
-//   GET /api/admin/exam-schedules/student/:studentId
-//   Returns schedules where (class_id = student.class_id OR class_id IS NULL)
-//   AND (section = student.section OR section IS NULL).
 app.get('/api/admin/exam-schedules/student/:studentId', async (req, res) => {
     try {
         const [u] = await db.execute('SELECT institutionId, class_id, section FROM users WHERE id = ?', [req.params.studentId]);
@@ -1897,7 +1919,7 @@ app.get('/api/admin/exam-schedules/single/:id', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 16.A.4 Create schedule ---------------------------------------
+// --- 16.A.4 Create schedule (+ notify students) -------------------
 //   class_id = null means "All classes"
 //   section  = null means "all sections in the class"
 app.post('/api/admin/exam-schedules', async (req, res) => {
@@ -1914,6 +1936,18 @@ app.post('/api/admin/exam-schedules', async (req, res) => {
             [institutionId, title, subtitle || null, exam_type || 'Internal',
              class_id || null, section || null, JSON.stringify(schedule_data || []), created_by || null]
         );
+
+        // 🔔 Notify the targeted students. Own try/catch so a notify issue
+        //    can't fail the create.
+        try {
+            const recipients = await examRecipientIds(institutionId, class_id || null, section || null);
+            await createNotifications({
+                institutionId, recipientIds: recipients, type: 'exam',
+                title: 'Exam timetable published', body: title,
+                link: 'Exams', entity_id: result.insertId, actor_id: created_by
+            });
+        } catch (e) { console.warn('[notify exam-schedule]', e.message); }
+
         res.json({ success: true, id: result.insertId });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -1947,8 +1981,6 @@ app.delete('/api/admin/exam-schedules/:id', async (req, res) => {
 // =====================================================================
 
 // --- 16.B.1 List exams created by/visible to a teacher ------------
-//   GET /api/admin/exams/teacher/:teacherId?instId=...
-//   Super Admin gets ALL exams in the school; teachers get only their own.
 app.get('/api/admin/exams/teacher/:teacherId', async (req, res) => {
     const { teacherId } = req.params;
     try {
@@ -1987,8 +2019,6 @@ app.get('/api/admin/exams/teacher/:teacherId', async (req, res) => {
 });
 
 // --- 16.B.2 List exams for a student to take ----------------------
-//   GET /api/admin/exams/student/:studentId
-//   Returns exams where the student's class+section match, with attempt status.
 app.get('/api/admin/exams/student/:studentId', async (req, res) => {
     const { studentId } = req.params;
     try {
@@ -2040,9 +2070,7 @@ app.get('/api/admin/exams/:examId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 16.B.4 Create or update exam --------------------------------
-//   Body: { institutionId, title, description, class_id, section, subject_id,
-//           time_limit_mins, status, created_by, questions: [...] }
+// --- 16.B.4 Create exam (+ notify students if published) ----------
 app.post('/api/admin/exams', async (req, res) => {
     const {
         institutionId, title, description, class_id, section, subject_id,
@@ -2078,6 +2106,20 @@ app.post('/api/admin/exams', async (req, res) => {
             );
         }
         await conn.commit();
+
+        // 🔔 Notify the class/section students — only if the exam is live.
+        //    Own try/catch so a notify issue can't fail the create.
+        try {
+            if ((status || 'published') === 'published') {
+                const recipients = await examRecipientIds(institutionId, class_id, section || null);
+                await createNotifications({
+                    institutionId, recipientIds: recipients, type: 'exam',
+                    title: 'New exam available', body: title,
+                    link: 'Exams', entity_id: examId, actor_id: created_by
+                });
+            }
+        } catch (e) { console.warn('[notify exam]', e.message); }
+
         res.json({ success: true, id: examId });
     } catch (err) {
         await conn.rollback();
@@ -2182,8 +2224,6 @@ app.post('/api/admin/exams/:examId/start', async (req, res) => {
 });
 
 // --- 16.C.3 Submit answers ----------------------------------------
-//   Body: { student_id, answers: { question_id: answer_text, ... } }
-//   Auto-grades MCQ rows where correct_answer matches student's answer.
 app.post('/api/admin/attempts/:attemptId/submit', async (req, res) => {
     const { attemptId } = req.params;
     const { student_id, answers = {} } = req.body;
@@ -2294,8 +2334,7 @@ app.get('/api/admin/attempts/:attemptId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 16.C.6 Save grade for one attempt ---------------------------
-//   Body: { graded_answers: [{question_id, marks_awarded}], teacher_feedback, graded_by }
+// --- 16.C.6 Save grade for one attempt (+ notify the student) -----
 app.post('/api/admin/attempts/:attemptId/grade', async (req, res) => {
     const { attemptId } = req.params;
     const { graded_answers = [], teacher_feedback, graded_by } = req.body;
@@ -2322,6 +2361,30 @@ app.post('/api/admin/attempts/:attemptId/grade', async (req, res) => {
             [total, nowSQL(), graded_by, teacher_feedback || null, attemptId]
         );
         await conn.commit();
+
+        // 🔔 Tell the student their result is ready. Reuses the existing
+        //    'result' type. Own try/catch so a notify issue can't fail grading.
+        try {
+            const [info] = await db.execute(
+                `SELECT a.student_id, a.exam_id, e.institutionId, e.title AS exam_title, e.total_marks
+                   FROM online_exam_attempts a
+                   JOIN online_exams e ON e.id = a.exam_id
+                  WHERE a.id = ?`,
+                [attemptId]
+            );
+            if (info.length) {
+                const r = info[0];
+                await createNotifications({
+                    institutionId: r.institutionId, recipientIds: [r.student_id], type: 'result',
+                    title: 'Your result is ready',
+                    body: r.total_marks
+                        ? `${r.exam_title}: ${total}/${r.total_marks}`
+                        : `${r.exam_title}: ${total} marks`,
+                    link: 'Exams', entity_id: r.exam_id, actor_id: graded_by
+                });
+            }
+        } catch (e) { console.warn('[notify result]', e.message); }
+
         res.json({ success: true, final_score: total });
     } catch (err) {
         await conn.rollback();
@@ -5522,7 +5585,7 @@ app.get('/api/admin/syllabus/chapter/:id/doc', async (req, res) => {
 
 // --- 22.11 Create a chapter (manual) -> slice it --------------------
 app.post('/api/admin/syllabus/chapters', async (req, res) => {
-    const { syllabus_id, title, page_from, page_to } = req.body;
+    const { syllabus_id, title, page_from, page_to, actor_id } = req.body;
     if (!syllabus_id || !title) {
         return res.status(400).json({ error: 'syllabus_id and title are required.' });
     }
@@ -5536,6 +5599,28 @@ app.post('/api/admin/syllabus/chapters', async (req, res) => {
             [syllabus_id, maxOrder, title, page_from || null, page_to || null]);
         await resliceChapter(result.insertId);
         await db.execute('UPDATE syllabus SET updated_at = ? WHERE id = ?', [nowSQL(), syllabus_id]);
+ 
+        // 🔔 Notify the class's active students about the new chapter.
+        //    Own try/catch so a notify issue can't fail the create.
+        try {
+            const [info] = await db.execute(
+                `SELECT s.institutionId, s.class_id, sub.name AS subject_name
+                   FROM syllabus s
+                   LEFT JOIN subjects sub ON sub.id = s.subject_id
+                  WHERE s.id = ?`,
+                [syllabus_id]
+            );
+            if (info.length && info[0].class_id) {
+                const recipients = await studentIdsForClass(info[0].class_id);
+                await createNotifications({
+                    institutionId: info[0].institutionId, recipientIds: recipients, type: 'syllabus',
+                    title: 'New chapter added',
+                    body: info[0].subject_name ? `${title} — ${info[0].subject_name}` : title,
+                    link: 'Syllabus', entity_id: syllabus_id, actor_id
+                });
+            }
+        } catch (e) { console.warn('[notify syllabus chapter]', e.message); }
+ 
         res.json({ success: true, id: result.insertId });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
