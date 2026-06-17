@@ -7158,6 +7158,91 @@ app.delete('/api/notifications/:userId/clear', async (req, res) => {
 
 
 // =====================================================================
+//  BACKEND — OVERVIEW CONFIG (per-role dashboard cards)
+//
+//  Append this block to backend/index.js (anywhere with the other admin
+//  routes, before the final `const PORT = ...`). Stores which Overview
+//  cards each role sees. A role with no row falls back to the frontend's
+//  persona defaults, so this is an override layer, not a requirement.
+//
+//  ONE-TIME MIGRATION — run once in your DB:
+//    CREATE TABLE IF NOT EXISTS overview_config (
+//      id            INT AUTO_INCREMENT PRIMARY KEY,
+//      institutionId INT NOT NULL,
+//      role_name     VARCHAR(100) NOT NULL,
+//      card_ids      JSON NOT NULL,
+//      updated_at    DATETIME NULL,
+//      UNIQUE KEY uniq_inst_role (institutionId, role_name)
+//    );
+//  (If your MySQL has no JSON type, use TEXT for card_ids — the code
+//   stores/reads a JSON string either way.)
+// =====================================================================
+
+// card_ids may come back as a JSON string or an already-parsed array
+// depending on the column type / driver. Normalise to an array.
+function parseCardIds(v) {
+    if (Array.isArray(v)) return v;
+    if (v === null || v === undefined) return [];
+    try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; }
+    catch { return []; }
+}
+
+// --- OC.1 Full config map for a school (Settings UI) ---------------
+//   GET /api/admin/overview-config/:instId
+//   -> { "Super Admin": ["total_users",...], "Teacher": [...] }
+app.get('/api/admin/overview-config/:instId', async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            'SELECT role_name, card_ids FROM overview_config WHERE institutionId = ?',
+            [req.params.instId]
+        );
+        const map = {};
+        rows.forEach(r => { map[r.role_name] = parseCardIds(r.card_ids); });
+        res.json(map);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- OC.2 Resolve one role's cards (read by the Overview itself) ----
+//   GET /api/overview-config/resolve?instId=<id>&role=<role name>
+//   -> { card_ids: [...] }  or  { card_ids: null } when unconfigured.
+//   Query params avoid path-encoding issues with role names that have
+//   spaces (e.g. "Super Admin").
+app.get('/api/overview-config/resolve', async (req, res) => {
+    const { instId, role } = req.query;
+    if (!instId || !role) {
+        return res.status(400).json({ error: 'instId and role are required.' });
+    }
+    try {
+        const [rows] = await db.execute(
+            'SELECT card_ids FROM overview_config WHERE institutionId = ? AND role_name = ?',
+            [instId, role]
+        );
+        res.json({ card_ids: rows.length ? parseCardIds(rows[0].card_ids) : null });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- OC.3 Upsert one role's cards (Settings UI save) ---------------
+//   POST /api/admin/overview-config
+//   Body: { institutionId, role_name, card_ids: ["total_users", ...] }
+app.post('/api/admin/overview-config', async (req, res) => {
+    const { institutionId, role_name, card_ids } = req.body;
+    if (!institutionId || !role_name || !Array.isArray(card_ids)) {
+        return res.status(400).json({ error: 'institutionId, role_name and card_ids[] are required.' });
+    }
+    try {
+        await db.execute(
+            `INSERT INTO overview_config (institutionId, role_name, card_ids, updated_at)
+             VALUES (?, ?, ?, NOW())
+             ON DUPLICATE KEY UPDATE card_ids = VALUES(card_ids), updated_at = NOW()`,
+            [institutionId, role_name, JSON.stringify(card_ids)]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+
+// =====================================================================
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
     console.log(`🚀 SmartEdz Backend Active on Port ${PORT}`);
