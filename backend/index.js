@@ -7240,6 +7240,118 @@ app.post('/api/admin/overview-config', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// =====================================================================
+//  BACKEND — OVERVIEW PERFORMANCE ANALYTICS (one call, school-wide)
+app.get('/api/admin/performance/overview/:instId', async (req, res) => {
+    const { instId } = req.params;
+    try {
+        const yearId = await resolveYearId(instId, req.query.academic_year_id);
+ 
+        const [classes] = await db.execute(
+            'SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section',
+            [instId]
+        );
+        const [examTypes] = await db.execute(
+            'SELECT id, name FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id',
+            [instId]
+        );
+ 
+        // Per class+exam max marks: { [class_id]: { [exam_type_id]: { default, bySubject } } }
+        const [maxRows] = await db.execute(
+            `SELECT m.exam_type_id, m.class_id, m.subject_id, m.max_marks
+               FROM exam_max_marks m
+               JOIN exam_types t ON t.id = m.exam_type_id
+              WHERE t.institutionId = ?`,
+            [instId]
+        );
+        const maxMap = {};
+        maxRows.forEach(r => {
+            const c = maxMap[r.class_id] || (maxMap[r.class_id] = {});
+            const e = c[r.exam_type_id] || (c[r.exam_type_id] = { default: null, bySubject: {} });
+            if (Number(r.subject_id) === 0) e.default = r.max_marks;
+            else e.bySubject[r.subject_id] = r.max_marks;
+        });
+        const possibleFor = (classId, examTypeId, subjectId) => {
+            const e = maxMap[classId] && maxMap[classId][examTypeId];
+            if (!e) return null;
+            const ov = e.bySubject[subjectId];
+            if (ov !== undefined && ov !== null) return Number(ov);
+            if (e.default !== undefined && e.default !== null) return Number(e.default);
+            return null;
+        };
+ 
+        // Entered marks for the active year (students only, no alumni).
+        const [marks] = await db.execute(
+            `SELECT sm.student_id, sm.class_id, sm.subject_id, sm.exam_type_id, sm.marks_obtained,
+                    u.name AS student_name, u.roll_no
+               FROM student_marks sm
+               JOIN users u ON u.id = sm.student_id
+              WHERE sm.institutionId = ? AND sm.academic_year_id = ?
+                AND LOWER(TRIM(u.role)) = 'student'
+                AND (u.status IS NULL OR LOWER(TRIM(u.status)) <> 'alumni')`,
+            [instId, yearId]
+        );
+ 
+        const students = {};            // student_id -> { name, roll, class_id, obtained, possible }
+        const completedExams = new Set();
+        marks.forEach(m => {
+            if (m.marks_obtained === null || m.marks_obtained === undefined) return;
+            const obt = Number(m.marks_obtained);
+            if (isNaN(obt)) return;
+            const poss = possibleFor(m.class_id, m.exam_type_id, m.subject_id);
+            if (poss === null || poss <= 0) return;
+            completedExams.add(Number(m.exam_type_id));
+            const s = students[m.student_id] ||
+                (students[m.student_id] = { name: m.student_name, roll_no: m.roll_no, class_id: m.class_id, obtained: 0, possible: 0 });
+            s.obtained += obt;
+            s.possible += poss;
+        });
+ 
+        const round1 = (n) => Math.round(n * 10) / 10;
+        const classMeta = {};
+        classes.forEach(c => {
+            classMeta[c.id] = {
+                class_id: c.id,
+                class_group: `${c.className}${c.section ? ' - ' + c.section : ''}`,
+                obtained: 0, possible: 0, top: null
+            };
+        });
+ 
+        Object.values(students).forEach(s => {
+            const cm = classMeta[s.class_id];
+            if (!cm || s.possible <= 0) return;
+            cm.obtained += s.obtained;
+            cm.possible += s.possible;
+            const pct = (s.obtained / s.possible) * 100;
+            if (!cm.top || pct > cm.top.pct) {
+                cm.top = {
+                    student_name: s.name, roll_no: s.roll_no,
+                    pct: round1(pct), obtained: Math.round(s.obtained), possible: Math.round(s.possible)
+                };
+            }
+        });
+ 
+        const top_classes = Object.values(classMeta)
+            .filter(c => c.possible > 0)
+            .map(c => ({
+                class_id: c.class_id, class_group: c.class_group,
+                pct: round1((c.obtained / c.possible) * 100),
+                obtained: Math.round(c.obtained), possible: Math.round(c.possible)
+            }))
+            .sort((a, b) => b.pct - a.pct);
+ 
+        const top_performers = Object.values(classMeta)
+            .filter(c => c.top)
+            .map(c => ({ class_id: c.class_id, class_group: c.class_group, ...c.top }))
+            .sort((a, b) => b.pct - a.pct);
+ 
+        const exams_completed = examTypes.filter(t => completedExams.has(Number(t.id))).map(t => t.name);
+ 
+        res.json({ academic_year_id: yearId, exams_completed, top_performers, top_classes });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+ 
+
 
 
 // =====================================================================
