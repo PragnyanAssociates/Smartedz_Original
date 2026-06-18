@@ -42,6 +42,13 @@ function gateByPermission(ids, can) {
   });
 }
 
+// Large-screen column count = number of stat boxes (3–6), so they sit on a
+// single row instead of wrapping. Literal classes so Tailwind keeps them.
+const COLS_LG = {
+  1: 'lg:grid-cols-1', 2: 'lg:grid-cols-2', 3: 'lg:grid-cols-3',
+  4: 'lg:grid-cols-4', 5: 'lg:grid-cols-5', 6: 'lg:grid-cols-6'
+};
+
 const barColor = (p) => (p >= 80 ? '#22c55e' : p >= 50 ? '#3b82f6' : '#ef4444');
 const EVENT_COLORS = { Meeting: '#3b82f6', Event: '#f59e0b', Festival: '#ef4444', Holiday: '#10b981', Exam: '#8b5cf6', Other: '#ec4899' };
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -188,11 +195,12 @@ export default function Overview() {
   const showPerf   = enabled.includes('performance_analytics');
   const showEvents = enabled.includes('events_panel');
   const showNotes  = enabled.includes('notifications_panel');
+  const cols       = Math.min(Math.max(kpiIds.length, 1), 6); // one row, 3–6 wide
 
   const renderKpi = (id) => {
     const c = cardById[id];
     if (c.render === 'live') {
-      return <LiveClassCard key={id} tt={bundle.tt} persona={persona} className="col-span-2" />;
+      return <LiveClassCard key={id} tt={bundle.tt} persona={persona} className="col-span-2 lg:col-span-1" />;
     }
     if (c.render === 'gauge') {
       if (id === 'attendance_pct') {
@@ -226,7 +234,7 @@ export default function Overview() {
       </header>
 
       {kpiIds.length > 0 && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6 lg:mb-8 items-stretch">
+        <div className={`grid grid-cols-2 md:grid-cols-3 ${COLS_LG[cols]} gap-3 sm:gap-4 mb-6 lg:mb-8 items-stretch`}>
           {kpiIds.map(renderKpi)}
         </div>
       )}
