@@ -1,24 +1,26 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, Loader2, Check, LayoutDashboard } from 'lucide-react';
+import {
+  X, Loader2, Check, LayoutDashboard, Info, CheckSquare, Square,
+  ChevronUp, ChevronDown, Plus
+} from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
-import { getPersona, cardsForPersona, PERSONA_DEFAULTS } from './overviewCards';
+import { getPersona, KPI_CARDS, PANEL_CARDS, ALL_CARD_IDS, cardById, normalizeIds } from './overviewCards';
 
 // =====================================================================
-//  OverviewSettingsModal — Super Admin picks which Overview cards AND
-//  sections each role sees. Saves per-role to /api/admin/overview-config.
-//  A role with no saved config falls back to the persona defaults
-//  (shown pre-ticked).
+//  OverviewSettingsModal — Super Admin chooses, per role, which boxes
+//  and sections appear AND in what order. Saves per-role to
+//  /api/admin/overview-config. No saved config => everything on.
+//
+//  • Stat boxes: tick to show, set a position number (or use the arrows)
+//    to order them. Each box notes who it's for.
+//  • Sections: simple on/off.
 //
 //  Props: { instId, roles, onClose }
-//    roles: array of { id, role_name } (pass data.roles from the Overview)
 // =====================================================================
 export default function OverviewSettingsModal({ instId, roles = [], onClose }) {
-  const roleNames = useMemo(
-    () => (roles || []).map(r => r.role_name).filter(Boolean),
-    [roles]
-  );
+  const roleNames = useMemo(() => (roles || []).map(r => r.role_name).filter(Boolean), [roles]);
 
-  const [configMap, setConfigMap] = useState({});   // { role_name: [card_ids] }
+  const [configMap, setConfigMap] = useState({});
   const [selectedRole, setSelectedRole] = useState(roleNames[0] || '');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -38,147 +40,195 @@ export default function OverviewSettingsModal({ instId, roles = [], onClose }) {
   }, [instId]);
 
   const persona = getPersona(selectedRole);
-  const available = cardsForPersona(persona);
-  const kpiCards   = available.filter(c => c.kind !== 'panel');
-  const panelCards = available.filter(c => c.kind === 'panel');
 
   const selectedIds = useMemo(() => {
     if (!selectedRole) return [];
     const saved = configMap[selectedRole];
-    if (Array.isArray(saved)) return saved;
-    return PERSONA_DEFAULTS[persona] || [];
-  }, [configMap, selectedRole, persona]);
+    return normalizeIds(Array.isArray(saved) ? saved : ALL_CARD_IDS);
+  }, [configMap, selectedRole]);
 
-  const toggle = (cardId) => {
+  const enabledKpi   = selectedIds.filter(id => cardById[id]?.kind === 'kpi');
+  const enabledPanel = selectedIds.filter(id => cardById[id]?.kind === 'panel');
+  const disabledKpi   = KPI_CARDS.filter(c => !selectedIds.includes(c.id));
+  const disabledPanel = PANEL_CARDS.filter(c => !selectedIds.includes(c.id));
+
+  const setRoleIds = (ids) => {
     setSavedRole('');
-    setConfigMap(prev => {
-      const current = Array.isArray(prev[selectedRole])
-        ? prev[selectedRole]
-        : (PERSONA_DEFAULTS[persona] || []);
-      const next = current.includes(cardId)
-        ? current.filter(id => id !== cardId)
-        : [...current, cardId];
-      return { ...prev, [selectedRole]: next };
-    });
+    setConfigMap(prev => ({ ...prev, [selectedRole]: normalizeIds(ids) }));
   };
+
+  const addCard    = (id) => setRoleIds([...selectedIds, id]);
+  const removeCard = (id) => setRoleIds(selectedIds.filter(x => x !== id));
+
+  // Move a KPI to a new position (0-based) among the enabled KPIs.
+  const moveKpiTo = (id, target) => {
+    const arr = [...enabledKpi];
+    const from = arr.indexOf(id);
+    if (from < 0) return;
+    const to = Math.max(0, Math.min(arr.length - 1, target));
+    arr.splice(to, 0, arr.splice(from, 1)[0]);
+    setRoleIds([...arr, ...enabledPanel]);
+  };
+
+  const enableAll = () => setRoleIds([...ALL_CARD_IDS]);
+  const clearAll  = () => setRoleIds([]);
 
   const save = async () => {
     if (!selectedRole) return;
     setSaving(true);
     try {
-      const card_ids = Array.isArray(configMap[selectedRole])
-        ? configMap[selectedRole]
-        : (PERSONA_DEFAULTS[persona] || []);
       const res = await fetch(`${API_BASE_URL}/admin/overview-config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ institutionId: instId, role_name: selectedRole, card_ids })
+        body: JSON.stringify({ institutionId: instId, role_name: selectedRole, card_ids: selectedIds })
       });
       if (res.ok) setSavedRole(selectedRole);
-      else {
-        const err = await res.json().catch(() => ({}));
-        alert(err.error || 'Failed to save.');
-      }
+      else { const err = await res.json().catch(() => ({})); alert(err.error || 'Failed to save.'); }
     } catch (e) { alert('Failed to save.'); }
     finally { setSaving(false); }
   };
 
-  const renderCard = (card) => {
-    const on = selectedIds.includes(card.id);
+  // ---- row renderers ----
+  const EnabledKpiRow = (id, idx) => {
+    const c = cardById[id];
     return (
-      <button key={card.id} type="button" onClick={() => toggle(card.id)}
+      <div key={id} className="flex items-center gap-2 p-2.5 rounded-md ring-1 ring-primary/25 bg-primary/[0.04]">
+        <div className="flex flex-col items-center gap-0.5 shrink-0">
+          <button type="button" onClick={() => moveKpiTo(id, idx - 1)} disabled={idx === 0}
+            className="text-zinc-400 hover:text-primary disabled:opacity-30 transition-colors"><ChevronUp className="size-3.5" /></button>
+          <input type="number" min={1} max={enabledKpi.length} value={idx + 1}
+            onChange={e => { const v = parseInt(e.target.value, 10); if (!isNaN(v)) moveKpiTo(id, v - 1); }}
+            className="w-9 h-6 text-center text-xs font-semibold tabular-nums rounded border border-zinc-200 bg-white text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20" />
+          <button type="button" onClick={() => moveKpiTo(id, idx + 1)} disabled={idx === enabledKpi.length - 1}
+            className="text-zinc-400 hover:text-primary disabled:opacity-30 transition-colors"><ChevronDown className="size-3.5" /></button>
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-zinc-900 truncate">{c.label}</p>
+          <p className="text-[10px] text-zinc-500 leading-snug">
+            <span className="font-semibold text-primary/80 uppercase tracking-wider">{c.audience}</span>
+            {' · '}{c.desc}{c.requiresModule ? ` · Needs ${c.requiresModule}` : ''}
+          </p>
+        </div>
+        <button type="button" onClick={() => removeCard(id)} title="Remove"
+          className="size-7 rounded-md flex items-center justify-center text-zinc-400 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0">
+          <X className="size-4" />
+        </button>
+      </div>
+    );
+  };
+
+  const AddTile = (c) => (
+    <button key={c.id} type="button" onClick={() => addCard(c.id)}
+      className="w-full flex items-center gap-3 p-2.5 rounded-md ring-1 ring-black/5 bg-white hover:bg-zinc-50 text-left transition-colors">
+      <div className="size-6 rounded-md flex items-center justify-center shrink-0 bg-zinc-100 text-zinc-500"><Plus className="size-3.5" /></div>
+      <div className="min-w-0">
+        <p className="text-sm font-semibold text-zinc-700 truncate">{c.label}</p>
+        <p className="text-[10px] text-zinc-400 leading-snug">
+          <span className="font-semibold uppercase tracking-wider">{c.audience}</span>{' · '}{c.desc}
+        </p>
+      </div>
+    </button>
+  );
+
+  const PanelRow = (c) => {
+    const on = selectedIds.includes(c.id);
+    return (
+      <button key={c.id} type="button" onClick={() => (on ? removeCard(c.id) : addCard(c.id))}
         className={`w-full flex items-center gap-3 p-3 rounded-md ring-1 text-left transition-colors ${
-          on ? 'bg-primary/5 ring-primary/20' : 'bg-white ring-black/5 hover:bg-zinc-50'
+          on ? 'bg-primary/5 ring-primary/30' : 'bg-white ring-black/5 hover:bg-zinc-50'
         }`}>
-        <div className={`size-4 rounded flex items-center justify-center shrink-0 ${
-          on ? 'bg-primary border-primary' : 'border border-zinc-300 bg-zinc-50'
-        }`}>
-          {on && <Check className="size-2.5 text-white shrink-0" strokeWidth={3} />}
+        <div className={`size-5 rounded flex items-center justify-center shrink-0 ${on ? 'bg-primary' : 'border border-zinc-300 bg-zinc-50'}`}>
+          {on && <Check className="size-3 text-white" strokeWidth={3} />}
         </div>
         <div className="min-w-0">
-          <p className="text-sm font-semibold text-zinc-900 truncate">{card.label}</p>
-          {card.requiresModule && (
-            <p className="text-[10px] text-zinc-400 font-medium uppercase tracking-wider">
-              Needs {card.requiresModule} access
-            </p>
-          )}
+          <p className="text-sm font-semibold text-zinc-900 truncate">{c.label}</p>
+          <p className="text-[10px] text-zinc-500 leading-snug">
+            <span className="font-semibold text-primary/80 uppercase tracking-wider">{c.audience}</span>
+            {' · '}{c.desc}{c.requiresModule ? ` · Needs ${c.requiresModule}` : ''}
+          </p>
         </div>
       </button>
     );
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg p-6 shadow-xl relative animate-in zoom-in-95 duration-200">
-        <button onClick={onClose}
-          className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-700 transition-colors p-1 rounded-md hover:bg-zinc-100">
-          <X className="size-5 shrink-0" />
-        </button>
+    <div className="fixed inset-0 z-[60] flex items-stretch sm:items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-0 sm:p-6 animate-in fade-in duration-200">
+      <div className="bg-zinc-50 w-full sm:max-w-4xl sm:rounded-xl ring-1 ring-black/10 shadow-2xl flex flex-col max-h-screen sm:max-h-[92vh] overflow-hidden animate-in zoom-in-95 duration-200">
 
-        <div className="mb-5 flex items-start gap-3">
-          <div className="size-9 rounded-md bg-primary/5 ring-1 ring-primary/20 text-primary flex items-center justify-center shrink-0">
+        <div className="px-6 py-5 bg-white border-b border-zinc-100 flex items-start gap-3 shrink-0">
+          <div className="size-10 rounded-md bg-primary/5 ring-1 ring-primary/20 text-primary flex items-center justify-center shrink-0">
             <LayoutDashboard className="size-5" />
           </div>
-          <div>
+          <div className="flex-1 min-w-0">
             <h2 className="text-lg font-semibold text-zinc-900 tracking-tight">Overview Settings</h2>
-            <p className="text-sm text-zinc-500 font-medium">
-              Choose which dashboard cards and sections each role sees. Unsaved roles use sensible defaults.
-            </p>
+            <p className="text-sm text-zinc-500">Pick the boxes and sections each role sees — and the order they appear in.</p>
           </div>
+          <button onClick={onClose} className="text-zinc-400 hover:text-zinc-700 transition-colors p-1.5 rounded-md hover:bg-zinc-100 shrink-0"><X className="size-5" /></button>
         </div>
 
         {loading ? (
-          <div className="h-40 flex items-center justify-center">
-            <Loader2 className="animate-spin size-6 text-primary" />
-          </div>
+          <div className="flex-1 flex items-center justify-center py-20"><Loader2 className="animate-spin size-6 text-primary" /></div>
         ) : (
           <>
-            <div className="space-y-1.5 mb-5">
-              <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Role</label>
-              <select
-                value={selectedRole}
-                onChange={e => { setSelectedRole(e.target.value); setSavedRole(''); }}
-                className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm">
-                {roleNames.map(rn => <option key={rn} value={rn}>{rn}</option>)}
-              </select>
-              <p className="text-[10px] text-zinc-400 font-medium uppercase tracking-wider pt-0.5">
-                Persona: {persona}
-              </p>
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-6">
+
+              <div className="bg-sky-50/70 ring-1 ring-sky-200/70 rounded-lg p-4 flex gap-3">
+                <Info className="size-4 text-sky-600 shrink-0 mt-0.5" />
+                <div className="text-[13px] text-sky-900/80 leading-relaxed">
+                  <p className="font-semibold text-sky-900 mb-1">How this works</p>
+                  Every role sees <span className="font-semibold">everything by default</span>. Remove what a role shouldn't see, and
+                  set each box's <span className="font-semibold">position number</span> (or use the arrows) to order them — e.g. push “Active Year”
+                  to last. Each box shows <span className="font-semibold">who it's for</span>. A box still won't appear if the role lacks
+                  permission for its module, so this only narrows, never overrides, your access rules.
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+                <div className="space-y-1.5 flex-1">
+                  <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Configuring role</label>
+                  <select value={selectedRole} onChange={e => { setSelectedRole(e.target.value); setSavedRole(''); }}
+                    className="h-10 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm font-medium text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm">
+                    {roleNames.map(rn => <option key={rn} value={rn}>{rn}</option>)}
+                  </select>
+                  <p className="text-[10px] text-zinc-400 font-medium uppercase tracking-wider pt-0.5">Persona: {persona} · {selectedIds.length} selected</p>
+                </div>
+                <div className="flex gap-2">
+                  <button type="button" onClick={enableAll} className="h-10 px-3 inline-flex items-center gap-1.5 bg-white border border-zinc-200 text-zinc-700 rounded-md text-xs font-semibold hover:bg-zinc-50 transition-colors shadow-sm"><CheckSquare className="size-3.5" /> Enable all</button>
+                  <button type="button" onClick={clearAll} className="h-10 px-3 inline-flex items-center gap-1.5 bg-white border border-zinc-200 text-zinc-700 rounded-md text-xs font-semibold hover:bg-zinc-50 transition-colors shadow-sm"><Square className="size-3.5" /> Clear</button>
+                </div>
+              </div>
+
+              {/* Above section — ordered stat boxes */}
+              <div>
+                <h3 className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider mb-2.5">Above Section — Stat Boxes (shown in this order)</h3>
+                <div className="space-y-2">
+                  {enabledKpi.length === 0 && <p className="text-xs text-zinc-400 italic px-1">No stat boxes selected.</p>}
+                  {enabledKpi.map((id, idx) => EnabledKpiRow(id, idx))}
+                </div>
+                {disabledKpi.length > 0 && (
+                  <>
+                    <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mt-4 mb-2">Available to add</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">{disabledKpi.map(AddTile)}</div>
+                  </>
+                )}
+              </div>
+
+              {/* Sections */}
+              <div>
+                <h3 className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider mb-2.5">Dashboard Sections</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {[...enabledPanel.map(id => cardById[id]), ...disabledPanel].map(PanelRow)}
+                </div>
+              </div>
             </div>
 
-            <div className="space-y-4 max-h-[340px] overflow-y-auto custom-scrollbar pr-1">
-              {available.length === 0 && (
-                <p className="text-sm text-zinc-400 py-6 text-center">No cards available for this role yet.</p>
-              )}
-
-              {kpiCards.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Stat cards</p>
-                  {kpiCards.map(renderCard)}
-                </div>
-              )}
-
-              {panelCards.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Dashboard sections</p>
-                  {panelCards.map(renderCard)}
-                </div>
-              )}
-            </div>
-
-            <div className="pt-5 flex items-center justify-between gap-3">
-              <span className="text-[11px] font-semibold text-emerald-600 uppercase tracking-wider">
-                {savedRole && savedRole === selectedRole ? 'Saved \u2713' : '\u00a0'}
-              </span>
+            <div className="px-6 py-4 bg-white border-t border-zinc-100 flex items-center justify-between gap-3 shrink-0">
+              <span className="text-[11px] font-semibold text-emerald-600 uppercase tracking-wider">{savedRole && savedRole === selectedRole ? 'Saved \u2713' : '\u00a0'}</span>
               <div className="flex gap-3">
-                <button type="button" onClick={onClose}
-                  className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 rounded-md text-xs font-semibold hover:bg-zinc-50 transition-colors shadow-sm">
-                  Close
-                </button>
+                <button type="button" onClick={onClose} className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 rounded-md text-xs font-semibold hover:bg-zinc-50 transition-colors shadow-sm">Close</button>
                 <button type="button" onClick={save} disabled={saving || !selectedRole}
                   className="h-9 px-6 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold shadow-sm transition-colors disabled:opacity-50 flex items-center gap-1.5">
-                  {saving && <Loader2 className="animate-spin size-3.5" />}
-                  Save “{selectedRole}”
+                  {saving && <Loader2 className="animate-spin size-3.5" />} Save “{selectedRole}”
                 </button>
               </div>
             </div>

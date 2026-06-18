@@ -1,18 +1,17 @@
 // =====================================================================
 //  overviewCards.js — single source of truth for the Overview dashboard.
 //
-//  • OVERVIEW_CARDS: every card AND section the dashboard can show. Add
-//    an entry here and it automatically appears in the Settings picker
-//    and renders in the Overview.
-//      - kind: 'kpi'   -> a small stat box in the top grid
-//      - kind: 'panel' -> a full section (Performance Analytics, Events,
-//                         Notifications)
-//    `personas` lists which personas may be offered/shown the entry.
-//    `requiresModule` ties it to a module so the Overview hides it for
-//    users who can't access that module (permissions stay the hard gate).
-//  • getPersona(role): coarse bucket a role falls into.
-//  • PERSONA_DEFAULTS: what each persona shows when a Super Admin hasn't
-//    configured that role yet (so the feature works out of the box).
+//  Each entry: { id, label, kind, render?, requiresModule?, desc, audience }
+//    kind:   'kpi'  -> a box in the "Above Section" grid
+//            'panel'-> a full section (Performance / Events / Notifications)
+//    render: 'stat' (default number box) | 'live' (live-class card)
+//            | 'gauge' (circular % card)
+//    requiresModule -> hidden for roles without that module's view access
+//    desc / audience -> shown in Settings so it's clear which box is for whom
+//
+//  Default for every role = ALL_CARD_IDS (everything on). The Super Admin
+//  trims and ORDERS per role in Overview Settings. The saved order of the
+//  KPI ids is the on-screen order of the boxes.
 //
 //  Place this in the same folder as Overview.jsx (Screens/).
 // =====================================================================
@@ -30,41 +29,39 @@ export function getPersona(role) {
 }
 
 export const OVERVIEW_CARDS = [
-  // ---- KPI stat boxes: admin / leadership ----
-  { id: 'total_users',    label: 'Total Users',      kind: 'kpi', personas: ['admin'] },
-  { id: 'students',       label: 'Students',         kind: 'kpi', personas: ['admin'] },
-  { id: 'teachers_staff', label: 'Teachers / Staff', kind: 'kpi', personas: ['admin'] },
-  { id: 'classes',        label: 'Classes',          kind: 'kpi', personas: ['admin'] },
-  { id: 'roles',          label: 'Roles Defined',    kind: 'kpi', personas: ['admin'] },
-  { id: 'active_year',    label: 'Active Year',      kind: 'kpi', personas: ['admin'] },
+  // ---- ABOVE SECTION: stat boxes ----
+  { id: 'total_users',     label: 'Total Users',      kind: 'kpi', render: 'stat', audience: 'Admins',              desc: 'School-wide count of all user accounts.' },
+  { id: 'students',        label: 'Students',         kind: 'kpi', render: 'stat', audience: 'Admins',              desc: 'School-wide count of enrolled students.' },
+  { id: 'teachers_staff',  label: 'Teachers / Staff', kind: 'kpi', render: 'stat', audience: 'Admins',              desc: 'School-wide count of teachers and staff.' },
+  { id: 'classes',         label: 'Classes',          kind: 'kpi', render: 'stat', audience: 'Admins',              desc: 'Number of classes configured.' },
+  { id: 'roles',           label: 'Roles Defined',    kind: 'kpi', render: 'stat', audience: 'Admins',              desc: 'Number of roles defined for the school.' },
+  { id: 'active_year',     label: 'Active Year',      kind: 'kpi', render: 'stat', audience: 'Admins',              desc: 'The current active academic year.' },
 
-  // ---- KPI stat boxes: student / teacher / staff ----
-  { id: 'my_class',             label: 'My Class',             kind: 'kpi', personas: ['student'],                     requiresModule: 'Timetable' },
-  { id: 'teaching_classes',     label: 'Classes I Teach',      kind: 'kpi', personas: ['teacher'],                     requiresModule: 'Timetable' },
-  { id: 'classes_today',        label: 'Classes Today',        kind: 'kpi', personas: ['student', 'teacher'],          requiresModule: 'Timetable' },
-  { id: 'weekly_periods',       label: 'Weekly Periods',       kind: 'kpi', personas: ['student', 'teacher'],          requiresModule: 'Timetable' },
-  { id: 'unread_notifications', label: 'Unread Notifications', kind: 'kpi', personas: ['student', 'teacher', 'staff'] },
+  { id: 'my_class',        label: 'My Class',         kind: 'kpi', render: 'stat', requiresModule: 'Timetable', audience: 'Students', desc: "The signed-in student's own class." },
+  { id: 'teaching_classes',label: 'Classes I Teach',  kind: 'kpi', render: 'stat', requiresModule: 'Timetable', audience: 'Teachers', desc: 'How many classes the teacher takes this week.' },
+  { id: 'classes_today',   label: 'Classes Today',    kind: 'kpi', render: 'stat', requiresModule: 'Timetable', audience: 'Students & Teachers', desc: "Count of the user's classes scheduled today." },
+  { id: 'weekly_periods',  label: 'Weekly Periods',   kind: 'kpi', render: 'stat', requiresModule: 'Timetable', audience: 'Students & Teachers', desc: "Total periods on the user's weekly timetable." },
 
-  // ---- Full sections ----
-  { id: 'performance_analytics', label: 'Performance Analytics', kind: 'panel', personas: ['admin'],                              requiresModule: 'Performance' },
-  { id: 'events_panel',          label: 'Upcoming Events',       kind: 'panel', personas: ['admin', 'student', 'teacher', 'staff'], requiresModule: 'Academic Calendar' },
-  { id: 'notifications_panel',   label: 'Recent Notifications',  kind: 'panel', personas: ['admin', 'student', 'teacher', 'staff'] }
+  { id: 'live_class',      label: 'Live Class',       kind: 'kpi', render: 'live',  requiresModule: 'Timetable',   audience: 'Students & Teachers', desc: 'The class happening right now with a live countdown; shows “no class” when free.' },
+  { id: 'attendance_pct',  label: 'My Attendance %',  kind: 'kpi', render: 'gauge', requiresModule: 'Attendance',  audience: 'Students & Teachers', desc: "The user's own attendance % for the academic year." },
+  { id: 'performance_pct', label: 'My Performance %', kind: 'kpi', render: 'gauge', requiresModule: 'Performance', audience: 'Students & Teachers', desc: 'Students: own overall result. Teachers: their assigned classes’ result.' },
+
+  // ---- DASHBOARD SECTIONS ----
+  { id: 'performance_analytics', label: 'Performance Analytics', kind: 'panel', requiresModule: 'Performance',       audience: 'Admins',   desc: 'School-wide Top Performers / Top Classes charts.' },
+  { id: 'events_panel',          label: 'Upcoming Events',       kind: 'panel', requiresModule: 'Academic Calendar', audience: 'Everyone', desc: 'Upcoming events pulled from the calendar.' },
+  { id: 'notifications_panel',   label: 'Recent Notifications',  kind: 'panel',                                      audience: 'Everyone', desc: 'The latest notifications for this user.' }
 ];
 
-export const cardById = OVERVIEW_CARDS.reduce((acc, c) => { acc[c.id] = c; return acc; }, {});
+export const cardById    = OVERVIEW_CARDS.reduce((a, c) => { a[c.id] = c; return a; }, {});
+export const KPI_CARDS   = OVERVIEW_CARDS.filter(c => c.kind === 'kpi');
+export const PANEL_CARDS = OVERVIEW_CARDS.filter(c => c.kind === 'panel');
+export const ALL_CARD_IDS = OVERVIEW_CARDS.map(c => c.id);
 
-export const PERSONA_DEFAULTS = {
-  admin: [
-    'total_users', 'students', 'teachers_staff', 'classes', 'roles', 'active_year',
-    'performance_analytics', 'events_panel', 'notifications_panel'
-  ],
-  student: ['my_class', 'classes_today', 'weekly_periods', 'unread_notifications', 'events_panel', 'notifications_panel'],
-  teacher: ['teaching_classes', 'classes_today', 'weekly_periods', 'unread_notifications', 'events_panel', 'notifications_panel'],
-  staff:   ['unread_notifications', 'events_panel', 'notifications_panel']
-};
-
-// Everything a persona may be offered in Settings (before per-user
-// permission gating, which the Overview applies at render).
-export function cardsForPersona(persona) {
-  return OVERVIEW_CARDS.filter(c => !c.personas || c.personas.includes(persona));
+// Keep saved ids in a stable shape: KPI ids first (their chosen order),
+// then panel ids. KPI order = on-screen box order.
+export function normalizeIds(ids) {
+  const set = new Set(ids);
+  const kp = ids.filter(i => cardById[i]?.kind === 'kpi');
+  const pn = ids.filter(i => cardById[i]?.kind === 'panel');
+  return [...kp, ...pn].filter(i => set.has(i) && cardById[i]);
 }

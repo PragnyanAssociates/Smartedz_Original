@@ -7350,6 +7350,18 @@ app.get('/api/admin/performance/overview/:instId', async (req, res) => {
         res.json({ academic_year_id: yearId, exams_completed, top_performers, top_classes });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+app.get('/api/overview/me/:instId/:userId', async (req, res) => {
+    const { instId, userId } = req.params;
+    try {
+        const [rows] = await db.execute(
+            'SELECT id, role, class_id FROM users WHERE id = ? AND institutionId = ? LIMIT 1',
+            [userId, instId]
+        );
+        if (!rows.length) return res.json({ role: null, class_id: null });
+        res.json({ role: rows[0].role, class_id: rows[0].class_id ?? null });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
  
 
 
