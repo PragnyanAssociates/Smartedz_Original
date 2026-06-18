@@ -222,7 +222,7 @@ export default function Overview() {
 
       <header className="mb-6 lg:mb-8 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
         <div className="flex flex-col gap-2">
-          <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Welcome back, {user?.name?.split(' ')[0]}</h1>
+          <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Welcome back, {user?.name?.split(' ')[0] || 'User'}</h1>
           <p className="text-sm text-zinc-500 max-w-[56ch]">Here is what is happening at {admin.institution?.name || 'your institution'} today.</p>
         </div>
         {isSuperAdmin && (
@@ -252,26 +252,26 @@ export default function Overview() {
 
 // ---- stat box ------------------------------------------------------
 const KPI_META = {
-  total_users:    { Icon: Users,        tint: 'hero' },
-  students:       { Icon: GraduationCap, tint: 'accent' },
-  teachers_staff: { Icon: Users,        tint: 'emerald' },
-  classes:        { Icon: School,       tint: 'violet' },
-  roles:          { Icon: ShieldCheck,  tint: 'amber' },
-  active_year:    { Icon: CalendarDays, tint: 'sky' },
-  my_class:       { Icon: GraduationCap, tint: 'accent' },
-  teaching_classes: { Icon: Users,      tint: 'accent' },
-  classes_today:  { Icon: Clock,        tint: 'emerald' },
-  weekly_periods: { Icon: CalendarClock, tint: 'violet' }
+  total_users:      { Icon: Users,          tint: 'hero' },
+  students:         { Icon: GraduationCap,  tint: 'orange' },
+  teachers_staff:   { Icon: Users,          tint: 'emerald' },
+  classes:          { Icon: School,         tint: 'violet' },
+  roles:            { Icon: ShieldCheck,    tint: 'amber' },
+  active_year:      { Icon: CalendarDays,   tint: 'sky' },
+  my_class:         { Icon: GraduationCap,  tint: 'orange' },
+  teaching_classes: { Icon: Users,          tint: 'orange' },
+  classes_today:    { Icon: Clock,          tint: 'emerald' },
+  weekly_periods:   { Icon: CalendarClock,  tint: 'violet' }
 };
 const TINT_CLASS = {
   hero: 'bg-primary text-white shadow-sm ring-1 ring-primary/40',
-  accent: 'ring-1 ring-accent/20 bg-accent/5 border-l-2 border-accent',
-  emerald: 'ring-1 ring-emerald-200 bg-emerald-50 border-l-2 border-emerald-400',
-  violet: 'ring-1 ring-violet-200 bg-violet-50 border-l-2 border-violet-400',
-  amber: 'ring-1 ring-amber-200 bg-amber-50 border-l-2 border-amber-400',
-  sky: 'ring-1 ring-sky-200 bg-sky-50 border-l-2 border-sky-400'
+  orange: 'bg-white ring-1 ring-orange-300 shadow-sm',
+  emerald: 'bg-white ring-1 ring-emerald-300 shadow-sm',
+  violet: 'bg-white ring-1 ring-violet-300 shadow-sm',
+  amber: 'bg-white ring-1 ring-amber-300 shadow-sm',
+  sky: 'bg-white ring-1 ring-sky-300 shadow-sm'
 };
-const LABEL_CLASS = { hero: 'text-white/80', accent: 'text-accent', emerald: 'text-emerald-700', violet: 'text-violet-700', amber: 'text-amber-700', sky: 'text-sky-700' };
+const LABEL_CLASS = { hero: 'text-white/80', orange: 'text-orange-600', emerald: 'text-emerald-600', violet: 'text-violet-600', amber: 'text-amber-600', sky: 'text-sky-600' };
 
 function KpiBox({ id, value, sub, isText }) {
   const meta = KPI_META[id] || { Icon: Bell, tint: 'sky' };
@@ -358,16 +358,16 @@ function LiveClassCard({ tt, persona, className = '' }) {
             <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-600 uppercase tracking-wider">
               <CircleDot className="size-3.5" /> Current Class
             </span>
-            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-600 bg-rose-50 ring-1 ring-rose-200 px-2 py-0.5 rounded uppercase tracking-wider">
+            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-600 bg-rose-50 ring-1 ring-rose-200 px-2 py-0.5 rounded uppercase tracking-wider">
               <span className="size-1.5 rounded-full bg-rose-500 animate-pulse" /> Live
             </span>
           </div>
           <p className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider mt-2 truncate">{subject}</p>
-          <p className="text-xl font-bold text-zinc-900 leading-tight truncate">{classText || '—'}</p>
+          <p className="text-xl font-semibold text-zinc-900 leading-tight truncate">{classText || '—'}</p>
         </div>
         <div className="mt-3">
           <div className="flex items-center justify-between text-[11px] mb-1">
-            <span className="font-semibold text-zinc-700"><span className="text-lg font-bold text-zinc-900 tabular-nums">{remaining}</span> mins left</span>
+            <span className="font-semibold text-zinc-700"><span className="text-lg font-semibold text-zinc-900 tabular-nums">{remaining}</span> mins left</span>
             <span className="text-zinc-400 font-medium tabular-nums">{fmt12(info.start)} – {fmt12(info.end)}</span>
           </div>
           <div className="w-full h-2 rounded-full bg-zinc-100 overflow-hidden">
@@ -464,20 +464,32 @@ function PerformanceAnalytics({ perf, className = '' }) {
     </div>
   );
 }
+
+// FULLY MATCHED TO PerfBar.jsx STRUCTURE
 function BarChart({ bars }) {
   const TRACK = 220;
   return (
     <div className="overflow-x-auto custom-scrollbar pb-2">
       <div className="flex items-end gap-5 sm:gap-8 min-w-min px-1" style={{ minHeight: TRACK + 90 }}>
         {bars.map(b => {
-          const h = Math.max(6, (Math.min(b.pct, 100) / 100) * TRACK), c = barColor(b.pct);
+          const h = Math.max(6, (Math.min(b.pct, 100) / 100) * TRACK);
+          const c = barColor(b.pct);
           return (
             <div key={b.key} className="flex flex-col items-center w-24 sm:w-28 shrink-0">
               <span className="text-sm font-semibold text-zinc-700 mb-1.5">{b.pct}%</span>
-              <div className="w-14 sm:w-16 rounded-t-md relative flex items-end justify-center group" style={{ height: h, background: c }} title={b.marks}>
-                <span className="text-[9px] font-bold text-white/90 [writing-mode:vertical-rl] rotate-180 mb-2 px-1 py-1 rounded bg-black/25 opacity-0 group-hover:opacity-100 transition-opacity">{b.marks}</span>
+              
+              {/* Outer Track Match: bg-zinc-100 and inset ring */}
+              <div className="w-14 sm:w-16 bg-zinc-100 rounded-t-md flex flex-col justify-end overflow-hidden ring-1 ring-inset ring-black/5 group" style={{ height: TRACK }}>
+                {/* Inner Colored Bar */}
+                <div className="w-full rounded-t-md transition-all duration-700 ease-out relative flex items-end justify-center" style={{ height: h, background: c }} title={b.marks}>
+                  <span className="text-[9px] font-semibold text-white/90 [writing-mode:vertical-rl] rotate-180 mb-2 px-1 py-1 rounded bg-black/25 opacity-0 group-hover:opacity-100 transition-opacity">{b.marks}</span>
+                </div>
               </div>
-              <div className="mt-2.5 text-center w-full">
+
+              {/* Baseline Match: Clean grey separator line */}
+              <div className="w-full h-px bg-zinc-200 mt-1" />
+
+              <div className="mt-1.5 text-center w-full">
                 <div className="text-xs font-semibold text-zinc-800 truncate w-full" title={b.name}>{b.name}</div>
                 <div className="text-[10px] text-zinc-400 font-medium mt-0.5">{b.sub}</div>
                 {b.badge && <span className="inline-block mt-1.5 px-2 py-0.5 rounded text-[10px] font-semibold bg-primary/10 text-primary ring-1 ring-inset ring-primary/15">{b.badge}</span>}
@@ -489,6 +501,7 @@ function BarChart({ bars }) {
     </div>
   );
 }
+
 function Dot({ color, text }) {
   return (
     <span className="inline-flex items-center gap-1.5">
@@ -511,7 +524,7 @@ function EventsPanel({ events }) {
         <CalendarDays className="size-4 text-primary shrink-0" /><h2 className="text-sm font-semibold text-zinc-800">Upcoming Events</h2>
       </div>
       {upcoming.length === 0 ? (
-        <div className="p-8 text-center text-zinc-400 text-xs italic">No upcoming events scheduled.</div>
+        <div className="p-8 text-center text-zinc-400 text-xs italic font-medium">No upcoming events scheduled.</div>
       ) : (
         <div className="divide-y divide-zinc-100">
           {upcoming.map(e => {
@@ -544,7 +557,7 @@ function NotificationsPanel({ notes }) {
         <Bell className="size-4 text-primary shrink-0" /><h2 className="text-sm font-semibold text-zinc-800">Recent Notifications</h2>
       </div>
       {recent.length === 0 ? (
-        <div className="p-8 text-center flex flex-col items-center"><Inbox className="size-8 text-zinc-300 mb-2" /><p className="text-zinc-400 text-xs italic">No notifications yet.</p></div>
+        <div className="p-8 text-center flex flex-col items-center"><Inbox className="size-8 text-zinc-300 mb-2" /><p className="text-zinc-400 text-xs italic font-medium">No notifications yet.</p></div>
       ) : (
         <div className="divide-y divide-zinc-100">
           {recent.map(n => (

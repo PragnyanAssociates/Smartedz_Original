@@ -21,23 +21,23 @@ import {
 
 // Per-type icon + colour. Unknown types fall back to a generic bell.
 const TYPE_META = {
-  homework:       { icon: BookOpen,      bg: 'bg-indigo-50',  text: 'text-indigo-600',  ring: 'ring-indigo-600/20',  label: 'Homework' },
-  event:          { icon: CalendarDays,  bg: 'bg-emerald-50', text: 'text-emerald-600', ring: 'ring-emerald-600/20', label: 'Event' },
-  timetable:      { icon: CalendarClock, bg: 'bg-lime-50',    text: 'text-lime-600',    ring: 'ring-lime-600/20',    label: 'Timetable' },
-  attendance:     { icon: ClipboardCheck,bg: 'bg-green-50',   text: 'text-green-700',   ring: 'ring-green-600/20',   label: 'Attendance' },
-  result:         { icon: Award,         bg: 'bg-amber-50',   text: 'text-amber-600',   ring: 'ring-amber-600/20',   label: 'Result' },
-  exam:           { icon: ClipboardList, bg: 'bg-red-50',     text: 'text-red-600',     ring: 'ring-red-600/20',     label: 'Exam' },
-  lab:            { icon: FlaskConical,  bg: 'bg-sky-50',     text: 'text-sky-600',     ring: 'ring-sky-600/20',     label: 'Lab' },
-  lesson_plan:    { icon: BookMarked,    bg: 'bg-violet-50',  text: 'text-violet-600',  ring: 'ring-violet-600/20',  label: 'Lesson Plan' },
-  online_class:   { icon: Video,         bg: 'bg-rose-50',    text: 'text-rose-600',    ring: 'ring-rose-600/20',    label: 'Online Class' },
-  group_chat:     { icon: MessagesSquare,bg: 'bg-teal-50',    text: 'text-teal-600',    ring: 'ring-teal-600/20',    label: 'Group' },
-  syllabus:       { icon: BookText,      bg: 'bg-blue-50',    text: 'text-blue-600',    ring: 'ring-blue-600/20',    label: 'Syllabus' },
-  study_material: { icon: FileText,      bg: 'bg-cyan-50',    text: 'text-cyan-600',    ring: 'ring-cyan-600/20',    label: 'Study Material' },
-  ptm:            { icon: Users,         bg: 'bg-fuchsia-50', text: 'text-fuchsia-600', ring: 'ring-fuchsia-600/20', label: 'PTM' },
-  gallery:        { icon: Images,        bg: 'bg-pink-50',    text: 'text-pink-600',    ring: 'ring-pink-600/20',    label: 'Gallery' },
-  meals:          { icon: Utensils,      bg: 'bg-orange-50',  text: 'text-orange-600',  ring: 'ring-orange-600/20',  label: 'Food Menu' }
+  homework:       { icon: BookOpen,      bg: 'bg-indigo-50',  text: 'text-indigo-600',  ring: 'ring-inset ring-indigo-600/20',  label: 'Homework' },
+  event:          { icon: CalendarDays,  bg: 'bg-emerald-50', text: 'text-emerald-600', ring: 'ring-inset ring-emerald-600/20', label: 'Event' },
+  timetable:      { icon: CalendarClock, bg: 'bg-lime-50',    text: 'text-lime-600',    ring: 'ring-inset ring-lime-600/20',    label: 'Timetable' },
+  attendance:     { icon: ClipboardCheck,bg: 'bg-green-50',   text: 'text-green-700',   ring: 'ring-inset ring-green-600/20',   label: 'Attendance' },
+  result:         { icon: Award,         bg: 'bg-amber-50',   text: 'text-amber-600',   ring: 'ring-inset ring-amber-600/20',   label: 'Result' },
+  exam:           { icon: ClipboardList, bg: 'bg-red-50',     text: 'text-red-600',     ring: 'ring-inset ring-red-600/20',     label: 'Exam' },
+  lab:            { icon: FlaskConical,  bg: 'bg-sky-50',     text: 'text-sky-600',     ring: 'ring-inset ring-sky-600/20',     label: 'Lab' },
+  lesson_plan:    { icon: BookMarked,    bg: 'bg-violet-50',  text: 'text-violet-600',  ring: 'ring-inset ring-violet-600/20',  label: 'Lesson Plan' },
+  online_class:   { icon: Video,         bg: 'bg-rose-50',    text: 'text-rose-600',    ring: 'ring-inset ring-rose-600/20',    label: 'Online Class' },
+  group_chat:     { icon: MessagesSquare,bg: 'bg-teal-50',    text: 'text-teal-600',    ring: 'ring-inset ring-teal-600/20',    label: 'Group' },
+  syllabus:       { icon: BookText,      bg: 'bg-blue-50',    text: 'text-blue-600',    ring: 'ring-inset ring-blue-600/20',    label: 'Syllabus' },
+  study_material: { icon: FileText,      bg: 'bg-cyan-50',    text: 'text-cyan-600',    ring: 'ring-inset ring-cyan-600/20',    label: 'Study Material' },
+  ptm:            { icon: Users,         bg: 'bg-fuchsia-50', text: 'text-fuchsia-600', ring: 'ring-inset ring-fuchsia-600/20', label: 'PTM' },
+  gallery:        { icon: Images,        bg: 'bg-pink-50',    text: 'text-pink-600',    ring: 'ring-inset ring-pink-600/20',    label: 'Gallery' },
+  meals:          { icon: Utensils,      bg: 'bg-orange-50',  text: 'text-orange-600',  ring: 'ring-inset ring-orange-600/20',  label: 'Food Menu' }
 };
-const FALLBACK_META = { icon: Bell, bg: 'bg-zinc-100', text: 'text-zinc-600', ring: 'ring-zinc-200', label: 'Notification' };
+const FALLBACK_META = { icon: Bell, bg: 'bg-zinc-100', text: 'text-zinc-600', ring: 'ring-inset ring-zinc-200', label: 'Notification' };
 
 // The notification `link` must be a module `id` from Modules.js for
 // onNavigate to switch tabs. A few modules have a lower/kebab-case id but
@@ -155,21 +155,21 @@ export default function NotificationsScreen({ onNavigate }) {
           <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
             <Bell className="text-primary size-5" /> Notifications
           </h1>
-          <p className="text-sm text-zinc-500 mt-1">
+          <p className="text-sm text-zinc-500 mt-1 font-medium">
             {unreadCount > 0 ? `${unreadCount} unread` : 'You are all caught up.'}
           </p>
         </div>
 
         {items.some(n => !n.is_read) && (
           <button onClick={markAll} disabled={busy}
-            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-white border border-zinc-200 text-zinc-700 text-xs font-semibold hover:bg-zinc-50 transition-colors self-start sm:self-auto disabled:opacity-50">
+            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-white border border-zinc-200 text-zinc-700 text-xs font-semibold hover:bg-zinc-50 transition-colors self-start sm:self-auto disabled:opacity-50 shadow-sm">
             <CheckCheck className="size-3.5" /> Mark all read
           </button>
         )}
       </header>
 
       {/* Filter tabs */}
-      <div className="inline-flex bg-zinc-100/80 p-1 rounded-md">
+      <div className="inline-flex bg-zinc-100/80 p-1 rounded-md ring-1 ring-inset ring-black/5">
         {TABS.map(t => (
           <button key={t.k} onClick={() => setFilter(t.k)}
             className={`px-3 py-1.5 rounded text-[11px] font-semibold uppercase tracking-wider transition-colors ${
@@ -189,12 +189,12 @@ export default function NotificationsScreen({ onNavigate }) {
         <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
           <Inbox className="size-10 text-zinc-300 mb-3" />
           <p className="text-zinc-500 text-sm font-medium">{emptyText}</p>
-          <p className="text-zinc-400 text-xs mt-1.5">
+          <p className="text-zinc-400 text-xs mt-1.5 font-medium">
             You'll be notified here about homework, labs, classes, results and more.
           </p>
         </div>
       ) : (
-        <div className="bg-white rounded-lg ring-1 ring-black/5 overflow-hidden divide-y divide-zinc-100">
+        <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden divide-y divide-zinc-100">
           {visible.map(n => {
             const meta = TYPE_META[n.type] || FALLBACK_META;
             const Icon = meta.icon;
@@ -214,7 +214,7 @@ export default function NotificationsScreen({ onNavigate }) {
                     </p>
                     {!n.is_read && <span className="size-1.5 rounded-full bg-primary shrink-0" />}
                   </div>
-                  {n.body && <p className="text-xs text-zinc-500 mt-0.5 line-clamp-2">{n.body}</p>}
+                  {n.body && <p className="text-xs text-zinc-500 mt-0.5 line-clamp-2 font-medium">{n.body}</p>}
                   <span className="text-[10px] font-medium text-zinc-400 uppercase tracking-wider mt-1 inline-block">
                     {meta.label} · {timeAgo(n.created_at)}
                   </span>

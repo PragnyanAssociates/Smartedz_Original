@@ -1314,6 +1314,14 @@ app.post('/api/admin/timetable/teacher-entries/bulk', async (req, res) => {
 // =====================================================================
 app.post('/api/admin/subjects', async (req, res) => {
     const { name, institutionId, class_ids } = req.body;
+    // 👇 === BOUNCER FOR CREATION === 👇
+    if (!name || name.trim() === '') {
+        return res.status(400).json({ error: 'Subject name is required.' });
+    }
+    if (!institutionId) {
+        return res.status(400).json({ error: 'Institution ID is required.' });
+    }
+    // 👆 ============================ 👆
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
@@ -1343,6 +1351,7 @@ app.post('/api/admin/subjects', async (req, res) => {
 });
 
 app.put('/api/admin/subjects/:id', async (req, res) => {
+    
     const { name, class_ids } = req.body;
     const subjectId = parseInt(req.params.id, 10);
     const conn = await db.getConnection();
@@ -2379,20 +2388,22 @@ app.get('/api/admin/attempts/:attemptId', async (req, res) => {
         res.json({ attempt: att[0], items });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-
 // --- 16.C.6 Save grade for one attempt (+ notify the student) -----
 app.post('/api/admin/attempts/:attemptId/grade', async (req, res) => {
     const { attemptId } = req.params;
     const { graded_answers = [], teacher_feedback, graded_by } = req.body;
+    
     if (!graded_by) return res.status(400).json({ error: 'graded_by required.' });
+    
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
-        let total = 0;
+        
+        // 1. Save the new manual grades provided by the teacher FIRST
         for (const g of graded_answers) {
             const marks = parseFloat(g.marks_awarded);
             const safe = isNaN(marks) ? 0 : marks;
-            total += safe;
+            
             await conn.execute(
                 `INSERT INTO online_exam_answers (attempt_id, question_id, marks_awarded)
                  VALUES (?, ?, ?)
@@ -2400,16 +2411,25 @@ app.post('/api/admin/attempts/:attemptId/grade', async (req, res) => {
                 [attemptId, g.question_id, safe]
             );
         }
+
+        // 2. Ask the database for the true total of ALL answers (auto + manual)
+        const [sumResult] = await conn.execute(
+            `SELECT SUM(marks_awarded) as true_total FROM online_exam_answers WHERE attempt_id = ?`,
+            [attemptId]
+        );
+        const finalTotal = parseFloat(sumResult[0].true_total) || 0;
+
+        // 3. Update the attempt record with the secure database total
         await conn.execute(
             `UPDATE online_exam_attempts
                 SET status = 'graded', final_score = ?, graded_at = ?, graded_by = ?, teacher_feedback = ?
               WHERE id = ?`,
-            [total, nowSQL(), graded_by, teacher_feedback || null, attemptId]
+            [finalTotal, nowSQL(), graded_by, teacher_feedback || null, attemptId]
         );
+        
         await conn.commit();
 
-        // 🔔 Tell the student their result is ready. Reuses the existing
-        //    'result' type. Own try/catch so a notify issue can't fail grading.
+        // 4. Notify the student using the secure total
         try {
             const [info] = await db.execute(
                 `SELECT a.student_id, a.exam_id, e.institutionId, e.title AS exam_title, e.total_marks
@@ -2424,21 +2444,19 @@ app.post('/api/admin/attempts/:attemptId/grade', async (req, res) => {
                     institutionId: r.institutionId, recipientIds: [r.student_id], type: 'result',
                     title: 'Your result is ready',
                     body: r.total_marks
-                        ? `${r.exam_title}: ${total}/${r.total_marks}`
-                        : `${r.exam_title}: ${total} marks`,
+                        ? `${r.exam_title}: ${finalTotal}/${r.total_marks}`
+                        : `${r.exam_title}: ${finalTotal} marks`,
                     link: 'Exams', entity_id: r.exam_id, actor_id: graded_by
                 });
             }
         } catch (e) { console.warn('[notify result]', e.message); }
 
-        res.json({ success: true, final_score: total });
+        res.json({ success: true, final_score: finalTotal });
     } catch (err) {
         await conn.rollback();
         res.status(500).json({ error: err.message });
     } finally { conn.release(); }
 });
-
-
 
 // =====================================================================
 // === 17. REPORTS — Offline Exams, Marks Entry & Report Cards =========
