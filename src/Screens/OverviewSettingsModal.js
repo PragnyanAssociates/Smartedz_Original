@@ -4,9 +4,10 @@ import { API_BASE_URL } from '../apiConfig';
 import { getPersona, cardsForPersona, PERSONA_DEFAULTS } from './overviewCards';
 
 // =====================================================================
-//  OverviewSettingsModal — Super Admin picks which Overview cards each
-//  role sees. Saves per-role to /api/admin/overview-config. A role with
-//  no saved config falls back to the persona defaults (shown pre-ticked).
+//  OverviewSettingsModal — Super Admin picks which Overview cards AND
+//  sections each role sees. Saves per-role to /api/admin/overview-config.
+//  A role with no saved config falls back to the persona defaults
+//  (shown pre-ticked).
 //
 //  Props: { instId, roles, onClose }
 //    roles: array of { id, role_name } (pass data.roles from the Overview)
@@ -23,7 +24,6 @@ export default function OverviewSettingsModal({ instId, roles = [], onClose }) {
   const [saving, setSaving] = useState(false);
   const [savedRole, setSavedRole] = useState('');
 
-  // Load existing config for every role in this school.
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -39,8 +39,9 @@ export default function OverviewSettingsModal({ instId, roles = [], onClose }) {
 
   const persona = getPersona(selectedRole);
   const available = cardsForPersona(persona);
+  const kpiCards   = available.filter(c => c.kind !== 'panel');
+  const panelCards = available.filter(c => c.kind === 'panel');
 
-  // Selected card ids for the active role: saved config, else persona default.
   const selectedIds = useMemo(() => {
     if (!selectedRole) return [];
     const saved = configMap[selectedRole];
@@ -82,6 +83,30 @@ export default function OverviewSettingsModal({ instId, roles = [], onClose }) {
     finally { setSaving(false); }
   };
 
+  const renderCard = (card) => {
+    const on = selectedIds.includes(card.id);
+    return (
+      <button key={card.id} type="button" onClick={() => toggle(card.id)}
+        className={`w-full flex items-center gap-3 p-3 rounded-md ring-1 text-left transition-colors ${
+          on ? 'bg-primary/5 ring-primary/20' : 'bg-white ring-black/5 hover:bg-zinc-50'
+        }`}>
+        <div className={`size-4 rounded flex items-center justify-center shrink-0 ${
+          on ? 'bg-primary border-primary' : 'border border-zinc-300 bg-zinc-50'
+        }`}>
+          {on && <Check className="size-2.5 text-white shrink-0" strokeWidth={3} />}
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-zinc-900 truncate">{card.label}</p>
+          {card.requiresModule && (
+            <p className="text-[10px] text-zinc-400 font-medium uppercase tracking-wider">
+              Needs {card.requiresModule} access
+            </p>
+          )}
+        </div>
+      </button>
+    );
+  };
+
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4 animate-in fade-in duration-200">
       <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg p-6 shadow-xl relative animate-in zoom-in-95 duration-200">
@@ -97,7 +122,7 @@ export default function OverviewSettingsModal({ instId, roles = [], onClose }) {
           <div>
             <h2 className="text-lg font-semibold text-zinc-900 tracking-tight">Overview Settings</h2>
             <p className="text-sm text-zinc-500 font-medium">
-              Choose which dashboard cards each role sees. Unsaved roles use sensible defaults.
+              Choose which dashboard cards and sections each role sees. Unsaved roles use sensible defaults.
             </p>
           </div>
         </div>
@@ -108,7 +133,6 @@ export default function OverviewSettingsModal({ instId, roles = [], onClose }) {
           </div>
         ) : (
           <>
-            {/* Role selector */}
             <div className="space-y-1.5 mb-5">
               <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Role</label>
               <select
@@ -122,34 +146,24 @@ export default function OverviewSettingsModal({ instId, roles = [], onClose }) {
               </p>
             </div>
 
-            {/* Card checklist */}
-            <div className="space-y-2 max-h-[320px] overflow-y-auto custom-scrollbar pr-1">
+            <div className="space-y-4 max-h-[340px] overflow-y-auto custom-scrollbar pr-1">
               {available.length === 0 && (
                 <p className="text-sm text-zinc-400 py-6 text-center">No cards available for this role yet.</p>
               )}
-              {available.map(card => {
-                const on = selectedIds.includes(card.id);
-                return (
-                  <button key={card.id} type="button" onClick={() => toggle(card.id)}
-                    className={`w-full flex items-center gap-3 p-3 rounded-md ring-1 text-left transition-colors ${
-                      on ? 'bg-primary/5 ring-primary/20' : 'bg-white ring-black/5 hover:bg-zinc-50'
-                    }`}>
-                    <div className={`size-4 rounded flex items-center justify-center shrink-0 ${
-                      on ? 'bg-primary border-primary' : 'border border-zinc-300 bg-zinc-50'
-                    }`}>
-                      {on && <Check className="size-2.5 text-white shrink-0" strokeWidth={3} />}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-zinc-900 truncate">{card.label}</p>
-                      {card.requiresModule && (
-                        <p className="text-[10px] text-zinc-400 font-medium uppercase tracking-wider">
-                          Needs {card.requiresModule} access
-                        </p>
-                      )}
-                    </div>
-                  </button>
-                );
-              })}
+
+              {kpiCards.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Stat cards</p>
+                  {kpiCards.map(renderCard)}
+                </div>
+              )}
+
+              {panelCards.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Dashboard sections</p>
+                  {panelCards.map(renderCard)}
+                </div>
+              )}
             </div>
 
             <div className="pt-5 flex items-center justify-between gap-3">

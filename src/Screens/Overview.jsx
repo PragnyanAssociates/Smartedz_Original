@@ -3,22 +3,22 @@ import { useAuth } from '../context/AuthContext';
 import { usePermissions } from './PermissionsContext';
 import { API_BASE_URL } from '../apiConfig';
 import {
-  Check, ShieldCheck, Bell, GraduationCap, Users, Clock, CalendarClock,
-  BookOpen, Settings, BarChart3, CalendarDays, Inbox, ArrowRight
+  Bell, GraduationCap, Users, Clock, CalendarClock,
+  Settings, BarChart3, CalendarDays, Inbox
 } from 'lucide-react';
 import { getPersona, PERSONA_DEFAULTS, cardById } from './overviewCards';
 import OverviewSettingsModal from './OverviewSettingsModal';
 
 // =====================================================================
-//  Overview — persona layout + per-role configurable cards, plus a
-//  school-wide Performance Analytics block and an Events / Notifications
-//  row for the admin view.
+//  Overview — persona layout + per-role configurable cards & sections.
 //
 //  • Persona (getPersona) decides the layout: admin = school-wide,
 //    everyone else = personal.
-//  • KPI cards are driven by the Super Admin's saved config for the
-//    user's role (GET /overview-config/resolve), gated at render by the
-//    user's module permissions (can(module,'view')). No config -> default.
+//  • What shows (KPI boxes AND the Performance Analytics / Events /
+//    Notifications sections) is driven by the Super Admin's saved config
+//    for the user's role (GET /overview-config/resolve), gated at render
+//    by the user's module permissions (can(module,'view')). No config ->
+//    persona default.
 //  • Performance Analytics reads GET /admin/performance/overview/:instId
 //    (Top Performers = each class's topper, Top Classes = class overall).
 //    Bands are 80 / 50 to match the Performance screens.
@@ -41,6 +41,7 @@ async function fetchRoleCards(instId, role) {
   return Array.isArray(d?.card_ids) ? d.card_ids : null;
 }
 
+// Keep only entries the current user is allowed to see (module gate).
 function gateByPermission(ids, can) {
   return ids.filter(id => {
     const card = cardById[id];
@@ -50,18 +51,14 @@ function gateByPermission(ids, can) {
   });
 }
 
-// 80 / 50 bands, matching PerfUtils used by the Performance screens.
 const barColor = (p) => (p >= 80 ? '#22c55e' : p >= 50 ? '#3b82f6' : '#ef4444');
 
-// Event type colours (from AcademicCalendar's eventTypesConfig).
 const EVENT_COLORS = {
   Meeting: '#3b82f6', Event: '#f59e0b', Festival: '#ef4444',
   Holiday: '#10b981', Exam: '#8b5cf6', Other: '#ec4899'
 };
-
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-// created_at is naive UTC (server runs UTC); tag as UTC for correct localisation.
 const timeAgo = (s) => {
   if (!s) return '';
   let v = String(s);
@@ -114,6 +111,18 @@ function KpiBox({ tint, label, value, sub, isText }) {
         {value}
       </span>
       <span className={`text-[10px] font-medium uppercase tracking-wide truncate ${SUB_CLASS[tint]}`}>{sub}</span>
+    </div>
+  );
+}
+
+// Renders the Events | Notifications row, collapsing to one column when
+// only a single panel is enabled.
+function PanelRow({ showEvents, showNotes, events, notes }) {
+  if (!showEvents && !showNotes) return null;
+  return (
+    <div className={`grid grid-cols-1 ${showEvents && showNotes ? 'lg:grid-cols-2' : ''} gap-6 lg:gap-8 items-start`}>
+      {showEvents && <EventsPanel events={events} />}
+      {showNotes && <NotificationsPanel notes={notes} />}
     </div>
   );
 }
@@ -171,8 +180,11 @@ function AdminOverview({ user }) {
     active_year:    { value: activeYear?.name || 'None', sub: 'Current term', isText: true }
   };
 
-  const wanted = gateByPermission(cardIds || PERSONA_DEFAULTS.admin, can);
-  const orderedIds = Object.keys(SCHOOL_TINT).filter(id => wanted.includes(id));
+  const enabled    = gateByPermission(cardIds || PERSONA_DEFAULTS.admin, can);
+  const orderedIds = Object.keys(SCHOOL_TINT).filter(id => enabled.includes(id));
+  const showPerf   = enabled.includes('performance_analytics');
+  const showEvents = enabled.includes('events_panel');
+  const showNotes  = enabled.includes('notifications_panel');
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto">
@@ -195,7 +207,6 @@ function AdminOverview({ user }) {
         )}
       </header>
 
-      {/* KPI row */}
       {orderedIds.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4 mb-6 lg:mb-8">
           {orderedIds.map(id => (
@@ -204,14 +215,9 @@ function AdminOverview({ user }) {
         </div>
       )}
 
-      {/* Performance analytics */}
-      <PerformanceAnalytics perf={perf} className="mb-6 lg:mb-8" />
+      {showPerf && <PerformanceAnalytics perf={perf} className="mb-6 lg:mb-8" />}
 
-      {/* Events | Notifications */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 items-start">
-        <EventsPanel events={events} />
-        <NotificationsPanel notes={notes} />
-      </div>
+      <PanelRow showEvents={showEvents} showNotes={showNotes} events={events} notes={notes} />
 
       {settingsOpen && (
         <OverviewSettingsModal
@@ -491,11 +497,13 @@ function SelfOverview({ user, persona }) {
     unread_notifications: { value: unread }
   };
 
-  const base = (cardIds || PERSONA_DEFAULTS[persona] || []).filter(id => {
+  const enabled = gateByPermission(cardIds || PERSONA_DEFAULTS[persona] || [], can);
+  const kpiIds = enabled.filter(id => {
     const c = cardById[id];
-    return c && c.scope === 'self' && (!c.personas || c.personas.includes(persona));
+    return c && c.kind === 'kpi' && (!c.personas || c.personas.includes(persona));
   });
-  const ids = gateByPermission(base, can);
+  const showEvents = enabled.includes('events_panel');
+  const showNotes  = enabled.includes('notifications_panel');
 
   const heading = persona === 'student' ? 'Your day at a glance'
                 : persona === 'teacher' ? 'Your teaching snapshot'
@@ -511,9 +519,9 @@ function SelfOverview({ user, persona }) {
         <p className="text-sm text-zinc-500 max-w-[56ch]">{heading}.</p>
       </header>
 
-      {ids.length > 0 && (
+      {kpiIds.length > 0 && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6 lg:mb-8">
-          {ids.map(id => {
+          {kpiIds.map(id => {
             const meta = SELF_META[id] || SELF_META.unread_notifications;
             const v = VALUES[id] || {};
             const Icon = meta.Icon;
@@ -532,11 +540,7 @@ function SelfOverview({ user, persona }) {
         </div>
       )}
 
-      {/* Events | Notifications for everyone */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 items-start">
-        <EventsPanel events={events} />
-        <NotificationsPanel notes={notes} />
-      </div>
+      <PanelRow showEvents={showEvents} showNotes={showNotes} events={events} notes={notes} />
     </div>
   );
 }
