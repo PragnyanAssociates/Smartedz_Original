@@ -110,7 +110,52 @@ async function syncTeacherSubjects(conn, userId, role, subjectIds) {
 
 
 // =====================================================================
-// === 1. AUTHENTICATION (accepts email OR username) ===================
+//  SMARTEDZ — GROUP OF INSTITUTES (parent_id model)
+//  Backend changes for index.js. Splice the marked sections into your
+//  existing file (replace the same-numbered blocks; add Section 2b new).
+//  NOTHING in your per-module code (Attendance, Marks, Timetable,
+//  Notifications, Reports, Performance) changes — branches are normal
+//  institutionId-scoped tenants and your modules already scope by it.
+//
+//  ────────────────────────────────────────────────────────────────────
+//  ONE-TIME MIGRATION (run in MySQL Workbench, in this order):
+//
+//    -- 1. Re-home any existing 'University' rows before dropping the value
+//    --    (id > 0 keeps Workbench safe-update mode happy).
+//    UPDATE institutions SET type='College' WHERE type='University' AND id > 0;
+//
+//    -- 2. Swap the enum: drop University, add Group (Tuition kept).
+//    ALTER TABLE institutions
+//      MODIFY COLUMN `type` ENUM('School','College','Tuition','Group') NOT NULL;
+//
+//    -- 3. Add the self-referencing parent link (group -> branches).
+//    --    RESTRICT = you can't delete a group while branches still exist,
+//    --    so a stray delete can never wipe a whole org's data.
+//    ALTER TABLE institutions
+//      ADD COLUMN parent_id INT NULL AFTER `type`,
+//      ADD KEY fk_inst_parent (parent_id),
+//      ADD CONSTRAINT fk_inst_parent FOREIGN KEY (parent_id)
+//          REFERENCES institutions(id) ON DELETE RESTRICT;
+//  ────────────────────────────────────────────────────────────────────
+//
+//  MODEL RECAP:
+//    • Group  = institutions row, type='Group', parent_id=NULL. Owns the
+//               PLAN (branches inherit it). Has a 'Group Admin' user who
+//               logs in to the group console. No classes/students itself.
+//    • Branch = institutions row, type School/College/Tuition,
+//               parent_id = group id. A normal tenant with its own
+//               'Super Admin', users, classes, marks, etc.
+//    • Standalone = parent_id=NULL, type School/College/Tuition. Exactly
+//               today's behaviour — unchanged.
+// =====================================================================
+
+
+// =====================================================================
+// === REPLACE Section 1 — LOGIN (plan now walks up to the group) ======
+//
+//   Only change vs your current login: when the user's institution has a
+//   parent_id (i.e. it's a branch), the plan-expiry check reads the
+//   GROUP's plan instead of the branch's own (branches inherit).
 // =====================================================================
 app.post('/api/login', async (req, res) => {
     const identifier = req.body.identifier || req.body.email;
@@ -125,9 +170,21 @@ app.post('/api/login', async (req, res) => {
         if (user.status === 'inactive') return res.status(403).json({ success: false, message: 'Your account has been deactivated.' });
 
         if (user.role !== 'Developer' && user.institutionId) {
-            const [instRows] = await db.execute('SELECT usage_plan, plan_start_date FROM institutions WHERE id = ?', [user.institutionId]);
+            const [instRows] = await db.execute(
+                'SELECT id, parent_id, usage_plan, plan_start_date FROM institutions WHERE id = ?',
+                [user.institutionId]
+            );
             if (instRows.length > 0) {
-                const status = computePlanStatus(instRows[0].usage_plan, instRows[0].plan_start_date);
+                let planRow = instRows[0];
+                // Branch? Inherit the group's plan.
+                if (planRow.parent_id) {
+                    const [p] = await db.execute(
+                        'SELECT usage_plan, plan_start_date FROM institutions WHERE id = ?',
+                        [planRow.parent_id]
+                    );
+                    if (p.length) planRow = p[0];
+                }
+                const status = computePlanStatus(planRow.usage_plan, planRow.plan_start_date);
                 if (status.expired) return res.status(403).json({ success: false, message: "Your institution's plan has expired." });
             }
         }
@@ -147,88 +204,112 @@ app.post('/api/login', async (req, res) => {
 
 
 // =====================================================================
-// === 2. DEVELOPER ENDPOINTS ==========================================
+// === REPLACE Section 2 — DEVELOPER ENDPOINTS =========================
 //
-//   REQUIRES a one-time migration to allow the new "Tuition" category:
-//     ALTER TABLE institutions
-//       MODIFY COLUMN `type`
-//       ENUM('School','College','University','Tuition') NOT NULL;
+//   onboard / update now accept `parent_id` and a 'Group' type:
+//     • type='Group'  -> umbrella row, parent forced NULL, owns the plan,
+//                        admin user is created with role='Group Admin',
+//                        academic system roles are NOT seeded (no school).
+//     • otherwise      -> branch (if parent_id given) or standalone,
+//                        admin user role='Super Admin', system roles seeded.
+//
+//   /developer/data decoration resolves each branch's plan from its group
+//   (so the dashboard shows the inherited plan, not the placeholder).
 // =====================================================================
+
+// Resolve the plan a row should DISPLAY: a branch shows its group's plan.
+function _effectivePlan(inst, byId) {
+    const src = (inst.parent_id && byId[inst.parent_id]) ? byId[inst.parent_id] : inst;
+    return { usage_plan: src.usage_plan, plan_start_date: src.plan_start_date };
+}
+
 app.get('/api/developer/data', async (req, res) => {
     try {
         const [insts] = await db.execute('SELECT * FROM institutions ORDER BY created_at DESC');
-        // `status` is included so the dashboard can show each school's live
-        // user count excluding alumni (matching the Users screen "All" tab).
         const [users] = await db.execute('SELECT id, name, email, username, role, institutionId, password, status FROM users');
-        const decorated = insts.map(inst => ({ ...inst, ...computePlanStatus(inst.usage_plan, inst.plan_start_date) }));
+        const byId = {};
+        insts.forEach(i => { byId[i.id] = i; });
+        const decorated = insts.map(inst => {
+            const eff = _effectivePlan(inst, byId);
+            // Override the plan fields too, so branch cards read the group's
+            // plan (their own usage_plan column is just a placeholder).
+            return { ...inst, usage_plan: eff.usage_plan, plan_start_date: eff.plan_start_date,
+                     ...computePlanStatus(eff.usage_plan, eff.plan_start_date) };
+        });
         res.json({ institutions: decorated, users });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- Onboard a new institution. Seeds ALL THREE system roles now. ---
+// --- Onboard: group OR branch OR standalone --------------------------
 app.post('/api/developer/onboard', async (req, res) => {
-    const { name, type, logo, schoolKey, school_email, phone, usage_plan, plan_start_date,
+    const { name, type, parent_id, logo, schoolKey, school_email, phone,
+            usage_plan, plan_start_date,
             superAdminName, superAdminEmail, superAdminPassword } = req.body;
+
+    const isGroup = type === 'Group';
+    const parentId = isGroup ? null : (parent_id || null);           // a group never has a parent
     const plan = PLAN_DAYS.hasOwnProperty(usage_plan) ? usage_plan : 'Full Time';
     const startDate = plan_start_date || new Date().toISOString().slice(0, 10);
+    const adminRole = isGroup ? 'Group Admin' : 'Super Admin';        // umbrella vs branch principal
+
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
         const [inst] = await conn.execute(
-            'INSERT INTO institutions (name, type, logo, schoolKey, school_email, phone, usage_plan, plan_start_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-            [name, type, logo, schoolKey, school_email, phone, plan, startDate]
+            'INSERT INTO institutions (name, type, parent_id, logo, schoolKey, school_email, phone, usage_plan, plan_start_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [name, type, parentId, logo, schoolKey, school_email, phone, plan, startDate]
         );
         const instId = inst.insertId;
 
-        // Create the Super Admin user account
         await conn.execute(
             'INSERT INTO users (name, email, password, role, institutionId) VALUES (?, ?, ?, ?, ?)',
-            [superAdminName, superAdminEmail, superAdminPassword, 'Super Admin', instId]
+            [superAdminName, superAdminEmail, superAdminPassword, adminRole, instId]
         );
 
-        // Seed all 3 system roles. INSERT IGNORE is unnecessary because
-        // the school is brand new, but cheap insurance against re-runs.
-        for (const roleName of SYSTEM_ROLES) {
-            await conn.execute(
-                'INSERT IGNORE INTO roles (role_name, institutionId) VALUES (?, ?)',
-                [roleName, instId]
-            );
+        // Academic system roles only make sense for real schools, not the
+        // group umbrella (it owns no students/teachers/classes).
+        if (!isGroup) {
+            for (const roleName of SYSTEM_ROLES) {
+                await conn.execute('INSERT IGNORE INTO roles (role_name, institutionId) VALUES (?, ?)', [roleName, instId]);
+            }
         }
 
         await conn.commit();
-        res.json({ success: true });
+        res.json({ success: true, id: instId });
     } catch (err) {
         await conn.rollback();
         res.status(500).json({ error: err.message });
     } finally { conn.release(); }
 });
 
+// --- Update institution (group / branch / standalone) ----------------
 app.put('/api/developer/institution/:id', async (req, res) => {
     const { id } = req.params;
-    const { name, type, logo, school_email, phone, usage_plan, plan_start_date,
+    const { name, type, parent_id, logo, school_email, phone, usage_plan, plan_start_date,
             superAdminName, superAdminEmail, superAdminPassword } = req.body;
+
+    const isGroup = type === 'Group';
+    const parentId = isGroup ? null : (parent_id || null);
     const plan = PLAN_DAYS.hasOwnProperty(usage_plan) ? usage_plan : 'Full Time';
     const startDate = plan_start_date || new Date().toISOString().slice(0, 10);
+
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
         await conn.execute(
-            'UPDATE institutions SET name = ?, type = ?, logo = ?, school_email = ?, phone = ?, usage_plan = ?, plan_start_date = ? WHERE id = ?',
-            [name, type, logo, school_email, phone, plan, startDate, id]
+            'UPDATE institutions SET name=?, type=?, parent_id=?, logo=?, school_email=?, phone=?, usage_plan=?, plan_start_date=? WHERE id=?',
+            [name, type, parentId, logo, school_email, phone, plan, startDate, id]
         );
+        // Update whichever platform admin this institution has (group OR branch).
         await conn.execute(
-            'UPDATE users SET name = ?, email = ?, password = ? WHERE institutionId = ? AND role = "Super Admin"',
+            'UPDATE users SET name=?, email=?, password=? WHERE institutionId=? AND role IN ("Super Admin","Group Admin")',
             [superAdminName, superAdminEmail, superAdminPassword, id]
         );
-
-        // Defensive: heal any pre-existing school that's missing system roles
-        for (const roleName of SYSTEM_ROLES) {
-            await conn.execute(
-                'INSERT IGNORE INTO roles (role_name, institutionId) VALUES (?, ?)',
-                [roleName, id]
-            );
+        if (!isGroup) {
+            for (const roleName of SYSTEM_ROLES) {
+                await conn.execute('INSERT IGNORE INTO roles (role_name, institutionId) VALUES (?, ?)', [roleName, id]);
+            }
         }
-
         await conn.commit();
         res.json({ success: true });
     } catch (err) {
@@ -241,14 +322,139 @@ app.delete('/api/developer/institution/:id', async (req, res) => {
     try {
         await db.execute('DELETE FROM institutions WHERE id = ?', [req.params.id]);
         res.json({ success: true });
+    } catch (err) {
+        // FK RESTRICT: deleting a group that still has branches is blocked.
+        if (err.code === 'ER_ROW_IS_REFERENCED_2' || err.errno === 1451) {
+            return res.status(400).json({ error: 'This group still has branches. Move or delete its branches first.' });
+        }
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
+// =====================================================================
+// === ADD Section 2b (NEW) — GROUP ADMIN ENDPOINTS ====================
+//
+//   A Group Admin (role='Group Admin', institutionId = the group row)
+//   manages ONLY the branches whose parent_id = their group id. Every
+//   route below is scoped to that group server-side, so a group owner
+//   can never touch another group's data.
+// =====================================================================
+
+// Aggregate data for the group console.
+app.get('/api/group/data/:groupId', async (req, res) => {
+    const { groupId } = req.params;
+    try {
+        const [grpRows] = await db.execute('SELECT * FROM institutions WHERE id = ? AND type = "Group"', [groupId]);
+        if (grpRows.length === 0) return res.status(404).json({ error: 'Group not found.' });
+        const group = { ...grpRows[0], ...computePlanStatus(grpRows[0].usage_plan, grpRows[0].plan_start_date) };
+
+        const [branches] = await db.execute('SELECT * FROM institutions WHERE parent_id = ? ORDER BY created_at DESC', [groupId]);
+        // Branches inherit the group's plan — decorate every branch from the group.
+        const decorated = branches.map(b => ({
+            ...b, usage_plan: group.usage_plan, plan_start_date: group.plan_start_date,
+            ...computePlanStatus(group.usage_plan, group.plan_start_date)
+        }));
+
+        // Per-branch user counts (active, non-alumni) — matches the Users "All" tab.
+        const branchIds = branches.map(b => b.id);
+        let users = [];
+        if (branchIds.length) {
+            const ph = branchIds.map(() => '?').join(',');
+            const [u] = await db.execute(
+                `SELECT id, name, email, role, institutionId, status FROM users WHERE institutionId IN (${ph})`,
+                branchIds
+            );
+            users = u;
+        }
+        res.json({ group, branches: decorated, users });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Onboard a new branch under THIS group (parent + type forced server-side).
+app.post('/api/group/:groupId/branch', async (req, res) => {
+    const { groupId } = req.params;
+    const { name, type, logo, schoolKey, school_email, phone,
+            superAdminName, superAdminEmail, superAdminPassword } = req.body;
+    const branchType = ['School', 'College', 'Tuition'].includes(type) ? type : 'School';
+
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        const [grp] = await conn.execute('SELECT id FROM institutions WHERE id = ? AND type = "Group"', [groupId]);
+        if (grp.length === 0) { await conn.rollback(); return res.status(404).json({ error: 'Group not found.' }); }
+
+        // Plan columns are placeholders for branches — they always read the group's plan.
+        const [inst] = await conn.execute(
+            'INSERT INTO institutions (name, type, parent_id, logo, schoolKey, school_email, phone, usage_plan, plan_start_date) VALUES (?, ?, ?, ?, ?, ?, ?, "Full Time", CURDATE())',
+            [name, branchType, groupId, logo, schoolKey, school_email, phone]
+        );
+        const instId = inst.insertId;
+
+        await conn.execute(
+            'INSERT INTO users (name, email, password, role, institutionId) VALUES (?, ?, ?, "Super Admin", ?)',
+            [superAdminName, superAdminEmail, superAdminPassword, instId]
+        );
+        for (const roleName of SYSTEM_ROLES) {
+            await conn.execute('INSERT IGNORE INTO roles (role_name, institutionId) VALUES (?, ?)', [roleName, instId]);
+        }
+
+        await conn.commit();
+        res.json({ success: true, id: instId });
+    } catch (err) {
+        await conn.rollback();
+        if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
+            return res.status(400).json({ error: 'That login email is already in use.' });
+        }
+        res.status(500).json({ error: err.message });
+    } finally { conn.release(); }
+});
+
+// Edit a branch — scoped: only branches that belong to this group.
+app.put('/api/group/:groupId/branch/:id', async (req, res) => {
+    const { groupId, id } = req.params;
+    const { name, type, logo, school_email, phone,
+            superAdminName, superAdminEmail, superAdminPassword } = req.body;
+    const branchType = ['School', 'College', 'Tuition'].includes(type) ? type : 'School';
+
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        const [own] = await conn.execute('SELECT id FROM institutions WHERE id = ? AND parent_id = ?', [id, groupId]);
+        if (own.length === 0) { await conn.rollback(); return res.status(404).json({ error: 'Branch not found in this group.' }); }
+
+        await conn.execute(
+            'UPDATE institutions SET name=?, type=?, logo=?, school_email=?, phone=? WHERE id=?',
+            [name, branchType, logo, school_email, phone, id]
+        );
+        await conn.execute(
+            'UPDATE users SET name=?, email=?, password=? WHERE institutionId=? AND role="Super Admin"',
+            [superAdminName, superAdminEmail, superAdminPassword, id]
+        );
+        await conn.commit();
+        res.json({ success: true });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally { conn.release(); }
+});
+
+// Delete a branch — scoped to this group.
+app.delete('/api/group/:groupId/branch/:id', async (req, res) => {
+    const { groupId, id } = req.params;
+    try {
+        const [r] = await db.execute('DELETE FROM institutions WHERE id = ? AND parent_id = ?', [id, groupId]);
+        res.json({ success: true, deleted: r.affectedRows });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 
 // =====================================================================
-// === 3. SUPER ADMIN — School Aggregate Data ==========================
-//          Also returns the systemRoles array so the frontend can lock
-//          them without having to maintain its own list.
+// === REPLACE Section 3 — SUPER ADMIN School Aggregate Data ===========
+//
+//   Only change: a branch's `institution.plan*` fields are resolved from
+//   its GROUP, so anything showing plan/days-left on the branch side
+//   reflects the inherited plan instead of the placeholder.
 // =====================================================================
 app.get('/api/admin/data/:instId', async (req, res) => {
     const { instId } = req.params;
@@ -267,8 +473,7 @@ app.get('/api/admin/data/:instId', async (req, res) => {
             if (!teacherSubjects[r.teacher_id]) teacherSubjects[r.teacher_id] = [];
             teacherSubjects[r.teacher_id].push(r.subject_id);
         });
- 
-        // NEW — subject → [classIds] map
+
         const [scRows] = await db.execute(
             `SELECT sc.subject_id, sc.class_id FROM subject_classes sc
                JOIN subjects s ON s.id = sc.subject_id WHERE s.institutionId = ?`, [instId]);
@@ -277,8 +482,23 @@ app.get('/api/admin/data/:instId', async (req, res) => {
             if (!subjectClasses[r.subject_id]) subjectClasses[r.subject_id] = [];
             subjectClasses[r.subject_id].push(r.class_id);
         });
- 
-        const institution = inst[0] ? { ...inst[0], ...computePlanStatus(inst[0].usage_plan, inst[0].plan_start_date) } : null;
+
+        // Resolve the effective plan: a branch inherits its group's plan.
+        let institution = null;
+        if (inst[0]) {
+            let planRow = inst[0];
+            if (inst[0].parent_id) {
+                const [p] = await db.execute('SELECT usage_plan, plan_start_date FROM institutions WHERE id = ?', [inst[0].parent_id]);
+                if (p.length) planRow = { usage_plan: p[0].usage_plan, plan_start_date: p[0].plan_start_date };
+            }
+            institution = {
+                ...inst[0],
+                usage_plan: planRow.usage_plan,
+                plan_start_date: planRow.plan_start_date,
+                ...computePlanStatus(planRow.usage_plan, planRow.plan_start_date)
+            };
+        }
+
         res.json({
             users, classes, academicYears: years, roles, subjects,
             teacherSubjects, subjectClasses, modules: DEFAULT_MODULES, institution,

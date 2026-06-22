@@ -4,7 +4,7 @@ import {
   Building2, Plus, LogOut, Trash2, Edit3, Image as ImageIcon, Shield,
   Mail, Lock, User, Globe, Phone, Calendar, AlertTriangle, CheckCircle2,
   Infinity as InfinityIcon, ChevronDown, X, Loader2,
-  Users, Search, School, GraduationCap, Library, BookOpen
+  Users, Search, School, GraduationCap, BookOpen, Network, CornerDownRight
 } from 'lucide-react';
 import smartedzLogo from '../assets/smartedzlogo.png';
 
@@ -15,20 +15,25 @@ import smartedzLogo from '../assets/smartedzlogo.png';
 // =====================================================================
 const PLAN_OPTIONS = ['7 days', '30 days', '90 days', '180 days', '1 year', '3 years', 'Full Time'];
 
-// The four institution categories. School/College/University already
-// existed; "Tuition" is new and REQUIRES a one-time DB migration:
+// The four institution categories. "University" was removed (universities
+// have IT/Non-IT/Medical/Agriculture streams this ERP doesn't model);
+// "Group" is the umbrella for a brand with multiple branches (e.g. a
+// "Sri Chaithanya" group containing Hyderabad / Bangalore / Mumbai).
 //   ALTER TABLE institutions
-//     MODIFY COLUMN `type` ENUM('School','College','University','Tuition') NOT NULL;
-const CATEGORIES = ['School', 'College', 'University', 'Tuition'];
+//     MODIFY COLUMN `type` ENUM('School','College','Tuition','Group') NOT NULL;
+//   ALTER TABLE institutions ADD COLUMN parent_id INT NULL ...
+const CATEGORIES = ['School', 'College', 'Tuition', 'Group'];
 
-// Overview-bar styling — each category gets a visually distinct box so
-// the five tiles read as clearly different from one another.
+// Categories a BRANCH can be (a branch is never another group).
+const BRANCH_TYPES = ['School', 'College', 'Tuition'];
+
+// Overview-bar styling — each category gets a visually distinct box.
 const STAT_STYLES = {
-  total:      { label: 'Total Institutions', icon: Building2,     box: 'bg-primary/5 ring-primary/20',       chip: 'bg-primary/10 text-primary' },
-  School:     { label: 'Schools',            icon: School,        box: 'bg-emerald-50 ring-emerald-600/20',  chip: 'bg-emerald-100 text-emerald-700' },
-  College:    { label: 'Colleges',           icon: GraduationCap, box: 'bg-amber-50 ring-amber-600/20',      chip: 'bg-amber-100 text-amber-700' },
-  University: { label: 'Universities',       icon: Library,       box: 'bg-violet-50 ring-violet-600/20',    chip: 'bg-violet-100 text-violet-700' },
-  Tuition:    { label: 'Tuitions',           icon: BookOpen,      box: 'bg-sky-50 ring-sky-600/20',          chip: 'bg-sky-100 text-sky-700' }
+  total:   { label: 'Total Institutions', icon: Building2,     box: 'bg-primary/5 ring-primary/20',      chip: 'bg-primary/10 text-primary' },
+  School:  { label: 'Schools',            icon: School,        box: 'bg-emerald-50 ring-emerald-600/20', chip: 'bg-emerald-100 text-emerald-700' },
+  College: { label: 'Colleges',           icon: GraduationCap, box: 'bg-amber-50 ring-amber-600/20',     chip: 'bg-amber-100 text-amber-700' },
+  Tuition: { label: 'Tuitions',           icon: BookOpen,      box: 'bg-sky-50 ring-sky-600/20',         chip: 'bg-sky-100 text-sky-700' },
+  Group:   { label: 'Groups',             icon: Network,       box: 'bg-violet-50 ring-violet-600/20',   chip: 'bg-violet-100 text-violet-700' }
 };
 
 // Today's date as YYYY-MM-DD for <input type="date" />
@@ -105,7 +110,7 @@ export default function DeveloperDashboard() {
   const [planFilter, setPlanFilter]         = useState('all');
 
   const blank = {
-    name: '', type: 'School', logo: '', school_email: '', phone: '',
+    name: '', type: 'School', parent_id: '', logo: '', school_email: '', phone: '',
     usage_plan: 'Full Time', plan_start_date: todayISO(),
     superAdminName: '', superAdminEmail: '', superAdminPassword: ''
   };
@@ -123,10 +128,27 @@ export default function DeveloperDashboard() {
     return map;
   }, [usersList]);
 
+  // --- Groups available as a parent + id -> group name lookup ---------
+  const groups = useMemo(
+    () => (institutions || []).filter(i => i.type === 'Group'),
+    [institutions]
+  );
+  const nameById = useMemo(() => {
+    const m = {};
+    (institutions || []).forEach(i => { m[i.id] = i.name; });
+    return m;
+  }, [institutions]);
+  const branchCountByGroup = useMemo(() => {
+    const m = {};
+    (institutions || []).forEach(i => {
+      if (i.parent_id) m[i.parent_id] = (m[i.parent_id] || 0) + 1;
+    });
+    return m;
+  }, [institutions]);
+
   // --- Overview counts -----------------------------------------------
-  // total = School + College + University + Tuition (i.e. every tenant).
   const counts = useMemo(() => {
-    const c = { total: (institutions || []).length, School: 0, College: 0, University: 0, Tuition: 0 };
+    const c = { total: (institutions || []).length, School: 0, College: 0, Tuition: 0, Group: 0 };
     (institutions || []).forEach(i => {
       if (Object.prototype.hasOwnProperty.call(c, i.type)) c[i.type] += 1;
     });
@@ -156,13 +178,25 @@ export default function DeveloperDashboard() {
     }
   };
 
+  // Switching category: a Group can't have a parent, so clear it.
+  const handleTypeChange = (val) => {
+    setFormData(prev => ({
+      ...prev,
+      type: val,
+      parent_id: val === 'Group' ? '' : prev.parent_id
+    }));
+  };
+
   const openEditModal = (inst) => {
-    const admin = usersList.find(u => u.institutionId === inst.id && u.role === 'Super Admin');
+    const admin = usersList.find(
+      u => u.institutionId === inst.id && (u.role === 'Super Admin' || u.role === 'Group Admin')
+    );
     setIsEditMode(true);
     setSelectedId(inst.id);
     setFormData({
       name: inst.name,
       type: inst.type,
+      parent_id: inst.parent_id || '',
       logo: inst.logo || '',
       school_email: inst.school_email || '',
       phone: inst.phone || '',
@@ -190,12 +224,14 @@ export default function DeveloperDashboard() {
       ? `${API_URL}/api/developer/institution/${selectedId}`
       : `${API_URL}/api/developer/onboard`;
 
+    const isGroup = formData.type === 'Group';
     try {
       const res = await fetch(url, {
         method: isEditMode ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...formData,
+          parent_id: isGroup ? null : (formData.parent_id || null),
           schoolKey: isEditMode ? undefined : `SK-${Math.random().toString(36).substring(2, 8).toUpperCase()}`
         })
       });
@@ -203,7 +239,8 @@ export default function DeveloperDashboard() {
         refreshData();
         setIsModalOpen(false);
       } else {
-        alert('Failed to save institution.');
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || 'Failed to save institution.');
       }
     } catch (error) {
       alert('Network error while saving.');
@@ -211,6 +248,11 @@ export default function DeveloperDashboard() {
       setIsSaving(false);
     }
   };
+
+  const isGroupType = formData.type === 'Group';
+  // A branch = a non-group with a parent selected. Branches inherit the
+  // group's plan, so we hide plan fields for them.
+  const isBranch = !isGroupType && !!formData.parent_id;
 
   return (
     <div className="min-h-screen bg-zinc-50 flex flex-col font-sans">
@@ -237,7 +279,7 @@ export default function DeveloperDashboard() {
             <p className="text-sm text-zinc-500 mt-1">Control and monitor your system tenants.</p>
           </div>
           <button onClick={openAddModal} className="h-9 px-4 bg-primary hover:bg-primary/90 text-white shadow-sm rounded-md text-xs font-semibold flex items-center transition-colors w-full sm:w-auto justify-center shrink-0">
-            <Plus className="size-3.5 mr-1.5" /> Onboard School
+            <Plus className="size-3.5 mr-1.5" /> Onboard Client
           </button>
         </div>
 
@@ -313,21 +355,30 @@ export default function DeveloperDashboard() {
             const badge = planBadgeStyle(inst);
             const BadgeIcon = badge.icon;
             const isFullTime = inst.usage_plan === 'Full Time' || inst.daysLeft === null;
+            const isGroupRow = inst.type === 'Group';
             const userCount = userCountByInst[inst.id] || 0;
+            const branchCount = branchCountByGroup[inst.id] || 0;
+            const parentName = inst.parent_id ? nameById[inst.parent_id] : null;
             return (
               <div key={inst.id} className="group bg-white rounded-lg ring-1 ring-black/5 shadow-sm hover:ring-black/10 transition-shadow overflow-hidden flex flex-col">
                 <div className="flex flex-row justify-between items-center bg-zinc-50/50 p-4 border-b border-zinc-100">
                   <div className="flex items-center gap-2 min-w-0">
                     <span className="text-[11px] font-bold text-zinc-400 tabular-nums shrink-0">#{idx + 1}</span>
-                    <span className="bg-zinc-100 text-zinc-700 ring-1 ring-inset ring-black/5 px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider truncate">
-                      {inst.type}
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider truncate ring-1 ring-inset
+                      ${isGroupRow ? 'bg-violet-100 text-violet-700 ring-violet-600/20' : 'bg-zinc-100 text-zinc-700 ring-black/5'}`}>
+                      {isGroupRow ? 'Group' : inst.type}
                     </span>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    {/* Total users in this tenant (matches the Users screen "All" tab) */}
-                    <span title="Total users" className="inline-flex items-center gap-1 bg-white text-zinc-600 ring-1 ring-inset ring-black/5 px-2 py-0.5 rounded text-[10px] font-semibold tabular-nums shadow-sm">
-                      <Users className="size-3" /> {userCount}
-                    </span>
+                    {isGroupRow ? (
+                      <span title="Branches in this group" className="inline-flex items-center gap-1 bg-white text-violet-700 ring-1 ring-inset ring-violet-600/20 px-2 py-0.5 rounded text-[10px] font-semibold tabular-nums shadow-sm">
+                        <Network className="size-3" /> {branchCount} {branchCount === 1 ? 'branch' : 'branches'}
+                      </span>
+                    ) : (
+                      <span title="Total users" className="inline-flex items-center gap-1 bg-white text-zinc-600 ring-1 ring-inset ring-black/5 px-2 py-0.5 rounded text-[10px] font-semibold tabular-nums shadow-sm">
+                        <Users className="size-3" /> {userCount}
+                      </span>
+                    )}
                     <div className="flex items-center gap-1.5 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
                       <button onClick={() => openEditModal(inst)} title="Edit"
                         className="size-7 bg-white hover:bg-zinc-50 text-zinc-500 hover:text-primary rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5">
@@ -335,8 +386,15 @@ export default function DeveloperDashboard() {
                       </button>
                       <button
                         onClick={() => {
-                          if (window.confirm('Are you sure you want to delete this institution?'))
-                            fetch(`${API_URL}/api/developer/institution/${inst.id}`, { method: 'DELETE' }).then(refreshData);
+                          const msg = isGroupRow
+                            ? 'Delete this group? (You must move or delete its branches first.)'
+                            : 'Are you sure you want to delete this institution?';
+                          if (window.confirm(msg))
+                            fetch(`${API_URL}/api/developer/institution/${inst.id}`, { method: 'DELETE' })
+                              .then(async r => {
+                                if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || 'Delete failed.'); }
+                                refreshData();
+                              });
                         }}
                         title="Delete"
                         className="size-7 bg-white hover:bg-red-50 text-zinc-500 hover:text-red-600 rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5">
@@ -350,12 +408,21 @@ export default function DeveloperDashboard() {
                   <div className="size-20 bg-zinc-50 ring-1 ring-inset ring-black/5 rounded-md flex items-center justify-center mb-4 overflow-hidden shadow-sm">
                     {inst.logo ? (
                       <img src={inst.logo} className="w-full h-full object-contain p-2" alt="logo" />
+                    ) : isGroupRow ? (
+                      <Network className="size-8 text-violet-300" />
                     ) : (
                       <Building2 className="size-8 text-zinc-300" />
                     )}
                   </div>
 
                   <h3 className="font-semibold text-lg text-zinc-900 tracking-tight text-center line-clamp-1 w-full">{inst.name}</h3>
+
+                  {parentName && (
+                    <div className="mt-1 inline-flex items-center gap-1 text-[11px] font-medium text-violet-700">
+                      <CornerDownRight className="size-3" /> Part of {parentName}
+                    </div>
+                  )}
+
                   <div className="mt-1.5">
                     <span className="text-[10px] font-medium text-zinc-500 bg-zinc-100 px-2 py-0.5 rounded">
                       Key: <span className="font-semibold">{inst.schoolKey}</span>
@@ -367,7 +434,7 @@ export default function DeveloperDashboard() {
                       <BadgeIcon className="size-5 shrink-0" />
                       <div className="flex flex-col min-w-0 flex-1">
                         <span className="text-[10px] font-semibold uppercase tracking-wider opacity-80 mb-0.5">
-                          {planLabel(inst.usage_plan || 'Full Time')} Plan
+                          {planLabel(inst.usage_plan || 'Full Time')} Plan{parentName ? ' · inherited' : ''}
                         </span>
                         <span className="text-sm font-semibold leading-tight truncate">{badge.headline}</span>
                         {!isFullTime && (
@@ -451,7 +518,7 @@ export default function DeveloperDashboard() {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Official Name <span className="text-red-500">*</span></label>
-                      <input required placeholder="Lincoln High" value={formData.name}
+                      <input required placeholder={isGroupType ? 'Sri Chaithanya' : 'Lincoln High'} value={formData.name}
                         onChange={e => setFormData({ ...formData, name: e.target.value })}
                         disabled={isSaving}
                         className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
@@ -460,22 +527,45 @@ export default function DeveloperDashboard() {
                       <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Category</label>
                       <div className="relative">
                         <select value={formData.type}
-                          onChange={e => setFormData({ ...formData, type: e.target.value })}
+                          onChange={e => handleTypeChange(e.target.value)}
                           disabled={isSaving}
                           className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 appearance-none shadow-sm transition-colors cursor-pointer">
                           <option value="School">School</option>
                           <option value="College">College</option>
-                          <option value="University">University</option>
                           <option value="Tuition">Tuition</option>
+                          <option value="Group">Group of Institutes</option>
                         </select>
                         <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                       </div>
                     </div>
                   </div>
 
+                  {/* Belongs-to-group (only for non-group categories) */}
+                  {!isGroupType && (
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Belongs to Group</label>
+                      <div className="relative">
+                        <Network className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
+                        <select value={formData.parent_id}
+                          onChange={e => setFormData({ ...formData, parent_id: e.target.value })}
+                          disabled={isSaving}
+                          className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 appearance-none shadow-sm transition-colors cursor-pointer">
+                          <option value="">Standalone (no group)</option>
+                          {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                        </select>
+                        <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      </div>
+                      {isBranch && (
+                        <p className="text-[11px] text-violet-700 font-medium">
+                          This branch inherits its plan from {nameById[formData.parent_id] || 'the group'}.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-1.5">
-                      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">School Email <span className="text-red-500">*</span></label>
+                      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">{isGroupType ? 'Group' : 'School'} Email <span className="text-red-500">*</span></label>
                       <div className="relative">
                         <Mail className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
                         <input required type="email" placeholder="info@school.com"
@@ -499,51 +589,57 @@ export default function DeveloperDashboard() {
                   </div>
                 </div>
 
-                {/* Subscription block */}
-                <div className="space-y-4">
-                  <div className="flex items-center gap-1.5 text-zinc-500 mb-3 border-b border-zinc-100 pb-2 mt-6">
-                    <Calendar className="size-4" />
-                    <span className="text-[11px] font-semibold uppercase tracking-wider">Subscription Plan</span>
-                  </div>
+                {/* Subscription block — group or standalone only (branches inherit) */}
+                {!isBranch && (
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-1.5 text-zinc-500 mb-3 border-b border-zinc-100 pb-2 mt-6">
+                      <Calendar className="size-4" />
+                      <span className="text-[11px] font-semibold uppercase tracking-wider">Subscription Plan</span>
+                    </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Plan</label>
-                      <div className="relative">
-                        <select
-                          value={formData.usage_plan}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Plan</label>
+                        <div className="relative">
+                          <select
+                            value={formData.usage_plan}
+                            disabled={isSaving}
+                            onChange={e => setFormData({ ...formData, usage_plan: e.target.value })}
+                            className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 appearance-none shadow-sm transition-colors cursor-pointer">
+                            {PLAN_OPTIONS.map(opt => (
+                              <option key={opt} value={opt}>{planLabel(opt)}</option>
+                            ))}
+                          </select>
+                          <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        </div>
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Start Date</label>
+                        <input
+                          type="date"
                           disabled={isSaving}
-                          onChange={e => setFormData({ ...formData, usage_plan: e.target.value })}
-                          className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 appearance-none shadow-sm transition-colors cursor-pointer">
-                          {PLAN_OPTIONS.map(opt => (
-                            <option key={opt} value={opt}>{planLabel(opt)}</option>
-                          ))}
-                        </select>
-                        <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                          value={formData.plan_start_date}
+                          onChange={e => setFormData({ ...formData, plan_start_date: e.target.value })}
+                          className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
                       </div>
                     </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Start Date</label>
-                      <input
-                        type="date"
-                        disabled={isSaving}
-                        value={formData.plan_start_date}
-                        onChange={e => setFormData({ ...formData, plan_start_date: e.target.value })}
-                        className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
-                    </div>
+                    <p className="text-[11px] text-zinc-500 font-medium">
+                      {isGroupType
+                        ? 'Tip: A group\u2019s plan covers all its branches. "Life Time" never expires.'
+                        : 'Tip: "Life Time" never expires. Other plans count from the start date you pick.'}
+                    </p>
                   </div>
-                  <p className="text-[11px] text-zinc-500 font-medium">
-                    Tip: "Life Time" never expires. Other plans count from the start date you pick.
-                  </p>
-                </div>
+                )}
 
-                {/* Super admin */}
+                {/* Admin access */}
                 <div className="bg-zinc-50 p-5 rounded-md ring-1 ring-inset ring-black/5 space-y-4 relative overflow-hidden mt-6">
                   <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none"><Shield className="size-24" /></div>
 
                   <div className="flex items-center gap-1.5 text-primary mb-2">
                     <Shield className="size-4" />
-                    <span className="text-[11px] font-semibold uppercase tracking-wider">Master Admin Access</span>
+                    <span className="text-[11px] font-semibold uppercase tracking-wider">
+                      {isGroupType ? 'Group Owner Access' : 'Master Admin Access'}
+                    </span>
                   </div>
 
                   <div className="space-y-4 relative z-10">
