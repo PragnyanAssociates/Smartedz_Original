@@ -410,6 +410,14 @@ export default function GroupDashboard() {
                     <span className="text-[11px] font-semibold uppercase tracking-wider">Branch Information</span>
                   </div>
 
+                  {/* Institute name is fixed — the branch always belongs to this group. */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Institute</label>
+                    <input value={group?.name || ''} disabled readOnly
+                      className="h-9 w-full bg-zinc-100 border border-zinc-200 rounded-md px-3 text-sm text-zinc-600 font-medium cursor-not-allowed outline-none" />
+                    <p className="text-[10px] text-zinc-400 font-medium">Every branch belongs to this institute. You only name the branch below.</p>
+                  </div>
+
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Branch Name <span className="text-red-500">*</span></label>

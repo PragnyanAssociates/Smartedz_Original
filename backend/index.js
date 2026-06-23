@@ -473,7 +473,7 @@ app.get('/api/admin/data/:instId', async (req, res) => {
             if (!teacherSubjects[r.teacher_id]) teacherSubjects[r.teacher_id] = [];
             teacherSubjects[r.teacher_id].push(r.subject_id);
         });
-
+ 
         const [scRows] = await db.execute(
             `SELECT sc.subject_id, sc.class_id FROM subject_classes sc
                JOIN subjects s ON s.id = sc.subject_id WHERE s.institutionId = ?`, [instId]);
@@ -482,23 +482,34 @@ app.get('/api/admin/data/:instId', async (req, res) => {
             if (!subjectClasses[r.subject_id]) subjectClasses[r.subject_id] = [];
             subjectClasses[r.subject_id].push(r.class_id);
         });
-
-        // Resolve the effective plan: a branch inherits its group's plan.
+ 
+        // Resolve effective plan + parent (group) identity for branches.
         let institution = null;
         if (inst[0]) {
             let planRow = inst[0];
+            let parentName = null;
+            let parentLogo = null;
             if (inst[0].parent_id) {
-                const [p] = await db.execute('SELECT usage_plan, plan_start_date FROM institutions WHERE id = ?', [inst[0].parent_id]);
-                if (p.length) planRow = { usage_plan: p[0].usage_plan, plan_start_date: p[0].plan_start_date };
+                const [p] = await db.execute(
+                    'SELECT name, logo, usage_plan, plan_start_date FROM institutions WHERE id = ?',
+                    [inst[0].parent_id]
+                );
+                if (p.length) {
+                    planRow = { usage_plan: p[0].usage_plan, plan_start_date: p[0].plan_start_date };
+                    parentName = p[0].name;
+                    parentLogo = p[0].logo;
+                }
             }
             institution = {
                 ...inst[0],
+                parent_name: parentName,
+                parent_logo: parentLogo,
                 usage_plan: planRow.usage_plan,
                 plan_start_date: planRow.plan_start_date,
                 ...computePlanStatus(planRow.usage_plan, planRow.plan_start_date)
             };
         }
-
+ 
         res.json({
             users, classes, academicYears: years, roles, subjects,
             teacherSubjects, subjectClasses, modules: DEFAULT_MODULES, institution,
