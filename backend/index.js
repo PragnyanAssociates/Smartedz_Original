@@ -348,21 +348,21 @@ app.get('/api/group/data/:groupId', async (req, res) => {
         const [grpRows] = await db.execute('SELECT * FROM institutions WHERE id = ? AND type = "Group"', [groupId]);
         if (grpRows.length === 0) return res.status(404).json({ error: 'Group not found.' });
         const group = { ...grpRows[0], ...computePlanStatus(grpRows[0].usage_plan, grpRows[0].plan_start_date) };
-
+ 
         const [branches] = await db.execute('SELECT * FROM institutions WHERE parent_id = ? ORDER BY created_at DESC', [groupId]);
         // Branches inherit the group's plan — decorate every branch from the group.
         const decorated = branches.map(b => ({
             ...b, usage_plan: group.usage_plan, plan_start_date: group.plan_start_date,
             ...computePlanStatus(group.usage_plan, group.plan_start_date)
         }));
-
-        // Per-branch user counts (active, non-alumni) — matches the Users "All" tab.
+ 
+        // Branch users (includes password so the group owner can view/edit the branch admin login).
         const branchIds = branches.map(b => b.id);
         let users = [];
         if (branchIds.length) {
             const ph = branchIds.map(() => '?').join(',');
             const [u] = await db.execute(
-                `SELECT id, name, email, role, institutionId, status FROM users WHERE institutionId IN (${ph})`,
+                `SELECT id, name, email, role, institutionId, status, password FROM users WHERE institutionId IN (${ph})`,
                 branchIds
             );
             users = u;

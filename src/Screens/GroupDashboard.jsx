@@ -5,7 +5,7 @@ import {
   Building2, Plus, LogOut, Trash2, Edit3, Image as ImageIcon, Shield,
   Mail, Lock, User, Globe, Phone, Calendar, AlertTriangle, CheckCircle2,
   Infinity as InfinityIcon, ChevronDown, X, Loader2,
-  Users, Search, School, GraduationCap, BookOpen, Network
+  Users, Search, School, GraduationCap, BookOpen, Network, ArrowLeft, KeyRound, Eye, EyeOff
 } from 'lucide-react';
 
 // A group owner can only ever create School / College / Tuition branches.
@@ -20,6 +20,8 @@ const STAT_STYLES = {
 };
 
 const planLabel = (p) => (p === 'Full Time' ? 'Life Time' : p);
+
+const fmtDMY = (d) => (d ? new Date(d).toLocaleDateString('en-GB') : '\u2014');
 
 const planBadgeStyle = (g) => {
   if (!g) return { wrap: 'bg-zinc-50 text-zinc-500 ring-1 ring-inset ring-black/5', icon: InfinityIcon, headline: '—' };
@@ -52,9 +54,13 @@ export default function GroupDashboard() {
   const [isEditMode, setIsEditMode]   = useState(false);
   const [selectedId, setSelectedId]   = useState(null);
   const [isSaving, setIsSaving]       = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const [search, setSearch]                 = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
+
+  // 'list' = branch grid, 'detail' = one branch's full details
+  const [view, setView] = useState({ mode: 'list' });
 
   const blank = {
     name: '', type: 'School', logo: '', school_email: '', phone: '',
@@ -129,6 +135,7 @@ export default function GroupDashboard() {
   const openAddModal = () => {
     setIsEditMode(false);
     setFormData(blank);
+    setShowPassword(false);
     setIsModalOpen(true);
   };
 
@@ -146,6 +153,7 @@ export default function GroupDashboard() {
       superAdminEmail: admin?.email || '',
       superAdminPassword: admin?.password || ''
     });
+    setShowPassword(false);
     setIsModalOpen(true);
   };
 
@@ -190,6 +198,74 @@ export default function GroupDashboard() {
   const badge = planBadgeStyle(group);
   const BadgeIcon = badge.icon;
 
+  // Detail view for a single branch (opened by clicking a card).
+  const renderDetail = () => {
+    const b = branches.find(x => x.id === view.id);
+    if (!b) return null;
+    const admin = users.find(u => u.institutionId === b.id && u.role === 'Super Admin');
+    const userCount = userCountByBranch[b.id] || 0;
+    const bBadge = planBadgeStyle(b);
+    const BBadgeIcon = bBadge.icon;
+    return (
+      <div className="max-w-3xl mx-auto w-full">
+        <button onClick={() => setView({ mode: 'list' })} className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-primary mb-4 transition-colors">
+          <ArrowLeft className="size-3.5" /> Back to branches
+        </button>
+
+        <div className="bg-white rounded-xl ring-1 ring-black/5 shadow-sm overflow-hidden">
+          <div className="p-6 sm:p-8 flex flex-col sm:flex-row gap-6 items-center sm:items-start border-b border-zinc-100">
+            <div className="size-24 bg-zinc-50 ring-1 ring-inset ring-black/5 rounded-lg flex items-center justify-center overflow-hidden shadow-sm shrink-0">
+              {b.logo ? <img src={b.logo} className="w-full h-full object-contain p-2" alt="logo" /> : <Building2 className="size-10 text-zinc-300" />}
+            </div>
+            <div className="flex-1 min-w-0 text-center sm:text-left">
+              <div className="flex items-center gap-2 justify-center sm:justify-start mb-1.5 flex-wrap">
+                <span className="bg-zinc-100 text-zinc-700 ring-1 ring-inset ring-black/5 px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider">{b.type}</span>
+                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-violet-700"><Network className="size-3" /> Part of {group?.name}</span>
+              </div>
+              <h2 className="text-2xl font-semibold text-zinc-900 tracking-tight">{b.name}</h2>
+              <div className="mt-2 flex flex-wrap gap-2 justify-center sm:justify-start">
+                <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 bg-zinc-100 px-2 py-1 rounded"><KeyRound className="size-3" /> {b.schoolKey}</span>
+                <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 bg-zinc-100 px-2 py-1 rounded"><Users className="size-3" /> {userCount} {userCount === 1 ? 'user' : 'users'}</span>
+              </div>
+            </div>
+            <button onClick={() => openEditModal(b)} className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-colors shrink-0">
+              <Edit3 className="size-3.5" /> Edit
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-px bg-zinc-100">
+            <div className="bg-white p-5">
+              <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-3">Contact</p>
+              <div className="space-y-2.5">
+                <div className="flex items-center gap-2.5 text-sm text-zinc-700"><Mail className="size-4 text-primary shrink-0" /> <span className="truncate">{b.school_email || '\u2014'}</span></div>
+                <div className="flex items-center gap-2.5 text-sm text-zinc-700"><Phone className="size-4 text-primary shrink-0" /> <span className="tabular-nums">{b.phone || '\u2014'}</span></div>
+              </div>
+            </div>
+            <div className="bg-white p-5">
+              <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-3">Branch Admin</p>
+              <div className="space-y-2.5">
+                <div className="flex items-center gap-2.5 text-sm text-zinc-700"><User className="size-4 text-primary shrink-0" /> <span className="truncate">{admin?.name || '\u2014'}</span></div>
+                <div className="flex items-center gap-2.5 text-sm text-zinc-700"><Mail className="size-4 text-primary shrink-0" /> <span className="truncate">{admin?.email || '\u2014'}</span></div>
+              </div>
+            </div>
+          </div>
+
+          <div className="p-5 border-t border-zinc-100">
+            <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-3">Subscription</p>
+            <div className={`rounded-md px-4 py-3 flex items-center gap-3 ${bBadge.wrap}`}>
+              <BBadgeIcon className="size-5 shrink-0" />
+              <div className="flex flex-col leading-tight">
+                <span className="text-[10px] font-semibold uppercase tracking-wider opacity-80">{planLabel(b.usage_plan || 'Full Time')} Plan &middot; inherited from {group?.name}</span>
+                <span className="text-sm font-semibold">{bBadge.headline}</span>
+                <span className="text-[10px] font-medium opacity-80 mt-0.5 tabular-nums">Since {fmtDMY(b.plan_start_date)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="flex flex-col h-[100dvh] bg-zinc-50 overflow-hidden w-full font-sans">
       {/* Same header as the school dashboard (shows the group's name / logo / contact) */}
@@ -204,6 +280,8 @@ export default function GroupDashboard() {
             </div>
           )}
 
+          {view.mode === 'detail' ? renderDetail() : (
+          <>
           {/* Toolbar */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
             <div>
@@ -221,7 +299,7 @@ export default function GroupDashboard() {
               <button onClick={openAddModal} className="h-9 px-4 bg-primary hover:bg-primary/90 text-white shadow-sm rounded-md text-xs font-semibold flex items-center transition-colors justify-center shrink-0">
                 <Plus className="size-3.5 mr-1.5" /> Add Branch
               </button>
-              <button onClick={logout} className="h-9 px-4 rounded-md hover:bg-zinc-50 border border-zinc-200 text-zinc-600 hover:text-zinc-900 flex items-center transition-colors text-xs font-semibold shadow-sm shrink-0">
+              <button onClick={() => { if (window.confirm('Are you sure you want to sign out?')) logout(); }} className="h-9 px-4 rounded-md hover:bg-zinc-50 border border-zinc-200 text-zinc-600 hover:text-zinc-900 flex items-center transition-colors text-xs font-semibold shadow-sm shrink-0">
                 <LogOut className="size-3.5 mr-2" /> Sign Out
               </button>
             </div>
@@ -282,7 +360,8 @@ export default function GroupDashboard() {
             {filtered.map((b, idx) => {
               const userCount = userCountByBranch[b.id] || 0;
               return (
-                <div key={b.id} className="group bg-white rounded-lg ring-1 ring-black/5 shadow-sm hover:ring-black/10 transition-shadow overflow-hidden flex flex-col">
+                <div key={b.id} onClick={() => setView({ mode: 'detail', id: b.id })}
+                  className="group bg-white rounded-lg ring-1 ring-black/5 shadow-sm hover:ring-primary/30 hover:shadow-md transition-all overflow-hidden flex flex-col cursor-pointer">
                   <div className="flex flex-row justify-between items-center bg-zinc-50/50 p-4 border-b border-zinc-100">
                     <div className="flex items-center gap-2 min-w-0">
                       <span className="text-[11px] font-bold text-zinc-400 tabular-nums shrink-0">#{idx + 1}</span>
@@ -295,11 +374,11 @@ export default function GroupDashboard() {
                         <Users className="size-3" /> {userCount}
                       </span>
                       <div className="flex items-center gap-1.5 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                        <button onClick={() => openEditModal(b)} title="Edit"
+                        <button onClick={(e) => { e.stopPropagation(); openEditModal(b); }} title="Edit"
                           className="size-7 bg-white hover:bg-zinc-50 text-zinc-500 hover:text-primary rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5">
                           <Edit3 className="size-3.5" />
                         </button>
-                        <button onClick={() => handleDelete(b)} title="Delete"
+                        <button onClick={(e) => { e.stopPropagation(); handleDelete(b); }} title="Delete"
                           className="size-7 bg-white hover:bg-red-50 text-zinc-500 hover:text-red-600 rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5">
                           <Trash2 className="size-3.5" />
                         </button>
@@ -370,6 +449,8 @@ export default function GroupDashboard() {
               </div>
             )}
           </div>
+          </>
+          )}
         </div>
       </main>
 
@@ -496,11 +577,16 @@ export default function GroupDashboard() {
                       </div>
                       <div className="relative">
                         <Lock className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
-                        <input required placeholder="Login Password"
+                        <input required type={showPassword ? 'text' : 'password'} placeholder="Login Password"
                           disabled={isSaving}
-                          className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors"
+                          className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-10 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors"
                           value={formData.superAdminPassword}
                           onChange={e => setFormData({ ...formData, superAdminPassword: e.target.value })} />
+                        <button type="button" onClick={() => setShowPassword(v => !v)} tabIndex={-1}
+                          title={showPassword ? 'Hide password' : 'Show password'}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 transition-colors p-0.5">
+                          {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                        </button>
                       </div>
                     </div>
                   </div>

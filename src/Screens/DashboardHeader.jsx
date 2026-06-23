@@ -43,11 +43,10 @@ export default function DashboardHeader({ onMenuClick }) {
   // just show their own name with no branch line.
   const isBranch = !!inst?.parent_id;
   const groupName = inst?.parent_name || parent?.name || '';
-  const groupLogo = inst?.parent_logo || parent?.logo || '';
 
   const instituteName = isBranch ? (groupName || inst?.name || '') : (inst?.name || '');
   const branchName = isBranch ? (inst?.name || '') : '';
-  const logoSrc = (isBranch ? (groupLogo || inst?.logo) : inst?.logo) || '';
+  const logoSrc = inst?.logo || ''; // each entity shows its OWN logo only
   const initial = (instituteName || '?').charAt(0).toUpperCase();
 
   return (
@@ -67,7 +66,7 @@ export default function DashboardHeader({ onMenuClick }) {
             <img
               src={logoSrc}
               alt={instituteName || 'Logo'}
-              className="h-[78px] w-auto object-contain shrink-0"
+              className="h-[76px] w-auto object-contain shrink-0"
             />
           ) : (
             <div className="size-14 bg-primary/10 text-primary rounded flex items-center justify-center border border-primary/20 shrink-0 font-semibold text-lg">
