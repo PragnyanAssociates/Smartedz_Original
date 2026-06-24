@@ -4,7 +4,7 @@ import {
   Building2, Plus, LogOut, Trash2, Edit3, Image as ImageIcon, Shield,
   Mail, Lock, User, Globe, Phone, Calendar, AlertTriangle, CheckCircle2,
   Infinity as InfinityIcon, ChevronDown, X, Loader2, ArrowLeft, KeyRound,
-  Users, Search, School, GraduationCap, BookOpen, Network, CornerDownRight
+  Users, Search, School, GraduationCap, BookOpen, Network, CornerDownRight, Eye, EyeOff
 } from 'lucide-react';
 import smartedzLogo from '../assets/smartedzlogo.png';
 
@@ -63,6 +63,7 @@ export default function DeveloperDashboard() {
   // When adding a branch from inside a group, this holds {id, name}; the
   // modal then locks the parent and hides plan/group options.
   const [branchParent, setBranchParent] = useState(null);
+  const [showPassword, setShowPassword] = useState(false);
 
   const [search, setSearch]                 = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
@@ -148,6 +149,7 @@ export default function DeveloperDashboard() {
     setIsEditMode(false);
     setBranchParent(null);
     setFormData(blank);
+    setShowPassword(false);
     setIsModalOpen(true);
   };
 
@@ -156,6 +158,7 @@ export default function DeveloperDashboard() {
     setIsEditMode(false);
     setBranchParent({ id: group.id, name: group.name });
     setFormData({ ...blank, type: 'School', parent_id: group.id });
+    setShowPassword(false);
     setIsModalOpen(true);
   };
 
@@ -179,6 +182,7 @@ export default function DeveloperDashboard() {
       superAdminEmail: admin?.email || '',
       superAdminPassword: admin?.password || ''
     });
+    setShowPassword(false);
     setIsModalOpen(true);
   };
 
@@ -223,8 +227,15 @@ export default function DeveloperDashboard() {
 
   // ---- Modal flags --------------------------------------------------
   const branchAddMode = !isEditMode && !!branchParent;
-  const isGroupType = !branchAddMode && formData.type === 'Group';
-  const isBranch = branchAddMode || (!isGroupType && !!formData.parent_id);
+  // Editing a row that already has a parent (and isn't a group) = a branch.
+  const isExistingBranch = isEditMode && !!formData.parent_id && formData.type !== 'Group';
+  // "branchMode" = show the Institute (fixed) field + "Branch Name" label and
+  // hide the group dropdown. True for BOTH adding and editing a branch.
+  const branchMode = branchAddMode || isExistingBranch;
+  const isGroupType = !branchMode && formData.type === 'Group';
+  const isBranch = branchMode || (!isGroupType && !!formData.parent_id);
+  // The institute (group) name shown as the fixed field in branch mode.
+  const instituteName = branchAddMode ? (branchParent?.name || '') : (instById[formData.parent_id]?.name || '');
 
   // ===================================================================
   //  Reusable institution card (used in list + group views)
@@ -237,6 +248,8 @@ export default function DeveloperDashboard() {
     const userCount = userCountByInst[inst.id] || 0;
     const branchCount = branchCountByGroup[inst.id] || 0;
     const parentName = inst.parent_id ? instById[inst.parent_id]?.name : null;
+    // Each institution shows its OWN logo only (placeholder icon if none).
+    const cardLogo = inst.logo;
     return (
       <div
         onClick={() => drillInto(inst)}
@@ -274,8 +287,8 @@ export default function DeveloperDashboard() {
 
         <div className="p-6 flex flex-col items-center flex-1">
           <div className="size-20 bg-zinc-50 ring-1 ring-inset ring-black/5 rounded-md flex items-center justify-center mb-4 overflow-hidden shadow-sm">
-            {inst.logo ? (
-              <img src={inst.logo} className="w-full h-full object-contain p-2" alt="logo" />
+            {cardLogo ? (
+              <img src={cardLogo} className="w-full h-full object-contain p-2" alt="logo" />
             ) : isGroupRow ? (
               <Network className="size-8 text-violet-300" />
             ) : (
@@ -336,6 +349,7 @@ export default function DeveloperDashboard() {
     const admin = (usersList || []).find(u => u.institutionId === inst.id && u.role === 'Super Admin');
     const userCount = userCountByInst[inst.id] || 0;
     const parentName = inst.parent_id ? instById[inst.parent_id]?.name : null;
+    const detailLogo = inst.logo; // own logo only
     const isFullTime = inst.usage_plan === 'Full Time' || inst.daysLeft === null;
     const back = () => setView(parentName ? { mode: 'group', id: inst.parent_id } : { mode: 'list' });
     return (
@@ -347,7 +361,7 @@ export default function DeveloperDashboard() {
         <div className="bg-white rounded-xl ring-1 ring-black/5 shadow-sm overflow-hidden">
           <div className="p-6 sm:p-8 flex flex-col sm:flex-row gap-6 items-center sm:items-start border-b border-zinc-100">
             <div className="size-24 bg-zinc-50 ring-1 ring-inset ring-black/5 rounded-lg flex items-center justify-center overflow-hidden shadow-sm shrink-0">
-              {inst.logo ? <img src={inst.logo} className="w-full h-full object-contain p-2" alt="logo" /> : <Building2 className="size-10 text-zinc-300" />}
+              {detailLogo ? <img src={detailLogo} className="w-full h-full object-contain p-2" alt="logo" /> : <Building2 className="size-10 text-zinc-300" />}
             </div>
             <div className="flex-1 min-w-0 text-center sm:text-left">
               <div className="flex items-center gap-2 justify-center sm:justify-start mb-1.5">
@@ -566,7 +580,7 @@ export default function DeveloperDashboard() {
           <div className="h-6 w-[1px] bg-zinc-200"></div>
           <span className="text-base sm:text-lg font-semibold text-zinc-900 tracking-tight">Admin Board</span>
         </div>
-        <button onClick={logout} className="h-9 px-4 rounded-md hover:bg-zinc-50 border border-zinc-200 text-zinc-600 hover:text-zinc-900 flex items-center transition-colors text-xs font-semibold shadow-sm">
+        <button onClick={() => { if (window.confirm('Are you sure you want to sign out?')) logout(); }} className="h-9 px-4 rounded-md hover:bg-zinc-50 border border-zinc-200 text-zinc-600 hover:text-zinc-900 flex items-center transition-colors text-xs font-semibold shadow-sm">
           <LogOut className="size-3.5 mr-2" /> Sign Out
         </button>
       </header>
@@ -584,7 +598,7 @@ export default function DeveloperDashboard() {
 
             <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 rounded-t-lg shrink-0">
               <h2 className="font-semibold text-lg text-zinc-900 tracking-tight">
-                {isEditMode ? 'Update Institution Profile' : branchAddMode ? `Add Branch to ${branchParent.name}` : 'Onboard New Client'}
+                {isEditMode ? (isExistingBranch ? `Update Branch · ${instituteName}` : 'Update Institution Profile') : branchAddMode ? `Add Branch to ${branchParent.name}` : 'Onboard New Client'}
               </h2>
               <button onClick={closeModal} className="text-zinc-400 hover:text-zinc-700 transition-colors p-1.5 hover:bg-zinc-100 rounded-md"><X className="size-4" /></button>
             </div>
@@ -609,13 +623,22 @@ export default function DeveloperDashboard() {
                 <div className="space-y-4">
                   <div className="flex items-center gap-1.5 text-zinc-500 mb-3 border-b border-zinc-100 pb-2">
                     <Globe className="size-4" />
-                    <span className="text-[11px] font-semibold uppercase tracking-wider">{branchAddMode ? 'Branch Information' : 'General Information'}</span>
+                    <span className="text-[11px] font-semibold uppercase tracking-wider">{branchMode ? 'Branch Information' : 'General Information'}</span>
                   </div>
+
+                  {branchMode && (
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Institute</label>
+                      <input value={instituteName} disabled readOnly
+                        className="h-9 w-full bg-zinc-100 border border-zinc-200 rounded-md px-3 text-sm text-zinc-600 font-medium cursor-not-allowed outline-none" />
+                      <p className="text-[10px] text-zinc-400 font-medium">Fixed — you only name the branch below.</p>
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-1.5">
-                      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">{branchAddMode ? 'Branch Name' : 'Official Name'} <span className="text-red-500">*</span></label>
-                      <input required placeholder={branchAddMode ? 'Hyderabad' : isGroupType ? 'Sri Chaithanya' : 'Lincoln High'} value={formData.name}
+                      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">{branchMode ? 'Branch Name' : 'Official Name'} <span className="text-red-500">*</span></label>
+                      <input required placeholder={branchMode ? 'Hyderabad' : isGroupType ? 'Sri Chaithanya' : 'Lincoln High'} value={formData.name}
                         onChange={e => setFormData({ ...formData, name: e.target.value })} disabled={isSaving}
                         className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
                     </div>
@@ -624,7 +647,7 @@ export default function DeveloperDashboard() {
                       <div className="relative">
                         <select value={formData.type} onChange={e => handleTypeChange(e.target.value)} disabled={isSaving}
                           className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 appearance-none shadow-sm transition-colors cursor-pointer">
-                          {(branchAddMode ? BRANCH_TYPES : ['School', 'College', 'Tuition', 'Group']).map(t => (
+                          {(branchMode ? BRANCH_TYPES : ['School', 'College', 'Tuition', 'Group']).map(t => (
                             <option key={t} value={t}>{t === 'Group' ? 'Group of Institutes' : t}</option>
                           ))}
                         </select>
@@ -633,7 +656,7 @@ export default function DeveloperDashboard() {
                     </div>
                   </div>
 
-                  {!isGroupType && !branchAddMode && (
+                  {!isGroupType && !branchMode && (
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Belongs to Group</label>
                       <div className="relative">
@@ -651,13 +674,13 @@ export default function DeveloperDashboard() {
                     </div>
                   )}
 
-                  {branchAddMode && (
-                    <p className="text-[11px] text-violet-700 font-medium">Adding under <span className="font-semibold">{branchParent.name}</span> — runs on the group plan, no separate subscription.</p>
+                  {branchMode && (
+                    <p className="text-[11px] text-violet-700 font-medium">Runs on <span className="font-semibold">{instituteName}</span>&rsquo;s group plan — no separate subscription.</p>
                   )}
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-1.5">
-                      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">{isGroupType ? 'Group' : branchAddMode ? 'Branch' : 'School'} Email <span className="text-red-500">*</span></label>
+                      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">{isGroupType ? 'Group' : branchMode ? 'Branch' : 'School'} Email <span className="text-red-500">*</span></label>
                       <div className="relative">
                         <Mail className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
                         <input required type="email" placeholder="info@school.com" disabled={isSaving}
@@ -710,7 +733,7 @@ export default function DeveloperDashboard() {
                   <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none"><Shield className="size-24" /></div>
                   <div className="flex items-center gap-1.5 text-primary mb-2">
                     <Shield className="size-4" />
-                    <span className="text-[11px] font-semibold uppercase tracking-wider">{branchAddMode ? 'Branch Admin Access' : isGroupType ? 'Group Owner Access' : 'Master Admin Access'}</span>
+                    <span className="text-[11px] font-semibold uppercase tracking-wider">{branchMode ? 'Branch Admin Access' : isGroupType ? 'Group Owner Access' : 'Master Admin Access'}</span>
                   </div>
                   <div className="space-y-4 relative z-10">
                     <div className="relative">
@@ -728,9 +751,14 @@ export default function DeveloperDashboard() {
                       </div>
                       <div className="relative">
                         <Lock className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
-                        <input required placeholder="Login Password" disabled={isSaving}
-                          className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors"
+                        <input required type={showPassword ? 'text' : 'password'} placeholder="Login Password" disabled={isSaving}
+                          className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-10 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors"
                           value={formData.superAdminPassword} onChange={e => setFormData({ ...formData, superAdminPassword: e.target.value })} />
+                        <button type="button" onClick={() => setShowPassword(v => !v)} tabIndex={-1}
+                          title={showPassword ? 'Hide password' : 'Show password'}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 transition-colors p-0.5">
+                          {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                        </button>
                       </div>
                     </div>
                   </div>

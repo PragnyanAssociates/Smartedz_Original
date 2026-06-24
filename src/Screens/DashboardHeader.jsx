@@ -6,32 +6,54 @@ import smartedzLogo from '../assets/smartedzlogo.png';
 export default function DashboardHeader({ onMenuClick }) {
   const { user, API_URL } = useAuth();
   const [inst, setInst] = useState(null);
+  const [parent, setParent] = useState(null); // the group, fetched only if needed
 
   useEffect(() => {
+    let cancelled = false;
     const fetchInst = async () => {
       try {
         const res = await fetch(`${API_URL}/api/admin/data/${user.institutionId}`);
         const data = await res.json();
-        setInst(data.institution);
+        if (cancelled) return;
+        const institution = data.institution;
+        setInst(institution);
+
+        // If this is a branch but the backend didn't include the group's
+        // name, fetch the group directly so we can show the INSTITUTE name
+        // on top (works even if Section 3 wasn't updated).
+        if (institution?.parent_id && !institution?.parent_name) {
+          try {
+            const pr = await fetch(`${API_URL}/api/admin/data/${institution.parent_id}`);
+            const pdata = await pr.json();
+            if (!cancelled) setParent(pdata.institution || null);
+          } catch (e) { /* ignore */ }
+        } else {
+          setParent(null);
+        }
       } catch (err) {
         console.error("Header fetch error", err);
       }
     };
     if (user?.institutionId) fetchInst();
+    return () => { cancelled = true; };
   }, [user, API_URL]);
 
-  const schoolName = inst?.name || '';
-  const initial = (inst?.name || '?').charAt(0).toUpperCase();
+  // INSTITUTE name (same for every branch) goes on top; the BRANCH name
+  // (different per branch) goes underneath. Standalone schools / groups
+  // just show their own name with no branch line.
+  const isBranch = !!inst?.parent_id;
+  const groupName = inst?.parent_name || parent?.name || '';
+
+  const instituteName = isBranch ? (groupName || inst?.name || '') : (inst?.name || '');
+  const branchName = isBranch ? (inst?.name || '') : '';
+  const logoSrc = inst?.logo || ''; // each entity shows its OWN logo only
+  const initial = (instituteName || '?').charAt(0).toUpperCase();
 
   return (
     <header className="w-full bg-white z-20 border-b border-zinc-200 shadow-sm shrink-0">
-      {/* 
-          1. Removed py-3 (padding) to control height strictly.
-          2. Added h-20 (80px) to fix the container height so it doesn't expand.
-      */}
       <div className="px-4 sm:px-8 h-20 flex items-center justify-between gap-4">
 
-        {/* SECTION 1: School Logo */}
+        {/* SECTION 1: Institute logo */}
         <div className="flex-1 md:w-1/3 flex items-center justify-start gap-3 h-full">
           <button
             onClick={onMenuClick}
@@ -40,30 +62,29 @@ export default function DashboardHeader({ onMenuClick }) {
             <Menu className="size-6" />
           </button>
 
-          {inst?.logo ? (
+          {logoSrc ? (
             <img
-              src={inst.logo}
-              alt={schoolName || 'School Logo'}
-              /* h-[78px] ensures a 1px gap top/bottom inside the 80px (h-20) container */
-              className="h-[78px] w-auto object-contain shrink-0"
+              src={logoSrc}
+              alt={instituteName || 'Logo'}
+              className="h-[76px] w-auto object-contain shrink-0"
             />
           ) : (
             <div className="size-14 bg-primary/10 text-primary rounded flex items-center justify-center border border-primary/20 shrink-0 font-semibold text-lg">
-              {schoolName ? initial : <Building2 className="size-6 text-zinc-400" />}
+              {instituteName ? initial : <Building2 className="size-6 text-zinc-400" />}
             </div>
           )}
 
-          {schoolName && (
-            <span className="md:hidden text-sm font-semibold text-zinc-900 truncate max-w-[120px]">
-              {schoolName}
+          {instituteName && (
+            <span className="md:hidden text-sm font-semibold text-zinc-900 truncate max-w-[140px]">
+              {instituteName}{branchName ? ` \u00b7 ${branchName}` : ''}
             </span>
           )}
         </div>
 
-        {/* SECTION 2: School Official Info (Middle) */}
+        {/* SECTION 2: Institute info (middle) */}
         <div className="hidden md:flex w-1/3 flex-col items-center justify-center text-center">
           <h1 className="text-lg font-semibold text-zinc-900 uppercase tracking-tight leading-none mb-1.5 truncate w-full px-4">
-            {schoolName}
+            {instituteName}
           </h1>
 
           {(inst?.school_email || inst?.phone) && (
@@ -82,9 +103,16 @@ export default function DashboardHeader({ onMenuClick }) {
               )}
             </div>
           )}
+
+          {/* Branch line — right under the email / phone, only for branches */}
+          {branchName && (
+            <div className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] font-semibold text-primary bg-primary/5 ring-1 ring-inset ring-primary/15 px-2.5 py-0.5 rounded-full">
+              <Building2 className="size-3 shrink-0" /> {branchName} Branch
+            </div>
+          )}
         </div>
 
-        {/* SECTION 3: Branding (Right) */}
+        {/* SECTION 3: Branding (right) */}
         <div className="flex-1 md:w-1/3 flex items-center justify-end gap-3 sm:gap-4 h-full">
           <div className="flex flex-col text-right leading-none">
             <p className="text-[8px] sm:text-[9px] font-semibold text-zinc-400 uppercase tracking-wider mb-1">Powered By</p>

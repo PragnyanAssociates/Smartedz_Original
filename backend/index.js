@@ -348,21 +348,21 @@ app.get('/api/group/data/:groupId', async (req, res) => {
         const [grpRows] = await db.execute('SELECT * FROM institutions WHERE id = ? AND type = "Group"', [groupId]);
         if (grpRows.length === 0) return res.status(404).json({ error: 'Group not found.' });
         const group = { ...grpRows[0], ...computePlanStatus(grpRows[0].usage_plan, grpRows[0].plan_start_date) };
-
+ 
         const [branches] = await db.execute('SELECT * FROM institutions WHERE parent_id = ? ORDER BY created_at DESC', [groupId]);
         // Branches inherit the group's plan — decorate every branch from the group.
         const decorated = branches.map(b => ({
             ...b, usage_plan: group.usage_plan, plan_start_date: group.plan_start_date,
             ...computePlanStatus(group.usage_plan, group.plan_start_date)
         }));
-
-        // Per-branch user counts (active, non-alumni) — matches the Users "All" tab.
+ 
+        // Branch users (includes password so the group owner can view/edit the branch admin login).
         const branchIds = branches.map(b => b.id);
         let users = [];
         if (branchIds.length) {
             const ph = branchIds.map(() => '?').join(',');
             const [u] = await db.execute(
-                `SELECT id, name, email, role, institutionId, status FROM users WHERE institutionId IN (${ph})`,
+                `SELECT id, name, email, role, institutionId, status, password FROM users WHERE institutionId IN (${ph})`,
                 branchIds
             );
             users = u;
@@ -473,7 +473,7 @@ app.get('/api/admin/data/:instId', async (req, res) => {
             if (!teacherSubjects[r.teacher_id]) teacherSubjects[r.teacher_id] = [];
             teacherSubjects[r.teacher_id].push(r.subject_id);
         });
-
+ 
         const [scRows] = await db.execute(
             `SELECT sc.subject_id, sc.class_id FROM subject_classes sc
                JOIN subjects s ON s.id = sc.subject_id WHERE s.institutionId = ?`, [instId]);
@@ -482,23 +482,34 @@ app.get('/api/admin/data/:instId', async (req, res) => {
             if (!subjectClasses[r.subject_id]) subjectClasses[r.subject_id] = [];
             subjectClasses[r.subject_id].push(r.class_id);
         });
-
-        // Resolve the effective plan: a branch inherits its group's plan.
+ 
+        // Resolve effective plan + parent (group) identity for branches.
         let institution = null;
         if (inst[0]) {
             let planRow = inst[0];
+            let parentName = null;
+            let parentLogo = null;
             if (inst[0].parent_id) {
-                const [p] = await db.execute('SELECT usage_plan, plan_start_date FROM institutions WHERE id = ?', [inst[0].parent_id]);
-                if (p.length) planRow = { usage_plan: p[0].usage_plan, plan_start_date: p[0].plan_start_date };
+                const [p] = await db.execute(
+                    'SELECT name, logo, usage_plan, plan_start_date FROM institutions WHERE id = ?',
+                    [inst[0].parent_id]
+                );
+                if (p.length) {
+                    planRow = { usage_plan: p[0].usage_plan, plan_start_date: p[0].plan_start_date };
+                    parentName = p[0].name;
+                    parentLogo = p[0].logo;
+                }
             }
             institution = {
                 ...inst[0],
+                parent_name: parentName,
+                parent_logo: parentLogo,
                 usage_plan: planRow.usage_plan,
                 plan_start_date: planRow.plan_start_date,
                 ...computePlanStatus(planRow.usage_plan, planRow.plan_start_date)
             };
         }
-
+ 
         res.json({
             users, classes, academicYears: years, roles, subjects,
             teacherSubjects, subjectClasses, modules: DEFAULT_MODULES, institution,
