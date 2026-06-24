@@ -29,7 +29,7 @@ app.use('/public', express.static(path.join(process.cwd(), 'public')));
 const db = mysql.createPool({
     uri: process.env.DATABASE_URL,
     waitForConnections: true,
-    connectionLimit: 10,
+    connectionLimit: 25,
     enableKeepAlive: true,
     dateStrings: true
 });

@@ -30,4 +30,6 @@ node_modules/
 /playwright/.cache/
 /playwright/.auth/
 playwright.config.js
-tests/
+tests/ 
+
+performance-tests/
