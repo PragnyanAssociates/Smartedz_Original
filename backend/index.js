@@ -2136,7 +2136,63 @@ app.get('/api/admin/attendance/overview/:instId', async (req, res) => {
 app.get('/api/admin/attendance-export/:instId', async (req, res) => {
     const { instId } = req.params;
     try {
-        // Resolve the year: explicit ?yearId= (validated) else the active year.
+        const ExcelJS = require('exceljs');
+ 
+        // ---- tiny self-contained workbook helpers ----------------------
+        const BRAND = 'FF3284C7';     // primary blue
+        const rollNum = (r) => { const n = parseInt(r, 10); return isNaN(n) ? Number.MAX_SAFE_INTEGER : n; };
+        const fmtDMY = (d) => {
+            if (!d) return '—';
+            const x = new Date(d); if (isNaN(x.getTime())) return '—';
+            const dd = String(x.getDate()).padStart(2, '0');
+            const mm = String(x.getMonth() + 1).padStart(2, '0');
+            return `${dd}/${mm}/${x.getFullYear()}`;
+        };
+        const safeSheetName = (base, fallback, used) => {
+            let name = (base || fallback || 'Sheet').replace(/[\\\/\?\*\[\]:]/g, ' ').trim().slice(0, 31) || fallback;
+            let n = name, i = 2;
+            while (used.has(n.toLowerCase())) { const sfx = ` (${i})`; n = name.slice(0, 31 - sfx.length) + sfx; i++; }
+            used.add(n.toLowerCase());
+            return n;
+        };
+        const xlTitle = (ws, span, inst, subtitle) => {
+            ws.mergeCells(1, 1, 1, span);
+            const t = ws.getCell(1, 1);
+            t.value = inst?.name || 'Institution';
+            t.font = { bold: true, size: 14, color: { argb: 'FF111827' } };
+            t.alignment = { vertical: 'middle' };
+            ws.mergeCells(2, 1, 2, span);
+            const s = ws.getCell(2, 1);
+            s.value = subtitle || '';
+            s.font = { size: 10, color: { argb: 'FF6B7280' } };
+            ws.getRow(1).height = 20; ws.getRow(2).height = 16;
+        };
+        const xlWriteTable = (ws, startRow, headers, rows, widths) => {
+            const hr = ws.getRow(startRow);
+            headers.forEach((h, i) => {
+                const c = hr.getCell(i + 1);
+                c.value = h;
+                c.font = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+                c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND } };
+                c.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
+                c.border = { bottom: { style: 'thin', color: { argb: 'FFD1D5DB' } } };
+            });
+            hr.height = 18;
+            rows.forEach((r, ri) => {
+                const row = ws.getRow(startRow + 1 + ri);
+                r.forEach((v, ci) => {
+                    const c = row.getCell(ci + 1);
+                    c.value = (v === null || v === undefined) ? '' : v;
+                    c.font = { size: 10, color: { argb: 'FF374151' } };
+                    c.alignment = { vertical: 'middle' };
+                    if (ri % 2 === 1) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } };
+                });
+            });
+            (widths || []).forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+            ws.views = [{ state: 'frozen', ySplit: startRow }];
+        };
+ 
+        // ---- resolve year: explicit ?yearId= (validated) else active ----
         let year;
         if (req.query.yearId) {
             const [yr] = await db.execute(
@@ -2153,7 +2209,7 @@ app.get('/api/admin/attendance-export/:instId', async (req, res) => {
         }
         const yearId = year.id;
  
-        const [instRows] = await db.execute('SELECT id, name, school_email, phone FROM institutions WHERE id = ?', [instId]);
+        const [instRows] = await db.execute('SELECT id, name FROM institutions WHERE id = ?', [instId]);
         const inst = instRows[0] || { name: 'Institution' };
  
         const [classes] = await db.execute(
@@ -2164,9 +2220,11 @@ app.get('/api/admin/attendance-export/:instId', async (req, res) => {
  
         const [users] = await db.execute('SELECT id, name, role, roll_no, class_id FROM users WHERE institutionId = ?', [instId]);
         const userById = {}; users.forEach(u => { userById[u.id] = u; });
-        const isStudent = (u) => (u.role || '').toLowerCase().trim() === 'student';
+        const roleLc   = (u) => (u.role || '').toLowerCase().trim();
+        const isStudent = (u) => roleLc(u) === 'student';
+        const isTeacher = (u) => roleLc(u).includes('teacher');
+        const isAdmin   = (u) => ['super admin', 'developer', 'group admin'].includes(roleLc(u));
         const studentUsers = users.filter(isStudent);
-        const staffUsers = users.filter(u => !isStudent(u));
  
         // Historical class for the year (so an OLD year still groups correctly).
         const [hc] = await db.execute(
@@ -2176,7 +2234,10 @@ app.get('/api/admin/attendance-export/:instId', async (req, res) => {
         const histClass = {}; hc.forEach(r => { if (histClass[r.student_id] == null) histClass[r.student_id] = r.class_id; });
         const classOfStudent = (u) => (histClass[u.id] != null ? histClass[u.id] : u.class_id);
  
-        // Student attendance.
+        const dateStr = (v) => (v instanceof Date) ? v.toISOString().slice(0, 10) : String(v);
+        const pct1 = (n, den) => (den > 0 ? Math.round((n / den) * 1000) / 10 : null);
+ 
+        // ---- Student attendance ---------------------------------------
         const [attStu] = await db.execute(
             `SELECT a.user_id, a.attendance_date, a.status
                FROM attendance a JOIN users u ON u.id = a.user_id
@@ -2188,36 +2249,34 @@ app.get('/api/admin/attendance-export/:instId', async (req, res) => {
             const a = (stuAtt[r.user_id] = stuAtt[r.user_id] || { present: 0, absent: 0 });
             if (r.status === 'P') a.present++; else if (r.status === 'A') a.absent++;
             const u = userById[r.user_id];
-            if (u) {
-                const cid = classOfStudent(u);
-                const d = (r.attendance_date instanceof Date) ? r.attendance_date.toISOString().slice(0, 10) : String(r.attendance_date);
-                (classDates[cid] = classDates[cid] || new Set()).add(d);
-            }
+            if (u) { const cid = classOfStudent(u); (classDates[cid] = classDates[cid] || new Set()).add(dateStr(r.attendance_date)); }
         });
         const wdOfClass = (cid) => (classDates[cid] ? classDates[cid].size : 0);
  
-        // Staff attendance.
+        // ---- Non-student attendance (split into Teachers / Other) -----
         const [attStaff] = await db.execute(
             `SELECT a.user_id, a.attendance_date, a.status
                FROM attendance a JOIN users u ON u.id = a.user_id
               WHERE a.institutionId = ? AND a.academic_year_id = ? AND LOWER(TRIM(u.role)) <> 'student'`,
             [instId, yearId]
         );
-        const staffAtt = {}; const staffDates = new Set();
+        const staffAtt = {}; const teacherDates = new Set(); const otherDates = new Set();
         attStaff.forEach(r => {
+            const u = userById[r.user_id]; if (!u) return;
             const a = (staffAtt[r.user_id] = staffAtt[r.user_id] || { present: 0, absent: 0 });
             if (r.status === 'P') a.present++; else if (r.status === 'A') a.absent++;
-            const d = (r.attendance_date instanceof Date) ? r.attendance_date.toISOString().slice(0, 10) : String(r.attendance_date);
-            staffDates.add(d);
+            const d = dateStr(r.attendance_date);
+            if (isTeacher(u)) teacherDates.add(d);
+            else if (!isAdmin(u)) otherDates.add(d);
         });
-        const staffWD = staffDates.size;
+        const teacherWD = teacherDates.size;
+        const otherWD   = otherDates.size;
  
-        const pct1 = (n, den) => (den > 0 ? Math.round((n / den) * 1000) / 10 : null);
- 
+        // ---- Assemble sheet rows --------------------------------------
         const studentsAtt = studentUsers.filter(u => stuAtt[u.id]).map(u => {
             const cid = classOfStudent(u); const wd = wdOfClass(cid); const a = stuAtt[u.id];
             return { classLabel: labelOf(cid), roll: u.roll_no, name: u.name, workingDays: wd, present: a.present, absent: a.absent, pct: pct1(a.present, wd) };
-        }).sort((a, b) => (a.classLabel || '').localeCompare(b.classLabel || '') || _rollNum(a.roll) - _rollNum(b.roll));
+        }).sort((a, b) => (a.classLabel || '').localeCompare(b.classLabel || '') || rollNum(a.roll) - rollNum(b.roll));
  
         const classAgg = {};
         studentUsers.forEach(u => {
@@ -2231,12 +2290,17 @@ app.get('/api/admin/attendance-export/:instId', async (req, res) => {
             return { classLabel: labelOf(cid), students: g.students, workingDays: wd, present: g.present, absent: g.absent, pct: pct1(g.present, wd * g.students) };
         }).sort((a, b) => (a.classLabel || '').localeCompare(b.classLabel || ''));
  
-        const staffSheet = staffUsers.filter(u => staffAtt[u.id]).map(u => {
+        const teacherSheet = users.filter(u => isTeacher(u) && staffAtt[u.id]).map(u => {
             const a = staffAtt[u.id];
-            return { name: u.name, role: u.role, workingDays: staffWD, present: a.present, absent: a.absent, pct: pct1(a.present, staffWD) };
+            return { name: u.name, role: u.role, workingDays: teacherWD, present: a.present, absent: a.absent, pct: pct1(a.present, teacherWD) };
+        }).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+ 
+        const otherSheet = users.filter(u => !isStudent(u) && !isTeacher(u) && !isAdmin(u) && staffAtt[u.id]).map(u => {
+            const a = staffAtt[u.id];
+            return { name: u.name, role: u.role, workingDays: otherWD, present: a.present, absent: a.absent, pct: pct1(a.present, otherWD) };
         }).sort((a, b) => (a.role || '').localeCompare(b.role || '') || (a.name || '').localeCompare(b.name || ''));
  
-        // ---- workbook (reuses Section 30 helpers) -----------------------
+        // ---- Workbook --------------------------------------------------
         const wb = new ExcelJS.Workbook();
         wb.creator = 'SmartEdz';
         wb.created = new Date();
@@ -2244,50 +2308,60 @@ app.get('/api/admin/attendance-export/:instId', async (req, res) => {
         const yLabel = year.name || '';
  
         {
-            const ws = wb.addWorksheet(_safeSheetName('Summary', 'Summary', used));
-            _xlTitle(ws, 4, inst, `Attendance · ${yLabel}`);
+            const ws = wb.addWorksheet(safeSheetName('Summary', 'Summary', used));
+            xlTitle(ws, 4, inst, `Attendance · ${yLabel}`);
             const info = [
                 ['Institution', inst.name || '—'],
                 ['Academic Year', yLabel || '—'],
-                ['Year Period', [year.startDate, year.endDate].filter(Boolean).map(_fmtDMY).join('  to  ') || '—'],
+                ['Year Period', [year.startDate, year.endDate].filter(Boolean).map(fmtDMY).join('  to  ') || '—'],
                 ['Generated On', new Date().toLocaleString('en-GB')],
                 ['', ''],
                 ['Classes', String(classSummary.length)],
                 ['Students (with attendance)', String(studentsAtt.length)],
-                ['Staff (with attendance)', String(staffSheet.length)]
+                ['Teachers (with attendance)', String(teacherSheet.length)],
+                ['Other staff (with attendance)', String(otherSheet.length)]
             ];
             info.forEach((r, i) => {
                 const rn = 4 + i;
                 const a = ws.getCell(rn, 1); a.value = r[0]; a.font = { bold: true, size: 10, color: { argb: 'FF374151' } };
                 ws.getCell(rn, 2).value = r[1];
             });
-            ws.getColumn(1).width = 26; ws.getColumn(2).width = 30;
+            ws.getColumn(1).width = 28; ws.getColumn(2).width = 30;
         }
  
         {
-            const ws = wb.addWorksheet(_safeSheetName('Attendance Summary', 'Attendance Summary', used));
-            _xlTitle(ws, 6, inst, `Attendance — class overview · ${yLabel}`);
-            _xlWriteTable(ws, 4,
+            const ws = wb.addWorksheet(safeSheetName('Attendance Summary', 'Attendance Summary', used));
+            xlTitle(ws, 6, inst, `Attendance — class overview · ${yLabel}`);
+            xlWriteTable(ws, 4,
                 ['Class', 'Students', 'Working Days', 'Present (total)', 'Absent (total)', 'Overall %'],
                 classSummary.map(r => [r.classLabel, r.students, r.workingDays, r.present, r.absent, (r.pct != null ? `${r.pct}%` : '—')]),
                 [18, 10, 14, 16, 16, 12]);
         }
  
         {
-            const ws = wb.addWorksheet(_safeSheetName('Attendance Students', 'Attendance Students', used));
-            _xlTitle(ws, 7, inst, `Attendance — per student · ${yLabel}`);
-            _xlWriteTable(ws, 4,
+            const ws = wb.addWorksheet(safeSheetName('Attendance Students', 'Attendance Students', used));
+            xlTitle(ws, 7, inst, `Attendance — per student · ${yLabel}`);
+            xlWriteTable(ws, 4,
                 ['Class', 'Roll', 'Name', 'Working Days', 'Present', 'Absent', '%'],
                 studentsAtt.map(r => [r.classLabel, r.roll, r.name, r.workingDays, r.present, r.absent, (r.pct != null ? `${r.pct}%` : '—')]),
                 [16, 8, 24, 14, 10, 10, 9]);
         }
  
         {
-            const ws = wb.addWorksheet(_safeSheetName('Attendance Staff', 'Attendance Staff', used));
-            _xlTitle(ws, 6, inst, `Attendance — teachers & staff · ${yLabel}`);
-            _xlWriteTable(ws, 4,
+            const ws = wb.addWorksheet(safeSheetName('Attendance Teachers', 'Attendance Teachers', used));
+            xlTitle(ws, 6, inst, `Attendance — teachers · ${yLabel}`);
+            xlWriteTable(ws, 4,
                 ['Name', 'Role', 'Working Days', 'Present', 'Absent', '%'],
-                staffSheet.map(r => [r.name, r.role, r.workingDays, r.present, r.absent, (r.pct != null ? `${r.pct}%` : '—')]),
+                teacherSheet.map(r => [r.name, r.role, r.workingDays, r.present, r.absent, (r.pct != null ? `${r.pct}%` : '—')]),
+                [24, 16, 14, 10, 10, 9]);
+        }
+ 
+        {
+            const ws = wb.addWorksheet(safeSheetName('Attendance Other', 'Attendance Other', used));
+            xlTitle(ws, 6, inst, `Attendance — other staff · ${yLabel}`);
+            xlWriteTable(ws, 4,
+                ['Name', 'Role', 'Working Days', 'Present', 'Absent', '%'],
+                otherSheet.map(r => [r.name, r.role, r.workingDays, r.present, r.absent, (r.pct != null ? `${r.pct}%` : '—')]),
                 [24, 16, 14, 10, 10, 9]);
         }
  
