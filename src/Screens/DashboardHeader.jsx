@@ -115,7 +115,7 @@ export default function DashboardHeader({ onMenuClick }) {
         {/* SECTION 3: Branding (right) */}
         <div className="flex-1 md:w-1/3 flex items-center justify-end gap-3 sm:gap-4 h-full">
           <div className="flex flex-col text-right leading-none">
-            <p className="text-[8px] sm:text-[9px] font-semibold text-zinc-400 uppercase tracking-wider mb-1">Powered By</p>
+            <p className="text-[8px] sm:text-[9px] font-semibold text-zinc-400 uppercase tracking-wider mb-1">Developed by</p>
             <p className="text-sm sm:text-lg font-semibold italic tracking-tight">
               <span className="text-primary">Smart</span>
               <span className="text-accent">Edz</span>

@@ -459,7 +459,7 @@ app.delete('/api/group/:groupId/branch/:id', async (req, res) => {
 app.get('/api/admin/data/:instId', async (req, res) => {
     const { instId } = req.params;
     try {
-        // const [users]    = await db.execute('SELECT * FROM users WHERE institutionId = ?', [instId]);
+        const [users]    = await db.execute('SELECT * FROM users WHERE institutionId = ?', [instId]);
         const [users] = await db.execute(
     `SELECT
         id,
