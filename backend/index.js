@@ -460,6 +460,7 @@ app.get('/api/admin/data/:instId', async (req, res) => {
     const { instId } = req.params;
     try {
         
+        const includeFullUsers = req.query.fullUsers === 'true';
         let users;
 
 if (includeFullUsers) {
