@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   GraduationCap, Users as UsersIcon, UserCog, ClipboardCheck, History,
   Search, ChevronLeft, ChevronDown, BarChart3, CalendarCheck, CalendarX,
-  CalendarRange, List, PieChart
+  CalendarRange, List, PieChart, Download, Loader2
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
@@ -55,6 +55,49 @@ export default function Attendance() {
       } catch (e) { console.error('academic year load:', e); }
     })();
   }, [user]);
+
+  // ---- Download the active year's attendance as a readable .xlsx ----
+  // Same layout as the combined Year Archive's attendance tabs (class
+  // overview %, per-student, per-staff). Super Admin only.
+  const [downloading, setDownloading] = useState(false);
+  const handleExport = async () => {
+    setDownloading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/attendance-export/${user.institutionId}`);
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || 'Download failed. Please try again.');
+      }
+      const blob = await res.blob();
+      if (!blob || blob.size < 200) throw new Error('The export came back empty.');
+      let filename = `Attendance_${activeYearName || 'year'}.xlsx`;
+      const cd = res.headers.get('Content-Disposition') || '';
+      const m = cd.match(/filename="?([^"]+)"?/);
+      if (m) filename = m[1];
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const DownloadButton = () => (
+    isSuper ? (
+      <button onClick={handleExport} disabled={downloading}
+        className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-white text-zinc-700 border border-zinc-200 hover:bg-zinc-50 hover:text-primary hover:border-primary/40 text-xs font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed whitespace-nowrap shadow-sm">
+        {downloading ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+        {downloading ? 'Preparing…' : 'Download'}
+      </button>
+    ) : null
+  );
 
   // Which category tabs are visible to this user?
   const categories = useMemo(() => {
@@ -109,7 +152,10 @@ export default function Attendance() {
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-3 sm:space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <Header subtitle="Mark and review daily attendance" />
-        <YearBadge />
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          <DownloadButton />
+          <YearBadge />
+        </div>
       </div>
 
       {/* Navigation Controls Wrapper - Tighter spacing on mobile */}

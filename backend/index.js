@@ -2104,6 +2104,179 @@ app.get('/api/admin/attendance/overview/:instId', async (req, res) => {
     }
 });
 
+// === 30.A ATTENDANCE EXPORT (per-module download) ====================
+
+app.get('/api/admin/attendance-export/:instId', async (req, res) => {
+    const { instId } = req.params;
+    try {
+        // Resolve the year: explicit ?yearId= (validated) else the active year.
+        let year;
+        if (req.query.yearId) {
+            const [yr] = await db.execute(
+                'SELECT * FROM academic_years WHERE id = ? AND institutionId = ?', [req.query.yearId, instId]
+            );
+            if (yr.length === 0) return res.status(404).json({ error: 'Academic year not found for this institution.' });
+            year = yr[0];
+        } else {
+            const [yr] = await db.execute(
+                'SELECT * FROM academic_years WHERE institutionId = ? AND isActive = 1 LIMIT 1', [instId]
+            );
+            if (yr.length === 0) return res.status(400).json({ error: 'No active academic year to export.' });
+            year = yr[0];
+        }
+        const yearId = year.id;
+ 
+        const [instRows] = await db.execute('SELECT id, name, school_email, phone FROM institutions WHERE id = ?', [instId]);
+        const inst = instRows[0] || { name: 'Institution' };
+ 
+        const [classes] = await db.execute(
+            'SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section', [instId]
+        );
+        const classById = {}; classes.forEach(c => { classById[c.id] = c; });
+        const labelOf = (cid) => { const c = classById[cid]; return c ? `${c.className}${c.section ? ' - ' + c.section : ''}` : '—'; };
+ 
+        const [users] = await db.execute('SELECT id, name, role, roll_no, class_id FROM users WHERE institutionId = ?', [instId]);
+        const userById = {}; users.forEach(u => { userById[u.id] = u; });
+        const isStudent = (u) => (u.role || '').toLowerCase().trim() === 'student';
+        const studentUsers = users.filter(isStudent);
+        const staffUsers = users.filter(u => !isStudent(u));
+ 
+        // Historical class for the year (so an OLD year still groups correctly).
+        const [hc] = await db.execute(
+            'SELECT DISTINCT student_id, class_id FROM student_marks WHERE institutionId = ? AND academic_year_id = ?',
+            [instId, yearId]
+        );
+        const histClass = {}; hc.forEach(r => { if (histClass[r.student_id] == null) histClass[r.student_id] = r.class_id; });
+        const classOfStudent = (u) => (histClass[u.id] != null ? histClass[u.id] : u.class_id);
+ 
+        // Student attendance.
+        const [attStu] = await db.execute(
+            `SELECT a.user_id, a.attendance_date, a.status
+               FROM attendance a JOIN users u ON u.id = a.user_id
+              WHERE a.institutionId = ? AND a.academic_year_id = ? AND LOWER(TRIM(u.role)) = 'student'`,
+            [instId, yearId]
+        );
+        const stuAtt = {}; const classDates = {};
+        attStu.forEach(r => {
+            const a = (stuAtt[r.user_id] = stuAtt[r.user_id] || { present: 0, absent: 0 });
+            if (r.status === 'P') a.present++; else if (r.status === 'A') a.absent++;
+            const u = userById[r.user_id];
+            if (u) {
+                const cid = classOfStudent(u);
+                const d = (r.attendance_date instanceof Date) ? r.attendance_date.toISOString().slice(0, 10) : String(r.attendance_date);
+                (classDates[cid] = classDates[cid] || new Set()).add(d);
+            }
+        });
+        const wdOfClass = (cid) => (classDates[cid] ? classDates[cid].size : 0);
+ 
+        // Staff attendance.
+        const [attStaff] = await db.execute(
+            `SELECT a.user_id, a.attendance_date, a.status
+               FROM attendance a JOIN users u ON u.id = a.user_id
+              WHERE a.institutionId = ? AND a.academic_year_id = ? AND LOWER(TRIM(u.role)) <> 'student'`,
+            [instId, yearId]
+        );
+        const staffAtt = {}; const staffDates = new Set();
+        attStaff.forEach(r => {
+            const a = (staffAtt[r.user_id] = staffAtt[r.user_id] || { present: 0, absent: 0 });
+            if (r.status === 'P') a.present++; else if (r.status === 'A') a.absent++;
+            const d = (r.attendance_date instanceof Date) ? r.attendance_date.toISOString().slice(0, 10) : String(r.attendance_date);
+            staffDates.add(d);
+        });
+        const staffWD = staffDates.size;
+ 
+        const pct1 = (n, den) => (den > 0 ? Math.round((n / den) * 1000) / 10 : null);
+ 
+        const studentsAtt = studentUsers.filter(u => stuAtt[u.id]).map(u => {
+            const cid = classOfStudent(u); const wd = wdOfClass(cid); const a = stuAtt[u.id];
+            return { classLabel: labelOf(cid), roll: u.roll_no, name: u.name, workingDays: wd, present: a.present, absent: a.absent, pct: pct1(a.present, wd) };
+        }).sort((a, b) => (a.classLabel || '').localeCompare(b.classLabel || '') || _rollNum(a.roll) - _rollNum(b.roll));
+ 
+        const classAgg = {};
+        studentUsers.forEach(u => {
+            if (!stuAtt[u.id]) return;
+            const cid = classOfStudent(u);
+            const g = (classAgg[cid] = classAgg[cid] || { students: 0, present: 0, absent: 0 });
+            g.students++; g.present += stuAtt[u.id].present; g.absent += stuAtt[u.id].absent;
+        });
+        const classSummary = Object.keys(classAgg).map(cid => {
+            const wd = wdOfClass(cid); const g = classAgg[cid];
+            return { classLabel: labelOf(cid), students: g.students, workingDays: wd, present: g.present, absent: g.absent, pct: pct1(g.present, wd * g.students) };
+        }).sort((a, b) => (a.classLabel || '').localeCompare(b.classLabel || ''));
+ 
+        const staffSheet = staffUsers.filter(u => staffAtt[u.id]).map(u => {
+            const a = staffAtt[u.id];
+            return { name: u.name, role: u.role, workingDays: staffWD, present: a.present, absent: a.absent, pct: pct1(a.present, staffWD) };
+        }).sort((a, b) => (a.role || '').localeCompare(b.role || '') || (a.name || '').localeCompare(b.name || ''));
+ 
+        // ---- workbook (reuses Section 30 helpers) -----------------------
+        const wb = new ExcelJS.Workbook();
+        wb.creator = 'SmartEdz';
+        wb.created = new Date();
+        const used = new Set();
+        const yLabel = year.name || '';
+ 
+        {
+            const ws = wb.addWorksheet(_safeSheetName('Summary', 'Summary', used));
+            _xlTitle(ws, 4, inst, `Attendance · ${yLabel}`);
+            const info = [
+                ['Institution', inst.name || '—'],
+                ['Academic Year', yLabel || '—'],
+                ['Year Period', [year.startDate, year.endDate].filter(Boolean).map(_fmtDMY).join('  to  ') || '—'],
+                ['Generated On', new Date().toLocaleString('en-GB')],
+                ['', ''],
+                ['Classes', String(classSummary.length)],
+                ['Students (with attendance)', String(studentsAtt.length)],
+                ['Staff (with attendance)', String(staffSheet.length)]
+            ];
+            info.forEach((r, i) => {
+                const rn = 4 + i;
+                const a = ws.getCell(rn, 1); a.value = r[0]; a.font = { bold: true, size: 10, color: { argb: 'FF374151' } };
+                ws.getCell(rn, 2).value = r[1];
+            });
+            ws.getColumn(1).width = 26; ws.getColumn(2).width = 30;
+        }
+ 
+        {
+            const ws = wb.addWorksheet(_safeSheetName('Attendance Summary', 'Attendance Summary', used));
+            _xlTitle(ws, 6, inst, `Attendance — class overview · ${yLabel}`);
+            _xlWriteTable(ws, 4,
+                ['Class', 'Students', 'Working Days', 'Present (total)', 'Absent (total)', 'Overall %'],
+                classSummary.map(r => [r.classLabel, r.students, r.workingDays, r.present, r.absent, (r.pct != null ? `${r.pct}%` : '—')]),
+                [18, 10, 14, 16, 16, 12]);
+        }
+ 
+        {
+            const ws = wb.addWorksheet(_safeSheetName('Attendance Students', 'Attendance Students', used));
+            _xlTitle(ws, 7, inst, `Attendance — per student · ${yLabel}`);
+            _xlWriteTable(ws, 4,
+                ['Class', 'Roll', 'Name', 'Working Days', 'Present', 'Absent', '%'],
+                studentsAtt.map(r => [r.classLabel, r.roll, r.name, r.workingDays, r.present, r.absent, (r.pct != null ? `${r.pct}%` : '—')]),
+                [16, 8, 24, 14, 10, 10, 9]);
+        }
+ 
+        {
+            const ws = wb.addWorksheet(_safeSheetName('Attendance Staff', 'Attendance Staff', used));
+            _xlTitle(ws, 6, inst, `Attendance — teachers & staff · ${yLabel}`);
+            _xlWriteTable(ws, 4,
+                ['Name', 'Role', 'Working Days', 'Present', 'Absent', '%'],
+                staffSheet.map(r => [r.name, r.role, r.workingDays, r.present, r.absent, (r.pct != null ? `${r.pct}%` : '—')]),
+                [24, 16, 14, 10, 10, 9]);
+        }
+ 
+        const fileSafe = `${inst.name || 'institution'}_Attendance_${year.name || 'year'}`
+            .replace(/[^a-z0-9\-_ ]/gi, '_').replace(/\s+/g, '_');
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="${fileSafe}.xlsx"`);
+        await wb.xlsx.write(res);
+        res.end();
+    } catch (err) {
+        console.error('[attendance-export] FATAL:', err);
+        if (!res.headersSent) res.status(500).json({ error: err.message });
+        else res.end();
+    }
+});
+
 
 
 // =====================================================================
