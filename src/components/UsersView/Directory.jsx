@@ -26,7 +26,7 @@ export default function Directory() {
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_BASE_URL}/admin/data/${user.institutionId}`);
+      const res = await fetch(`${API_BASE_URL}/admin/data/${user.institutionId}?fullUsers=true`);
       const json = await res.json();
       setData(json);
     } catch (e) {

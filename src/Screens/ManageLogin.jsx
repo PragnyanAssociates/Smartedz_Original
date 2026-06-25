@@ -24,7 +24,7 @@ export default function ManageLogin() {
     if (!user?.institutionId) return;
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/data/${user.institutionId}`);
+      const res = await fetch(`${API_BASE_URL}/admin/data/${user.institutionId}?fullUsers=true);`);
       const json = await res.json();
       setData(json);
     } catch (e) {
