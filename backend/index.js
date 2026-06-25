@@ -1261,15 +1261,58 @@ app.get('/api/admin/timetable/:instId', async (req, res) => {
                 message: 'No active academic year. Create one first under Academics.'
             });
         }
-        const [days]     = await db.execute('SELECT * FROM timetable_days WHERE institutionId = ? AND academic_year_id = ? ORDER BY day_index', [instId, yearId]);
-        const [periods]  = await db.execute('SELECT * FROM timetable_periods WHERE institutionId = ? AND academic_year_id = ? ORDER BY period_index', [instId, yearId]);
-        const [entries]  = await db.execute('SELECT * FROM timetable_entries WHERE institutionId = ? AND academic_year_id = ?', [instId, yearId]);
-        const [classes]  = await db.execute('SELECT * FROM classes WHERE institutionId = ? ORDER BY className, section', [instId]);
-        const [teachers] = await db.execute("SELECT id, name, email FROM users WHERE institutionId = ? AND LOWER(role) LIKE '%teacher%'", [instId]);
-        const [subjects] = await db.execute('SELECT * FROM subjects WHERE institutionId = ? ORDER BY name', [instId]);
-        const [tsRows] = await db.execute(
-            `SELECT ts.teacher_id, ts.subject_id FROM teacher_subjects ts
-               JOIN users u ON u.id = ts.teacher_id WHERE u.institutionId = ?`, [instId]);
+        // const [days]     = await db.execute('SELECT * FROM timetable_days WHERE institutionId = ? AND academic_year_id = ? ORDER BY day_index', [instId, yearId]);
+        // const [periods]  = await db.execute('SELECT * FROM timetable_periods WHERE institutionId = ? AND academic_year_id = ? ORDER BY period_index', [instId, yearId]);
+        // const [entries]  = await db.execute('SELECT * FROM timetable_entries WHERE institutionId = ? AND academic_year_id = ?', [instId, yearId]);
+        // const [classes]  = await db.execute('SELECT * FROM classes WHERE institutionId = ? ORDER BY className, section', [instId]);
+        // const [teachers] = await db.execute("SELECT id, name, email FROM users WHERE institutionId = ? AND LOWER(role) LIKE '%teacher%'", [instId]);
+        // const [subjects] = await db.execute('SELECT * FROM subjects WHERE institutionId = ? ORDER BY name', [instId]);
+        // const [tsRows] = await db.execute(
+        //     `SELECT ts.teacher_id, ts.subject_id FROM teacher_subjects ts
+        //        JOIN users u ON u.id = ts.teacher_id WHERE u.institutionId = ?`, [instId]);
+        const [
+    [days],
+    [periods],
+    [entries],
+    [classes],
+    [teachers],
+    [subjects],
+    [tsRows]
+] = await Promise.all([
+    db.execute(
+        'SELECT * FROM timetable_days WHERE institutionId = ? AND academic_year_id = ? ORDER BY day_index',
+        [instId, yearId]
+    ),
+    db.execute(
+        'SELECT * FROM timetable_periods WHERE institutionId = ? AND academic_year_id = ? ORDER BY period_index',
+        [instId, yearId]
+    ),
+    db.execute(
+        'SELECT * FROM timetable_entries WHERE institutionId = ? AND academic_year_id = ?',
+        [instId, yearId]
+    ),
+    db.execute(
+        'SELECT * FROM classes WHERE institutionId = ? ORDER BY className, section',
+        [instId]
+    ),
+    db.execute(
+        "SELECT id, name, email FROM users WHERE institutionId = ? AND LOWER(role) LIKE '%teacher%'",
+        [instId]
+    ),
+    db.execute(
+        'SELECT * FROM subjects WHERE institutionId = ? ORDER BY name',
+        [instId]
+    ),
+    db.execute(
+        `SELECT ts.teacher_id, ts.subject_id
+         FROM teacher_subjects ts
+         JOIN users u ON u.id = ts.teacher_id
+         WHERE u.institutionId = ?`,
+        [instId]
+    )
+]);
+
+
         const teacherSubjects = {};
         tsRows.forEach(r => {
             if (!teacherSubjects[r.teacher_id]) teacherSubjects[r.teacher_id] = [];
