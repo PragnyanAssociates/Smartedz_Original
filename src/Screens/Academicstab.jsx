@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Plus, Edit, Trash2, X, Calendar, CheckCircle2, Circle, AlertTriangle, Clock, Info } from 'lucide-react';
+import { Plus, Edit, Trash2, X, Calendar, CheckCircle2, Circle, AlertTriangle, Clock, Info, Download, Loader2, ShieldAlert } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
 
 // --- Date helpers ----------------------------------------------------
@@ -40,6 +40,7 @@ const yearStatus = (y) => {
 export default function AcademicsTab({ data, fetchData, user }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editing, setEditing]         = useState(null);
+  const [deletingYear, setDeletingYear] = useState(null);   // year object pending deletion
   const emptyForm = { name: '', startDate: '', endDate: '' };
   const [form, setForm] = useState(emptyForm);
 
@@ -101,19 +102,12 @@ export default function AcademicsTab({ data, fetchData, user }) {
     if (res.ok) fetchData();
   };
 
-  const handleDelete = async (y) => {
+  // Deleting is no longer a one-click action: it opens a guarded modal that
+  // makes the user download the year's archive first, then explicitly
+  // acknowledge, before the permanent delete is allowed.
+  const openDelete = (y) => {
     if (y.isActive) return alert('Set another year active before deleting this one.');
-    // Strong, explicit warning — deleting a year removes its data permanently.
-    if (!window.confirm(
-      `Are you sure you want to delete the academic year "${y.name}"?\n\n` +
-      `If you delete it, this academic year's data will be GONE FOREVER and cannot be recovered.`
-    )) return;
-    const res = await fetch(`${API_BASE_URL}/admin/academics/${y.id}`, { method: 'DELETE' });
-    if (res.ok) fetchData();
-    else {
-      const err = await res.json().catch(() => ({}));
-      alert(err.error || 'Failed to delete academic year.');
-    }
+    setDeletingYear(y);
   };
 
   return (
@@ -142,7 +136,7 @@ export default function AcademicsTab({ data, fetchData, user }) {
         <div className="text-[11px] text-blue-800 leading-relaxed">
           <span className="font-semibold">Note — how academic years work:</span> Every module (the <strong>Timetable</strong>, Attendance, Fees, Reports, etc.) always runs on the <strong>active</strong> academic year.
           When you switch the active year, those screens start <strong>empty</strong> for the new year. If you switch back to a previous year, its earlier data reappears exactly as you left it — nothing is lost by simply changing the active year.
-          <span className="block mt-1 font-semibold text-red-700">However, if you DELETE an academic year, every record linked to it (timetable, attendance, fees and more) is gone forever and cannot be recovered.</span>
+          <span className="block mt-1 font-semibold text-red-700">However, if you DELETE an academic year, every record linked to it (attendance, marks and more) is gone forever and cannot be recovered.</span>
         </div>
       </div>
 
@@ -199,7 +193,7 @@ export default function AcademicsTab({ data, fetchData, user }) {
                   <button onClick={() => openEdit(y)} className="p-1.5 rounded text-zinc-400 hover:text-zinc-700 hover:bg-zinc-50 transition-colors" title="Edit">
                     <Edit className="size-4 shrink-0" />
                   </button>
-                  <button onClick={() => handleDelete(y)} className="p-1.5 rounded text-zinc-400 hover:text-accent hover:bg-accent/10 transition-colors" title="Delete">
+                  <button onClick={() => openDelete(y)} className="p-1.5 rounded text-zinc-400 hover:text-accent hover:bg-accent/10 transition-colors" title="Delete">
                     <Trash2 className="size-4 shrink-0" />
                   </button>
                 </div>
@@ -241,7 +235,7 @@ export default function AcademicsTab({ data, fetchData, user }) {
         )}
       </div>
 
-      {/* Modal */}
+      {/* Add / Edit Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
           <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-sm p-6 shadow-xl relative">
@@ -295,6 +289,186 @@ export default function AcademicsTab({ data, fetchData, user }) {
           </div>
         </div>
       )}
+
+      {/* Guarded delete flow */}
+      {deletingYear && (
+        <DeleteYearModal
+          year={deletingYear}
+          instId={user.institutionId}
+          onClose={() => setDeletingYear(null)}
+          onDeleted={() => { setDeletingYear(null); fetchData(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// =====================================================================
+//  DeleteYearModal — the two-step guarded deletion.
+//    Step 1: download the year's archive (.xlsx). Delete stays locked
+//            until the file has actually downloaded in this session.
+//    Step 2: tick the acknowledgement.
+//  Only with BOTH done does the permanent delete arm.
+// =====================================================================
+function DeleteYearModal({ year, instId, onClose, onDeleted }) {
+  const [downloaded, setDownloaded]     = useState(false);
+  const [downloading, setDownloading]   = useState(false);
+  const [acknowledged, setAcknowledged] = useState(false);
+  const [deleting, setDeleting]         = useState(false);
+  const [error, setError]               = useState(null);
+
+  const handleDownload = async () => {
+    setDownloading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/year-export/${instId}/${year.id}`);
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || 'Download failed. Please try again.');
+      }
+      const blob = await res.blob();
+      if (!blob || blob.size < 200) throw new Error('The archive came back empty. Please try again.');
+
+      let filename = `${year.name || 'year'}.xlsx`;
+      const cd = res.headers.get('Content-Disposition') || '';
+      const m = cd.match(/filename="?([^"]+)"?/);
+      if (m) filename = m[1];
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+
+      setDownloaded(true);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!downloaded || !acknowledged) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/academics/${year.id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || 'Failed to delete the academic year.');
+      }
+      onDeleted();
+    } catch (e) {
+      setError(e.message);
+      setDeleting(false);
+    }
+  };
+
+  const canDelete = downloaded && acknowledged && !deleting;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4">
+      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg shadow-xl relative max-h-[90vh] overflow-y-auto custom-scrollbar">
+
+        {/* Header */}
+        <div className="flex items-start justify-between p-5 border-b border-zinc-100">
+          <div className="flex items-center gap-3">
+            <div className="size-10 rounded-md bg-red-100 text-red-600 flex items-center justify-center shrink-0">
+              <Trash2 className="size-5" />
+            </div>
+            <div>
+              <h2 className="text-base font-semibold text-zinc-900">Delete &ldquo;{year.name}&rdquo;</h2>
+              <p className="text-[11px] text-zinc-500 mt-0.5">This permanently removes the year&rsquo;s data.</p>
+            </div>
+          </div>
+          <button onClick={onClose} disabled={deleting} className="text-zinc-400 hover:text-zinc-700 transition-colors p-1 disabled:opacity-50">
+            <X className="size-5" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          {/* Warning */}
+          <div className="rounded-md bg-red-50 ring-1 ring-inset ring-red-500/20 px-4 py-3 flex items-start gap-2.5">
+            <ShieldAlert className="size-4 text-red-600 shrink-0 mt-0.5" />
+            <p className="text-xs text-red-700 leading-relaxed">
+              Deleting <strong>{year.name}</strong> permanently erases its <strong>Attendance</strong> and <strong>Marks / Report-card</strong> records to free storage.
+              <strong> This cannot be undone</strong>, and the data will not come back from this app. Download the archive first and keep a printed copy in your school records.
+            </p>
+          </div>
+
+          {/* Step 1 — download */}
+          <div className="rounded-md ring-1 ring-black/5 p-4">
+            <div className="flex items-start gap-2.5">
+              <span className={`size-6 rounded-full flex items-center justify-center text-[11px] font-bold shrink-0 ${downloaded ? 'bg-emerald-100 text-emerald-700' : 'bg-zinc-100 text-zinc-500'}`}>1</span>
+              <div className="flex-1">
+                <p className="text-xs font-semibold text-zinc-800">Download the year archive</p>
+                <p className="text-[11px] text-zinc-500 mt-0.5">Students, Staff, Attendance and class-wise Marks in one Excel file.</p>
+
+                <div className="mt-3">
+                  {downloaded ? (
+                    <div className="flex flex-wrap items-center gap-3">
+                      <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700">
+                        <CheckCircle2 className="size-4" /> Archive downloaded
+                      </span>
+                      <button onClick={handleDownload} disabled={downloading}
+                        className="text-[11px] font-semibold text-zinc-500 hover:text-primary underline underline-offset-2 disabled:opacity-50">
+                        Download again
+                      </button>
+                    </div>
+                  ) : (
+                    <button onClick={handleDownload} disabled={downloading}
+                      className="h-9 px-4 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md text-xs font-semibold inline-flex items-center gap-2 shadow-sm transition-colors">
+                      {downloading ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
+                      {downloading ? 'Preparing…' : `Download ${year.name} (.xlsx)`}
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Step 2 — acknowledge (locked until downloaded) */}
+          <div className={`rounded-md ring-1 ring-black/5 p-4 transition-opacity ${downloaded ? '' : 'opacity-50 pointer-events-none'}`}>
+            <div className="flex items-start gap-2.5">
+              <span className={`size-6 rounded-full flex items-center justify-center text-[11px] font-bold shrink-0 ${acknowledged ? 'bg-emerald-100 text-emerald-700' : 'bg-zinc-100 text-zinc-500'}`}>2</span>
+              <div className="flex-1">
+                <p className="text-xs font-semibold text-zinc-800">Confirm you&rsquo;ve saved it</p>
+                <label className="flex items-start gap-2 mt-2 cursor-pointer">
+                  <input type="checkbox" checked={acknowledged} disabled={!downloaded}
+                    onChange={e => setAcknowledged(e.target.checked)}
+                    className="mt-0.5 size-4 rounded border-zinc-300 text-primary focus:ring-2 focus:ring-primary/30" />
+                  <span className="text-[11px] text-zinc-600 leading-relaxed">
+                    I have downloaded, saved and printed this data, and I understand the academic year&rsquo;s attendance and marks will be <strong>permanently deleted</strong> and cannot be recovered from the app.
+                  </span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          {error && (
+            <div className="rounded-md bg-red-50 ring-1 ring-inset ring-red-500/20 px-3 py-2 text-xs text-red-700 flex items-start gap-2">
+              <AlertTriangle className="size-4 shrink-0 mt-px" /> {error}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex justify-end gap-3 p-5 border-t border-zinc-100">
+          <button onClick={onClose} disabled={deleting}
+            className="text-zinc-700 px-4 py-2 border border-zinc-200 rounded-md text-xs font-medium hover:bg-zinc-50 transition-colors disabled:opacity-50">
+            Cancel
+          </button>
+          <button onClick={handleDelete} disabled={!canDelete}
+            className="px-5 py-2 bg-red-600 hover:bg-red-700 disabled:bg-zinc-200 disabled:text-zinc-400 text-white rounded-md text-xs font-semibold inline-flex items-center gap-2 transition-colors disabled:cursor-not-allowed">
+            {deleting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+            {deleting ? 'Deleting…' : 'Delete Year Permanently'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

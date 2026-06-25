@@ -1102,15 +1102,50 @@ app.put('/api/admin/academics/set-active/:id', async (req, res) => {
 //  Guard: the active year cannot be deleted (set another active first).
 //  The "data gone forever" warning is shown on the frontend.
 app.delete('/api/admin/academics/:id', async (req, res) => {
+    const { id } = req.params;
+    const conn = await db.getConnection();
     try {
-        const [rows] = await db.execute('SELECT isActive FROM academic_years WHERE id = ?', [req.params.id]);
-        if (rows.length === 0) return res.status(404).json({ error: 'Academic year not found.' });
+        const [rows] = await conn.execute(
+            'SELECT id, institutionId, isActive FROM academic_years WHERE id = ?',
+            [id]
+        );
+        if (rows.length === 0) {
+            conn.release();
+            return res.status(404).json({ error: 'Academic year not found.' });
+        }
         if (rows[0].isActive) {
+            conn.release();
             return res.status(400).json({ error: 'Cannot delete the active academic year. Set another year active first.' });
         }
-        await db.execute('DELETE FROM academic_years WHERE id = ?', [req.params.id]);
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+        const instId = rows[0].institutionId;
+ 
+        await conn.beginTransaction();
+ 
+        // Purge the heavy, year-scoped records so storage is actually freed.
+        const [delMarks] = await conn.execute(
+            'DELETE FROM student_marks WHERE institutionId = ? AND academic_year_id = ?',
+            [instId, id]
+        );
+        const [delAtt] = await conn.execute(
+            'DELETE FROM attendance WHERE institutionId = ? AND academic_year_id = ?',
+            [instId, id]
+        );
+ 
+        // Finally the year row (users.academic_year_id -> NULL via FK).
+        await conn.execute('DELETE FROM academic_years WHERE id = ?', [id]);
+ 
+        await conn.commit();
+        res.json({
+            success: true,
+            deletedMarks: delMarks.affectedRows,
+            deletedAttendance: delAtt.affectedRows
+        });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally {
+        conn.release();
+    }
 });
 
 
@@ -1261,58 +1296,15 @@ app.get('/api/admin/timetable/:instId', async (req, res) => {
                 message: 'No active academic year. Create one first under Academics.'
             });
         }
-        // const [days]     = await db.execute('SELECT * FROM timetable_days WHERE institutionId = ? AND academic_year_id = ? ORDER BY day_index', [instId, yearId]);
-        // const [periods]  = await db.execute('SELECT * FROM timetable_periods WHERE institutionId = ? AND academic_year_id = ? ORDER BY period_index', [instId, yearId]);
-        // const [entries]  = await db.execute('SELECT * FROM timetable_entries WHERE institutionId = ? AND academic_year_id = ?', [instId, yearId]);
-        // const [classes]  = await db.execute('SELECT * FROM classes WHERE institutionId = ? ORDER BY className, section', [instId]);
-        // const [teachers] = await db.execute("SELECT id, name, email FROM users WHERE institutionId = ? AND LOWER(role) LIKE '%teacher%'", [instId]);
-        // const [subjects] = await db.execute('SELECT * FROM subjects WHERE institutionId = ? ORDER BY name', [instId]);
-        // const [tsRows] = await db.execute(
-        //     `SELECT ts.teacher_id, ts.subject_id FROM teacher_subjects ts
-        //        JOIN users u ON u.id = ts.teacher_id WHERE u.institutionId = ?`, [instId]);
-        const [
-    [days],
-    [periods],
-    [entries],
-    [classes],
-    [teachers],
-    [subjects],
-    [tsRows]
-] = await Promise.all([
-    db.execute(
-        'SELECT * FROM timetable_days WHERE institutionId = ? AND academic_year_id = ? ORDER BY day_index',
-        [instId, yearId]
-    ),
-    db.execute(
-        'SELECT * FROM timetable_periods WHERE institutionId = ? AND academic_year_id = ? ORDER BY period_index',
-        [instId, yearId]
-    ),
-    db.execute(
-        'SELECT * FROM timetable_entries WHERE institutionId = ? AND academic_year_id = ?',
-        [instId, yearId]
-    ),
-    db.execute(
-        'SELECT * FROM classes WHERE institutionId = ? ORDER BY className, section',
-        [instId]
-    ),
-    db.execute(
-        "SELECT id, name, email FROM users WHERE institutionId = ? AND LOWER(role) LIKE '%teacher%'",
-        [instId]
-    ),
-    db.execute(
-        'SELECT * FROM subjects WHERE institutionId = ? ORDER BY name',
-        [instId]
-    ),
-    db.execute(
-        `SELECT ts.teacher_id, ts.subject_id
-         FROM teacher_subjects ts
-         JOIN users u ON u.id = ts.teacher_id
-         WHERE u.institutionId = ?`,
-        [instId]
-    )
-]);
-
-
+        const [days]     = await db.execute('SELECT * FROM timetable_days WHERE institutionId = ? AND academic_year_id = ? ORDER BY day_index', [instId, yearId]);
+        const [periods]  = await db.execute('SELECT * FROM timetable_periods WHERE institutionId = ? AND academic_year_id = ? ORDER BY period_index', [instId, yearId]);
+        const [entries]  = await db.execute('SELECT * FROM timetable_entries WHERE institutionId = ? AND academic_year_id = ?', [instId, yearId]);
+        const [classes]  = await db.execute('SELECT * FROM classes WHERE institutionId = ? ORDER BY className, section', [instId]);
+        const [teachers] = await db.execute("SELECT id, name, email FROM users WHERE institutionId = ? AND LOWER(role) LIKE '%teacher%'", [instId]);
+        const [subjects] = await db.execute('SELECT * FROM subjects WHERE institutionId = ? ORDER BY name', [instId]);
+        const [tsRows] = await db.execute(
+            `SELECT ts.teacher_id, ts.subject_id FROM teacher_subjects ts
+               JOIN users u ON u.id = ts.teacher_id WHERE u.institutionId = ?`, [instId]);
         const teacherSubjects = {};
         tsRows.forEach(r => {
             if (!teacherSubjects[r.teacher_id]) teacherSubjects[r.teacher_id] = [];
