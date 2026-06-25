@@ -41,8 +41,8 @@ export default function ManageLogin() {
     { id: 'permissions', label: 'Permissions', icon: CircleCheck },
     { id: 'classes',     label: 'Classes',     icon: Layers },
     { id: 'subjects',    label: 'Subjects',    icon: BookOpen },
-    { id: 'academics',   label: 'Academics Year',   icon: Calendar },
     { id: 'promotion',   label: 'Promotion',   icon: CircleArrowUp },
+    { id: 'academics',   label: 'Academics Year',   icon: Calendar },
   ];
 
   const tabProps = { data, fetchData, user };
