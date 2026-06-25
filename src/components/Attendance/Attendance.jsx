@@ -12,16 +12,6 @@ import { API_BASE_URL } from '../../apiConfig';
 
 // =====================================================================
 //  Attendance — Top-level container
-//  Three category tabs (Students / Teachers / Other) × two action
-//  sub-tabs (Mark / History), plus an Academic Year filter on top.
-//
-//  Access rules:
-//    • Super Admin           -> full access everywhere
-//    • Student               -> only own history (Students tab -> History)
-//    • Teacher               -> mark Students (their classes), view own history
-//    • Custom role           -> only own history by default; mark only if
-//                               Super Admin granted edit permission on
-//                               the Attendance module.
 // =====================================================================
 
 export default function Attendance() {
@@ -35,13 +25,9 @@ export default function Attendance() {
 
   const canMark = isSuper || isTeacher || can('Attendance', 'edit');
 
-  // ---- Active academic year (read-only context) -------------------
-  // Attendance data is tied to the school's ACTIVE academic year (the
-  // backend scopes every query by it). There is no year picker — when the
-  // admin switches the active year under Academics, the attendance data
-  // switches with it automatically. We fetch the active year only to show
-  // its name as context.
+  // ---- Active academic year + class list (for the download dropdown) ---
   const [activeYearName, setActiveYearName] = useState('');
+  const [classes, setClasses] = useState([]);
 
   useEffect(() => {
     if (!user?.institutionId) return;
@@ -52,18 +38,22 @@ export default function Attendance() {
         const list = data.academicYears || [];
         const active = list.find(y => y.isActive) || list[0];
         if (active) setActiveYearName(active.name || '');
+        setClasses(data.classes || []);
       } catch (e) { console.error('academic year load:', e); }
     })();
   }, [user]);
 
-  // ---- Download the active year's attendance as a readable .xlsx ----
-  // Same layout as the combined Year Archive's attendance tabs (class
-  // overview %, per-student, per-staff). Super Admin only.
+  // ---- Download the active year's attendance REGISTER as .xlsx --------
+  // scope picks what goes in the file: everything, all students, one class,
+  // teachers, or other staff. Super Admin only.
   const [downloading, setDownloading] = useState(false);
+  const [exportScope, setExportScope] = useState('all');
+
   const handleExport = async () => {
     setDownloading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/attendance-export/${user.institutionId}`);
+      const url = `${API_BASE_URL}/admin/attendance-export/${user.institutionId}?scope=${encodeURIComponent(exportScope)}`;
+      const res = await fetch(url);
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
         throw new Error(d.error || 'Download failed. Please try again.');
@@ -74,14 +64,14 @@ export default function Attendance() {
       const cd = res.headers.get('Content-Disposition') || '';
       const m = cd.match(/filename="?([^"]+)"?/);
       if (m) filename = m[1];
-      const url = URL.createObjectURL(blob);
+      const objUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url;
+      a.href = objUrl;
       a.download = filename;
       document.body.appendChild(a);
       a.click();
       a.remove();
-      URL.revokeObjectURL(url);
+      URL.revokeObjectURL(objUrl);
     } catch (e) {
       alert(e.message);
     } finally {
@@ -89,33 +79,50 @@ export default function Attendance() {
     }
   };
 
-  const DownloadButton = () => (
+  // Download control = scope dropdown + button. Super Admin only.
+  const DownloadControl = () => (
     isSuper ? (
-      <button onClick={handleExport} disabled={downloading}
-        className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-white text-zinc-700 border border-zinc-200 hover:bg-zinc-50 hover:text-primary hover:border-primary/40 text-xs font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed whitespace-nowrap shadow-sm">
-        {downloading ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
-        {downloading ? 'Preparing…' : 'Download'}
-      </button>
+      <div className="flex items-center gap-2">
+        <div className="relative">
+          <select value={exportScope} onChange={e => setExportScope(e.target.value)}
+            title="Choose what to download"
+            className="h-9 rounded-md border border-zinc-200 bg-white pl-3 pr-8 text-xs font-medium text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 appearance-none cursor-pointer shadow-sm max-w-[180px] truncate">
+            <option value="all">Everything</option>
+            <option value="students">Students — All classes</option>
+            {classes.map(c => (
+              <option key={c.id} value={`class:${c.id}`}>
+                Students — {c.className}{c.section ? ` ${c.section}` : ''}
+              </option>
+            ))}
+            <option value="teachers">Teachers</option>
+            <option value="other">Other staff</option>
+          </select>
+          <ChevronDown className="size-3.5 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+        </div>
+        <button onClick={handleExport} disabled={downloading}
+          className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-white text-zinc-700 border border-zinc-200 hover:bg-zinc-50 hover:text-primary hover:border-primary/40 text-xs font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed whitespace-nowrap shadow-sm">
+          {downloading ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+          {downloading ? 'Preparing…' : 'Download'}
+        </button>
+      </div>
     ) : null
   );
 
   // Which category tabs are visible to this user?
   const categories = useMemo(() => {
     if (isSuper)   return ['students', 'teachers', 'other'];
-    if (isTeacher) return ['students', 'teachers']; // teacher marks students, views own
-    if (isStudent) return ['students'];             // sees only their history
+    if (isTeacher) return ['students', 'teachers'];
+    if (isStudent) return ['students'];
     return ['students', 'teachers', 'other'];
   }, [isSuper, isTeacher, isStudent]);
 
   const [category, setCategory] = useState(categories[0]);
   const [mode, setMode] = useState('mark'); // 'mark' | 'history'
 
-  // If the user can't mark at all, lock them to history view
   useEffect(() => {
     if (!canMark) setMode('history');
   }, [canMark]);
 
-  // Students/custom-role users see only their own history; force category+mode
   const forceSelfHistory = isStudent || (!isSuper && !isTeacher && !can('Attendance', 'edit'));
 
   const categoryConfig = {
@@ -124,7 +131,6 @@ export default function Attendance() {
     other:    { label: 'Other',    icon: UserCog }
   };
 
-  // Read-only badge showing which academic year the attendance belongs to.
   const YearBadge = () => (
     activeYearName ? (
       <div className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-primary/5 ring-1 ring-primary/15 text-primary text-xs font-semibold whitespace-nowrap self-start sm:self-auto">
@@ -133,8 +139,6 @@ export default function Attendance() {
     ) : null
   );
 
-  // -----------------------------------------------------------------
-  // Render
   // -----------------------------------------------------------------
   if (forceSelfHistory) {
     return (
@@ -152,16 +156,13 @@ export default function Attendance() {
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-3 sm:space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <Header subtitle="Mark and review daily attendance" />
-        <div className="flex items-center gap-2 self-start sm:self-auto">
-          <DownloadButton />
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2 self-start sm:self-auto">
+          <DownloadControl />
           <YearBadge />
         </div>
       </div>
 
-      {/* Navigation Controls Wrapper - Tighter spacing on mobile */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        
-        {/* Category Tabs (Students / Teachers / Other) */}
         <div className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar w-full sm:w-auto pb-1 sm:pb-0">
           {categories.map(key => {
             const cfg = categoryConfig[key];
@@ -181,7 +182,6 @@ export default function Attendance() {
           })}
         </div>
 
-        {/* Mode toggle (Mark / History) - Spans full width evenly on mobile */}
         <div className="flex sm:inline-flex bg-zinc-100/80 p-1 rounded-md shrink-0 w-full sm:w-auto">
           {canMark && (
             <button
@@ -202,7 +202,6 @@ export default function Attendance() {
         </div>
       </div>
 
-      {/* Body */}
       {mode === 'mark' ? (
         <RosterMarker category={category} />
       ) : (
@@ -212,7 +211,6 @@ export default function Attendance() {
   );
 }
 
-// Reduced bottom margin on mobile to save vertical space
 function Header({ subtitle }) {
   return (
     <header className="flex flex-col mb-1 sm:mb-4">
@@ -223,18 +221,8 @@ function Header({ subtitle }) {
 }
 
 // =====================================================================
-//  HistoryPicker — category overview + Analysis + person list.
-//  • For STUDENTS, a class filter scopes the roster + overview to ONE
-//    class (mirrors the marking screen). There is no "All classes" option
-//    — a default class is always selected, otherwise the list mixed every
-//    class together and collided roll numbers.
-//  • Overview bar (below search): working days + present/absent/late for
-//    the chosen Daily/Monthly/Yearly/Custom range, across the (scoped)
-//    category.
-//  • "Analysis" button toggles a bar graph of the same data.
-//  • Picking a person opens their individual history (with its own graph).
+//  HistoryPicker — unchanged behaviour
 // =====================================================================
-
 function HistoryPicker({ category, yearName }) {
   const { user } = useAuth();
   const { isAllAccess } = usePermissions();
@@ -246,14 +234,11 @@ function HistoryPicker({ category, yearName }) {
   const [picked, setPicked] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Class filter (students only) — scopes roster + overview to one class.
-  // No "All classes" option: one real class is always selected.
   const [classes, setClasses] = useState([]);
   const [classId, setClassId] = useState('');
   const [classesLoaded, setClassesLoaded] = useState(false);
 
-  // Overview filter state
-  const [mode, setMode] = useState('monthly'); // daily | monthly | yearly | custom
+  const [mode, setMode] = useState('monthly');
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [day, setDay]     = useState(() => new Date().toISOString().slice(0, 10));
   const [from, setFrom]   = useState(() => {
@@ -264,16 +249,11 @@ function HistoryPicker({ category, yearName }) {
 
   const [overview, setOverview] = useState(null);
   const [ovLoading, setOvLoading] = useState(true);
-  const [view, setView] = useState('list'); // 'list' | 'analysis'
-  const [analysisSort, setAnalysisSort] = useState('high'); // 'high' | 'low' | 'order'
+  const [view, setView] = useState('list');
+  const [analysisSort, setAnalysisSort] = useState('high');
 
-  // Teacher in "teachers" tab -> just shortcut to their own history
   const teacherViewingTeachers = !isAllAccess && isTeacher && category === 'teachers';
 
-  // ---- Load the class list for the student class filter ------------
-  //   Super Admin -> all classes; Teacher -> only their timetabled classes.
-  //   Non-student categories clear it. The default class is chosen by the
-  //   effect below (no "All classes" entry).
   useEffect(() => {
     if (category !== 'students') { setClasses([]); setClassId(''); setClassesLoaded(false); return; }
     setClassesLoaded(false);
@@ -293,20 +273,14 @@ function HistoryPicker({ category, yearName }) {
     })();
   }, [category, user, isTeacher, isAllAccess]);
 
-  // Keep one real class selected — default to the first, re-point if the
-  // current one disappears.
   useEffect(() => {
     if (category !== 'students' || classes.length === 0) return;
     const valid = classes.some(c => String(c.id) === String(classId));
     if (!valid) setClassId(String(classes[0].id));
   }, [classes, category, classId]);
 
-  // While students' default class is still resolving, hold off fetching so
-  // we never briefly list every class together.
   const awaitingClass = category === 'students' && !classId && (!classesLoaded || classes.length > 0);
 
-  // ---- Range resolution. "Yearly" returns no date bound — the backend
-  //      scopes to the whole active academic year. ------------------
   const resolveRange = useCallback(() => {
     if (mode === 'daily') return { from: day, to: day };
     if (mode === 'monthly') {
@@ -318,7 +292,6 @@ function HistoryPicker({ category, yearName }) {
     return { from, to };
   }, [mode, day, month, from, to]);
 
-  // ---- Load the roster of people to pick from ----------------------
   const loadRoster = useCallback(async () => {
     if (awaitingClass) { setLoading(true); return; }
     setLoading(true);
@@ -338,7 +311,6 @@ function HistoryPicker({ category, yearName }) {
     else setLoading(false);
   }, [loadRoster, teacherViewingTeachers]);
 
-  // ---- Load the category overview / analysis series ----------------
   const loadOverview = useCallback(async () => {
     if (teacherViewingTeachers) { setOvLoading(false); return; }
     if (awaitingClass) { setOvLoading(true); return; }
@@ -357,7 +329,6 @@ function HistoryPicker({ category, yearName }) {
 
   useEffect(() => { loadOverview(); }, [loadOverview]);
 
-  // ---- Sorting: students by roll, others alphabetical + S.No -------
   const sortedAll = useMemo(() => {
     const arr = [...users];
     if (category === 'students') {
@@ -391,9 +362,6 @@ function HistoryPicker({ category, yearName }) {
     );
   }, [sortedAll, search]);
 
-  // ---- Per-user stats (for the "total / present" figure + Analysis) -
-  // "present" counts days attended (Present); the denominator is the
-  // category's working days in the selected range.
   const workingDays = overview?.working_days || 0;
   const statsById = useMemo(() => {
     const m = {};
@@ -409,7 +377,6 @@ function HistoryPicker({ category, yearName }) {
     return m;
   }, [overview, workingDays]);
 
-  // Per-student data for the Analysis bar chart, sorted per the chosen order.
   const analysisData = useMemo(() => {
     const arr = sortedAll.map(u => {
       const st = statsById[u.id] || { present: 0, absent: 0, late: 0, total: workingDays, pct: 0 };
@@ -423,13 +390,11 @@ function HistoryPicker({ category, yearName }) {
     } else if (analysisSort === 'low') {
       arr.sort((a, b) => a.pct - b.pct || (a.name || '').localeCompare(b.name || ''));
     }
-    // 'order' keeps sortedAll order (roll-wise for students, S.No/alpha otherwise)
     return arr;
   }, [sortedAll, statsById, serialMap, workingDays, analysisSort]);
 
   const categoryLabel = category === 'students' ? 'Students' : (category === 'teachers' ? 'Teachers' : 'Other');
 
-  // ---- Early outs --------------------------------------------------
   if (teacherViewingTeachers) {
     return <AttendanceHistory userId={user.id} userName={user.name} selfOnly yearName={yearName} />;
   }
@@ -448,8 +413,6 @@ function HistoryPicker({ category, yearName }) {
 
   return (
     <div className="space-y-4">
-
-      {/* Filter row: Daily/Monthly/Yearly/Custom + class (students) + pickers + Analysis toggle */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         <div className="inline-flex bg-zinc-100/80 p-1 rounded-md overflow-x-auto custom-scrollbar shrink-0 max-w-full">
           {['daily', 'monthly', 'yearly', 'custom'].map(m => (
@@ -463,7 +426,6 @@ function HistoryPicker({ category, yearName }) {
         </div>
 
         <div className="flex items-center flex-wrap gap-2">
-          {/* Class filter — students only. Scopes the roster + overview. */}
           {category === 'students' && classes.length > 0 && (
             <div className="relative shrink-0">
               <select value={classId} onChange={e => setClassId(e.target.value)}
@@ -479,7 +441,6 @@ function HistoryPicker({ category, yearName }) {
             </div>
           )}
 
-          {/* Range pickers */}
           {mode === 'daily' && (
             <input type="date" value={day} onChange={e => setDay(e.target.value)}
               className="h-9 rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors" />
@@ -503,7 +464,6 @@ function HistoryPicker({ category, yearName }) {
             </div>
           )}
 
-          {/* Analysis toggle */}
           <button onClick={() => setView(v => (v === 'analysis' ? 'list' : 'analysis'))}
             className={`h-9 px-3 rounded-md text-xs font-semibold inline-flex items-center gap-1.5 transition-colors shrink-0 ${
               view === 'analysis'
@@ -516,7 +476,6 @@ function HistoryPicker({ category, yearName }) {
         </div>
       </div>
 
-      {/* Search */}
       <div className="relative w-full sm:w-80">
         <Search className="size-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
         <input
@@ -527,10 +486,8 @@ function HistoryPicker({ category, yearName }) {
         />
       </div>
 
-      {/* Overview bar (below the search) */}
       <OverviewBar overview={overview} loading={ovLoading} category={category} mode={mode} />
 
-      {/* Body: Analysis graph OR person list */}
       {view === 'analysis' ? (
         ovLoading ? (
           <div className="h-64 flex items-center justify-center">
@@ -542,7 +499,6 @@ function HistoryPicker({ category, yearName }) {
               <h3 className="text-xs font-semibold text-zinc-700 flex items-center gap-1.5">
                 <BarChart3 className="size-3.5 text-primary" /> Attendance % per {category === 'students' ? 'student' : (category === 'teachers' ? 'teacher' : 'person')}
               </h3>
-              {/* Bar-graph sort filter */}
               <div className="inline-flex bg-zinc-100/80 p-1 rounded-md self-start sm:self-auto">
                 {[
                   { key: 'high',  label: 'High → Low' },
@@ -572,7 +528,6 @@ function HistoryPicker({ category, yearName }) {
           </div>
         ) : (
           <div className="space-y-3">
-            {/* Heading above the people list */}
             <h3 className="text-xs font-semibold text-zinc-700 flex items-center gap-1.5">
               <List className="size-3.5 text-primary" /> {categoryLabel}
               <span className="text-zinc-400 font-medium tabular-nums">({filtered.length})</span>
@@ -649,7 +604,7 @@ function HistoryPicker({ category, yearName }) {
 }
 
 // =====================================================================
-//  OverviewBar — aggregate summary for the whole category
+//  OverviewBar
 // =====================================================================
 function OverviewBar({ overview, loading, category, mode }) {
   if (loading) {
@@ -661,11 +616,6 @@ function OverviewBar({ overview, loading, category, mode }) {
   }
   if (!overview) return null;
 
-  // Daily view shows raw head-counts (e.g. 20 present of 21 students today).
-  // Monthly / Yearly / Custom span many days, so raw counts become summed
-  // student-days (confusing next to the student count). For those period
-  // views we instead show Present / Absent as a SHARE of all marked
-  // student-days, so the two add up to 100%.
   const isDaily = mode === 'daily';
   const present = overview.present ?? 0;
   const absent  = overview.absent ?? 0;
@@ -714,9 +664,7 @@ function OverviewBar({ overview, loading, category, mode }) {
 }
 
 // =====================================================================
-//  AnalysisBars — one vertical bar per person, height = attendance %.
-//  Colour bands:  ≥ 80% green · 50–80% blue · < 50% red.
-//  Horizontally scrollable; people are shown line-wise.
+//  AnalysisBars
 // =====================================================================
 function bandColor(pct) {
   if (pct >= 80) return { bar: 'bg-emerald-500', text: 'text-emerald-600' };
@@ -725,7 +673,7 @@ function bandColor(pct) {
 }
 
 function AnalysisBars({ data, category }) {
-  const CHART_H = 240; // px track height for the bars
+  const CHART_H = 240;
 
   if (!data || data.length === 0) {
     return (
@@ -737,7 +685,6 @@ function AnalysisBars({ data, category }) {
 
   return (
     <div className="bg-white rounded-lg ring-1 ring-black/5 p-4 sm:p-5">
-      {/* Band legend */}
       <div className="flex flex-wrap items-center gap-3 sm:gap-4 mb-5 text-[10px] font-medium text-zinc-500">
         <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-emerald-500" /> ≥ 80%</span>
         <span className="flex items-center gap-1.5"><span className="size-2.5 rounded-sm bg-primary" /> 50–80%</span>
@@ -751,14 +698,12 @@ function AnalysisBars({ data, category }) {
             const barPx = Math.max(Math.round((d.pct / 100) * (CHART_H - 26)), d.pct > 0 ? 6 : 2);
             return (
               <div key={d.id} className="flex flex-col items-center shrink-0" style={{ width: 72 }}>
-                {/* Bar + % label (bottom-aligned so the label sits above the bar) */}
                 <div className="flex flex-col justify-end items-center w-full" style={{ height: CHART_H }}>
                   <span className={`text-[11px] font-bold tabular-nums mb-1 ${c.text}`}>{d.pct}%</span>
                   <div className={`w-full ${c.bar} rounded-t transition-all`}
                     style={{ height: barPx }}
                     title={`${d.name} — ${d.present}/${d.total} present (${d.pct}%)`} />
                 </div>
-                {/* Name + roll / serial */}
                 <span className="text-[10px] font-semibold text-zinc-700 mt-2 text-center leading-tight w-full truncate" title={d.name}>
                   {d.name}
                 </span>
