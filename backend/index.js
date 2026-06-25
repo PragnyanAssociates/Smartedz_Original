@@ -459,23 +459,23 @@ app.delete('/api/group/:groupId/branch/:id', async (req, res) => {
 app.get('/api/admin/data/:instId', async (req, res) => {
     const { instId } = req.params;
     try {
-        const [users]    = await db.execute('SELECT * FROM users WHERE institutionId = ?', [instId]);
-        const [users] = await db.execute(
-    `SELECT
-        id,
-        name,
-        email,
-        username,
-        role,
-        institutionId,
-        status,
-        class_id,
-        section,
-        academic_year_id
-     FROM users
-     WHERE institutionId = ?`,
-    [instId]
-);
+        const [users] = await db.execute('SELECT * FROM users WHERE institutionId = ?', [instId]);
+//         const [users] = await db.execute(
+//     `SELECT
+//         id,
+//         name,
+//         email,
+//         username,
+//         role,
+//         institutionId,
+//         status,
+//         class_id,
+//         section,
+//         academic_year_id
+//      FROM users
+//      WHERE institutionId = ?`,
+//     [instId]
+// );
         const [classes]  = await db.execute('SELECT * FROM classes WHERE institutionId = ? ORDER BY className, section', [instId]);
         const [years]    = await db.execute('SELECT * FROM academic_years WHERE institutionId = ? ORDER BY startDate DESC', [instId]);
         const [roles]    = await db.execute('SELECT * FROM roles WHERE institutionId = ? ORDER BY role_name', [instId]);
