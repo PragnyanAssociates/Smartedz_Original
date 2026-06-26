@@ -8443,7 +8443,7 @@ app.get('/api/notifications/:userId/unread-count', async (req, res) => {
 //   PUT /api/notifications/:id/read
 app.put('/api/notifications/:id/read', async (req, res) => {
     try {
-        await db.execute('UPDATE notifications SET is_read = 1 WHERE id = ?', [req.params.id]);
+        await db.execute('UPDATE notifications SET is_read = 1 WHERE id = ? AND is_read = 0', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
