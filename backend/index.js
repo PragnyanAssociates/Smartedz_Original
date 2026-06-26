@@ -449,6 +449,143 @@ app.delete('/api/group/:groupId/branch/:id', async (req, res) => {
 });
 
 
+
+// =====================================================================
+// === 15.8 ARCHIVE TRACKING — per-module "final archive" freshness ====
+//
+//   Two endpoints power the per-module Final Archive tick:
+//     GET  /api/admin/archive-status/:instId/:yearId
+//          -> { modules: { users:{downloaded,stale,downloadedAt},
+//                          attendance:{...} } }
+//     POST /api/admin/archive-record/:instId/:yearId/:module
+//          -> records that the module's final archive was just downloaded
+//             (stores a fingerprint of the data at this moment)
+//
+//   How "needs re-download" works:
+//     • Each module has a FINGERPRINT — a small signature of its current
+//       data (row count + latest change time). Computed on the fly.
+//     • On download we save that fingerprint. Later, if the live
+//       fingerprint differs (new rows added / edited / deleted), the
+//       archive is STALE and the UI asks to download again.
+//
+//   MIGRATION (run once):
+//     CREATE TABLE IF NOT EXISTS archive_downloads (
+//       id INT AUTO_INCREMENT PRIMARY KEY,
+//       institutionId INT NOT NULL,
+//       academic_year_id INT NOT NULL,
+//       module VARCHAR(32) NOT NULL,
+//       fingerprint VARCHAR(255) NOT NULL,
+//       downloaded_by INT NULL,
+//       downloaded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+//       UNIQUE KEY uq_archive (institutionId, academic_year_id, module)
+//     );
+//     -- users have no change-timestamp; add one so edits invalidate the
+//     -- archive too (skip this line if the column already exists):
+//     ALTER TABLE users
+//       ADD COLUMN updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;
+//
+//   No other section depends on this. Self-contained.
+// =====================================================================
+
+const ARCHIVE_MODULES = ['users', 'attendance'];   // add 'marks','fees' here later
+
+const _archNorm = (v) => (v == null ? '' : (v instanceof Date ? v.toISOString() : String(v)));
+
+// Signature of a module's CURRENT data for an institution + year.
+async function computeArchiveFingerprint(instId, yearId, module) {
+    if (module === 'users') {
+        // Users aren't year-scoped; the directory snapshot is the live
+        // roster (alumni excluded, mirroring the export). updated_at may
+        // not exist on older DBs — fall back gracefully.
+        let rows;
+        try {
+            [rows] = await db.execute(
+                `SELECT COUNT(*) c, COALESCE(MAX(updated_at), '') t, COALESCE(MAX(id), 0) mx
+                   FROM users
+                  WHERE institutionId = ? AND (status IS NULL OR LOWER(TRIM(status)) <> 'alumni')`,
+                [instId]
+            );
+        } catch (e) {
+            [rows] = await db.execute(
+                `SELECT COUNT(*) c, '' t, COALESCE(MAX(id), 0) mx
+                   FROM users
+                  WHERE institutionId = ? AND (status IS NULL OR LOWER(TRIM(status)) <> 'alumni')`,
+                [instId]
+            );
+        }
+        const x = rows[0] || {};
+        return `u:${x.c}|${_archNorm(x.t)}|${x.mx}`;
+    }
+    if (module === 'attendance') {
+        const [rows] = await db.execute(
+            `SELECT COUNT(*) c, COALESCE(MAX(marked_at), '') mk, COALESCE(MAX(updated_at), '') up
+               FROM attendance
+              WHERE institutionId = ? AND academic_year_id = ?`,
+            [instId, yearId]
+        );
+        const x = rows[0] || {};
+        return `a:${x.c}|${_archNorm(x.mk)}|${_archNorm(x.up)}`;
+    }
+    return '';
+}
+
+async function _getArchiveRow(instId, yearId, module) {
+    const [rows] = await db.execute(
+        'SELECT fingerprint, downloaded_at FROM archive_downloads WHERE institutionId = ? AND academic_year_id = ? AND module = ? LIMIT 1',
+        [instId, yearId, module]
+    );
+    return rows[0] || null;
+}
+
+// ---- status for every module of one year ----------------------------
+app.get('/api/admin/archive-status/:instId/:yearId', async (req, res) => {
+    const { instId, yearId } = req.params;
+    try {
+        const modules = {};
+        for (const m of ARCHIVE_MODULES) {
+            const current = await computeArchiveFingerprint(instId, yearId, m);
+            const row = await _getArchiveRow(instId, yearId, m);
+            modules[m] = {
+                downloaded: !!row,
+                stale: row ? row.fingerprint !== current : false,
+                downloadedAt: row ? row.downloaded_at : null
+            };
+        }
+        res.json({ modules });
+    } catch (err) {
+        console.error('[archive-status]', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ---- record a successful final-archive download ---------------------
+app.post('/api/admin/archive-record/:instId/:yearId/:module', async (req, res) => {
+    const { instId, yearId, module } = req.params;
+    const downloadedBy = (req.body && req.body.userId) || null;
+    if (!ARCHIVE_MODULES.includes(module)) {
+        return res.status(400).json({ error: 'Unknown module.' });
+    }
+    try {
+        const fingerprint = await computeArchiveFingerprint(instId, yearId, module);
+        await db.execute(
+            `INSERT INTO archive_downloads (institutionId, academic_year_id, module, fingerprint, downloaded_by)
+             VALUES (?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+                fingerprint = VALUES(fingerprint),
+                downloaded_by = VALUES(downloaded_by),
+                downloaded_at = CURRENT_TIMESTAMP`,
+            [instId, yearId, module, fingerprint, downloadedBy]
+        );
+        const row = await _getArchiveRow(instId, yearId, module);
+        res.json({ downloaded: true, stale: false, downloadedAt: row ? row.downloaded_at : new Date() });
+    } catch (err) {
+        console.error('[archive-record]', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
+
 // =====================================================================
 // === REPLACE Section 3 — SUPER ADMIN School Aggregate Data ===========
 //
@@ -875,6 +1012,197 @@ app.delete('/api/admin/users/:id', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// === 15.7 USERS EXPORT — full directory, register layout =============
+app.get('/api/admin/users-export/:instId', async (req, res) => {
+    const { instId } = req.params;
+    try {
+        const ExcelJS = require('exceljs');
+ 
+        const BRAND = 'FF3284C7';
+        const dmy = (v) => {
+            if (!v) return '';
+            const d = (v instanceof Date) ? v : new Date(v);
+            if (isNaN(d.getTime())) return '';
+            return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+        };
+        const rollNum = (r) => { const n = parseInt(r, 10); return isNaN(n) ? Number.MAX_SAFE_INTEGER : n; };
+        const money = (v) => (v === null || v === undefined || v === '') ? '' : v;
+ 
+        // ---- scope ----
+        const scope = (req.query.scope || 'all').toString();
+        const isClassScope = scope.startsWith('class:');
+        const specificClass = isClassScope ? parseInt(scope.slice(6), 10) : null;
+        const includeStudents = scope === 'all' || scope === 'students' || isClassScope;
+        const includeTeachers = scope === 'all' || scope === 'teachers';
+        const includeOther = scope === 'all' || scope === 'other';
+ 
+        // ---- year (for historical class grouping + label) ----
+        let year = null;
+        if (req.query.yearId) {
+            const [yr] = await db.execute('SELECT * FROM academic_years WHERE id = ? AND institutionId = ?', [req.query.yearId, instId]);
+            if (yr.length) year = yr[0];
+        }
+        if (!year) {
+            const [yr] = await db.execute('SELECT * FROM academic_years WHERE institutionId = ? AND isActive = 1 LIMIT 1', [instId]);
+            if (yr.length) year = yr[0];
+        }
+        const yearId = year ? year.id : null;
+        const yLabel = year ? (year.name || '') : 'All years';
+ 
+        const [instRows] = await db.execute('SELECT id, name FROM institutions WHERE id = ?', [instId]);
+        const inst = instRows[0] || { name: 'Institution' };
+ 
+        const [classes] = await db.execute('SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section', [instId]);
+        const classById = {}; classes.forEach(c => { classById[c.id] = c; });
+        const labelOf = (cid) => { const c = classById[cid]; return c ? `${c.className}${c.section ? ' - ' + c.section : ''}` : 'Unassigned'; };
+ 
+        const [users] = await db.execute('SELECT * FROM users WHERE institutionId = ?', [instId]);
+        const roleLc = (u) => (u.role || '').toLowerCase().trim();
+        const notAlumni = (u) => (u.status || '').toLowerCase() !== 'alumni';
+        const isStudent = (u) => roleLc(u) === 'student';
+        const isTeacher = (u) => roleLc(u).includes('teacher');
+ 
+        // Historical class for an old year (else current class_id).
+        let histClass = {};
+        if (yearId) {
+            const [hc] = await db.execute('SELECT DISTINCT student_id, class_id FROM student_marks WHERE institutionId = ? AND academic_year_id = ?', [instId, yearId]);
+            hc.forEach(r => { if (histClass[r.student_id] == null) histClass[r.student_id] = r.class_id; });
+        }
+        const classOf = (u) => (histClass[u.id] != null ? histClass[u.id] : u.class_id);
+ 
+        // Teacher -> subject names (best-effort; table/columns may vary).
+        let subjByTeacher = {};
+        try {
+            const [ts] = await db.execute(
+                `SELECT ts.teacher_id AS tid, s.name AS sname
+                   FROM teacher_subjects ts JOIN subjects s ON s.id = ts.subject_id
+                  WHERE s.institutionId = ?`, [instId]
+            );
+            ts.forEach(r => { (subjByTeacher[r.tid] = subjByTeacher[r.tid] || []).push(r.sname); });
+        } catch (e) { /* leave subjects blank if schema differs */ }
+ 
+        // rosters (alumni excluded, mirroring the Users tab)
+        const live = users.filter(notAlumni);
+        const studentsByClass = {};
+        live.filter(isStudent).forEach(u => { const cid = classOf(u); (studentsByClass[cid] = studentsByClass[cid] || []).push(u); });
+        Object.values(studentsByClass).forEach(list => list.sort((a, b) => rollNum(a.roll_no) - rollNum(b.roll_no) || (a.name || '').localeCompare(b.name || '')));
+        const teacherUsers = live.filter(isTeacher).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        const otherUsers = live.filter(u => !isStudent(u) && !isTeacher(u)).sort((a, b) => (a.role || '').localeCompare(b.role || '') || (a.name || '').localeCompare(b.name || ''));
+ 
+        // ---- column maps ----
+        const STU_HEAD = ['Roll', 'Name', 'Section', 'Gender', 'DOB', 'Phone', 'Email', 'Username', 'Aadhaar No', 'Admission No', 'Admission Date', 'Parent / Guardian', 'PEN No', 'Joined Date', 'Joined Grade', 'TC No', 'Address', 'Status'];
+        const stuRow = (u) => [
+            u.roll_no || '', u.name || '', u.section || '', u.gender || '', dmy(u.dob), u.phone_no || '', u.email || '', u.username || '',
+            u.aadhar_no || '', u.admission_no || '', dmy(u.admission_date), u.parent_name || '', u.pen_no || '',
+            dmy(u.school_joined_date), (u.school_joined_grade ?? '') === '' ? '' : String(u.school_joined_grade), u.tc_number || '', u.address || '', u.status || ''
+        ];
+        const TEA_HEAD = ['S.No', 'Name', 'Role', 'Gender', 'DOB', 'Phone', 'Email', 'Username', 'Aadhaar No', 'Joining Date', 'Experience', 'Prev Salary', 'Present Salary', 'Subjects', 'Address', 'Status'];
+        const teaRow = (u, i) => [
+            i + 1, u.name || '', u.role || '', u.gender || '', dmy(u.dob), u.phone_no || '', u.email || '', u.username || '',
+            u.aadhar_no || '', dmy(u.joining_date), u.experience || '', money(u.prev_salary), money(u.present_salary),
+            (subjByTeacher[u.id] || []).join(', '), u.address || '', u.status || ''
+        ];
+        const OTH_HEAD = ['S.No', 'Name', 'Role', 'Gender', 'DOB', 'Phone', 'Email', 'Username', 'Aadhaar No', 'Joining Date', 'Experience', 'Prev Salary', 'Present Salary', 'Address', 'Status'];
+        const othRow = (u, i) => [
+            i + 1, u.name || '', u.role || '', u.gender || '', dmy(u.dob), u.phone_no || '', u.email || '', u.username || '',
+            u.aadhar_no || '', dmy(u.joining_date), u.experience || '', money(u.prev_salary), money(u.present_salary), u.address || '', u.status || ''
+        ];
+        const maxCols = Math.max(STU_HEAD.length, TEA_HEAD.length, OTH_HEAD.length);
+ 
+        // ---- workbook ----
+        const wb = new ExcelJS.Workbook();
+        wb.creator = 'SmartEdz'; wb.created = new Date();
+        const ws = wb.addWorksheet('Users');
+        let r = 1;
+ 
+        ws.mergeCells(r, 1, r, maxCols);
+        const tt = ws.getCell(r, 1); tt.value = inst.name || 'Institution'; tt.font = { bold: true, size: 14, color: { argb: 'FF111827' } }; r++;
+        ws.mergeCells(r, 1, r, maxCols);
+        const sb = ws.getCell(r, 1); sb.value = `Users directory · ${yLabel}`; sb.font = { size: 10, color: { argb: 'FF6B7280' } }; r++;
+        r++;
+ 
+        const heading = (text) => {
+            ws.mergeCells(r, 1, r, maxCols);
+            const c = ws.getCell(r, 1); c.value = text;
+            c.font = { bold: true, size: 12, color: { argb: 'FFFFFFFF' } };
+            c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F2937' } };
+            c.alignment = { vertical: 'middle' }; ws.getRow(r).height = 20; r++;
+        };
+        const subHeading = (text) => {
+            ws.mergeCells(r, 1, r, maxCols);
+            const c = ws.getCell(r, 1); c.value = text;
+            c.font = { bold: true, size: 11, color: { argb: 'FF111827' } };
+            c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFF3F8' } }; r++;
+        };
+        const headerRow = (heads) => {
+            const row = ws.getRow(r);
+            heads.forEach((h, i) => {
+                const c = row.getCell(i + 1); c.value = h;
+                c.font = { bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
+                c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND } };
+                c.alignment = { vertical: 'middle', horizontal: (i < 2 ? 'left' : 'center'), wrapText: true };
+            });
+            row.height = 26; r++;
+        };
+        const dataRow = (vals) => {
+            const row = ws.getRow(r);
+            vals.forEach((v, i) => {
+                const c = row.getCell(i + 1); c.value = (v === null || v === undefined) ? '' : v;
+                c.font = { size: 9, color: { argb: 'FF374151' } };
+                c.alignment = { horizontal: (i < 2 ? 'left' : 'center'), vertical: 'top', wrapText: i >= 2 };
+            });
+            r++;
+        };
+ 
+        if (includeStudents) {
+            heading('STUDENTS');
+            const cids = (specificClass != null ? [specificClass] : Object.keys(studentsByClass).map(Number))
+                .filter(cid => studentsByClass[cid] && studentsByClass[cid].length)
+                .sort((a, b) => labelOf(a).localeCompare(labelOf(b), undefined, { numeric: true }));
+            if (cids.length === 0) subHeading('No students found for this selection');
+            cids.forEach(cid => {
+                subHeading(labelOf(cid));
+                headerRow(STU_HEAD);
+                studentsByClass[cid].forEach(u => dataRow(stuRow(u)));
+                r++;
+            });
+        }
+ 
+        if (includeTeachers) {
+            heading('TEACHERS');
+            headerRow(TEA_HEAD);
+            if (teacherUsers.length === 0) { ws.getRow(r).getCell(2).value = 'No teachers found'; r++; }
+            teacherUsers.forEach((u, i) => dataRow(teaRow(u, i)));
+            r++;
+        }
+ 
+        if (includeOther) {
+            heading('OTHER STAFF');
+            headerRow(OTH_HEAD);
+            if (otherUsers.length === 0) { ws.getRow(r).getCell(2).value = 'No other staff found'; r++; }
+            otherUsers.forEach((u, i) => dataRow(othRow(u, i)));
+            r++;
+        }
+ 
+        // widths (best compromise across sections) + freeze first 2 cols
+        const widths = [8, 24, 12, 9, 12, 14, 26, 16, 16, 14, 14, 22, 16, 22, 12, 14, 30, 12];
+        for (let i = 1; i <= maxCols; i++) ws.getColumn(i).width = widths[i - 1] || 14;
+        ws.views = [{ state: 'frozen', xSplit: 2, ySplit: 0 }];
+ 
+        const scopeTag = isClassScope ? `Class_${labelOf(specificClass)}` : scope.charAt(0).toUpperCase() + scope.slice(1);
+        const fileSafe = `${inst.name || 'institution'}_Users_${scopeTag}_${yLabel}`.replace(/[^a-z0-9\-_ ]/gi, '_').replace(/\s+/g, '_');
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="${fileSafe}.xlsx"`);
+        await wb.xlsx.write(res);
+        res.end();
+    } catch (err) {
+        console.error('[users-export] FATAL:', err);
+        if (!res.headersSent) res.status(500).json({ error: err.message });
+        else res.end();
+    }
+});
+
+
 
 
 // =====================================================================
@@ -1207,6 +1535,479 @@ app.get('/api/admin/academics/status/:instId', async (req, res) => {
 
         res.json({ hasActive: true, activeYear: y, ...st, level, message });
     } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// === 30. ACADEMIC YEAR DATA EXPORT (multi-sheet .xlsx) ===============
+// ---- styling constants ----------------------------------------------
+const _XL_BRAND = 'FF3284C7';
+const _XL_BRAND_SOFT = 'FFE7F1FB';
+const _XL_ZEBRA = 'FFF7F8FA';
+const _XL_THIN = { style: 'thin', color: { argb: 'FFD9DEE5' } };
+const _XL_BORDERS = { top: _XL_THIN, left: _XL_THIN, bottom: _XL_THIN, right: _XL_THIN };
+ 
+const _fmtDMY = (v) => {
+    if (!v) return '';
+    const d = new Date(v);
+    if (isNaN(d.getTime())) return '';
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    return `${dd}/${mm}/${d.getFullYear()}`;
+};
+ 
+const _rollNum = (r) => {
+    const n = parseInt(r, 10);
+    return isNaN(n) ? Number.POSITIVE_INFINITY : n;
+};
+ 
+// Excel sheet names: <=31 chars, none of  [ ] : * ? / \  ; must be unique.
+function _safeSheetName(name, fallback, used) {
+    let s = String(name || fallback || 'Sheet').replace(/[\[\]:*?/\\]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!s) s = fallback || 'Sheet';
+    s = s.slice(0, 31);
+    if (used) {
+        let base = s, n = 2;
+        while (used.has(s.toLowerCase())) {
+            const suffix = ' ' + n;
+            s = base.slice(0, 31 - suffix.length) + suffix;
+            n++;
+        }
+        used.add(s.toLowerCase());
+    }
+    return s;
+}
+ 
+function _xlTitle(ws, lastCol, inst, subtitle) {
+    ws.mergeCells(1, 1, 1, lastCol);
+    const t = ws.getCell(1, 1);
+    t.value = inst.name || 'Institution';
+    t.font = { bold: true, size: 14, color: { argb: _XL_BRAND } };
+    ws.mergeCells(2, 1, 2, lastCol);
+    const s = ws.getCell(2, 1);
+    s.value = subtitle;
+    s.font = { size: 10, color: { argb: 'FF6B7280' } };
+    ws.getRow(1).height = 20;
+}
+ 
+function _xlHeaderCell(cell) {
+    cell.font = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _XL_BRAND } };
+    cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    cell.border = _XL_BORDERS;
+}
+ 
+function _xlWriteTable(ws, startRow, headers, rows, widths) {
+    const hr = startRow;
+    headers.forEach((h, i) => { const c = ws.getCell(hr, i + 1); c.value = h; _xlHeaderCell(c); });
+    rows.forEach((r, ri) => {
+        const rowNum = hr + 1 + ri;
+        r.forEach((v, ci) => {
+            const c = ws.getCell(rowNum, ci + 1);
+            c.value = (v === undefined || v === null || v === '') ? '' : v;
+            c.border = _XL_BORDERS;
+            c.alignment = { vertical: 'middle', horizontal: (typeof v === 'number') ? 'center' : 'left' };
+            if (ri % 2 === 1) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _XL_ZEBRA } };
+        });
+    });
+    if (widths) widths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+    ws.views = [{ state: 'frozen', ySplit: hr }];
+    return hr + 1 + rows.length;
+}
+ 
+function _buildYearWorkbook(payload) {
+    const { inst, year, students = [], staff = [], attendance = {}, marksClasses = [] } = payload;
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'SmartEdz';
+    wb.created = new Date();
+    const used = new Set();
+    const yLabel = year?.name || '';
+ 
+    // 1. Summary
+    {
+        const ws = wb.addWorksheet(_safeSheetName('Summary', 'Summary', used));
+        _xlTitle(ws, 4, inst, `Academic Year Archive · ${yLabel}`);
+        const info = [
+            ['Institution', inst.name || '—'],
+            ['Academic Year', yLabel || '—'],
+            ['Year Period', [year?.startDate, year?.endDate].filter(Boolean).map(_fmtDMY).join('  to  ') || '—'],
+            ['Email', inst.school_email || '—'],
+            ['Phone', inst.phone || '—'],
+            ['Generated On', new Date().toLocaleString('en-GB')],
+            ['', ''],
+            ['Students', String(students.length)],
+            ['Staff', String(staff.length)],
+            ['Classes with marks', String(marksClasses.length)],
+            ['', ''],
+            ['Note', 'This file is the offline archive for the academic year above. Keep a printed copy in the school records. Once the academic year is deleted from SmartEdz, this data cannot be recovered from the app.']
+        ];
+        info.forEach((r, i) => {
+            const rn = 4 + i;
+            const a = ws.getCell(rn, 1); a.value = r[0]; a.font = { bold: true, size: 10, color: { argb: 'FF374151' } };
+            const b = ws.getCell(rn, 2); b.value = r[1]; b.alignment = { wrapText: true, vertical: 'top' };
+            if (r[0] === 'Note') { ws.mergeCells(rn, 2, rn, 4); ws.getRow(rn).height = 56; }
+        });
+        ws.getColumn(1).width = 22; ws.getColumn(2).width = 30; ws.getColumn(3).width = 18; ws.getColumn(4).width = 18;
+    }
+ 
+    // 2. Students
+    {
+        const ws = wb.addWorksheet(_safeSheetName('Students', 'Students', used));
+        const headers = ['Roll', 'Name', 'Class', 'Section', 'Gender', 'DOB', 'Phone', 'Email', 'Username',
+                         'Aadhaar No', 'Admission No', 'Admission Date', 'Parent / Guardian', 'PEN No',
+                         'Joined Date', 'Joined Grade', 'TC No', 'Address', 'Status'];
+        _xlTitle(ws, headers.length, inst, `Students · ${yLabel}`);
+        const rows = students.map(s => [
+            s.roll_no || '', s.name || '', s.classLabel || '', s.section || '', s.gender || '', s.dob || '',
+            s.phone_no || '', s.email || '', s.username || '', s.aadhar_no || '', s.admission_no || '',
+            s.admission_date || '', s.parent_name || '', s.pen_no || '', s.school_joined_date || '',
+            s.school_joined_grade || '', s.tc_number || '', s.address || '', s.status || ''
+        ]);
+        _xlWriteTable(ws, 4, headers, rows, [8, 24, 14, 9, 9, 12, 14, 26, 16, 16, 14, 14, 22, 14, 14, 9, 14, 28, 10]);
+    }
+ 
+    // 3. Staff
+    {
+        const ws = wb.addWorksheet(_safeSheetName('Staff', 'Staff', used));
+        const headers = ['S.No', 'Name', 'Role', 'Gender', 'DOB', 'Phone', 'Email', 'Username',
+                         'Aadhaar No', 'Joining Date', 'Experience', 'Prev Salary', 'Present Salary',
+                         'Subjects', 'Address', 'Status'];
+        _xlTitle(ws, headers.length, inst, `Teachers & Staff · ${yLabel}`);
+        const rows = staff.map((s, i) => [
+            i + 1, s.name || '', s.role || '', s.gender || '', s.dob || '', s.phone_no || '',
+            s.email || '', s.username || '', s.aadhar_no || '', s.joining_date || '', s.experience || '',
+            (s.prev_salary ?? '') === '' ? '' : s.prev_salary, (s.present_salary ?? '') === '' ? '' : s.present_salary,
+            s.subjects || '', s.address || '', s.status || ''
+        ]);
+        _xlWriteTable(ws, 4, headers, rows, [6, 24, 16, 9, 12, 14, 26, 16, 16, 13, 14, 13, 13, 22, 28, 10]);
+    }
+ 
+    // 4. Attendance — class summary
+    {
+        const ws = wb.addWorksheet(_safeSheetName('Attendance Summary', 'Attendance Summary', used));
+        _xlTitle(ws, 6, inst, `Attendance — class overview · ${yLabel}`);
+        const headers = ['Class', 'Students', 'Working Days', 'Present (total)', 'Absent (total)', 'Overall %'];
+        const rows = (attendance.classSummary || []).map(r => [
+            r.classLabel || '', r.students || 0, r.workingDays || 0, r.present || 0, r.absent || 0,
+            (r.pct != null ? `${r.pct}%` : '—')
+        ]);
+        _xlWriteTable(ws, 4, headers, rows, [18, 10, 14, 16, 16, 12]);
+    }
+ 
+    // 5. Attendance — students
+    {
+        const ws = wb.addWorksheet(_safeSheetName('Attendance Students', 'Attendance Students', used));
+        _xlTitle(ws, 7, inst, `Attendance — per student · ${yLabel}`);
+        const headers = ['Class', 'Roll', 'Name', 'Working Days', 'Present', 'Absent', '%'];
+        const rows = (attendance.students || []).map(r => [
+            r.classLabel || '', r.roll || '', r.name || '', r.workingDays || 0, r.present || 0, r.absent || 0,
+            (r.pct != null ? `${r.pct}%` : '—')
+        ]);
+        _xlWriteTable(ws, 4, headers, rows, [16, 8, 24, 14, 10, 10, 9]);
+    }
+ 
+    // 6. Attendance — staff
+    {
+        const ws = wb.addWorksheet(_safeSheetName('Attendance Staff', 'Attendance Staff', used));
+        _xlTitle(ws, 6, inst, `Attendance — teachers & staff · ${yLabel}`);
+        const headers = ['Name', 'Role', 'Working Days', 'Present', 'Absent', '%'];
+        const rows = (attendance.staff || []).map(r => [
+            r.name || '', r.role || '', r.workingDays || 0, r.present || 0, r.absent || 0,
+            (r.pct != null ? `${r.pct}%` : '—')
+        ]);
+        _xlWriteTable(ws, 4, headers, rows, [24, 16, 14, 10, 10, 9]);
+    }
+ 
+    // 7. Marks register — one sheet per class
+    marksClasses.forEach(cls => {
+        const ws = wb.addWorksheet(_safeSheetName(`${cls.label} Marks`, 'Class Marks', used));
+        const exams = cls.exams || [];
+        const subjects = cls.subjects || [];
+        const nCells = exams.length * subjects.length;
+        const lastCol = 2 + nCells + 2;
+ 
+        _xlTitle(ws, lastCol, inst, `Marks Register · ${cls.label} · ${yLabel}`);
+ 
+        const hr1 = 4, hr2 = 5;
+        ws.mergeCells(hr1, 1, hr2, 1); ws.getCell(hr1, 1).value = 'Roll'; _xlHeaderCell(ws.getCell(hr1, 1));
+        ws.mergeCells(hr1, 2, hr2, 2); ws.getCell(hr1, 2).value = 'Name'; _xlHeaderCell(ws.getCell(hr1, 2));
+ 
+        let col = 3;
+        exams.forEach(ex => {
+            const start = col;
+            subjects.forEach(sub => { const c = ws.getCell(hr2, col); c.value = sub.name; _xlHeaderCell(c); col++; });
+            const end = col - 1;
+            if (end >= start) {
+                ws.mergeCells(hr1, start, hr1, end);
+                ws.getCell(hr1, start).value = ex.name;
+                for (let k = start; k <= end; k++) _xlHeaderCell(ws.getCell(hr1, k));
+            }
+        });
+        const totalCol = col, pctCol = col + 1;
+        ws.mergeCells(hr1, totalCol, hr2, totalCol); ws.getCell(hr1, totalCol).value = 'Total'; _xlHeaderCell(ws.getCell(hr1, totalCol));
+        ws.mergeCells(hr1, pctCol, hr2, pctCol); ws.getCell(hr1, pctCol).value = '%'; _xlHeaderCell(ws.getCell(hr1, pctCol));
+ 
+        (cls.rows || []).forEach((r, ri) => {
+            const rowNum = hr2 + 1 + ri;
+            const zebra = ri % 2 === 1;
+            const put = (cIdx, val, opts = {}) => {
+                const c = ws.getCell(rowNum, cIdx);
+                c.value = (val === undefined || val === null || val === '') ? '' : val;
+                c.border = _XL_BORDERS;
+                c.alignment = { vertical: 'middle', horizontal: opts.left ? 'left' : 'center' };
+                if (opts.bold) c.font = { bold: true };
+                if (opts.fill) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: opts.fill } };
+                else if (zebra) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _XL_ZEBRA } };
+            };
+            put(1, r.roll || '');
+            put(2, r.name || '', { left: true });
+            let cc = 3;
+            exams.forEach(ex => subjects.forEach(sub => {
+                const v = r.cells[`${ex.id}:${sub.id}`];
+                put(cc, (v === undefined || v === null) ? '' : Number(v));
+                cc++;
+            }));
+            put(totalCol, (r.total != null ? Number(r.total) : ''), { bold: true, fill: _XL_BRAND_SOFT });
+            put(pctCol, (r.pct != null ? `${r.pct}%` : ''), { bold: true, fill: _XL_BRAND_SOFT });
+        });
+ 
+        ws.getColumn(1).width = 7;
+        ws.getColumn(2).width = 22;
+        for (let k = 3; k <= 2 + nCells; k++) ws.getColumn(k).width = 11;
+        ws.getColumn(totalCol).width = 9;
+        ws.getColumn(pctCol).width = 8;
+        ws.views = [{ state: 'frozen', xSplit: 2, ySplit: hr2 }];
+    });
+ 
+    return wb;
+}
+ 
+// ---- the route -------------------------------------------------------
+app.get('/api/admin/year-export/:instId/:yearId', async (req, res) => {
+    const { instId, yearId } = req.params;
+    try {
+        // Validate the year belongs to this institution.
+        const [yRows] = await db.execute(
+            'SELECT * FROM academic_years WHERE id = ? AND institutionId = ?', [yearId, instId]
+        );
+        if (yRows.length === 0) return res.status(404).json({ error: 'Academic year not found for this institution.' });
+        const year = yRows[0];
+ 
+        const [instRows] = await db.execute(
+            'SELECT id, name, school_email, phone FROM institutions WHERE id = ?', [instId]
+        );
+        const inst = instRows[0] || { name: 'Institution' };
+ 
+        const [classes] = await db.execute(
+            'SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section', [instId]
+        );
+        const classById = {}; classes.forEach(c => { classById[c.id] = c; });
+        const labelOf = (cid) => { const c = classById[cid]; return c ? `${c.className}${c.section ? ' - ' + c.section : ''}` : '—'; };
+ 
+        const [users] = await db.execute('SELECT * FROM users WHERE institutionId = ?', [instId]);
+ 
+        // ---- marks (year-scoped) → also gives each student's historical class
+        const [mrows] = await db.execute(
+            `SELECT sm.class_id, sm.student_id, sm.subject_id, sm.exam_type_id, sm.marks_obtained,
+                    u.name AS student_name, u.roll_no,
+                    sub.name AS subject_name, et.name AS exam_name, et.exam_order
+               FROM student_marks sm
+               JOIN users u   ON u.id = sm.student_id
+               JOIN subjects sub ON sub.id = sm.subject_id
+               JOIN exam_types et ON et.id = sm.exam_type_id
+              WHERE sm.institutionId = ? AND sm.academic_year_id = ?`,
+            [instId, yearId]
+        );
+        const histClassByStudent = {};
+        mrows.forEach(r => { if (histClassByStudent[r.student_id] == null) histClassByStudent[r.student_id] = r.class_id; });
+        const classOfStudent = (u) => (histClassByStudent[u.id] != null ? histClassByStudent[u.id] : u.class_id);
+ 
+        // per-class max marks for the % column
+        const [maxAll] = await db.execute(
+            `SELECT m.class_id, m.exam_type_id, m.subject_id, m.max_marks
+               FROM exam_max_marks m JOIN exam_types t ON t.id = m.exam_type_id
+              WHERE t.institutionId = ?`, [instId]
+        );
+        const maxRowsByClass = {};
+        maxAll.forEach(r => { (maxRowsByClass[r.class_id] = maxRowsByClass[r.class_id] || []).push(r); });
+        const maxMapByClass = {};
+        Object.keys(maxRowsByClass).forEach(cid => { maxMapByClass[cid] = buildMaxMarksMap(maxRowsByClass[cid]); });
+        const maxFor = (cid, etId, subId) => {
+            const m = maxMapByClass[cid] && maxMapByClass[cid][etId];
+            if (!m) return undefined;
+            const sp = m.bySubject ? m.bySubject[subId] : undefined;
+            if (sp !== undefined && sp !== null) return Number(sp);
+            if (m.default !== undefined && m.default !== null) return Number(m.default);
+            return undefined;
+        };
+ 
+        // ---- attendance (year-scoped), bucketed by historical class -----
+        const isStudent = (u) => (u.role || '').toLowerCase().trim() === 'student';
+        const studentUsers = users.filter(isStudent);
+        const staffUsers = users.filter(u => !isStudent(u));
+ 
+        const [attStu] = await db.execute(
+            `SELECT a.user_id, a.attendance_date, a.status
+               FROM attendance a JOIN users u ON u.id = a.user_id
+              WHERE a.institutionId = ? AND a.academic_year_id = ? AND LOWER(TRIM(u.role)) = 'student'`,
+            [instId, yearId]
+        );
+        const userById = {}; users.forEach(u => { userById[u.id] = u; });
+        const stuAtt = {};                 // userId -> {present, absent}
+        const classDates = {};             // classId -> Set(dates)
+        attStu.forEach(r => {
+            const a = (stuAtt[r.user_id] = stuAtt[r.user_id] || { present: 0, absent: 0 });
+            if (r.status === 'P') a.present++; else if (r.status === 'A') a.absent++;
+            const u = userById[r.user_id];
+            if (u) {
+                const cid = classOfStudent(u);
+                const d = (r.attendance_date instanceof Date) ? r.attendance_date.toISOString().slice(0, 10) : String(r.attendance_date);
+                (classDates[cid] = classDates[cid] || new Set()).add(d);
+            }
+        });
+        const workingDaysOfClass = (cid) => (classDates[cid] ? classDates[cid].size : 0);
+ 
+        const [attStaff] = await db.execute(
+            `SELECT a.user_id, a.attendance_date, a.status
+               FROM attendance a JOIN users u ON u.id = a.user_id
+              WHERE a.institutionId = ? AND a.academic_year_id = ? AND LOWER(TRIM(u.role)) <> 'student'`,
+            [instId, yearId]
+        );
+        const staffAtt = {};
+        const staffDates = new Set();
+        attStaff.forEach(r => {
+            const a = (staffAtt[r.user_id] = staffAtt[r.user_id] || { present: 0, absent: 0 });
+            if (r.status === 'P') a.present++; else if (r.status === 'A') a.absent++;
+            const d = (r.attendance_date instanceof Date) ? r.attendance_date.toISOString().slice(0, 10) : String(r.attendance_date);
+            staffDates.add(d);
+        });
+        const staffWorkingDays = staffDates.size;
+ 
+        // ---- assemble payload -------------------------------------------
+        const pct1 = (num, den) => (den > 0 ? Math.round((num / den) * 1000) / 10 : null);
+ 
+        // teacher -> subject names (best-effort; table/columns may vary)
+        let subjByTeacher = {};
+        try {
+            const [tsRows] = await db.execute(
+                `SELECT ts.teacher_id AS tid, s.name AS sname
+                   FROM teacher_subjects ts JOIN subjects s ON s.id = ts.subject_id
+                  WHERE s.institutionId = ?`, [instId]
+            );
+            tsRows.forEach(r => { (subjByTeacher[r.tid] = subjByTeacher[r.tid] || []).push(r.sname); });
+        } catch (e) { /* leave subjects blank if schema differs */ }
+ 
+        // students sheet (sorted by class label then roll) — full fields
+        const studentsSheet = studentUsers.map(u => ({
+            roll_no: u.roll_no, name: u.name, classLabel: labelOf(classOfStudent(u)), section: u.section,
+            gender: u.gender, dob: _fmtDMY(u.dob), phone_no: u.phone_no, email: u.email, username: u.username,
+            aadhar_no: u.aadhar_no, admission_no: u.admission_no, admission_date: _fmtDMY(u.admission_date),
+            parent_name: u.parent_name, pen_no: u.pen_no, school_joined_date: _fmtDMY(u.school_joined_date),
+            school_joined_grade: u.school_joined_grade, tc_number: u.tc_number, address: u.address, status: u.status
+        })).sort((a, b) => (a.classLabel || '').localeCompare(b.classLabel || '') || _rollNum(a.roll_no) - _rollNum(b.roll_no));
+ 
+        const staffSheet = staffUsers.map(u => ({
+            name: u.name, role: u.role, gender: u.gender, dob: _fmtDMY(u.dob),
+            phone_no: u.phone_no, email: u.email, username: u.username, aadhar_no: u.aadhar_no,
+            joining_date: _fmtDMY(u.joining_date), experience: u.experience,
+            prev_salary: u.prev_salary, present_salary: u.present_salary,
+            subjects: (subjByTeacher[u.id] || []).join(', '), address: u.address, status: u.status
+        })).sort((a, b) => (a.role || '').localeCompare(b.role || '') || (a.name || '').localeCompare(b.name || ''));
+ 
+        // attendance — per student
+        const attStudentsSheet = studentUsers
+            .filter(u => stuAtt[u.id])
+            .map(u => {
+                const cid = classOfStudent(u);
+                const wd = workingDaysOfClass(cid);
+                const a = stuAtt[u.id] || { present: 0, absent: 0 };
+                return {
+                    classLabel: labelOf(cid), roll: u.roll_no, name: u.name,
+                    workingDays: wd, present: a.present, absent: a.absent, pct: pct1(a.present, wd)
+                };
+            })
+            .sort((a, b) => (a.classLabel || '').localeCompare(b.classLabel || '') || _rollNum(a.roll) - _rollNum(b.roll));
+ 
+        // attendance — class summary
+        const classAgg = {}; // cid -> {students, present, absent}
+        studentUsers.forEach(u => {
+            if (!stuAtt[u.id]) return;
+            const cid = classOfStudent(u);
+            const agg = (classAgg[cid] = classAgg[cid] || { students: 0, present: 0, absent: 0 });
+            agg.students++; agg.present += stuAtt[u.id].present; agg.absent += stuAtt[u.id].absent;
+        });
+        const attClassSummary = Object.keys(classAgg).map(cid => {
+            const wd = workingDaysOfClass(cid);
+            const agg = classAgg[cid];
+            return {
+                classLabel: labelOf(cid), students: agg.students, workingDays: wd,
+                present: agg.present, absent: agg.absent, pct: pct1(agg.present, wd * agg.students)
+            };
+        }).sort((a, b) => (a.classLabel || '').localeCompare(b.classLabel || ''));
+ 
+        // attendance — staff
+        const attStaffSheet = staffUsers
+            .filter(u => staffAtt[u.id])
+            .map(u => {
+                const a = staffAtt[u.id];
+                return {
+                    name: u.name, role: u.role, workingDays: staffWorkingDays,
+                    present: a.present, absent: a.absent, pct: pct1(a.present, staffWorkingDays)
+                };
+            })
+            .sort((a, b) => (a.role || '').localeCompare(b.role || '') || (a.name || '').localeCompare(b.name || ''));
+ 
+        // marks — one register per class
+        const cmap = {}; // cid -> {students, exams, subjects, cells}
+        mrows.forEach(r => {
+            const cm = (cmap[r.class_id] = cmap[r.class_id] || { students: {}, exams: {}, subjects: {}, cells: {} });
+            cm.students[r.student_id] = { id: r.student_id, name: r.student_name, roll: r.roll_no };
+            cm.exams[r.exam_type_id] = { id: r.exam_type_id, name: r.exam_name, order: r.exam_order ?? 0 };
+            cm.subjects[r.subject_id] = { id: r.subject_id, name: r.subject_name };
+            (cm.cells[r.student_id] = cm.cells[r.student_id] || {})[`${r.exam_type_id}:${r.subject_id}`] = r.marks_obtained;
+        });
+        const marksClasses = Object.keys(cmap).map(cid => {
+            const cm = cmap[cid];
+            const exams = Object.values(cm.exams).sort((a, b) => (a.order - b.order) || a.id - b.id);
+            const subjects = Object.values(cm.subjects).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+            const studentList = Object.values(cm.students)
+                .sort((a, b) => _rollNum(a.roll) - _rollNum(b.roll) || (a.name || '').localeCompare(b.name || ''));
+            const rows = studentList.map(stu => {
+                const cells = cm.cells[stu.id] || {};
+                let total = 0, max = 0;
+                exams.forEach(ex => subjects.forEach(sub => {
+                    const v = cells[`${ex.id}:${sub.id}`];
+                    if (v != null) total += Number(v);
+                    const mx = maxFor(cid, ex.id, sub.id);
+                    if (mx !== undefined) max += mx;
+                }));
+                return {
+                    roll: stu.roll, name: stu.name, cells,
+                    total: Math.round(total * 100) / 100,
+                    pct: max > 0 ? Math.round((total / max) * 1000) / 10 : null
+                };
+            });
+            return { label: labelOf(cid), exams, subjects, rows };
+        }).sort((a, b) => (a.label || '').localeCompare(b.label || ''));
+ 
+        const payload = {
+            inst, year,
+            students: studentsSheet, staff: staffSheet,
+            attendance: { classSummary: attClassSummary, students: attStudentsSheet, staff: attStaffSheet },
+            marksClasses
+        };
+ 
+        const wb = _buildYearWorkbook(payload);
+ 
+        const fileSafe = `${inst.name || 'institution'}_${year.name || 'year'}`
+            .replace(/[^a-z0-9\-_ ]/gi, '_').replace(/\s+/g, '_');
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="${fileSafe}.xlsx"`);
+        await wb.xlsx.write(res);
+        res.end();
+    } catch (err) {
+        console.error('[year-export] FATAL:', err);
+        if (!res.headersSent) res.status(500).json({ error: err.message });
+        else res.end();
+    }
 });
 
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Users, ShieldCheck, Calendar, Layers, CircleArrowUp, CircleCheck, BookOpen } from 'lucide-react';
+import { Users, ShieldCheck, Calendar, Layers, CircleArrowUp, CircleCheck, BookOpen, Download } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
 
 import UserTab        from './UserTab';
@@ -10,6 +10,7 @@ import Academicstab   from './Academicstab';
 import Classestab     from './Classestab';
 import Promotiontab   from './Promotiontab';
 import SubjectsTab    from './SubjectsTab';
+import DownloadsTab   from './DownloadsTab';
 
 export default function ManageLogin() {
   const { user } = useAuth();
@@ -36,20 +37,21 @@ export default function ManageLogin() {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const tabs = [
-    { id: 'users',       label: 'Users',       icon: Users },
-    { id: 'roles',       label: 'Roles',       icon: ShieldCheck },
-    { id: 'permissions', label: 'Permissions', icon: CircleCheck },
-    { id: 'classes',     label: 'Classes',     icon: Layers },
-    { id: 'subjects',    label: 'Subjects',    icon: BookOpen },
-    { id: 'promotion',   label: 'Promotion',   icon: CircleArrowUp },
-    { id: 'academics',   label: 'Academics Year',   icon: Calendar },
+    { id: 'users',       label: 'Users',          icon: Users },
+    { id: 'roles',       label: 'Roles',          icon: ShieldCheck },
+    { id: 'permissions', label: 'Permissions',    icon: CircleCheck },
+    { id: 'classes',     label: 'Classes',        icon: Layers },
+    { id: 'subjects',    label: 'Subjects',       icon: BookOpen },
+    { id: 'promotion',   label: 'Promotion',      icon: CircleArrowUp },
+    { id: 'academics',   label: 'Academics Year', icon: Calendar },
+    { id: 'downloads',   label: 'Downloads',      icon: Download },
   ];
 
   const tabProps = { data, fetchData, user };
 
   return (
     <div className="p-8 max-w-[1440px] w-full mx-auto animate-in fade-in duration-700">
-      
+
       {/* 1. Page Header */}
       <header className="mb-6 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
@@ -67,8 +69,8 @@ export default function ManageLogin() {
             key={t.id}
             onClick={() => setActiveTab(t.id)}
             className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-              activeTab === t.id 
-                ? 'bg-primary text-white' 
+              activeTab === t.id
+                ? 'bg-primary text-white'
                 : 'text-zinc-600 hover:bg-zinc-50 border border-zinc-200'
             }`}
           >
@@ -92,6 +94,7 @@ export default function ManageLogin() {
             {activeTab === 'classes'     && <Classestab {...tabProps} />}
             {activeTab === 'subjects'    && <SubjectsTab {...tabProps} />}
             {activeTab === 'promotion'   && <Promotiontab {...tabProps} />}
+            {activeTab === 'downloads'   && <DownloadsTab {...tabProps} />}
           </>
         )}
       </div>

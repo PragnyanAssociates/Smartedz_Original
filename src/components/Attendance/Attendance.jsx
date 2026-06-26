@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   GraduationCap, Users as UsersIcon, UserCog, ClipboardCheck, History,
   Search, ChevronLeft, ChevronDown, BarChart3, CalendarCheck, CalendarX,
-  CalendarRange, List, PieChart, Download, Loader2
+  CalendarRange, List, PieChart
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
@@ -12,6 +12,8 @@ import { API_BASE_URL } from '../../apiConfig';
 
 // =====================================================================
 //  Attendance — Top-level container
+//  (Downloads now live on the dedicated Downloads tab in System
+//   Configuration, so there is no export control here.)
 // =====================================================================
 
 export default function Attendance() {
@@ -25,9 +27,8 @@ export default function Attendance() {
 
   const canMark = isSuper || isTeacher || can('Attendance', 'edit');
 
-  // ---- Active academic year + class list (for the download dropdown) ---
+  // ---- Active academic year (for the badge only) ---------------------
   const [activeYearName, setActiveYearName] = useState('');
-  const [classes, setClasses] = useState([]);
 
   useEffect(() => {
     if (!user?.institutionId) return;
@@ -38,75 +39,9 @@ export default function Attendance() {
         const list = data.academicYears || [];
         const active = list.find(y => y.isActive) || list[0];
         if (active) setActiveYearName(active.name || '');
-        setClasses(data.classes || []);
       } catch (e) { console.error('academic year load:', e); }
     })();
   }, [user]);
-
-  // ---- Download the active year's attendance REGISTER as .xlsx --------
-  // scope picks what goes in the file: everything, all students, one class,
-  // teachers, or other staff. Super Admin only.
-  const [downloading, setDownloading] = useState(false);
-  const [exportScope, setExportScope] = useState('all');
-
-  const handleExport = async () => {
-    setDownloading(true);
-    try {
-      const url = `${API_BASE_URL}/admin/attendance-export/${user.institutionId}?scope=${encodeURIComponent(exportScope)}`;
-      const res = await fetch(url);
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}));
-        throw new Error(d.error || 'Download failed. Please try again.');
-      }
-      const blob = await res.blob();
-      if (!blob || blob.size < 200) throw new Error('The export came back empty.');
-      let filename = `Attendance_${activeYearName || 'year'}.xlsx`;
-      const cd = res.headers.get('Content-Disposition') || '';
-      const m = cd.match(/filename="?([^"]+)"?/);
-      if (m) filename = m[1];
-      const objUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = objUrl;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(objUrl);
-    } catch (e) {
-      alert(e.message);
-    } finally {
-      setDownloading(false);
-    }
-  };
-
-  // Download control = scope dropdown + button. Super Admin only.
-  const DownloadControl = () => (
-    isSuper ? (
-      <div className="flex items-center gap-2">
-        <div className="relative">
-          <select value={exportScope} onChange={e => setExportScope(e.target.value)}
-            title="Choose what to download"
-            className="h-9 rounded-md border border-zinc-200 bg-white pl-3 pr-8 text-xs font-medium text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 appearance-none cursor-pointer shadow-sm max-w-[180px] truncate">
-            <option value="all">Everything</option>
-            <option value="students">Students — All classes</option>
-            {classes.map(c => (
-              <option key={c.id} value={`class:${c.id}`}>
-                Students — {c.className}{c.section ? ` ${c.section}` : ''}
-              </option>
-            ))}
-            <option value="teachers">Teachers</option>
-            <option value="other">Other staff</option>
-          </select>
-          <ChevronDown className="size-3.5 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-        </div>
-        <button onClick={handleExport} disabled={downloading}
-          className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-white text-zinc-700 border border-zinc-200 hover:bg-zinc-50 hover:text-primary hover:border-primary/40 text-xs font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed whitespace-nowrap shadow-sm">
-          {downloading ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
-          {downloading ? 'Preparing…' : 'Download'}
-        </button>
-      </div>
-    ) : null
-  );
 
   // Which category tabs are visible to this user?
   const categories = useMemo(() => {
@@ -156,10 +91,7 @@ export default function Attendance() {
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-3 sm:space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <Header subtitle="Mark and review daily attendance" />
-        <div className="flex flex-col sm:flex-row sm:items-center gap-2 self-start sm:self-auto">
-          <DownloadControl />
-          <YearBadge />
-        </div>
+        <YearBadge />
       </div>
 
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
