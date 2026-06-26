@@ -487,7 +487,7 @@ app.delete('/api/group/:groupId/branch/:id', async (req, res) => {
 //   No other section depends on this. Self-contained.
 // =====================================================================
 
-const ARCHIVE_MODULES = ['users', 'attendance', 'marks'];   // add 'fees' here later
+const ARCHIVE_MODULES = ['users', 'attendance', 'marks', 'performance'];   // add 'fees' here later
 
 const _archNorm = (v) => (v == null ? '' : (v instanceof Date ? v.toISOString() : String(v)));
 
@@ -526,7 +526,9 @@ async function computeArchiveFingerprint(instId, yearId, module) {
         const x = rows[0] || {};
         return `a:${x.c}|${_archNorm(x.mk)}|${_archNorm(x.up)}`;
     }
-    if (module === 'marks') {
+    if (module === 'marks' || module === 'performance') {
+        // Performance is entirely derived from marks, so it shares the
+        // marks signature (any marks change invalidates both).
         const [rows] = await db.execute(
             `SELECT COUNT(*) c, COALESCE(MAX(updated_at), '') up, COALESCE(MAX(id), 0) mx
                FROM student_marks
@@ -534,7 +536,8 @@ async function computeArchiveFingerprint(instId, yearId, module) {
             [instId, yearId]
         );
         const x = rows[0] || {};
-        return `m:${x.c}|${_archNorm(x.up)}|${x.mx}`;
+        const tag = module === 'performance' ? 'p' : 'm';
+        return `${tag}:${x.c}|${_archNorm(x.up)}|${x.mx}`;
     }
     return '';
 }
@@ -5132,6 +5135,280 @@ app.get('/api/admin/performance/teacher/:teacherId', async (req, res) => {
         });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+// === 15.10 PERFORMANCE EXPORT — students + teachers (self-contained) ==
+app.get('/api/admin/performance-export/:instId', async (req, res) => {
+    const { instId } = req.params;
+    try {
+        const ExcelJS = require('exceljs');
+ 
+        const BRAND = 'FF3284C7';
+        const rollNum = (r) => { const n = parseInt(r, 10); return isNaN(n) ? Number.MAX_SAFE_INTEGER : n; };
+        const r1 = (n) => Math.round(n * 10) / 10;
+        const buildMaxMarksMap = (rows) => {
+            const mm = {};
+            (rows || []).forEach(r => {
+                const et = r.exam_type_id;
+                if (!mm[et]) mm[et] = { default: null, bySubject: {} };
+                if (Number(r.subject_id) === 0) mm[et].default = r.max_marks;
+                else mm[et].bySubject[r.subject_id] = r.max_marks;
+            });
+            return mm;
+        };
+ 
+        // ---- scope ----
+        const scope = (req.query.scope || 'all').toString();
+        const isClassScope = scope.startsWith('class:');
+        const specificClass = isClassScope ? parseInt(scope.slice(6), 10) : null;
+        const includeStudents = scope === 'all' || scope === 'students' || isClassScope;
+        const includeTeachers = scope === 'all' || scope === 'teachers';
+ 
+        // ---- year ----
+        let year;
+        if (req.query.yearId) {
+            const [yr] = await db.execute('SELECT * FROM academic_years WHERE id = ? AND institutionId = ?', [req.query.yearId, instId]);
+            if (yr.length === 0) return res.status(404).json({ error: 'Academic year not found for this institution.' });
+            year = yr[0];
+        } else {
+            const [yr] = await db.execute('SELECT * FROM academic_years WHERE institutionId = ? AND isActive = 1 LIMIT 1', [instId]);
+            if (yr.length === 0) return res.status(400).json({ error: 'No active academic year to export.' });
+            year = yr[0];
+        }
+        const yearId = year.id;
+        const yLabel = year.name || '';
+ 
+        const [instRows] = await db.execute('SELECT id, name FROM institutions WHERE id = ?', [instId]);
+        const inst = instRows[0] || { name: 'Institution' };
+ 
+        const [classes] = await db.execute('SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section', [instId]);
+        const classById = {}; classes.forEach(c => { classById[c.id] = c; });
+        const labelOf = (cid) => { const c = classById[cid]; return c ? `${c.className}${c.section ? ' - ' + c.section : ''}` : 'Unassigned'; };
+ 
+        const [students] = await db.execute(
+            `SELECT id, name, roll_no, class_id FROM users
+              WHERE institutionId = ? AND LOWER(TRIM(role)) = 'student'
+                AND (status IS NULL OR LOWER(TRIM(status)) <> 'alumni')`, [instId]);
+ 
+        const [allSubjects] = await db.execute('SELECT id, name FROM subjects WHERE institutionId = ? ORDER BY name', [instId]);
+        const subjectName = {}; allSubjects.forEach(s => { subjectName[s.id] = s.name; });
+        const [scRows] = await db.execute(
+            `SELECT sc.subject_id, sc.class_id FROM subject_classes sc
+               JOIN subjects s ON s.id = sc.subject_id WHERE s.institutionId = ?`, [instId]);
+        const linkMap = {};
+        scRows.forEach(r => { (linkMap[r.subject_id] = linkMap[r.subject_id] || new Set()).add(r.class_id); });
+        const subjectsForClass = (cid) => allSubjects.filter(s => {
+            const links = linkMap[s.id];
+            if (!links || links.size === 0) return true;
+            return links.has(cid);
+        });
+ 
+        const [maxAll] = await db.execute(
+            `SELECT m.exam_type_id, m.class_id, m.subject_id, m.max_marks
+               FROM exam_max_marks m JOIN exam_types t ON t.id = m.exam_type_id
+              WHERE t.institutionId = ?`, [instId]);
+        const maxByClass = {};
+        maxAll.forEach(r => { (maxByClass[r.class_id] = maxByClass[r.class_id] || []).push(r); });
+        const maxMapByClass = {};
+        Object.keys(maxByClass).forEach(cid => { maxMapByClass[cid] = buildMaxMarksMap(maxByClass[cid]); });
+        const maxFor = (cid, etId, subId) => {
+            const m = maxMapByClass[cid] && maxMapByClass[cid][etId];
+            if (!m) return undefined;
+            const sp = m.bySubject ? m.bySubject[subId] : undefined;
+            if (sp !== undefined && sp !== null) return Number(sp);
+            if (m.default !== undefined && m.default !== null) return Number(m.default);
+            return undefined;
+        };
+ 
+        const [marks] = await db.execute(
+            'SELECT student_id, class_id, subject_id, exam_type_id, marks_obtained FROM student_marks WHERE institutionId = ? AND academic_year_id = ?',
+            [instId, yearId]);
+        const marksByStudent = {};        // sid -> [marks]
+        const histClass = {};
+        marks.forEach(r => {
+            (marksByStudent[r.student_id] = marksByStudent[r.student_id] || []).push(r);
+            if (histClass[r.student_id] == null) histClass[r.student_id] = r.class_id;
+        });
+        const classOf = (u) => (histClass[u.id] != null ? histClass[u.id] : u.class_id);
+ 
+        const studentsByClass = {};
+        students.forEach(u => { const cid = classOf(u); (studentsByClass[cid] = studentsByClass[cid] || []).push(u); });
+        Object.values(studentsByClass).forEach(list => list.sort((a, b) => rollNum(a.roll_no) - rollNum(b.roll_no) || (a.name || '').localeCompare(b.name || '')));
+ 
+        // teacher assignments
+        const [assignments] = await db.execute(
+            `SELECT stm.teacher_id, stm.class_id, stm.subject_id, u.name AS teacher_name
+               FROM subject_teacher_map stm JOIN users u ON u.id = stm.teacher_id
+              WHERE stm.institutionId = ?`, [instId]);
+        // marks indexed for teacher aggregation: class:subject -> [marks]
+        const marksByClassSubject = {};
+        marks.forEach(r => { (marksByClassSubject[`${r.class_id}:${r.subject_id}`] = marksByClassSubject[`${r.class_id}:${r.subject_id}`] || []).push(r); });
+ 
+        const pctColor = (p) => p == null ? 'FF9CA3AF' : (p >= 80 ? 'FF059669' : p >= 50 ? 'FF2563EB' : 'FFDC2626');
+ 
+        // widest student subject count for merged headings
+        const cids = (specificClass != null ? [specificClass] : Object.keys(studentsByClass).map(Number))
+            .filter(cid => studentsByClass[cid] && studentsByClass[cid].length)
+            .sort((a, b) => labelOf(a).localeCompare(labelOf(b), undefined, { numeric: true }));
+        let widestSubjects = 0;
+        cids.forEach(cid => { widestSubjects = Math.max(widestSubjects, subjectsForClass(cid).length); });
+        const maxCols = Math.max(2 + widestSubjects + 2, 6);   // student row vs teacher row (6 cols)
+ 
+        // ---- workbook ----
+        const wb = new ExcelJS.Workbook();
+        wb.creator = 'SmartEdz'; wb.created = new Date();
+        const ws = wb.addWorksheet('Performance');
+        let r = 1;
+ 
+        ws.mergeCells(r, 1, r, maxCols);
+        const tt = ws.getCell(r, 1); tt.value = inst.name || 'Institution'; tt.font = { bold: true, size: 14, color: { argb: 'FF111827' } }; r++;
+        ws.mergeCells(r, 1, r, maxCols);
+        const sb = ws.getCell(r, 1); sb.value = `Performance · ${yLabel}   (% = marks obtained / possible · green >=80, blue 50-80, red <50)`; sb.font = { size: 10, color: { argb: 'FF6B7280' } }; r++;
+        r++;
+ 
+        const heading = (text) => {
+            ws.mergeCells(r, 1, r, maxCols);
+            const c = ws.getCell(r, 1); c.value = text;
+            c.font = { bold: true, size: 12, color: { argb: 'FFFFFFFF' } };
+            c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F2937' } };
+            c.alignment = { vertical: 'middle' }; ws.getRow(r).height = 20; r++;
+        };
+        const subHeading = (text) => {
+            ws.mergeCells(r, 1, r, maxCols);
+            const c = ws.getCell(r, 1); c.value = text;
+            c.font = { bold: true, size: 11, color: { argb: 'FF111827' } };
+            c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFF3F8' } }; r++;
+        };
+        const noteRow = (text) => {
+            ws.mergeCells(r, 1, r, maxCols);
+            const c = ws.getCell(r, 1); c.value = text; c.font = { italic: true, size: 10, color: { argb: 'FF9CA3AF' } }; r++;
+        };
+        const headerRow = (heads) => {
+            const row = ws.getRow(r);
+            heads.forEach((h, i) => {
+                const c = row.getCell(i + 1); c.value = h;
+                c.font = { bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
+                c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND } };
+                c.alignment = { vertical: 'middle', horizontal: (i < 2 ? 'left' : 'center'), wrapText: true };
+            });
+            row.height = 26; r++;
+        };
+ 
+        // ---------- STUDENTS ----------
+        if (includeStudents) {
+            heading('STUDENTS');
+            if (cids.length === 0) noteRow('No students with marks for this selection.');
+            cids.forEach(cid => {
+                const subjects = subjectsForClass(cid);
+                subHeading(labelOf(cid));
+                headerRow(['Roll', 'Name', ...subjects.map(s => s.name), 'Overall %', 'Total']);
+                studentsByClass[cid].forEach(stu => {
+                    const myMarks = marksByStudent[stu.id] || [];
+                    let gObt = 0, gPos = 0, gAny = false;
+                    const cells = subjects.map(s => {
+                        let o = 0, p = 0, any = false;
+                        myMarks.forEach(m => {
+                            if (m.subject_id !== s.id) return;
+                            const mx = maxFor(m.class_id, m.exam_type_id, s.id);
+                            const val = parseFloat(m.marks_obtained);
+                            if (mx === undefined || mx === null || isNaN(val)) return;
+                            o += val; p += mx; any = true;
+                        });
+                        if (any) { gObt += o; gPos += p; gAny = true; }
+                        return any && p > 0 ? r1((o / p) * 100) : null;
+                    });
+                    const overall = (gAny && gPos > 0) ? r1((gObt / gPos) * 100) : null;
+                    const row = ws.getRow(r);
+                    row.getCell(1).value = stu.roll_no || '—'; row.getCell(1).alignment = { horizontal: 'left' };
+                    row.getCell(2).value = stu.name; row.getCell(2).alignment = { horizontal: 'left' };
+                    cells.forEach((pct, i) => {
+                        const c = row.getCell(3 + i);
+                        c.value = pct != null ? `${pct}%` : '—';
+                        c.alignment = { horizontal: 'center' };
+                        c.font = { size: 9, bold: pct != null, color: { argb: pctColor(pct) } };
+                    });
+                    const oc = row.getCell(2 + subjects.length + 1);
+                    oc.value = overall != null ? `${overall}%` : '—'; oc.alignment = { horizontal: 'center' };
+                    oc.font = { size: 9, bold: true, color: { argb: pctColor(overall) } };
+                    const tc = row.getCell(2 + subjects.length + 2);
+                    tc.value = gAny ? `${Math.round(gObt)}/${Math.round(gPos)}` : '—'; tc.alignment = { horizontal: 'center' };
+                    tc.font = { size: 9, color: { argb: 'FF374151' } };
+                    row.getCell(1).font = { size: 9, color: { argb: 'FF374151' } };
+                    row.getCell(2).font = { size: 9, color: { argb: 'FF111827' } };
+                    r++;
+                });
+                r++;
+            });
+        }
+ 
+        // ---------- TEACHERS ----------
+        if (includeTeachers) {
+            heading('TEACHERS');
+            headerRow(['S.No', 'Teacher', 'Class', 'Subject', 'Marks', '%']);
+            // group assignments by teacher
+            const byTeacher = {};
+            assignments.forEach(a => { (byTeacher[a.teacher_id] = byTeacher[a.teacher_id] || { name: a.teacher_name, rows: [] }).rows.push(a); });
+            const teacherIds = Object.keys(byTeacher).sort((x, y) => (byTeacher[x].name || '').localeCompare(byTeacher[y].name || ''));
+            if (teacherIds.length === 0) noteRow('No teacher assignments found.');
+            let sno = 0;
+            teacherIds.forEach(tid => {
+                const t = byTeacher[tid];
+                sno++;
+                let oObt = 0, oPos = 0, oAny = false, firstRow = true;
+                // sort that teacher's rows by class then subject
+                t.rows.sort((a, b) => labelOf(a.class_id).localeCompare(labelOf(b.class_id), undefined, { numeric: true }) || (subjectName[a.subject_id] || '').localeCompare(subjectName[b.subject_id] || ''));
+                t.rows.forEach(a => {
+                    let o = 0, p = 0, any = false;
+                    (marksByClassSubject[`${a.class_id}:${a.subject_id}`] || []).forEach(m => {
+                        const mx = maxFor(a.class_id, m.exam_type_id, a.subject_id);
+                        const val = parseFloat(m.marks_obtained);
+                        if (mx === undefined || mx === null || isNaN(val)) return;
+                        o += val; p += mx; any = true;
+                    });
+                    const pct = (any && p > 0) ? r1((o / p) * 100) : null;
+                    if (any) { oObt += o; oPos += p; oAny = true; }
+                    const row = ws.getRow(r);
+                    row.getCell(1).value = firstRow ? sno : '';
+                    row.getCell(2).value = firstRow ? t.name : '';
+                    row.getCell(3).value = labelOf(a.class_id);
+                    row.getCell(4).value = subjectName[a.subject_id] || '—';
+                    row.getCell(5).value = any ? `${Math.round(o)}/${Math.round(p)}` : '—';
+                    const pc = row.getCell(6); pc.value = pct != null ? `${pct}%` : '—';
+                    [1, 2, 3, 4, 5].forEach(i => { row.getCell(i).font = { size: 9, color: { argb: i === 2 ? 'FF111827' : 'FF374151' } }; row.getCell(i).alignment = { horizontal: i < 2 ? 'center' : (i === 2 ? 'left' : 'center') }; });
+                    pc.font = { size: 9, bold: true, color: { argb: pctColor(pct) } }; pc.alignment = { horizontal: 'center' };
+                    firstRow = false;
+                    r++;
+                });
+                // overall row
+                const oPct = (oAny && oPos > 0) ? r1((oObt / oPos) * 100) : null;
+                const orow = ws.getRow(r);
+                orow.getCell(3).value = 'OVERALL';
+                orow.getCell(5).value = oAny ? `${Math.round(oObt)}/${Math.round(oPos)}` : '—';
+                const opc = orow.getCell(6); opc.value = oPct != null ? `${oPct}%` : '—';
+                [1, 2, 3, 4, 5].forEach(i => { orow.getCell(i).font = { size: 9, bold: true, color: { argb: 'FF111827' } }; orow.getCell(i).alignment = { horizontal: i < 2 ? 'center' : (i === 2 ? 'left' : 'center') }; orow.getCell(i).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFF3F8' } }; });
+                opc.font = { size: 9, bold: true, color: { argb: pctColor(oPct) } }; opc.alignment = { horizontal: 'center' };
+                opc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFF3F8' } };
+                r++; r++;
+            });
+        }
+ 
+        // widths + freeze
+        ws.getColumn(1).width = 8; ws.getColumn(2).width = 26;
+        for (let i = 3; i <= maxCols; i++) ws.getColumn(i).width = 12;
+        ws.views = [{ state: 'frozen', xSplit: 2 }];
+ 
+        const scopeTag = isClassScope ? `Class_${labelOf(specificClass)}` : scope.charAt(0).toUpperCase() + scope.slice(1);
+        const fileSafe = `${inst.name || 'institution'}_Performance_${scopeTag}_${yLabel}`.replace(/[^a-z0-9\-_ ]/gi, '_').replace(/\s+/g, '_');
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="${fileSafe}.xlsx"`);
+        await wb.xlsx.write(res);
+        res.end();
+    } catch (err) {
+        console.error('[performance-export] FATAL:', err);
+        if (!res.headersSent) res.status(500).json({ error: err.message });
+        else res.end();
+    }
+});
+
 
 
 

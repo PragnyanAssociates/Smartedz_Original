@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   Download, Loader2, Info, AlertTriangle, ShieldAlert, CheckCircle2,
-  CalendarRange, ChevronDown, Archive, FileSpreadsheet, Users as UsersIcon, RefreshCw, BookOpen
+  CalendarRange, ChevronDown, Archive, FileSpreadsheet, Users as UsersIcon, RefreshCw, BookOpen, BarChart3
 } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
 
@@ -32,7 +32,7 @@ function YearSelect({ years, value, onChange, w = "w-full sm:w-48" }) {
   );
 }
 
-function ScopeSelect({ classes, value, onChange, studentsOnly }) {
+function ScopeSelect({ classes, value, onChange, studentsOnly, noOther }) {
   return (
     <div className="flex flex-col gap-1">
       <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Download</label>
@@ -49,7 +49,7 @@ function ScopeSelect({ classes, value, onChange, studentsOnly }) {
             </>
           ) : (
             <>
-              <option value="all">Everything (students + staff)</option>
+              <option value="all">Everything (students + {noOther ? 'teachers' : 'staff'})</option>
               <option value="students">Students — All classes</option>
               {classes.map(c => (
                 <option key={c.id} value={`class:${c.id}`}>
@@ -57,7 +57,7 @@ function ScopeSelect({ classes, value, onChange, studentsOnly }) {
                 </option>
               ))}
               <option value="teachers">Teachers</option>
-              <option value="other">Other staff</option>
+              {!noOther && <option value="other">Other staff</option>}
             </>
           )}
         </select>
@@ -169,6 +169,7 @@ export default function DownloadsTab({ data, user }) {
     { id: 'users',      label: 'Users',      icon: UsersIcon },
     { id: 'attendance', label: 'Attendance', icon: FileSpreadsheet },
     { id: 'marks',      label: 'Marks',      icon: BookOpen },
+    { id: 'performance', label: 'Performance', icon: BarChart3 },
   ];
 
   // per-year archive status cache: { [yearId]: { users:{...}, attendance:{...} } }
@@ -309,14 +310,47 @@ export default function DownloadsTab({ data, user }) {
     } catch (e) { setMkFinErr(e.message); } finally { setMkFinBusy(false); }
   };
 
+  // ================= PERFORMANCE =================
+  const [pfYear, setPfYear]   = useState(activeYear ? String(activeYear.id) : '');
+  const [pfScope, setPfScope] = useState('all');
+  const [pfBusy, setPfBusy]   = useState(false);
+  const [pfErr, setPfErr]     = useState(null);
+  const [pfDone, setPfDone]   = useState(false);
+  const [pfFinBusy, setPfFinBusy] = useState(false);
+  const [pfFinErr, setPfFinErr]   = useState(null);
+  const [pfAgain, setPfAgain]     = useState(false);
+
+  const downloadPerformance = async () => {
+    if (!pfYear) { setPfErr('Choose an academic year first.'); return; }
+    setPfBusy(true); setPfErr(null); setPfDone(false);
+    try {
+      await triggerBlob(`${API_BASE_URL}/admin/performance-export/${user.institutionId}?yearId=${pfYear}&scope=${encodeURIComponent(pfScope)}`,
+        `Performance_${yearName(pfYear) || 'year'}.xlsx`);
+      setPfDone(true);
+    } catch (e) { setPfErr(e.message); } finally { setPfBusy(false); }
+  };
+
+  const downloadPerformanceFinal = async () => {
+    if (!pfYear) { setPfFinErr('Choose an academic year first.'); return; }
+    setPfFinBusy(true); setPfFinErr(null);
+    try {
+      await triggerBlob(`${API_BASE_URL}/admin/performance-export/${user.institutionId}?yearId=${pfYear}&scope=all`,
+        `Performance_Final_${yearName(pfYear) || 'year'}.xlsx`);
+      await recordArchive(pfYear, 'performance');
+      setPfAgain(false);
+    } catch (e) { setPfFinErr(e.message); } finally { setPfFinBusy(false); }
+  };
+
   // load status for whichever year each module currently points at
   useEffect(() => { if (usrYear) loadStatus(usrYear); }, [usrYear, loadStatus]);
   useEffect(() => { if (attYear) loadStatus(attYear); }, [attYear, loadStatus]);
   useEffect(() => { if (mkYear) loadStatus(mkYear); }, [mkYear, loadStatus]);
+  useEffect(() => { if (pfYear) loadStatus(pfYear); }, [pfYear, loadStatus]);
 
   const usrStatus = statusByYear[usrYear]?.users;
   const attStatus = statusByYear[attYear]?.attendance;
   const mkStatus  = statusByYear[mkYear]?.marks;
+  const pfStatus  = statusByYear[pfYear]?.performance;
 
   return (
     <div className="space-y-5">
@@ -498,6 +532,59 @@ export default function DownloadsTab({ data, user }) {
               note={<>
                 <p>The <strong>whole marks register</strong> for this year in one file (every class). This is your keep-safe copy to store and print before deleting the year.</p>
                 <p>Once saved it&rsquo;s ticked. If <strong>any marks are entered or changed</strong> afterwards, the tick clears and it asks you to download again, so your saved copy is never out of date.</p>
+              </>}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* ========================= PERFORMANCE ======================= */}
+      {tab === 'performance' && (
+        <div className="bg-white rounded-lg ring-1 ring-black/5 p-5 space-y-5 animate-in fade-in duration-300">
+          <div className="flex items-center gap-2.5">
+            <span className="size-9 rounded-md bg-amber-50 text-amber-600 ring-1 ring-amber-600/20 flex items-center justify-center shrink-0">
+              <BarChart3 className="size-4" />
+            </span>
+            <div>
+              <h5 className="text-sm font-semibold text-zinc-900">Performance</h5>
+              <p className="text-[11px] text-zinc-500">Student &amp; teacher performance percentages for one academic year.</p>
+            </div>
+          </div>
+
+          <YearSelect years={years} value={pfYear}
+            onChange={e => { setPfYear(e.target.value); setPfDone(false); setPfAgain(false); }} />
+
+          {/* normal */}
+          <div className="space-y-3 border-t border-zinc-100 pt-4">
+            <h6 className="text-xs font-semibold text-zinc-900">Normal download</h6>
+            <div className="rounded-md ring-1 ring-inset ring-blue-500/15 bg-blue-50/60 px-4 py-3 flex items-start gap-2.5">
+              <Info className="size-4 text-blue-600 shrink-0 mt-0.5" />
+              <div className="text-[11px] text-blue-800 leading-relaxed space-y-1">
+                <p>Two sections. <strong>Students</strong> — per class, roll-wise, a <strong>%</strong> for each subject plus an <strong>Overall %</strong> and total marks. <strong>Teachers</strong> — each teacher&rsquo;s class &amp; subject %, with a bold Overall row.</p>
+                <p>Each % is <strong>marks obtained / possible</strong>, colour-coded (green ≥ 80, blue 50–80, red &lt; 50) — exactly like the Performance screens.</p>
+                <p><span className="font-semibold">Filter:</span> everything, a single class, or only Teachers. Read-only — take it any time. Alumni are not included.</p>
+              </div>
+            </div>
+            <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+              <ScopeSelect classes={classes} noOther value={pfScope} onChange={e => { setPfScope(e.target.value); setPfDone(false); }} />
+              <button onClick={downloadPerformance} disabled={pfBusy || !pfYear}
+                className="h-9 px-4 rounded-md bg-primary hover:bg-primary/90 disabled:bg-zinc-200 disabled:text-zinc-400 text-white text-xs font-semibold inline-flex items-center gap-2 shadow-sm transition-colors disabled:cursor-not-allowed whitespace-nowrap">
+                {pfBusy ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
+                {pfBusy ? 'Preparing…' : 'Download .xlsx'}
+              </button>
+            </div>
+            <StatusLine done={pfDone} err={pfErr} okText="Downloaded. Check your browser's downloads folder." />
+          </div>
+
+          {/* final */}
+          <div className="border-t border-zinc-100 pt-4">
+            <FinalArchivePanel
+              status={pfStatus} statusLoading={statusLoading && !pfStatus}
+              busy={pfFinBusy} err={pfFinErr} again={pfAgain} setAgain={setPfAgain}
+              onDownload={downloadPerformanceFinal}
+              note={<>
+                <p>The <strong>whole performance report</strong> for this year in one file (all students &amp; all teachers). This is your keep-safe copy to store and print before deleting the year.</p>
+                <p>Performance is built from marks, so if <strong>any marks change</strong> afterwards the tick clears and it asks you to download again — keeping your saved copy current.</p>
               </>}
             />
           </div>
