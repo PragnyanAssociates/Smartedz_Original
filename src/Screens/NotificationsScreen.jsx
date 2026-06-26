@@ -221,7 +221,7 @@ export default function NotificationsScreen({ onNavigate }) {
                 </div>
 
                 <button onClick={(e) => remove(e, n.id)} title="Remove"
-                  className="p-1.5 rounded-md text-zinc-300 hover:text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100 shrink-0">
+                  className="p-1.5 rounded-md text-zinc-400 hover:text-red-500 hover:bg-red-50 transition-colors opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 shrink-0">
                   <Trash2 className="size-3.5" />
                 </button>
               </div>
