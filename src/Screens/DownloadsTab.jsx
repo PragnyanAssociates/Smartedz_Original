@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   Download, Loader2, Info, AlertTriangle, ShieldAlert, CheckCircle2,
-  CalendarRange, ChevronDown, Archive, FileSpreadsheet, Users as UsersIcon, RefreshCw
+  CalendarRange, ChevronDown, Archive, FileSpreadsheet, Users as UsersIcon, RefreshCw, BookOpen
 } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
 
@@ -32,21 +32,34 @@ function YearSelect({ years, value, onChange, w = "w-full sm:w-48" }) {
   );
 }
 
-function ScopeSelect({ classes, value, onChange }) {
+function ScopeSelect({ classes, value, onChange, studentsOnly }) {
   return (
     <div className="flex flex-col gap-1">
       <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Download</label>
       <div className="relative">
         <select value={value} onChange={onChange} className={`${SELECT_CLS} w-full sm:w-56`}>
-          <option value="all">Everything (students + staff)</option>
-          <option value="students">Students — All classes</option>
-          {classes.map(c => (
-            <option key={c.id} value={`class:${c.id}`}>
-              Students — {c.className}{c.section ? ` ${c.section}` : ''}
-            </option>
-          ))}
-          <option value="teachers">Teachers</option>
-          <option value="other">Other staff</option>
+          {studentsOnly ? (
+            <>
+              <option value="all">All classes</option>
+              {classes.map(c => (
+                <option key={c.id} value={`class:${c.id}`}>
+                  {c.className}{c.section ? ` ${c.section}` : ''}
+                </option>
+              ))}
+            </>
+          ) : (
+            <>
+              <option value="all">Everything (students + staff)</option>
+              <option value="students">Students — All classes</option>
+              {classes.map(c => (
+                <option key={c.id} value={`class:${c.id}`}>
+                  Students — {c.className}{c.section ? ` ${c.section}` : ''}
+                </option>
+              ))}
+              <option value="teachers">Teachers</option>
+              <option value="other">Other staff</option>
+            </>
+          )}
         </select>
         <ChevronDown className="size-3.5 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
       </div>
@@ -155,6 +168,7 @@ export default function DownloadsTab({ data, user }) {
   const subTabs = [
     { id: 'users',      label: 'Users',      icon: UsersIcon },
     { id: 'attendance', label: 'Attendance', icon: FileSpreadsheet },
+    { id: 'marks',      label: 'Marks',      icon: BookOpen },
   ];
 
   // per-year archive status cache: { [yearId]: { users:{...}, attendance:{...} } }
@@ -264,12 +278,45 @@ export default function DownloadsTab({ data, user }) {
     } catch (e) { setAttFinErr(e.message); } finally { setAttFinBusy(false); }
   };
 
+  // ================= MARKS =================
+  const [mkYear, setMkYear]   = useState(activeYear ? String(activeYear.id) : '');
+  const [mkScope, setMkScope] = useState('all');
+  const [mkBusy, setMkBusy]   = useState(false);
+  const [mkErr, setMkErr]     = useState(null);
+  const [mkDone, setMkDone]   = useState(false);
+  const [mkFinBusy, setMkFinBusy] = useState(false);
+  const [mkFinErr, setMkFinErr]   = useState(null);
+  const [mkAgain, setMkAgain]     = useState(false);
+
+  const downloadMarks = async () => {
+    if (!mkYear) { setMkErr('Choose an academic year first.'); return; }
+    setMkBusy(true); setMkErr(null); setMkDone(false);
+    try {
+      await triggerBlob(`${API_BASE_URL}/admin/marks-export/${user.institutionId}?yearId=${mkYear}&scope=${encodeURIComponent(mkScope)}`,
+        `Marks_${yearName(mkYear) || 'year'}.xlsx`);
+      setMkDone(true);
+    } catch (e) { setMkErr(e.message); } finally { setMkBusy(false); }
+  };
+
+  const downloadMarksFinal = async () => {
+    if (!mkYear) { setMkFinErr('Choose an academic year first.'); return; }
+    setMkFinBusy(true); setMkFinErr(null);
+    try {
+      await triggerBlob(`${API_BASE_URL}/admin/marks-export/${user.institutionId}?yearId=${mkYear}&scope=all`,
+        `Marks_Final_${yearName(mkYear) || 'year'}.xlsx`);
+      await recordArchive(mkYear, 'marks');
+      setMkAgain(false);
+    } catch (e) { setMkFinErr(e.message); } finally { setMkFinBusy(false); }
+  };
+
   // load status for whichever year each module currently points at
   useEffect(() => { if (usrYear) loadStatus(usrYear); }, [usrYear, loadStatus]);
   useEffect(() => { if (attYear) loadStatus(attYear); }, [attYear, loadStatus]);
+  useEffect(() => { if (mkYear) loadStatus(mkYear); }, [mkYear, loadStatus]);
 
   const usrStatus = statusByYear[usrYear]?.users;
   const attStatus = statusByYear[attYear]?.attendance;
+  const mkStatus  = statusByYear[mkYear]?.marks;
 
   return (
     <div className="space-y-5">
@@ -398,6 +445,59 @@ export default function DownloadsTab({ data, user }) {
               note={<>
                 <p>The <strong>whole attendance register</strong> for this year in one file (everyone — students, teachers, other staff). This is your keep-safe copy to store and print before deleting the year.</p>
                 <p>Once saved it&rsquo;s ticked. If <strong>any new attendance is marked or edited</strong> afterwards, the tick clears and it asks you to download again, so your saved copy is never out of date.</p>
+              </>}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* ============================ MARKS =========================== */}
+      {tab === 'marks' && (
+        <div className="bg-white rounded-lg ring-1 ring-black/5 p-5 space-y-5 animate-in fade-in duration-300">
+          <div className="flex items-center gap-2.5">
+            <span className="size-9 rounded-md bg-violet-50 text-violet-600 ring-1 ring-violet-600/20 flex items-center justify-center shrink-0">
+              <BookOpen className="size-4" />
+            </span>
+            <div>
+              <h5 className="text-sm font-semibold text-zinc-900">Marks register</h5>
+              <p className="text-[11px] text-zinc-500">Exam marks, class-wise &amp; roll-wise, for one academic year.</p>
+            </div>
+          </div>
+
+          <YearSelect years={years} value={mkYear}
+            onChange={e => { setMkYear(e.target.value); setMkDone(false); setMkAgain(false); }} />
+
+          {/* normal */}
+          <div className="space-y-3 border-t border-zinc-100 pt-4">
+            <h6 className="text-xs font-semibold text-zinc-900">Normal download</h6>
+            <div className="rounded-md ring-1 ring-inset ring-blue-500/15 bg-blue-50/60 px-4 py-3 flex items-start gap-2.5">
+              <Info className="size-4 text-blue-600 shrink-0 mt-0.5" />
+              <div className="text-[11px] text-blue-800 leading-relaxed space-y-1">
+                <p>A marks register grouped by <strong>class</strong>, students <strong>roll-wise</strong>. Subjects run across the columns; each <strong>exam type</strong> is a row under the student, and every cell is <strong>marks obtained / max</strong> (e.g. <code className="bg-white/70 px-1 rounded">18/20</code>).</p>
+                <p>Each student ends with a bold <strong>Overall</strong> row and a colour-coded <strong>%</strong> (green ≥ 80, blue 50–80, red &lt; 50).</p>
+                <p><span className="font-semibold">Filter:</span> all classes at once, or a single class. Read-only — take it any time. Alumni are not included.</p>
+              </div>
+            </div>
+            <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+              <ScopeSelect classes={classes} studentsOnly value={mkScope} onChange={e => { setMkScope(e.target.value); setMkDone(false); }} />
+              <button onClick={downloadMarks} disabled={mkBusy || !mkYear}
+                className="h-9 px-4 rounded-md bg-primary hover:bg-primary/90 disabled:bg-zinc-200 disabled:text-zinc-400 text-white text-xs font-semibold inline-flex items-center gap-2 shadow-sm transition-colors disabled:cursor-not-allowed whitespace-nowrap">
+                {mkBusy ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
+                {mkBusy ? 'Preparing…' : 'Download .xlsx'}
+              </button>
+            </div>
+            <StatusLine done={mkDone} err={mkErr} okText="Downloaded. Check your browser's downloads folder." />
+          </div>
+
+          {/* final */}
+          <div className="border-t border-zinc-100 pt-4">
+            <FinalArchivePanel
+              status={mkStatus} statusLoading={statusLoading && !mkStatus}
+              busy={mkFinBusy} err={mkFinErr} again={mkAgain} setAgain={setMkAgain}
+              onDownload={downloadMarksFinal}
+              note={<>
+                <p>The <strong>whole marks register</strong> for this year in one file (every class). This is your keep-safe copy to store and print before deleting the year.</p>
+                <p>Once saved it&rsquo;s ticked. If <strong>any marks are entered or changed</strong> afterwards, the tick clears and it asks you to download again, so your saved copy is never out of date.</p>
               </>}
             />
           </div>
