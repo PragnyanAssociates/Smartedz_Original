@@ -5202,6 +5202,9 @@ app.get('/api/admin/performance-export/:instId', async (req, res) => {
             return links.has(cid);
         });
  
+        const [examTypes] = await db.execute('SELECT id, name, exam_order FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id', [instId]);
+        const examName = {}; examTypes.forEach(t => { examName[t.id] = t.name; });
+ 
         const [maxAll] = await db.execute(
             `SELECT m.exam_type_id, m.class_id, m.subject_id, m.max_marks
                FROM exam_max_marks m JOIN exam_types t ON t.id = m.exam_type_id
@@ -5222,11 +5225,15 @@ app.get('/api/admin/performance-export/:instId', async (req, res) => {
         const [marks] = await db.execute(
             'SELECT student_id, class_id, subject_id, exam_type_id, marks_obtained FROM student_marks WHERE institutionId = ? AND academic_year_id = ?',
             [instId, yearId]);
-        const marksByStudent = {};        // sid -> [marks]
+        const markMap = {};                 // `${sid}:${subj}:${exam}` -> obtained
         const histClass = {};
+        const stuExamSet = {};              // sid -> Set(examTypeId)
+        const examHasDataSchool = {};       // examTypeId -> true
         marks.forEach(r => {
-            (marksByStudent[r.student_id] = marksByStudent[r.student_id] || []).push(r);
+            markMap[`${r.student_id}:${r.subject_id}:${r.exam_type_id}`] = r.marks_obtained;
             if (histClass[r.student_id] == null) histClass[r.student_id] = r.class_id;
+            (stuExamSet[r.student_id] = stuExamSet[r.student_id] || new Set()).add(r.exam_type_id);
+            examHasDataSchool[r.exam_type_id] = true;
         });
         const classOf = (u) => (histClass[u.id] != null ? histClass[u.id] : u.class_id);
  
@@ -5234,24 +5241,35 @@ app.get('/api/admin/performance-export/:instId', async (req, res) => {
         students.forEach(u => { const cid = classOf(u); (studentsByClass[cid] = studentsByClass[cid] || []).push(u); });
         Object.values(studentsByClass).forEach(list => list.sort((a, b) => rollNum(a.roll_no) - rollNum(b.roll_no) || (a.name || '').localeCompare(b.name || '')));
  
-        // teacher assignments
+        // teacher aggregation: class:subject:exam -> {obtained, possible}
+        const aggCSE = {};
+        marks.forEach(m => {
+            const mx = maxFor(m.class_id, m.exam_type_id, m.subject_id);
+            const val = parseFloat(m.marks_obtained);
+            if (mx === undefined || mx === null || isNaN(val)) return;
+            const k = `${m.class_id}:${m.subject_id}:${m.exam_type_id}`;
+            if (!aggCSE[k]) aggCSE[k] = { obtained: 0, possible: 0 };
+            aggCSE[k].obtained += val; aggCSE[k].possible += mx;
+        });
         const [assignments] = await db.execute(
             `SELECT stm.teacher_id, stm.class_id, stm.subject_id, u.name AS teacher_name
                FROM subject_teacher_map stm JOIN users u ON u.id = stm.teacher_id
               WHERE stm.institutionId = ?`, [instId]);
-        // marks indexed for teacher aggregation: class:subject -> [marks]
-        const marksByClassSubject = {};
-        marks.forEach(r => { (marksByClassSubject[`${r.class_id}:${r.subject_id}`] = marksByClassSubject[`${r.class_id}:${r.subject_id}`] || []).push(r); });
  
         const pctColor = (p) => p == null ? 'FF9CA3AF' : (p >= 80 ? 'FF059669' : p >= 50 ? 'FF2563EB' : 'FFDC2626');
  
-        // widest student subject count for merged headings
+        // teacher exam columns = exams that have data anywhere (trim empties)
+        const teacherExamCols = examTypes.filter(t => examHasDataSchool[t.id]);
+ 
+        // widest column count across both sections
         const cids = (specificClass != null ? [specificClass] : Object.keys(studentsByClass).map(Number))
             .filter(cid => studentsByClass[cid] && studentsByClass[cid].length)
             .sort((a, b) => labelOf(a).localeCompare(labelOf(b), undefined, { numeric: true }));
         let widestSubjects = 0;
         cids.forEach(cid => { widestSubjects = Math.max(widestSubjects, subjectsForClass(cid).length); });
-        const maxCols = Math.max(2 + widestSubjects + 2, 6);   // student row vs teacher row (6 cols)
+        const studentCols = 3 + widestSubjects + 1;            // Roll,Name,Exam + subjects + Overall%
+        const teacherCols = 4 + teacherExamCols.length + 1;    // S.No,Teacher,Class,Subject + exams + Overall%
+        const maxCols = Math.max(studentCols, teacherCols, 6);
  
         // ---- workbook ----
         const wb = new ExcelJS.Workbook();
@@ -5262,7 +5280,7 @@ app.get('/api/admin/performance-export/:instId', async (req, res) => {
         ws.mergeCells(r, 1, r, maxCols);
         const tt = ws.getCell(r, 1); tt.value = inst.name || 'Institution'; tt.font = { bold: true, size: 14, color: { argb: 'FF111827' } }; r++;
         ws.mergeCells(r, 1, r, maxCols);
-        const sb = ws.getCell(r, 1); sb.value = `Performance · ${yLabel}   (% = marks obtained / possible · green >=80, blue 50-80, red <50)`; sb.font = { size: 10, color: { argb: 'FF6B7280' } }; r++;
+        const sb = ws.getCell(r, 1); sb.value = `Performance · ${yLabel}   (each cell = % · green >=80, blue 50-80, red <50)`; sb.font = { size: 10, color: { argb: 'FF6B7280' } }; r++;
         r++;
  
         const heading = (text) => {
@@ -5282,15 +5300,39 @@ app.get('/api/admin/performance-export/:instId', async (req, res) => {
             ws.mergeCells(r, 1, r, maxCols);
             const c = ws.getCell(r, 1); c.value = text; c.font = { italic: true, size: 10, color: { argb: 'FF9CA3AF' } }; r++;
         };
-        const headerRow = (heads) => {
+        const headerRow = (heads, leftCount) => {
             const row = ws.getRow(r);
             heads.forEach((h, i) => {
                 const c = row.getCell(i + 1); c.value = h;
                 c.font = { bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
                 c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND } };
-                c.alignment = { vertical: 'middle', horizontal: (i < 2 ? 'left' : 'center'), wrapText: true };
+                c.alignment = { vertical: 'middle', horizontal: (i < leftCount ? 'left' : 'center'), wrapText: true };
             });
             row.height = 26; r++;
+        };
+        // generic % data row; pcts is array of {pct} for the breakdown cols
+        const pctRow = (leftVals, pcts, overall, opts = {}) => {
+            const row = ws.getRow(r);
+            leftVals.forEach((v, i) => {
+                const c = row.getCell(i + 1); c.value = v;
+                c.alignment = { horizontal: i < (opts.leftAlign || 2) ? 'left' : 'center' };
+                c.font = { size: 9, bold: !!opts.bold, color: { argb: opts.bold ? 'FF111827' : (i === 1 ? 'FF111827' : 'FF374151') } };
+                if (opts.fill) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: opts.fill } };
+            });
+            const base = leftVals.length;
+            pcts.forEach((p, i) => {
+                const c = row.getCell(base + i + 1);
+                c.value = p != null ? `${p}%` : '—';
+                c.alignment = { horizontal: 'center' };
+                c.font = { size: 9, bold: p != null && (opts.bold || opts.boldPct), color: { argb: pctColor(p) } };
+                if (opts.fill) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: opts.fill } };
+            });
+            const oc = row.getCell(base + pcts.length + 1);
+            oc.value = overall != null ? `${overall}%` : '—';
+            oc.alignment = { horizontal: 'center' };
+            oc.font = { size: 9, bold: true, color: { argb: pctColor(overall) } };
+            if (opts.fill) oc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: opts.fill } };
+            r++;
         };
  
         // ---------- STUDENTS ----------
@@ -5300,41 +5342,38 @@ app.get('/api/admin/performance-export/:instId', async (req, res) => {
             cids.forEach(cid => {
                 const subjects = subjectsForClass(cid);
                 subHeading(labelOf(cid));
-                headerRow(['Roll', 'Name', ...subjects.map(s => s.name), 'Overall %', 'Total']);
+                headerRow(['Roll', 'Name', 'Exam', ...subjects.map(s => s.name), 'Overall %'], 2);
+ 
                 studentsByClass[cid].forEach(stu => {
-                    const myMarks = marksByStudent[stu.id] || [];
+                    const myExams = examTypes.filter(t => (stuExamSet[stu.id] || new Set()).has(t.id));
+                    if (myExams.length === 0) {
+                        pctRow([stu.roll_no || '—', stu.name, '—'], subjects.map(() => null), null);
+                        return;
+                    }
+                    // accumulators for the OVERALL row (per subject + grand)
+                    const subjAcc = subjects.map(() => ({ o: 0, p: 0, any: false }));
                     let gObt = 0, gPos = 0, gAny = false;
-                    const cells = subjects.map(s => {
-                        let o = 0, p = 0, any = false;
-                        myMarks.forEach(m => {
-                            if (m.subject_id !== s.id) return;
-                            const mx = maxFor(m.class_id, m.exam_type_id, s.id);
-                            const val = parseFloat(m.marks_obtained);
-                            if (mx === undefined || mx === null || isNaN(val)) return;
-                            o += val; p += mx; any = true;
+                    let first = true;
+                    myExams.forEach(et => {
+                        let eObt = 0, ePos = 0, eAny = false;
+                        const cells = subjects.map((s, si) => {
+                            const obt = markMap[`${stu.id}:${s.id}:${et.id}`];
+                            const mx = maxFor(cid, et.id, s.id);
+                            if (obt == null || mx === undefined || mx === null) return null;
+                            const val = parseFloat(obt); if (isNaN(val)) return null;
+                            eObt += val; ePos += mx; eAny = true;
+                            subjAcc[si].o += val; subjAcc[si].p += mx; subjAcc[si].any = true;
+                            return r1((val / mx) * 100);
                         });
-                        if (any) { gObt += o; gPos += p; gAny = true; }
-                        return any && p > 0 ? r1((o / p) * 100) : null;
+                        if (eAny) { gObt += eObt; gPos += ePos; gAny = true; }
+                        pctRow([first ? (stu.roll_no || '—') : '', first ? stu.name : '', et.name],
+                            cells, eAny && ePos > 0 ? r1((eObt / ePos) * 100) : null);
+                        first = false;
                     });
-                    const overall = (gAny && gPos > 0) ? r1((gObt / gPos) * 100) : null;
-                    const row = ws.getRow(r);
-                    row.getCell(1).value = stu.roll_no || '—'; row.getCell(1).alignment = { horizontal: 'left' };
-                    row.getCell(2).value = stu.name; row.getCell(2).alignment = { horizontal: 'left' };
-                    cells.forEach((pct, i) => {
-                        const c = row.getCell(3 + i);
-                        c.value = pct != null ? `${pct}%` : '—';
-                        c.alignment = { horizontal: 'center' };
-                        c.font = { size: 9, bold: pct != null, color: { argb: pctColor(pct) } };
-                    });
-                    const oc = row.getCell(2 + subjects.length + 1);
-                    oc.value = overall != null ? `${overall}%` : '—'; oc.alignment = { horizontal: 'center' };
-                    oc.font = { size: 9, bold: true, color: { argb: pctColor(overall) } };
-                    const tc = row.getCell(2 + subjects.length + 2);
-                    tc.value = gAny ? `${Math.round(gObt)}/${Math.round(gPos)}` : '—'; tc.alignment = { horizontal: 'center' };
-                    tc.font = { size: 9, color: { argb: 'FF374151' } };
-                    row.getCell(1).font = { size: 9, color: { argb: 'FF374151' } };
-                    row.getCell(2).font = { size: 9, color: { argb: 'FF111827' } };
-                    r++;
+                    // OVERALL row
+                    const oCells = subjAcc.map(a => a.any && a.p > 0 ? r1((a.o / a.p) * 100) : null);
+                    pctRow(['', '', 'OVERALL'], oCells, gAny && gPos > 0 ? r1((gObt / gPos) * 100) : null,
+                        { bold: true, fill: 'FFEFF3F8' });
                 });
                 r++;
             });
@@ -5343,8 +5382,8 @@ app.get('/api/admin/performance-export/:instId', async (req, res) => {
         // ---------- TEACHERS ----------
         if (includeTeachers) {
             heading('TEACHERS');
-            headerRow(['S.No', 'Teacher', 'Class', 'Subject', 'Marks', '%']);
-            // group assignments by teacher
+            headerRow(['S.No', 'Teacher', 'Class', 'Subject', ...teacherExamCols.map(t => t.name), 'Overall %'], 4);
+ 
             const byTeacher = {};
             assignments.forEach(a => { (byTeacher[a.teacher_id] = byTeacher[a.teacher_id] || { name: a.teacher_name, rows: [] }).rows.push(a); });
             const teacherIds = Object.keys(byTeacher).sort((x, y) => (byTeacher[x].name || '').localeCompare(byTeacher[y].name || ''));
@@ -5353,46 +5392,33 @@ app.get('/api/admin/performance-export/:instId', async (req, res) => {
             teacherIds.forEach(tid => {
                 const t = byTeacher[tid];
                 sno++;
-                let oObt = 0, oPos = 0, oAny = false, firstRow = true;
-                // sort that teacher's rows by class then subject
                 t.rows.sort((a, b) => labelOf(a.class_id).localeCompare(labelOf(b.class_id), undefined, { numeric: true }) || (subjectName[a.subject_id] || '').localeCompare(subjectName[b.subject_id] || ''));
+                const examAcc = teacherExamCols.map(() => ({ o: 0, p: 0, any: false }));
+                let gObt = 0, gPos = 0, gAny = false, first = true;
                 t.rows.forEach(a => {
-                    let o = 0, p = 0, any = false;
-                    (marksByClassSubject[`${a.class_id}:${a.subject_id}`] || []).forEach(m => {
-                        const mx = maxFor(a.class_id, m.exam_type_id, a.subject_id);
-                        const val = parseFloat(m.marks_obtained);
-                        if (mx === undefined || mx === null || isNaN(val)) return;
-                        o += val; p += mx; any = true;
+                    let rObt = 0, rPos = 0, rAny = false;
+                    const cells = teacherExamCols.map((et, ei) => {
+                        const e = aggCSE[`${a.class_id}:${a.subject_id}:${et.id}`];
+                        if (!e || e.possible <= 0) return null;
+                        rObt += e.obtained; rPos += e.possible; rAny = true;
+                        examAcc[ei].o += e.obtained; examAcc[ei].p += e.possible; examAcc[ei].any = true;
+                        return r1((e.obtained / e.possible) * 100);
                     });
-                    const pct = (any && p > 0) ? r1((o / p) * 100) : null;
-                    if (any) { oObt += o; oPos += p; oAny = true; }
-                    const row = ws.getRow(r);
-                    row.getCell(1).value = firstRow ? sno : '';
-                    row.getCell(2).value = firstRow ? t.name : '';
-                    row.getCell(3).value = labelOf(a.class_id);
-                    row.getCell(4).value = subjectName[a.subject_id] || '—';
-                    row.getCell(5).value = any ? `${Math.round(o)}/${Math.round(p)}` : '—';
-                    const pc = row.getCell(6); pc.value = pct != null ? `${pct}%` : '—';
-                    [1, 2, 3, 4, 5].forEach(i => { row.getCell(i).font = { size: 9, color: { argb: i === 2 ? 'FF111827' : 'FF374151' } }; row.getCell(i).alignment = { horizontal: i < 2 ? 'center' : (i === 2 ? 'left' : 'center') }; });
-                    pc.font = { size: 9, bold: true, color: { argb: pctColor(pct) } }; pc.alignment = { horizontal: 'center' };
-                    firstRow = false;
-                    r++;
+                    if (rAny) { gObt += rObt; gPos += rPos; gAny = true; }
+                    pctRow([first ? sno : '', first ? t.name : '', labelOf(a.class_id), subjectName[a.subject_id] || '—'],
+                        cells, rAny && rPos > 0 ? r1((rObt / rPos) * 100) : null, { leftAlign: 2 });
+                    first = false;
                 });
-                // overall row
-                const oPct = (oAny && oPos > 0) ? r1((oObt / oPos) * 100) : null;
-                const orow = ws.getRow(r);
-                orow.getCell(3).value = 'OVERALL';
-                orow.getCell(5).value = oAny ? `${Math.round(oObt)}/${Math.round(oPos)}` : '—';
-                const opc = orow.getCell(6); opc.value = oPct != null ? `${oPct}%` : '—';
-                [1, 2, 3, 4, 5].forEach(i => { orow.getCell(i).font = { size: 9, bold: true, color: { argb: 'FF111827' } }; orow.getCell(i).alignment = { horizontal: i < 2 ? 'center' : (i === 2 ? 'left' : 'center') }; orow.getCell(i).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFF3F8' } }; });
-                opc.font = { size: 9, bold: true, color: { argb: pctColor(oPct) } }; opc.alignment = { horizontal: 'center' };
-                opc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFF3F8' } };
-                r++; r++;
+                // teacher OVERALL row
+                const oCells = examAcc.map(a => a.any && a.p > 0 ? r1((a.o / a.p) * 100) : null);
+                pctRow(['', '', 'OVERALL', ''], oCells, gAny && gPos > 0 ? r1((gObt / gPos) * 100) : null,
+                    { bold: true, fill: 'FFEFF3F8', leftAlign: 2 });
+                r++;
             });
         }
  
         // widths + freeze
-        ws.getColumn(1).width = 8; ws.getColumn(2).width = 26;
+        ws.getColumn(1).width = 8; ws.getColumn(2).width = 24;
         for (let i = 3; i <= maxCols; i++) ws.getColumn(i).width = 12;
         ws.views = [{ state: 'frozen', xSplit: 2 }];
  

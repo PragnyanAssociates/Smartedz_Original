@@ -560,8 +560,8 @@ export default function DownloadsTab({ data, user }) {
             <div className="rounded-md ring-1 ring-inset ring-blue-500/15 bg-blue-50/60 px-4 py-3 flex items-start gap-2.5">
               <Info className="size-4 text-blue-600 shrink-0 mt-0.5" />
               <div className="text-[11px] text-blue-800 leading-relaxed space-y-1">
-                <p>Two sections. <strong>Students</strong> — per class, roll-wise, a <strong>%</strong> for each subject plus an <strong>Overall %</strong> and total marks. <strong>Teachers</strong> — each teacher&rsquo;s class &amp; subject %, with a bold Overall row.</p>
-                <p>Each % is <strong>marks obtained / possible</strong>, colour-coded (green ≥ 80, blue 50–80, red &lt; 50) — exactly like the Performance screens.</p>
+                <p>Same shape as the Marks register, but every cell is a <strong>%</strong>. <strong>Students</strong> — per class, roll-wise, each <strong>exam type</strong> a row, a % per <strong>subject</strong> across the columns, an <strong>Overall %</strong> column and a bold Overall row.</p>
+                <p><strong>Teachers</strong> — one row per class &amp; subject with an exam-wise % in each column and a bold Overall row. Every % is <strong>marks obtained / possible</strong>, colour-coded (green ≥ 80, blue 50–80, red &lt; 50).</p>
                 <p><span className="font-semibold">Filter:</span> everything, a single class, or only Teachers. Read-only — take it any time. Alumni are not included.</p>
               </div>
             </div>
