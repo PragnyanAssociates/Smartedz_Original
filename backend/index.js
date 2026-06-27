@@ -38,6 +38,106 @@ const JWT_SECRET = process.env.JWT_SECRET || 'unified_erp_key_2025';
 
 
 // =====================================================================
+// === AUTH CORE — token gate + role / tenant helpers ==================
+//
+//   PASTE THIS ONCE, near the top of index.js, immediately AFTER:
+//       const JWT_SECRET = process.env.JWT_SECRET || 'unified_erp_key_2025';
+//   and BEFORE Section 1 (the app.post('/api/login') route).
+//
+//   Order matters: this installs a gate on EVERY /api route, so it must
+//   be registered before the routes are defined (they all sit below it).
+//
+//   What it does:
+//     • Every request under /api now needs a valid login token, except
+//       the allowlist (/login). No token -> 401, app asks them to log in.
+//     • On success it attaches req.auth = { userId, role, institutionId }
+//       taken from the VERIFIED token. THIS is the value every route
+//       should trust from now on — never the URL (:instId) or the body.
+//     • /developer/* is Developer-only; /group/* is Group Admin (or Dev).
+//
+//   Nothing here touches your database. Self-contained.
+// =====================================================================
+
+// How long a login lasts before the user must sign in again. Change to
+// '12h' or '30d' to taste, or set TOKEN_TTL in the environment.
+// (Your /api/login currently signs with '24h'. To use this value, change
+//  that '24h' to TOKEN_TTL in the login route — optional.)
+const TOKEN_TTL = process.env.TOKEN_TTL || '7d';
+
+// Paths under /api that must work WITHOUT a token. Everything else is
+// closed. NOTE: these are written WITHOUT the /api prefix (Express strips
+// it inside this mounted middleware), so '/api/login' is just '/login'.
+//   If you have any other genuinely public endpoint — e.g. an outsider
+//   submitting a pre-admission enquiry form with no account — add its
+//   path here, otherwise it will start returning 401.
+const PUBLIC_API_PATHS = new Set(['/login']);
+
+// Verify the Bearer token. Returns the decoded payload, or null after
+// sending the 401 itself.
+function _readToken(req, res) {
+    const header = req.headers.authorization || '';
+    const match = header.match(/^Bearer\s+(.+)$/i);
+    if (!match) { res.status(401).json({ error: 'Please sign in to continue.' }); return null; }
+    try {
+        return jwt.verify(match[1], JWT_SECRET);
+    } catch (e) {
+        res.status(401).json({ error: 'Your session has expired. Please sign in again.' });
+        return null;
+    }
+}
+
+// ---- THE GATE: authenticate every /api request ----------------------
+app.use('/api', (req, res, next) => {
+    if (req.method === 'OPTIONS') return next();          // CORS preflight
+    if (PUBLIC_API_PATHS.has(req.path)) return next();    // allowlist (login)
+
+    const payload = _readToken(req, res);
+    if (!payload) return;                                 // 401 already sent
+
+    // The only identity routes may trust from here on.
+    req.auth = {
+        userId: payload.id,
+        role: payload.role,
+        institutionId: payload.instId
+    };
+
+    // Developer console — Developer only.
+    if (req.path.startsWith('/developer/') && req.auth.role !== 'Developer') {
+        return res.status(403).json({ error: 'Developer access only.' });
+    }
+    // Group console — Group Admin (or Developer).
+    if (req.path.startsWith('/group/') && !['Group Admin', 'Developer'].includes(req.auth.role)) {
+        return res.status(403).json({ error: 'Group access only.' });
+    }
+
+    next();
+});
+
+// ---- helpers used by the per-route tenant scoping (Part 2) ----------
+//
+// sameTenant(req, instId): true when the caller may act on this
+// institution — their own, or a Developer (who spans all tenants).
+function sameTenant(req, instId) {
+    if (req.auth && req.auth.role === 'Developer') return true;
+    return req.auth && String(req.auth.institutionId) === String(instId);
+}
+
+// requireRole('Super Admin', ...): drop into a single route to limit it
+// to specific roles, e.g.
+//   app.get('/api/admin/users-export/:instId', requireRole('Super Admin'), handler)
+function requireRole(...roles) {
+    return (req, res, next) => {
+        if (!req.auth) return res.status(401).json({ error: 'Please sign in to continue.' });
+        if (!roles.includes(req.auth.role)) {
+            return res.status(403).json({ error: 'You do not have access to this action.' });
+        }
+        next();
+    };
+}
+
+
+
+// =====================================================================
 //  MODULE REGISTRY (mirror in frontend/src/Screens/Modules.js)
 // =====================================================================
 const DEFAULT_MODULES = [
