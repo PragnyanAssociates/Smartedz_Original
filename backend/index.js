@@ -2135,7 +2135,7 @@ async function resolveYearId(instId, requestedYearId) {
 }
 
 app.get('/api/admin/timetable/:instId', async (req, res) => {
-    const { instId } = req.params;
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     try {
         const yearId = await resolveYearId(instId, req.query.yearId);
         if (!yearId) {
@@ -2174,6 +2174,7 @@ app.get('/api/timetable/my/:userId', async (req, res) => {
         );
         if (users.length === 0) return res.status(404).json({ error: 'User not found.' });
         const me = users[0];
+        if (!sameTenant(req, me.institutionId)) return res.status(403).json({ error: 'This user belongs to another institution.' });
 
         const role = (me.role || '').toLowerCase();
         const mode = role.includes('teacher') ? 'teacher' : 'student';
@@ -2226,7 +2227,8 @@ app.get('/api/timetable/my/:userId', async (req, res) => {
 });
 
 app.post('/api/admin/timetable/days', async (req, res) => {
-    const { institutionId, days } = req.body;
+    const { days } = req.body;
+    const institutionId = req.auth.institutionId;
     const conn = await db.getConnection();
     try {
         const yearId = await resolveYearId(institutionId, req.body.academic_year_id);
@@ -2246,7 +2248,8 @@ app.post('/api/admin/timetable/days', async (req, res) => {
 });
 
 app.post('/api/admin/timetable/periods', async (req, res) => {
-    const { institutionId, periods } = req.body;
+    const { periods } = req.body;
+    const institutionId = req.auth.institutionId;
     const conn = await db.getConnection();
     try {
         const yearId = await resolveYearId(institutionId, req.body.academic_year_id);
@@ -2269,12 +2272,15 @@ app.post('/api/admin/timetable/periods', async (req, res) => {
 // students would be pinged on every cell change). The bulk save below is
 // the "timetable updated" notify point.
 app.post('/api/admin/timetable/entry', async (req, res) => {
-    const { institutionId, class_id, day_id, period_id, subject_id, teacher_id, room_no } = req.body;
+    const institutionId = req.auth.institutionId;
+    const { class_id, day_id, period_id, subject_id, teacher_id, room_no } = req.body;
     try {
         const yearId = await resolveYearId(institutionId, req.body.academic_year_id);
         if (!yearId) return res.status(400).json({ error: 'No academic year. Create one first.' });
         if (!subject_id && !teacher_id && !room_no) {
-            await db.execute('DELETE FROM timetable_entries WHERE class_id = ? AND day_id = ? AND period_id = ?', [class_id, day_id, period_id]);
+            await db.execute(
+                'DELETE FROM timetable_entries WHERE class_id = ? AND day_id = ? AND period_id = ? AND institutionId = ?',
+                [class_id, day_id, period_id, institutionId]);
             return res.json({ success: true, cleared: true });
         }
         await db.execute(
@@ -2287,13 +2293,14 @@ app.post('/api/admin/timetable/entry', async (req, res) => {
 });
 
 app.post('/api/admin/timetable/entries/bulk', async (req, res) => {
-    const { institutionId, class_id, entries } = req.body;
+    const institutionId = req.auth.institutionId;
+    const { class_id, entries } = req.body;
     const conn = await db.getConnection();
     try {
         const yearId = await resolveYearId(institutionId, req.body.academic_year_id);
         if (!yearId) throw new Error('No academic year. Create one first.');
         await conn.beginTransaction();
-        await conn.execute('DELETE FROM timetable_entries WHERE class_id = ? AND academic_year_id = ?', [class_id, yearId]);
+        await conn.execute('DELETE FROM timetable_entries WHERE class_id = ? AND academic_year_id = ? AND institutionId = ?', [class_id, yearId, institutionId]);
         for (const e of entries) {
             if (!e.subject_id && !e.teacher_id && !e.room_no) continue;
             await conn.execute(
@@ -2302,18 +2309,14 @@ app.post('/api/admin/timetable/entries/bulk', async (req, res) => {
                 [institutionId, yearId, class_id, e.day_id, e.period_id, e.subject_id || null, e.teacher_id || null, e.room_no || null]);
         }
         await conn.commit();
-
-        // 🔔 Notify this class's active students that their timetable changed.
         try {
             const recipients = await studentIdsForClass(class_id);
             await createNotifications({
                 institutionId, recipientIds: recipients, type: 'timetable',
-                title: 'Timetable updated',
-                body: 'Your class timetable has been updated.',
-                link: 'timetable', entity_id: class_id, actor_id: req.body.actor_id
+                title: 'Timetable updated', body: 'Your class timetable has been updated.',
+                link: 'timetable', entity_id: class_id, actor_id: req.auth.userId
             });
         } catch (e) { console.warn('[notify timetable class]', e.message); }
-
         res.json({ success: true });
     } catch (err) {
         await conn.rollback();
@@ -2325,7 +2328,8 @@ app.post('/api/admin/timetable/entries/bulk', async (req, res) => {
 //  11.c  TEACHER TIMETABLE SAVE  ->  POST /api/admin/timetable/teacher-entries/bulk
 // ---------------------------------------------------------------------
 app.post('/api/admin/timetable/teacher-entries/bulk', async (req, res) => {
-    const { institutionId, teacher_id, entries } = req.body;
+    const { teacher_id, entries } = req.body;
+    const institutionId = req.auth.institutionId;
     if (!teacher_id) return res.status(400).json({ error: 'teacher_id is required.' });
 
     const conn = await db.getConnection();
@@ -2444,7 +2448,8 @@ app.post('/api/admin/timetable/teacher-entries/bulk', async (req, res) => {
 // === 12. SUBJECTS ====================================================
 // =====================================================================
 app.post('/api/admin/subjects', async (req, res) => {
-    const { name, institutionId, class_ids } = req.body;
+    const { name, class_ids } = req.body;
+    const institutionId = req.auth.institutionId;
     // 👇 === BOUNCER FOR CREATION === 👇
     if (!name || name.trim() === '') {
         return res.status(400).json({ error: 'Subject name is required.' });
@@ -2482,22 +2487,21 @@ app.post('/api/admin/subjects', async (req, res) => {
 });
 
 app.put('/api/admin/subjects/:id', async (req, res) => {
-    
     const { name, class_ids } = req.body;
     const subjectId = parseInt(req.params.id, 10);
     const conn = await db.getConnection();
     try {
+        const [own] = await conn.execute('SELECT institutionId FROM subjects WHERE id = ?', [subjectId]);
+        if (own.length === 0) return res.status(404).json({ error: 'Subject not found.' });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This subject belongs to another institution.' });
+ 
         await conn.beginTransaction();
         await conn.execute('UPDATE subjects SET name = ? WHERE id = ?', [name, subjectId]);
-        // Re-sync class links wholesale when class_ids is supplied
         if (Array.isArray(class_ids)) {
             await conn.execute('DELETE FROM subject_classes WHERE subject_id = ?', [subjectId]);
             for (const cid of class_ids) {
                 if (!cid) continue;
-                await conn.execute(
-                    'INSERT IGNORE INTO subject_classes (subject_id, class_id) VALUES (?, ?)',
-                    [subjectId, parseInt(cid, 10)]
-                );
+                await conn.execute('INSERT IGNORE INTO subject_classes (subject_id, class_id) VALUES (?, ?)', [subjectId, parseInt(cid, 10)]);
             }
         }
         await conn.commit();
@@ -2514,7 +2518,9 @@ app.put('/api/admin/subjects/:id', async (req, res) => {
 
 app.delete('/api/admin/subjects/:id', async (req, res) => {
     try {
-        // subject_classes rows cascade-delete via FK
+        const [own] = await db.execute('SELECT institutionId FROM subjects WHERE id = ?', [req.params.id]);
+        if (own.length === 0) return res.json({ success: true });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This subject belongs to another institution.' });
         await db.execute('DELETE FROM subjects WHERE id = ?', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -2526,13 +2532,15 @@ app.delete('/api/admin/subjects/:id', async (req, res) => {
 // =====================================================================
 app.get('/api/admin/calendar/:instId', async (req, res) => {
     try {
-        const [rows] = await db.execute('SELECT * FROM calendar_events WHERE institutionId = ? ORDER BY event_date ASC', [req.params.instId]);
+        const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+        const [rows] = await db.execute('SELECT * FROM calendar_events WHERE institutionId = ? ORDER BY event_date ASC', [instId]);
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.post('/api/admin/calendar', async (req, res) => {
-    const { institutionId, name, event_date, time, description, type, adminId } = req.body;
+    const { name, event_date, time, description, type, adminId } = req.body;
+    const institutionId = req.auth.institutionId;
     try {
         await db.execute('INSERT INTO calendar_events (institutionId, name, event_date, time, description, type, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
             [institutionId, name, event_date, time || null, description || null, type, adminId]);
@@ -2543,6 +2551,9 @@ app.post('/api/admin/calendar', async (req, res) => {
 app.put('/api/admin/calendar/:id', async (req, res) => {
     const { name, event_date, time, description, type } = req.body;
     try {
+        const [own] = await db.execute('SELECT institutionId FROM calendar_events WHERE id = ?', [req.params.id]);
+        if (own.length === 0) return res.status(404).json({ error: 'Event not found.' });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This event belongs to another institution.' });
         await db.execute('UPDATE calendar_events SET name=?, event_date=?, time=?, description=?, type=? WHERE id=?',
             [name, event_date, time || null, description || null, type, req.params.id]);
         res.json({ success: true });
@@ -2551,6 +2562,9 @@ app.put('/api/admin/calendar/:id', async (req, res) => {
 
 app.delete('/api/admin/calendar/:id', async (req, res) => {
     try {
+        const [own] = await db.execute('SELECT institutionId FROM calendar_events WHERE id = ?', [req.params.id]);
+        if (own.length === 0) return res.json({ success: true });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This event belongs to another institution.' });
         await db.execute('DELETE FROM calendar_events WHERE id = ?', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -2569,12 +2583,14 @@ app.get('/api/profile/:id', async (req, res) => {
             [req.params.id]
         );
         if (rows.length === 0) return res.status(404).json({ error: 'User not found' });
+        if (!sameTenant(req, rows[0].institutionId)) return res.status(403).json({ error: 'This user belongs to another institution.' });
         res.json(rows[0]);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.put('/api/profile/:id', async (req, res) => {
     const { id } = req.params;
+    if (String(id) !== String(req.auth.userId)) return res.status(403).json({ error: 'You can only edit your own profile.' });
     const { name, email, username, phone_no, dob, gender, address, profile_pic } = req.body;
     try {
         await db.execute(
@@ -2622,7 +2638,7 @@ app.put('/api/profile/:id', async (req, res) => {
 
 // --- 15.1 Roster for marking ---------------------------------------
 app.get('/api/admin/attendance/roster/:instId', async (req, res) => {
-    const { instId } = req.params;
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     const { category = 'students', date, class_id } = req.query;
     const targetDate = date || new Date().toISOString().slice(0, 10);
  
@@ -2704,10 +2720,12 @@ app.get('/api/admin/attendance/roster/:instId', async (req, res) => {
 //   Body: { institutionId, date, actor_id, entries: [{user_id, status}] }
 //   status must be 'P' or 'A'. Upserts each row.
 app.post('/api/admin/attendance/mark', async (req, res) => {
-    const { institutionId, date, actor_id, entries } = req.body;
-    if (!institutionId || !date || !actor_id || !Array.isArray(entries)) {
-        return res.status(400).json({ error: 'institutionId, date, actor_id and entries[] are required.' });
-    }
+    const { date, entries } = req.body;
+    const institutionId = req.auth.institutionId;   // from token
+    const actor_id = req.auth.userId;               // marker = the logged-in user
+               if (!date || !Array.isArray(entries)) {
+                   return res.status(400).json({ error: 'date and entries[] are required.' });
+             }
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
 
     const conn = await db.getConnection();
@@ -2792,6 +2810,7 @@ app.get('/api/admin/attendance/history/:userId', async (req, res) => {
     try {
         const [uRows] = await db.execute('SELECT institutionId FROM users WHERE id = ? LIMIT 1', [userId]);
         const instId = uRows[0]?.institutionId;
+        if (!uRows.length || !sameTenant(req, instId)) return res.status(403).json({ error: 'This user belongs to another institution.' });
         const yearId = await resolveYearId(instId, req.query.academic_year_id);
 
         let where = 'a.user_id = ? AND a.academic_year_id = ?';
@@ -2830,6 +2849,9 @@ app.get('/api/admin/attendance/history/:userId', async (req, res) => {
 app.get('/api/admin/attendance/teacher-classes/:teacherId', async (req, res) => {
     const { teacherId } = req.params;
     try {
+        const [t] = await db.execute('SELECT institutionId FROM users WHERE id = ? LIMIT 1', [teacherId]);
+        if (t.length === 0) return res.json([]);
+        if (!sameTenant(req, t[0].institutionId)) return res.status(403).json({ error: 'This teacher belongs to another institution.' });
         const [rows] = await db.execute(
             `SELECT DISTINCT c.id, c.className, c.section
                FROM timetable_entries te
@@ -2845,7 +2867,7 @@ app.get('/api/admin/attendance/teacher-classes/:teacherId', async (req, res) => 
 
 // --- 15.5 Category overview + analysis series ----------------------
 app.get('/api/admin/attendance/overview/:instId', async (req, res) => {
-    const { instId } = req.params;
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     const { category = 'students', from, to, class_id } = req.query;
 
     try {
@@ -2956,7 +2978,7 @@ app.get('/api/admin/attendance/overview/:instId', async (req, res) => {
 // === 30.A ATTENDANCE EXPORT (per-module download) ====================
 
 app.get('/api/admin/attendance-export/:instId', async (req, res) => {
-    const { instId } = req.params;
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     try {
         const ExcelJS = require('exceljs');
  
@@ -3208,6 +3230,7 @@ async function examRecipientIds(institutionId, classId, section) {
 // --- 16.A.1 List all schedules for a school -----------------------
 app.get('/api/admin/exam-schedules/:instId', async (req, res) => {
     try {
+        const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
         const [rows] = await db.execute(
             `SELECT s.*, c.className, u.name AS created_by_name
                FROM exam_schedules s
@@ -3215,7 +3238,7 @@ app.get('/api/admin/exam-schedules/:instId', async (req, res) => {
                LEFT JOIN users u ON u.id = s.created_by
               WHERE s.institutionId = ?
               ORDER BY s.created_at DESC`,
-            [req.params.instId]
+              [instId]
         );
         const decorated = rows.map(r => ({
             ...r,
@@ -3231,6 +3254,7 @@ app.get('/api/admin/exam-schedules/student/:studentId', async (req, res) => {
         const [u] = await db.execute('SELECT institutionId, class_id, section FROM users WHERE id = ?', [req.params.studentId]);
         if (u.length === 0) return res.status(404).json({ error: 'Student not found' });
         const { institutionId, class_id, section } = u[0];
+        if (!sameTenant(req, institutionId)) return res.status(403).json({ error: 'This student belongs to another institution.' });
 
         const [rows] = await db.execute(
             `SELECT s.*, c.className, usr.name AS created_by_name
@@ -3263,6 +3287,7 @@ app.get('/api/admin/exam-schedules/single/:id', async (req, res) => {
             [req.params.id]
         );
         if (rows.length === 0) return res.status(404).json({ error: 'Schedule not found' });
+        if (!sameTenant(req, rows[0].institutionId)) return res.status(403).json({ error: 'This schedule belongs to another institution.' });
         const r = rows[0];
         res.json({ ...r, schedule_data: parseJsonSafe(r.schedule_data, []) });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -3272,12 +3297,14 @@ app.get('/api/admin/exam-schedules/single/:id', async (req, res) => {
 //   class_id = null means "All classes"
 //   section  = null means "all sections in the class"
 app.post('/api/admin/exam-schedules', async (req, res) => {
+    const institutionId = req.auth.institutionId;
     const {
-        institutionId, title, subtitle, exam_type,
+        title, subtitle, exam_type,
         class_id, section, schedule_data, created_by
     } = req.body;
-    if (!institutionId || !title) return res.status(400).json({ error: 'institutionId and title required.' });
+    if (!title) return res.status(400).json({ error: 'title required.' });
     try {
+        
         const [result] = await db.execute(
             `INSERT INTO exam_schedules
                (institutionId, title, subtitle, exam_type, class_id, section, schedule_data, created_by)
@@ -3303,8 +3330,12 @@ app.post('/api/admin/exam-schedules', async (req, res) => {
 
 // --- 16.A.5 Update schedule ---------------------------------------
 app.put('/api/admin/exam-schedules/:id', async (req, res) => {
-    const { title, subtitle, exam_type, class_id, section, schedule_data, actor_id } = req.body;
+    const { title, subtitle, exam_type, class_id, section, schedule_data } = req.body;
     try {
+        const [own] = await db.execute('SELECT institutionId FROM exam_schedules WHERE id = ?', [req.params.id]);
+        if (own.length === 0) return res.status(404).json({ error: 'Schedule not found' });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This schedule belongs to another institution.' });
+ 
         await db.execute(
             `UPDATE exam_schedules
                 SET title = ?, subtitle = ?, exam_type = ?, class_id = ?, section = ?, schedule_data = ?
@@ -3312,23 +3343,17 @@ app.put('/api/admin/exam-schedules/:id', async (req, res) => {
             [title, subtitle || null, exam_type || 'Internal',
              class_id || null, section || null, JSON.stringify(schedule_data || []), req.params.id]
         );
-
-        // 🔔 Re-notify the targeted students (the exam date/time may have
-        //    changed). institutionId isn't in the body, so read it from row.
+ 
         try {
-            const [rows] = await db.execute(
-                'SELECT institutionId FROM exam_schedules WHERE id = ?', [req.params.id]);
-            if (rows.length) {
-                const instId = rows[0].institutionId;
-                const recipients = await examRecipientIds(instId, class_id || null, section || null);
-                await createNotifications({
-                    institutionId: instId, recipientIds: recipients, type: 'exam',
-                    title: 'Exam timetable updated', body: title,
-                    link: 'Exams', entity_id: req.params.id, actor_id
-                });
-            }
+            const instId = own[0].institutionId;
+            const recipients = await examRecipientIds(instId, class_id || null, section || null);
+            await createNotifications({
+                institutionId: instId, recipientIds: recipients, type: 'exam',
+                title: 'Exam timetable updated', body: title,
+                link: 'Exams', entity_id: req.params.id, actor_id: req.auth.userId
+            });
         } catch (e) { console.warn('[notify exam-schedule update]', e.message); }
-
+ 
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -3336,6 +3361,9 @@ app.put('/api/admin/exam-schedules/:id', async (req, res) => {
 // --- 16.A.6 Delete schedule ---------------------------------------
 app.delete('/api/admin/exam-schedules/:id', async (req, res) => {
     try {
+        const [own] = await db.execute('SELECT institutionId FROM exam_schedules WHERE id = ?', [req.params.id]);
+        if (own.length === 0) return res.json({ success: true });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This schedule belongs to another institution.' });
         await db.execute('DELETE FROM exam_schedules WHERE id = ?', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -3353,6 +3381,7 @@ app.get('/api/admin/exams/teacher/:teacherId', async (req, res) => {
         const [users] = await db.execute('SELECT id, role, institutionId FROM users WHERE id = ?', [teacherId]);
         if (users.length === 0) return res.status(404).json({ error: 'User not found' });
         const me = users[0];
+        if (!sameTenant(req, me.institutionId)) return res.status(403).json({ error: 'This user belongs to another institution.' });
         const isAdmin = me.role === 'Super Admin' || me.role === 'Developer';
 
         let sql, params;
@@ -3391,6 +3420,7 @@ app.get('/api/admin/exams/student/:studentId', async (req, res) => {
         const [u] = await db.execute('SELECT institutionId, class_id, section FROM users WHERE id = ?', [studentId]);
         if (u.length === 0) return res.status(404).json({ error: 'Student not found' });
         const { institutionId, class_id, section } = u[0];
+        if (!sameTenant(req, institutionId)) return res.status(403).json({ error: 'This student belongs to another institution.' });
 
         const [rows] = await db.execute(
             `SELECT e.id AS exam_id, e.title, e.description, e.time_limit_mins, e.total_marks,
@@ -3426,7 +3456,8 @@ app.get('/api/admin/exams/:examId', async (req, res) => {
             [req.params.examId]
         );
         if (exam.length === 0) return res.status(404).json({ error: 'Exam not found' });
-
+        if (!sameTenant(req, exam[0].institutionId)) return res.status(403).json({ error: 'This exam belongs to another institution.' });
+ 
         const [questions] = await db.execute(
             'SELECT * FROM online_exam_questions WHERE exam_id = ? ORDER BY question_order, id',
             [req.params.examId]
@@ -3438,11 +3469,12 @@ app.get('/api/admin/exams/:examId', async (req, res) => {
 
 // --- 16.B.4 Create exam (+ notify students if published) ----------
 app.post('/api/admin/exams', async (req, res) => {
+    const institutionId = req.auth.institutionId;
     const {
-        institutionId, title, description, class_id, section, subject_id,
+        title, description, class_id, section, subject_id,
         time_limit_mins, status, created_by, questions = []
     } = req.body;
-    if (!institutionId || !title || !class_id || !created_by) {
+    if (!title || !class_id || !created_by) {
         return res.status(400).json({ error: 'institutionId, title, class_id and created_by are required.' });
     }
     const conn = await db.getConnection();
@@ -3500,6 +3532,9 @@ app.put('/api/admin/exams/:examId', async (req, res) => {
     } = req.body;
     const conn = await db.getConnection();
     try {
+         const [exOwn] = await conn.execute('SELECT institutionId FROM online_exams WHERE id = ?', [req.params.examId]);
+         if (exOwn.length === 0) return res.status(404).json({ error: 'Exam not found' });
+         if (!sameTenant(req, exOwn[0].institutionId)) return res.status(403).json({ error: 'This exam belongs to another institution.' });
         await conn.beginTransaction();
         const totalMarks = questions.reduce((sum, q) => sum + (parseInt(q.marks, 10) || 0), 0);
 
@@ -3557,6 +3592,9 @@ app.put('/api/admin/exams/:examId', async (req, res) => {
 
 app.delete('/api/admin/exams/:examId', async (req, res) => {
     try {
+        const [own] = await db.execute('SELECT institutionId FROM online_exams WHERE id = ?', [req.params.examId]);
+        if (own.length === 0) return res.json({ success: true });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This exam belongs to another institution.' });
         await db.execute('DELETE FROM online_exams WHERE id = ?', [req.params.examId]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -3570,6 +3608,9 @@ app.delete('/api/admin/exams/:examId', async (req, res) => {
 // --- 16.C.1 Get questions without answers (for student to take) ---
 app.get('/api/admin/exams/:examId/take', async (req, res) => {
     try {
+        const [own] = await db.execute('SELECT institutionId FROM online_exams WHERE id = ?', [req.params.examId]);
+        if (own.length === 0) return res.status(404).json({ error: 'Exam not found' });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This exam belongs to another institution.' });
         const [questions] = await db.execute(
             `SELECT id, question_text, question_type, options, marks, question_order
                FROM online_exam_questions
@@ -3577,7 +3618,6 @@ app.get('/api/admin/exams/:examId/take', async (req, res) => {
               ORDER BY question_order, id`,
             [req.params.examId]
         );
-        // Don't leak correct_answer to the client
         const qList = questions.map(q => ({ ...q, options: parseJsonSafe(q.options, null) }));
         res.json(qList);
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -3586,9 +3626,12 @@ app.get('/api/admin/exams/:examId/take', async (req, res) => {
 // --- 16.C.2 Start (or resume) an attempt --------------------------
 app.post('/api/admin/exams/:examId/start', async (req, res) => {
     const { examId } = req.params;
-    const { student_id } = req.body;
-    if (!student_id) return res.status(400).json({ error: 'student_id required.' });
+    const student_id = req.auth.userId;                    // start as yourself only
     try {
+        const [own] = await db.execute('SELECT institutionId FROM online_exams WHERE id = ?', [examId]);
+        if (own.length === 0) return res.status(404).json({ error: 'Exam not found' });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This exam belongs to another institution.' });
+ 
         const [existing] = await db.execute(
             'SELECT id, status FROM online_exam_attempts WHERE exam_id = ? AND student_id = ?',
             [examId, student_id]
@@ -3611,7 +3654,8 @@ app.post('/api/admin/exams/:examId/start', async (req, res) => {
 // --- 16.C.3 Submit answers ----------------------------------------
 app.post('/api/admin/attempts/:attemptId/submit', async (req, res) => {
     const { attemptId } = req.params;
-    const { student_id, answers = {} } = req.body;
+    const { answers = {} } = req.body;
+    const student_id = req.auth.userId;   // submit as yourself only
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
@@ -3674,6 +3718,9 @@ app.post('/api/admin/attempts/:attemptId/submit', async (req, res) => {
 // --- 16.C.4 List submissions for an exam (teacher view) ----------
 app.get('/api/admin/exams/:examId/submissions', async (req, res) => {
     try {
+        const [own] = await db.execute('SELECT institutionId FROM online_exams WHERE id = ?', [req.params.examId]);
+        if (own.length === 0) return res.json([]);
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This exam belongs to another institution.' });
         const [rows] = await db.execute(
             `SELECT a.id AS attempt_id, a.status, a.final_score, a.submitted_at, a.graded_at,
                     u.id AS student_id, u.name AS student_name, u.roll_no, u.username
@@ -3691,7 +3738,7 @@ app.get('/api/admin/exams/:examId/submissions', async (req, res) => {
 app.get('/api/admin/attempts/:attemptId', async (req, res) => {
     try {
         const [att] = await db.execute(
-            `SELECT a.*, e.title AS exam_title, e.total_marks, e.class_id,
+            `SELECT a.*, e.title AS exam_title, e.total_marks, e.class_id, e.institutionId,
                     u.name AS student_name, u.roll_no, u.username,
                     g.name AS graded_by_name
                FROM online_exam_attempts a
@@ -3702,7 +3749,8 @@ app.get('/api/admin/attempts/:attemptId', async (req, res) => {
             [req.params.attemptId]
         );
         if (att.length === 0) return res.status(404).json({ error: 'Attempt not found' });
-
+        if (!sameTenant(req, att[0].institutionId)) return res.status(403).json({ error: 'This attempt belongs to another institution.' });
+ 
         const [rows] = await db.execute(
             `SELECT q.id AS question_id, q.question_text, q.question_type, q.options,
                     q.correct_answer, q.marks, q.question_order,
@@ -3718,15 +3766,20 @@ app.get('/api/admin/attempts/:attemptId', async (req, res) => {
         res.json({ attempt: att[0], items });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
 // --- 16.C.6 Save grade for one attempt (+ notify the student) -----
 app.post('/api/admin/attempts/:attemptId/grade', async (req, res) => {
     const { attemptId } = req.params;
-    const { graded_answers = [], teacher_feedback, graded_by } = req.body;
-    
-    if (!graded_by) return res.status(400).json({ error: 'graded_by required.' });
+    const { graded_answers = [], teacher_feedback } = req.body;
+    const graded_by = req.auth.userId;     // grader = the logged-in user
     
     const conn = await db.getConnection();
     try {
+        const [atOwn] = await conn.execute(
+                        'SELECT e.institutionId FROM online_exam_attempts a JOIN online_exams e ON e.id = a.exam_id WHERE a.id = ?',
+             [attemptId]);
+         if (atOwn.length === 0) return res.status(404).json({ error: 'Attempt not found' });
+        if (!sameTenant(req, atOwn[0].institutionId)) return res.status(403).json({ error: 'This attempt belongs to another institution.' });
         await conn.beginTransaction();
         
         // 1. Save the new manual grades provided by the teacher FIRST
@@ -3787,6 +3840,8 @@ app.post('/api/admin/attempts/:attemptId/grade', async (req, res) => {
         res.status(500).json({ error: err.message });
     } finally { conn.release(); }
 });
+
+
 
 // =====================================================================
 // === 17. REPORTS — Offline Exams, Marks Entry & Report Cards =========
