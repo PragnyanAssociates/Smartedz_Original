@@ -3845,72 +3845,14 @@ app.post('/api/admin/attempts/:attemptId/grade', async (req, res) => {
 
 // =====================================================================
 // === 17. REPORTS — Offline Exams, Marks Entry & Report Cards =========
-//
-//   Distinct from Section 16 (online quizzes). This covers the
-//   traditional paper-exam workflow:
-//     • exam_types          — admin defines AT1, UT1, SA1...   (config)
-//     • exam_max_marks      — per exam-type + class (+ subject) max marks
-//     • subject_teacher_map — who enters marks for a class+subject
-//     • student_marks       — the actual entered marks  (per academic year)
-//   Report-card attendance is auto-computed from the daily `attendance`
-//   table built in Section 15 — no separate W/P entry.
-//
-//   ACADEMIC YEAR: student_marks carry academic_year_id, and marks
-//   reads/writes scope to the school's ACTIVE academic year via the
-//   shared resolveYearId() helper (defined in the Timetable section).
-//   Exam types & max marks stay global config (reused across years).
-//
-//   ALUMNI: passed-out students (users.status = 'alumni') are excluded
-//   from class summaries and the marks grid.
-//
-//   PER-SUBJECT MAX MARKS: exam_max_marks now carries a subject_id.
-//   A row with subject_id = 0 is the "All Subjects" DEFAULT for that
-//   exam+class; a row with a real subject_id OVERRIDES the default for
-//   just that subject. So you can set one max for every subject, or give
-//   individual subjects their own max. Existing rows become subject_id=0
-//   defaults automatically.
-//
-//   REQUIRES a one-time migration for the per-subject max marks:
-//     -- 1. Add the subject dimension (0 = "All Subjects" default).
-//     ALTER TABLE exam_max_marks
-//       ADD COLUMN subject_id INT NOT NULL DEFAULT 0 AFTER class_id;
-//
-//     -- 2. Find the OLD unique key on (exam_type_id, class_id):
-//     SHOW CREATE TABLE exam_max_marks;
-//
-//     -- 3. Drop that old unique key (use the name you saw above), then
-//     --    add the new one that includes subject_id:
-//     ALTER TABLE exam_max_marks DROP INDEX <old_unique_key_name>;
-//     ALTER TABLE exam_max_marks
-//       ADD UNIQUE KEY uniq_exam_class_subject (exam_type_id, class_id, subject_id);
-//
-//   (student_marks academic-year migration — run once, if not already:)
-//     ALTER TABLE student_marks
-//       ADD COLUMN academic_year_id INT NULL AFTER class_id;
-//     UPDATE student_marks sm
-//       JOIN academic_years y
-//         ON y.institutionId = sm.institutionId AND y.isActive = 1
-//       SET sm.academic_year_id = y.id
-//      WHERE sm.id > 0 AND sm.academic_year_id IS NULL;
-//     DELETE s1 FROM student_marks s1
-//       JOIN student_marks s2
-//         ON s1.student_id  = s2.student_id
-//        AND s1.subject_id  = s2.subject_id
-//        AND s1.exam_type_id = s2.exam_type_id
-//        AND COALESCE(s1.academic_year_id,0) = COALESCE(s2.academic_year_id,0)
-//        AND s1.id < s2.id;
-//     ALTER TABLE student_marks DROP INDEX uniq_student_subject_exam;
-//     ALTER TABLE student_marks
-//       ADD UNIQUE KEY uniq_student_subject_exam_year
-//         (student_id, subject_id, exam_type_id, academic_year_id);
-//     CREATE INDEX idx_marks_year ON student_marks (academic_year_id);
+//   TENANT-SCOPED build. institutionId always comes from req.auth; by-id
+//   routes verify ownership; marks/max-marks writes are allowlisted to
+//   this institution's students/subjects/exam-types/classes (their unique
+//   keys don't include institutionId, so a foreign id could otherwise
+//   overwrite another school's rows).
+//   (Migrations unchanged — see your existing header block.)
 // =====================================================================
 
-// --- Month boundaries helper for attendance roll-up ----------------
-//   Given an academic year row {startDate,endDate}, returns an ordered
-//   list of { key:'2025-06', label:'June', from, to } month buckets.
-//   (Retained for reference / other callers; the report-card attendance
-//   below no longer relies on it — see the note in buildReportCard.)
 function buildMonthBuckets(startDateStr, endDateStr) {
     const buckets = [];
     if (!startDateStr || !endDateStr) return buckets;
@@ -3935,10 +3877,6 @@ function buildMonthBuckets(startDateStr, endDateStr) {
     return buckets;
 }
 
-// --- Build the per-exam max-marks map from exam_max_marks rows ------
-//   rows: [{ exam_type_id, subject_id, max_marks }]
-//   returns { [examTypeId]: { default: n|null, bySubject: { [subjectId]: n } } }
-//   subject_id = 0 is the "All Subjects" default; others are overrides.
 function buildMaxMarksMap(rows) {
     const maxMarks = {};
     (rows || []).forEach(r => {
@@ -3955,21 +3893,21 @@ function buildMaxMarksMap(rows) {
 // === 17.A EXAM TYPES =================================================
 // =====================================================================
 
-// --- 17.A.1 List exam types for a school --------------------------
 app.get('/api/admin/exam-types/:instId', async (req, res) => {
     try {
+        const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
         const [rows] = await db.execute(
             'SELECT * FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id',
-            [req.params.instId]
+            [instId]
         );
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 17.A.2 Create exam type --------------------------------------
 app.post('/api/admin/exam-types', async (req, res) => {
-    const { institutionId, name, exam_order } = req.body;
-    if (!institutionId || !name) return res.status(400).json({ error: 'institutionId and name required.' });
+    const { name, exam_order } = req.body;
+    const institutionId = req.auth.institutionId;
+    if (!name) return res.status(400).json({ error: 'name required.' });
     try {
         const [result] = await db.execute(
             'INSERT INTO exam_types (institutionId, name, exam_order) VALUES (?, ?, ?)',
@@ -3984,10 +3922,12 @@ app.post('/api/admin/exam-types', async (req, res) => {
     }
 });
 
-// --- 17.A.3 Update exam type --------------------------------------
 app.put('/api/admin/exam-types/:id', async (req, res) => {
     const { name, exam_order } = req.body;
     try {
+        const [own] = await db.execute('SELECT institutionId FROM exam_types WHERE id = ?', [req.params.id]);
+        if (own.length === 0) return res.status(404).json({ error: 'Exam type not found.' });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This exam type belongs to another institution.' });
         await db.execute(
             'UPDATE exam_types SET name = ?, exam_order = ? WHERE id = ?',
             [name.trim(), parseInt(exam_order, 10) || 0, req.params.id]
@@ -4001,9 +3941,11 @@ app.put('/api/admin/exam-types/:id', async (req, res) => {
     }
 });
 
-// --- 17.A.4 Delete exam type --------------------------------------
 app.delete('/api/admin/exam-types/:id', async (req, res) => {
     try {
+        const [own] = await db.execute('SELECT institutionId FROM exam_types WHERE id = ?', [req.params.id]);
+        if (own.length === 0) return res.json({ success: true });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This exam type belongs to another institution.' });
         await db.execute('DELETE FROM exam_types WHERE id = ?', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -4014,10 +3956,9 @@ app.delete('/api/admin/exam-types/:id', async (req, res) => {
 // === 17.B MAX MARKS (per exam-type + class + subject) ================
 // =====================================================================
 
-// --- 17.B.1 Get the full max-marks matrix for a school ------------
-//   Includes subject_id (0 = All Subjects default, else a per-subject override).
 app.get('/api/admin/exam-max-marks/:instId', async (req, res) => {
     try {
+        const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
         const [rows] = await db.execute(
             `SELECT m.id, m.exam_type_id, m.class_id, m.subject_id, m.max_marks,
                     t.name AS exam_type_name, c.className, c.section
@@ -4025,22 +3966,28 @@ app.get('/api/admin/exam-max-marks/:instId', async (req, res) => {
                JOIN exam_types t ON t.id = m.exam_type_id
                JOIN classes c    ON c.id = m.class_id
               WHERE t.institutionId = ?`,
-            [req.params.instId]
+            [instId]
         );
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 17.B.2 Bulk upsert max marks ---------------------------------
-//   Each entry: { exam_type_id, class_id, subject_id (0 = all), max_marks }
-//   Blank max_marks deletes that exact (exam, class, subject) row.
 app.post('/api/admin/exam-max-marks', async (req, res) => {
+    const institutionId = req.auth.institutionId;
     const { entries = [] } = req.body;
     const conn = await db.getConnection();
     try {
+        // The unique key has no institutionId, so allow writes only to this
+        // institution's own exam types + classes.
+        const [vExam] = await conn.execute('SELECT id FROM exam_types WHERE institutionId = ?', [institutionId]);
+        const examOk = new Set(vExam.map(r => r.id));
+        const [vClass] = await conn.execute('SELECT id FROM classes WHERE institutionId = ?', [institutionId]);
+        const classOk = new Set(vClass.map(r => r.id));
+
         await conn.beginTransaction();
         for (const e of entries) {
             if (!e.exam_type_id || !e.class_id) continue;
+            if (!examOk.has(Number(e.exam_type_id)) || !classOk.has(Number(e.class_id))) continue;
             const subjectId = (e.subject_id === undefined || e.subject_id === null || e.subject_id === '')
                 ? 0 : parseInt(e.subject_id, 10);
             const max = (e.max_marks === '' || e.max_marks === null || e.max_marks === undefined)
@@ -4072,9 +4019,11 @@ app.post('/api/admin/exam-max-marks', async (req, res) => {
 // === 17.C SUBJECT-TEACHER MAP ========================================
 // =====================================================================
 
-// --- 17.C.1 Get all assignments for a class -----------------------
 app.get('/api/admin/subject-teachers/:classId', async (req, res) => {
     try {
+        const [c] = await db.execute('SELECT institutionId FROM classes WHERE id = ?', [req.params.classId]);
+        if (c.length === 0) return res.json([]);
+        if (!sameTenant(req, c[0].institutionId)) return res.status(403).json({ error: 'That class belongs to another institution.' });
         const [rows] = await db.execute(
             `SELECT stm.id, stm.class_id, stm.subject_id, stm.teacher_id,
                     sub.name AS subject_name, u.name AS teacher_name
@@ -4088,13 +4037,17 @@ app.get('/api/admin/subject-teachers/:classId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 17.C.2 Assign (or reassign) a teacher to class+subject -------
 app.post('/api/admin/subject-teachers', async (req, res) => {
-    const { institutionId, class_id, subject_id, teacher_id } = req.body;
-    if (!institutionId || !class_id || !subject_id || !teacher_id) {
-        return res.status(400).json({ error: 'institutionId, class_id, subject_id, teacher_id required.' });
+    const institutionId = req.auth.institutionId;
+    const { class_id, subject_id, teacher_id } = req.body;
+    if (!class_id || !subject_id || !teacher_id) {
+        return res.status(400).json({ error: 'class_id, subject_id, teacher_id required.' });
     }
     try {
+        const [c] = await db.execute('SELECT institutionId FROM classes WHERE id = ?', [class_id]);
+        if (c.length === 0 || !sameTenant(req, c[0].institutionId)) {
+            return res.status(403).json({ error: 'That class belongs to another institution.' });
+        }
         await db.execute(
             `INSERT INTO subject_teacher_map (institutionId, class_id, subject_id, teacher_id)
              VALUES (?, ?, ?, ?)
@@ -4105,9 +4058,11 @@ app.post('/api/admin/subject-teachers', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 17.C.3 Remove an assignment ----------------------------------
 app.delete('/api/admin/subject-teachers/:id', async (req, res) => {
     try {
+        const [own] = await db.execute('SELECT institutionId FROM subject_teacher_map WHERE id = ?', [req.params.id]);
+        if (own.length === 0) return res.json({ success: true });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This assignment belongs to another institution.' });
         await db.execute('DELETE FROM subject_teacher_map WHERE id = ?', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -4118,19 +4073,15 @@ app.delete('/api/admin/subject-teachers/:id', async (req, res) => {
 // === 17.D MARKS ENTRY ================================================
 // =====================================================================
 
-// --- 17.D.1 Class data bundle for the marks grid ------------------
-//   Marks are scoped to the active academic year. Alumni students are
-//   excluded from the roster (status filter). Returns a per-subject
-//   max-marks map so the grid can show/validate each subject's own max.
 app.get('/api/admin/reports/class-data/:classId', async (req, res) => {
     const { classId } = req.params;
     try {
         const [cls] = await db.execute('SELECT * FROM classes WHERE id = ?', [classId]);
         if (cls.length === 0) return res.status(404).json({ error: 'Class not found' });
         const instId = cls[0].institutionId;
+        if (!sameTenant(req, instId)) return res.status(403).json({ error: 'This class belongs to another institution.' });
         const yearId = await resolveYearId(instId, req.query.academic_year_id);
 
-        // Students in this class (active only — excludes alumni/inactive)
         const [students] = await db.execute(
             `SELECT id, name, roll_no, section
                FROM users
@@ -4140,13 +4091,11 @@ app.get('/api/admin/reports/class-data/:classId', async (req, res) => {
             [classId]
         );
 
-        // All subjects in the school
         const [allSubjects] = await db.execute(
             'SELECT id, name FROM subjects WHERE institutionId = ? ORDER BY name',
             [instId]
         );
 
-        // Subject → class links
         const [scRows] = await db.execute(
             `SELECT sc.subject_id, sc.class_id FROM subject_classes sc
                JOIN subjects s ON s.id = sc.subject_id WHERE s.institutionId = ?`, [instId]);
@@ -4162,7 +4111,6 @@ app.get('/api/admin/reports/class-data/:classId', async (req, res) => {
             return links.has(parseInt(classId, 10));
         });
 
-        // Teacher assignment for this class
         const [assignments] = await db.execute(
             `SELECT stm.subject_id, stm.teacher_id, u.name AS teacher_name
                FROM subject_teacher_map stm
@@ -4173,7 +4121,6 @@ app.get('/api/admin/reports/class-data/:classId', async (req, res) => {
         const assignMap = {};
         assignments.forEach(a => { assignMap[a.subject_id] = a; });
 
-        // Exam types + this class's max marks (per subject, with defaults)
         const [examTypes] = await db.execute(
             'SELECT * FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id',
             [instId]
@@ -4184,13 +4131,8 @@ app.get('/api/admin/reports/class-data/:classId', async (req, res) => {
               WHERE m.class_id = ?`,
             [classId]
         );
-        // { [examTypeId]: { default: n|null, bySubject: { [subjectId]: n } } }
         const maxMarks = buildMaxMarksMap(maxRows);
 
-        // An exam type is active for this class if it has ANY max row
-        // (an All-Subjects default OR at least one per-subject override).
-        // max_marks here is the All-Subjects default (may be null) — kept
-        // for backward compatibility / the exam dropdown label.
         const examTypesForClass = examTypes
             .filter(t => maxMarks[t.id] !== undefined)
             .map(t => ({ ...t, max_marks: maxMarks[t.id]?.default ?? null }));
@@ -4201,7 +4143,6 @@ app.get('/api/admin/reports/class-data/:classId', async (req, res) => {
             teacher_name: assignMap[s.id]?.teacher_name || null
         }));
 
-        // Marks for the ACTIVE academic year only
         const [marks] = await db.execute(
             `SELECT student_id, subject_id, exam_type_id, marks_obtained
                FROM student_marks
@@ -4221,20 +4162,36 @@ app.get('/api/admin/reports/class-data/:classId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 17.D.2 Bulk save marks ---------------------------------------
-//   Marks are stamped with the active academic year.
 app.post('/api/admin/reports/marks/bulk', async (req, res) => {
-    const { institutionId, class_id, actor_id, entries = [] } = req.body;
-    if (!institutionId || !class_id || !Array.isArray(entries)) {
-        return res.status(400).json({ error: 'institutionId, class_id and entries[] required.' });
+    const { class_id, entries = [] } = req.body;
+    const institutionId = req.auth.institutionId;
+    const actor_id = req.auth.userId;
+    if (!class_id || !Array.isArray(entries)) {
+        return res.status(400).json({ error: 'class_id and entries[] required.' });
     }
     const conn = await db.getConnection();
     try {
         const yearId = await resolveYearId(institutionId, req.body.academic_year_id);
         if (!yearId) throw new Error('No active academic year. Activate one under Academics first.');
+
+        // student_marks' unique key is (student,subject,exam,year) — NO
+        // institutionId — so a foreign student_id could overwrite another
+        // school's marks. Only write rows whose student/subject/exam belong
+        // to THIS institution (and the student to THIS class).
+        const [vStu] = await conn.execute(
+            "SELECT id FROM users WHERE institutionId = ? AND class_id = ? AND LOWER(TRIM(role)) = 'student'",
+            [institutionId, class_id]);
+        const stuOk = new Set(vStu.map(r => r.id));
+        const [vSub] = await conn.execute('SELECT id FROM subjects WHERE institutionId = ?', [institutionId]);
+        const subOk = new Set(vSub.map(r => r.id));
+        const [vExam] = await conn.execute('SELECT id FROM exam_types WHERE institutionId = ?', [institutionId]);
+        const examOk = new Set(vExam.map(r => r.id));
+
         await conn.beginTransaction();
+        let saved = 0;
         for (const e of entries) {
             if (!e.student_id || !e.subject_id || !e.exam_type_id) continue;
+            if (!stuOk.has(Number(e.student_id)) || !subOk.has(Number(e.subject_id)) || !examOk.has(Number(e.exam_type_id))) continue;
             const val = (e.marks_obtained === '' || e.marks_obtained === null || e.marks_obtained === undefined)
                 ? null : parseFloat(e.marks_obtained);
             await conn.execute(
@@ -4243,16 +4200,14 @@ app.post('/api/admin/reports/marks/bulk', async (req, res) => {
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                  ON DUPLICATE KEY UPDATE marks_obtained = VALUES(marks_obtained),
                                          entered_by = VALUES(entered_by)`,
-                [institutionId, yearId, e.student_id, class_id, e.subject_id, e.exam_type_id,
-                 val, actor_id || null]
+                [institutionId, yearId, e.student_id, class_id, e.subject_id, e.exam_type_id, val, actor_id]
             );
+            saved++;
         }
         await conn.commit();
- 
-        // 🔔 Notify each student whose marks were saved. Distinct students;
-        //    createNotifications de-dups recipients and drops the actor.
+
         try {
-            const studentIds = [...new Set(entries.map(e => e.student_id).filter(Boolean))];
+            const studentIds = [...new Set(entries.map(e => e.student_id).filter(id => stuOk.has(Number(id))))];
             if (studentIds.length) {
                 await createNotifications({
                     institutionId, recipientIds: studentIds, type: 'result',
@@ -4262,8 +4217,8 @@ app.post('/api/admin/reports/marks/bulk', async (req, res) => {
                 });
             }
         } catch (e) { console.warn('[notify marks]', e.message); }
- 
-        res.json({ success: true, count: entries.length, academic_year_id: yearId });
+
+        res.json({ success: true, count: saved, academic_year_id: yearId });
     } catch (err) {
         await conn.rollback();
         res.status(500).json({ error: err.message });
@@ -4275,10 +4230,8 @@ app.post('/api/admin/reports/marks/bulk', async (req, res) => {
 // === 17.E CLASS LIST + SUMMARIES =====================================
 // =====================================================================
 
-// --- 17.E.1 Class summaries (overview table) ----------------------
-//   Scoped to the active academic year; alumni students excluded.
 app.get('/api/admin/reports/class-summaries/:instId', async (req, res) => {
-    const { instId } = req.params;
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     try {
         const yearId = await resolveYearId(instId, req.query.academic_year_id);
         const [classes] = await db.execute(
@@ -4288,7 +4241,6 @@ app.get('/api/admin/reports/class-summaries/:instId', async (req, res) => {
 
         const summaries = [];
         for (const c of classes) {
-            // Total marks across the class (active year, non-alumni)
             const [totalRow] = await db.execute(
                 `SELECT COALESCE(SUM(sm.marks_obtained), 0) AS total
                    FROM student_marks sm
@@ -4298,7 +4250,6 @@ app.get('/api/admin/reports/class-summaries/:instId', async (req, res) => {
                 [c.id, yearId]
             );
 
-            // Top student by summed marks (active year, non-alumni)
             const [topStudent] = await db.execute(
                 `SELECT u.name, COALESCE(SUM(sm.marks_obtained), 0) AS marks
                    FROM users u
@@ -4312,7 +4263,6 @@ app.get('/api/admin/reports/class-summaries/:instId', async (req, res) => {
                 [c.id, yearId, c.id]
             );
 
-            // Top subject by summed marks (active year, non-alumni)
             const [topSubject] = await db.execute(
                 `SELECT sub.name, COALESCE(SUM(sm.marks_obtained), 0) AS marks
                    FROM student_marks sm
@@ -4349,7 +4299,6 @@ app.get('/api/admin/reports/class-summaries/:instId', async (req, res) => {
 // === 17.F REPORT CARDS ===============================================
 // =====================================================================
 
-// --- Shared builder: assembles one student's full report card ------
 async function buildReportCard(studentId) {
     const [sRows] = await db.execute(
         `SELECT u.id, u.name, u.roll_no, u.admission_no, u.class_id, u.section,
@@ -4362,14 +4311,12 @@ async function buildReportCard(studentId) {
     if (sRows.length === 0) return null;
     const student = sRows[0];
 
-    // School header info
     const [instRows] = await db.execute(
         'SELECT id, name, logo, school_email, phone, type FROM institutions WHERE id = ?',
         [student.institutionId]
     );
     const institution = instRows[0] || null;
 
-    // Active academic year (for year label + marks scope + attendance scope)
     const [yearRows] = await db.execute(
         `SELECT * FROM academic_years
           WHERE institutionId = ? AND isActive = 1 LIMIT 1`,
@@ -4377,7 +4324,6 @@ async function buildReportCard(studentId) {
     );
     const academicYear = yearRows[0] || null;
 
-    // Subjects — filtered to this student's class
     const [allSubjectsRC] = await db.execute(
         'SELECT id, name FROM subjects WHERE institutionId = ? ORDER BY name',
         [student.institutionId]
@@ -4406,13 +4352,11 @@ async function buildReportCard(studentId) {
         'SELECT exam_type_id, subject_id, max_marks FROM exam_max_marks WHERE class_id = ?',
         [student.class_id]
     );
-    // { [examTypeId]: { default: n|null, bySubject: { [subjectId]: n } } }
     const maxMarks = buildMaxMarksMap(maxRows);
     const examTypesForClass = examTypes
         .filter(t => maxMarks[t.id] !== undefined)
         .map(t => ({ ...t, max_marks: maxMarks[t.id]?.default ?? null }));
 
-    // This student's marks for the ACTIVE academic year only
     let marks = [];
     if (academicYear) {
         const [mRows] = await db.execute(
@@ -4424,15 +4368,6 @@ async function buildReportCard(studentId) {
         marks = mRows;
     }
 
-    // ---- Attendance: pulled from the Attendance module (Section 15) ----
-    //   Scoped to the school's ACTIVE academic year (academic_year_id),
-    //   exactly like the Attendance module, the Directory and the history
-    //   endpoint — and grouped by the REAL month of each row, NOT by month
-    //   buckets derived from the year's start/end dates.
-    //
-    //   working_days = distinct dates the student's CLASS had attendance
-    //   taken that month (the denominator); present_days = this student's
-    //   Present + Late that month.
     let attendance = [];
     if (academicYear) {
         try {
@@ -4459,8 +4394,6 @@ async function buildReportCard(studentId) {
             const wMap = {}; wRows.forEach(r => { wMap[r.ym] = Number(r.working) || 0; });
             const pMap = {}; pRows.forEach(r => { pMap[r.ym] = Number(r.present) || 0; });
 
-            // Every month that has any data, in chronological order across
-            // the academic year (e.g. 2025-06, 2025-07, … 2026-05).
             const months = Array.from(new Set([...Object.keys(wMap), ...Object.keys(pMap)])).sort();
             attendance = months.map(ym => {
                 const m = parseInt(ym.slice(5, 7), 10);
@@ -4487,27 +4420,29 @@ async function buildReportCard(studentId) {
     };
 }
 
-// --- 17.F.1 One student's report card (admin/teacher) -------------
 app.get('/api/admin/reports/student/:studentId', async (req, res) => {
     try {
         const card = await buildReportCard(req.params.studentId);
         if (!card) return res.status(404).json({ error: 'Student not found' });
+        if (!sameTenant(req, card.student.institutionId)) return res.status(403).json({ error: 'This student belongs to another institution.' });
         res.json(card);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 17.F.2 Logged-in student's own report card -------------------
 app.get('/api/reports/my-report-card/:studentId', async (req, res) => {
     try {
         const card = await buildReportCard(req.params.studentId);
         if (!card) return res.status(404).json({ error: 'Student not found' });
+        if (!sameTenant(req, card.student.institutionId)) return res.status(403).json({ error: 'This student belongs to another institution.' });
         res.json(card);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 17.F.3 All report cards for a class (bulk print) -------------
 app.get('/api/admin/reports/class-cards/:classId', async (req, res) => {
     try {
+        const [co] = await db.execute('SELECT institutionId FROM classes WHERE id = ?', [req.params.classId]);
+        if (co.length === 0) return res.json([]);
+        if (!sameTenant(req, co[0].institutionId)) return res.status(403).json({ error: 'This class belongs to another institution.' });
         const [students] = await db.execute(
             `SELECT id FROM users
               WHERE class_id = ? AND LOWER(TRIM(role)) = 'student'
@@ -4524,13 +4459,14 @@ app.get('/api/admin/reports/class-cards/:classId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
 // === 15.9 MARKS EXPORT — class-wise register (self-contained) ========
 
 app.get('/api/admin/marks-export/:instId', async (req, res) => {
-    const { instId } = req.params;
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     try {
         const ExcelJS = require('exceljs');
- 
+
         const BRAND = 'FF3284C7';
         const rollNum = (r) => { const n = parseInt(r, 10); return isNaN(n) ? Number.MAX_SAFE_INTEGER : n; };
         const fmtNum = (v) => {
@@ -4539,7 +4475,6 @@ app.get('/api/admin/marks-export/:instId', async (req, res) => {
             if (isNaN(n)) return String(v);
             return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(2)));
         };
-        // exam_max_marks rows -> { [examTypeId]: { default, bySubject } }
         const buildMaxMarksMap = (rows) => {
             const mm = {};
             (rows || []).forEach(r => {
@@ -4550,13 +4485,11 @@ app.get('/api/admin/marks-export/:instId', async (req, res) => {
             });
             return mm;
         };
- 
-        // ---- scope ----
+
         const scope = (req.query.scope || 'all').toString();
         const isClassScope = scope.startsWith('class:');
         const specificClass = isClassScope ? parseInt(scope.slice(6), 10) : null;
- 
-        // ---- year ----
+
         let year;
         if (req.query.yearId) {
             const [yr] = await db.execute('SELECT * FROM academic_years WHERE id = ? AND institutionId = ?', [req.query.yearId, instId]);
@@ -4569,19 +4502,19 @@ app.get('/api/admin/marks-export/:instId', async (req, res) => {
         }
         const yearId = year.id;
         const yLabel = year.name || '';
- 
+
         const [instRows] = await db.execute('SELECT id, name FROM institutions WHERE id = ?', [instId]);
         const inst = instRows[0] || { name: 'Institution' };
- 
+
         const [classes] = await db.execute('SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section', [instId]);
         const classById = {}; classes.forEach(c => { classById[c.id] = c; });
         const labelOf = (cid) => { const c = classById[cid]; return c ? `${c.className}${c.section ? ' - ' + c.section : ''}` : 'Unassigned'; };
- 
+
         const [students] = await db.execute(
             `SELECT id, name, roll_no, class_id, section FROM users
               WHERE institutionId = ? AND LOWER(TRIM(role)) = 'student'
                 AND (status IS NULL OR LOWER(TRIM(status)) <> 'alumni')`, [instId]);
- 
+
         const [allSubjects] = await db.execute('SELECT id, name FROM subjects WHERE institutionId = ? ORDER BY name', [instId]);
         const [scRows] = await db.execute(
             `SELECT sc.subject_id, sc.class_id FROM subject_classes sc
@@ -4590,10 +4523,10 @@ app.get('/api/admin/marks-export/:instId', async (req, res) => {
         scRows.forEach(r => { (linkMap[r.subject_id] = linkMap[r.subject_id] || new Set()).add(r.class_id); });
         const subjectsForClass = (cid) => allSubjects.filter(s => {
             const links = linkMap[s.id];
-            if (!links || links.size === 0) return true;       // unlinked = available to all
+            if (!links || links.size === 0) return true;
             return links.has(cid);
         });
- 
+
         const [examTypes] = await db.execute('SELECT id, name, exam_order FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id', [instId]);
         const [maxAll] = await db.execute(
             `SELECT m.exam_type_id, m.class_id, m.subject_id, m.max_marks
@@ -4612,14 +4545,13 @@ app.get('/api/admin/marks-export/:instId', async (req, res) => {
             return undefined;
         };
         const examTypesForClass = (cid) => examTypes.filter(t => maxMapByClass[cid] && maxMapByClass[cid][t.id] !== undefined);
- 
-        // ---- marks for the year ----
+
         const [marks] = await db.execute(
             'SELECT student_id, class_id, subject_id, exam_type_id, marks_obtained FROM student_marks WHERE institutionId = ? AND academic_year_id = ?',
             [instId, yearId]);
-        const markMap = {};                 // `${stu}:${sub}:${exam}` -> obtained
-        const histClass = {};               // student -> class at entry time
-        const classExamHasData = {};        // `${cid}:${examId}` -> true
+        const markMap = {};
+        const histClass = {};
+        const classExamHasData = {};
         marks.forEach(r => {
             markMap[`${r.student_id}:${r.subject_id}:${r.exam_type_id}`] = r.marks_obtained;
             if (histClass[r.student_id] == null) histClass[r.student_id] = r.class_id;
@@ -4627,34 +4559,31 @@ app.get('/api/admin/marks-export/:instId', async (req, res) => {
         });
         const classOf = (u) => (histClass[u.id] != null ? histClass[u.id] : u.class_id);
         const studentHasAnyMark = (sid) => marks.some(r => r.student_id === sid);
- 
-        // group students by year-class, roll-wise
+
         const studentsByClass = {};
         students.forEach(u => { const cid = classOf(u); (studentsByClass[cid] = studentsByClass[cid] || []).push(u); });
         Object.values(studentsByClass).forEach(list => list.sort((a, b) => rollNum(a.roll_no) - rollNum(b.roll_no) || (a.name || '').localeCompare(b.name || '')));
- 
+
         const pctColor = (p) => p == null ? 'FF9CA3AF' : (p >= 80 ? 'FF059669' : p >= 50 ? 'FF2563EB' : 'FFDC2626');
- 
-        // global widest column count (3 fixed + subjects + Total + %)
+
         let widestSubjects = 0;
         const cids = (specificClass != null ? [specificClass] : Object.keys(studentsByClass).map(Number))
             .filter(cid => studentsByClass[cid] && studentsByClass[cid].length)
             .sort((a, b) => labelOf(a).localeCompare(labelOf(b), undefined, { numeric: true }));
         cids.forEach(cid => { widestSubjects = Math.max(widestSubjects, subjectsForClass(cid).length); });
         const maxCols = 3 + widestSubjects + 2;
- 
-        // ---- workbook ----
+
         const wb = new ExcelJS.Workbook();
         wb.creator = 'SmartEdz'; wb.created = new Date();
         const ws = wb.addWorksheet('Marks Register');
         let r = 1;
- 
+
         ws.mergeCells(r, 1, r, maxCols);
         const tt = ws.getCell(r, 1); tt.value = inst.name || 'Institution'; tt.font = { bold: true, size: 14, color: { argb: 'FF111827' } }; r++;
         ws.mergeCells(r, 1, r, maxCols);
         const sb = ws.getCell(r, 1); sb.value = `Marks Register · ${yLabel}   (each cell = marks obtained / max)`; sb.font = { size: 10, color: { argb: 'FF6B7280' } }; r++;
         r++;
- 
+
         const subHeading = (text) => {
             ws.mergeCells(r, 1, r, maxCols);
             const c = ws.getCell(r, 1); c.value = text;
@@ -4678,7 +4607,6 @@ app.get('/api/admin/marks-export/:instId', async (req, res) => {
             row.height = 24; r++;
             return subjNames.length;
         };
-        // writes one body row; returns nothing
         const bodyRow = (roll, name, examLabel, subjCells, totalCell, pct, opts = {}) => {
             const row = ws.getRow(r);
             row.getCell(1).value = roll; row.getCell(1).alignment = { horizontal: 'left' };
@@ -4695,20 +4623,20 @@ app.get('/api/admin/marks-export/:instId', async (req, res) => {
             if (opts.fill) { for (let i = 1; i <= pctIdx; i++) row.getCell(i).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: opts.fill } }; }
             r++;
         };
- 
+
         if (cids.length === 0) noteRow('No classes with students for this selection.');
- 
+
         cids.forEach(cid => {
             const subjects = subjectsForClass(cid);
             const subjNames = subjects.map(s => s.name);
             subHeading(labelOf(cid));
             headerRow(subjNames);
- 
+
             const examsUsed = examTypesForClass(cid).filter(t => classExamHasData[`${cid}:${t.id}`]);
             const roster = studentsByClass[cid];
- 
+
             if (examsUsed.length === 0) { noteRow('No marks entered for this class yet.'); r++; return; }
- 
+
             roster.forEach(stu => {
                 if (!studentHasAnyMark(stu.id)) {
                     bodyRow(stu.roll_no || '—', stu.name, '—', subjects.map(() => '—'), '—', null);
@@ -4729,7 +4657,6 @@ app.get('/api/admin/marks-export/:instId', async (req, res) => {
                         cells, anyObt ? `${fmtNum(tObt)}/${fmtNum(tMx)}` : '—', pct);
                     firstRow = false;
                 });
-                // OVERALL row (sum each subject across the exams used)
                 let gObt = 0, gMx = 0, gAny = false;
                 const oCells = subjects.map(s => {
                     let o = 0, m = 0, any = false;
@@ -4747,14 +4674,13 @@ app.get('/api/admin/marks-export/:instId', async (req, res) => {
             });
             r++;
         });
- 
-        // widths + freeze
+
         ws.getColumn(1).width = 7; ws.getColumn(2).width = 24; ws.getColumn(3).width = 12;
         for (let i = 0; i < widestSubjects; i++) ws.getColumn(4 + i).width = 11;
         ws.getColumn(3 + widestSubjects + 1).width = 12;
         ws.getColumn(3 + widestSubjects + 2).width = 8;
         ws.views = [{ state: 'frozen', xSplit: 3 }];
- 
+
         const scopeTag = isClassScope ? `Class_${labelOf(specificClass)}` : 'All';
         const fileSafe = `${inst.name || 'institution'}_Marks_${scopeTag}_${yLabel}`.replace(/[^a-z0-9\-_ ]/gi, '_').replace(/\s+/g, '_');
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -4771,41 +4697,13 @@ app.get('/api/admin/marks-export/:instId', async (req, res) => {
 
 
 // =====================================================================
-//  BACKEND — Section 18: PERFORMANCE ANALYTICS
+//  BACKEND — Section 18: PERFORMANCE ANALYTICS  (TENANT-SCOPED)
 //
-//  Append this whole block to backend/index.js, just BEFORE the final
-//  `const PORT = ...` line.
-//
-//  Reads entirely from the Reports module tables (student_marks,
-//  exam_types, exam_max_marks, subject_classes, subject_teacher_map).
-//  No new tables needed.
-//
-//  ACADEMIC YEAR: every read of student_marks is scoped to the school's
-//  ACTIVE academic year via the shared resolveYearId() helper (defined
-//  in the Timetable section). Requires the Reports migration that adds
-//  student_marks.academic_year_id.
-//
-//  PER-SUBJECT MAX MARKS: exam_max_marks now carries a subject_id
-//  (0 = "All Subjects" default, a real id = that subject's override).
-//  Every "possible marks" denominator below resolves a subject's max as
-//  override → default, so percentages stay correct whether a school uses
-//  one max for all subjects or per-subject maxes. Requires the Reports
-//  migration that adds exam_max_marks.subject_id.
-//
-//  ALSO — add 'Performance' to DEFAULT_MODULES at the top of index.js:
-//
-//      const DEFAULT_MODULES = [
-//          'Overview', 'Manage Logins', 'Timetable', 'Academic Calendar',
-//          'Attendance', 'Exams', 'Reports', 'Performance'
-//      ];
+//  institutionId comes from req.auth. Class/student/teacher reads verify
+//  the target belongs to the caller's institution via sameTenant.
+//  Reads entirely from the Reports tables (no new tables).
 // =====================================================================
 
-// --- Per-subject max-marks helpers ----------------------------------
-//   buildExamMaxMap(rows) — rows: [{ exam_type_id, subject_id, max_marks }]
-//     -> { [examTypeId]: { default: n|null, bySubject: { [subjectId]: n } } }
-//   resolveExamMax(examMax, subjectId) — subject override -> default ->
-//     undefined (uniquely named so it can't clash with the Reports
-//     section's buildMaxMarksMap).
 function buildExamMaxMap(rows) {
     const map = {};
     (rows || []).forEach(r => {
@@ -4824,20 +4722,12 @@ function resolveExamMax(examMax, subjectId) {
     return undefined;
 }
 
-
-// --- Shared helper: build a class's performance dataset --------------
-//   Given a classId (+ optional requested year), returns:
-//     { class, students[], subjects[], examTypes[], maxMarks, assignments[], marks[] }
-//   scoped to the active academic year. assignments carry the subject's
-//   teacher name + email so the UI can show "Teacher: X". maxMarks is the
-//   per-subject max map so the frontend can compute each subject's possible.
 async function loadClassPerformance(classId, requestedYearId) {
     const [cls] = await db.execute('SELECT * FROM classes WHERE id = ?', [classId]);
     if (cls.length === 0) return null;
     const instId = cls[0].institutionId;
     const yearId = await resolveYearId(instId, requestedYearId);
 
-    // Students (active only — excludes alumni)
     const [students] = await db.execute(
         `SELECT id, name, roll_no, section
            FROM users
@@ -4847,7 +4737,6 @@ async function loadClassPerformance(classId, requestedYearId) {
         [classId]
     );
 
-    // Subjects linked to this class (subject with no link = all classes)
     const [allSubjects] = await db.execute(
         'SELECT id, name FROM subjects WHERE institutionId = ? ORDER BY name',
         [instId]
@@ -4868,7 +4757,6 @@ async function loadClassPerformance(classId, requestedYearId) {
         return links.has(parseInt(classId, 10));
     });
 
-    // Exam types + this class's max marks (per subject, with defaults)
     const [examTypes] = await db.execute(
         'SELECT * FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id',
         [instId]
@@ -4877,16 +4765,11 @@ async function loadClassPerformance(classId, requestedYearId) {
         'SELECT exam_type_id, subject_id, max_marks FROM exam_max_marks WHERE class_id = ?',
         [classId]
     );
-    // { [examTypeId]: { default: n|null, bySubject: { [subjectId]: n } } }
     const maxMarks = buildExamMaxMap(maxRows);
-    // An exam type is active for this class if it has ANY max row.
-    // max_marks here is the All-Subjects default (may be null) — kept for
-    // backward compatibility; the per-subject values live in maxMarks.
     const examTypesForClass = examTypes
         .filter(t => maxMarks[t.id] !== undefined)
         .map(t => ({ ...t, max_marks: maxMarks[t.id]?.default ?? null }));
 
-    // Teacher assignment (name + email, so UI can show "Teacher: X")
     const [assignments] = await db.execute(
         `SELECT stm.subject_id, stm.teacher_id, u.name AS teacher_name, u.email AS teacher_email
            FROM subject_teacher_map stm
@@ -4895,7 +4778,6 @@ async function loadClassPerformance(classId, requestedYearId) {
         [classId]
     );
 
-    // All marks for the class, ACTIVE YEAR only
     const [marks] = await db.execute(
         `SELECT student_id, subject_id, exam_type_id, marks_obtained
            FROM student_marks
@@ -4919,22 +4801,22 @@ async function loadClassPerformance(classId, requestedYearId) {
 // --- 18.1 Class list for a school (performance dropdowns) ------------
 app.get('/api/admin/performance/classes/:instId', async (req, res) => {
     try {
+        const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
         const { teacher_id } = req.query;
         let rows;
         if (teacher_id) {
-            // Only classes this teacher is assigned to (via subject_teacher_map)
             [rows] = await db.execute(
                 `SELECT DISTINCT c.id, c.className, c.section
                    FROM classes c
                    JOIN subject_teacher_map stm ON stm.class_id = c.id
                   WHERE c.institutionId = ? AND stm.teacher_id = ?
                   ORDER BY c.className, c.section`,
-                [req.params.instId, teacher_id]
+                [instId, teacher_id]
             );
         } else {
             [rows] = await db.execute(
                 'SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section',
-                [req.params.instId]
+                [instId]
             );
         }
         res.json(rows.map(c => ({
@@ -4952,6 +4834,7 @@ app.get('/api/admin/performance/class/:classId', async (req, res) => {
     try {
         const data = await loadClassPerformance(req.params.classId, req.query.academic_year_id);
         if (!data) return res.status(404).json({ error: 'Class not found' });
+        if (!sameTenant(req, data.class.institutionId)) return res.status(403).json({ error: 'This class belongs to another institution.' });
         res.json(data);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -4961,10 +4844,11 @@ app.get('/api/admin/performance/class/:classId', async (req, res) => {
 app.get('/api/admin/performance/student/:studentId', async (req, res) => {
     try {
         const [u] = await db.execute(
-            'SELECT id, name, class_id FROM users WHERE id = ?',
+            'SELECT id, name, class_id, institutionId FROM users WHERE id = ?',
             [req.params.studentId]
         );
         if (u.length === 0) return res.status(404).json({ error: 'Student not found' });
+        if (!sameTenant(req, u[0].institutionId)) return res.status(403).json({ error: 'This student belongs to another institution.' });
         if (!u[0].class_id) {
             return res.json({ me: u[0], class: null, students: [], subjects: [], examTypes: [], maxMarks: {}, assignments: [], marks: [] });
         }
@@ -4976,27 +4860,16 @@ app.get('/api/admin/performance/student/:studentId', async (req, res) => {
 
 
 // --- 18.4 Teacher performance across the whole school ---------------
-//   GET /api/admin/performance/teachers/:instId
-//   Scoped to the active academic year. Returns:
-//     { examTypes:[{id,name}],
-//       teachers:[ { teacher_id, teacher_name, teacher_email,
-//                    detail:[ { class_id, class_group, subject_id,
-//                               subject_name, student_count,
-//                               exams:[ {exam_type_id,exam_name,obtained,possible} ] } ] } ] }
-//   The frontend computes overall/filtered %, so it can slice by class,
-//   subject and exam type without re-querying.
 app.get('/api/admin/performance/teachers/:instId', async (req, res) => {
-    const { instId } = req.params;
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     try {
         const yearId = await resolveYearId(instId, req.query.academic_year_id);
 
-        // Exam types for the school
         const [examTypeRows] = await db.execute(
             'SELECT id, name, exam_order FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id',
             [instId]
         );
 
-        // All teacher↔class↔subject assignments
         const [assignments] = await db.execute(
             `SELECT stm.class_id, stm.subject_id, stm.teacher_id,
                     u.name AS teacher_name, u.email AS teacher_email,
@@ -5010,7 +4883,6 @@ app.get('/api/admin/performance/teachers/:instId', async (req, res) => {
             [instId]
         );
 
-        // Exam max marks: classId → (examTypeId → { default, bySubject })
         const [maxRows] = await db.execute(
             `SELECT m.class_id, m.exam_type_id, m.subject_id, m.max_marks
                FROM exam_max_marks m
@@ -5027,7 +4899,6 @@ app.get('/api/admin/performance/teachers/:instId', async (req, res) => {
             else maxByClass[r.class_id][et].bySubject[r.subject_id] = r.max_marks;
         });
 
-        // Active-student count per class
         const [studentCounts] = await db.execute(
             `SELECT class_id, COUNT(*) AS cnt
                FROM users
@@ -5039,7 +4910,6 @@ app.get('/api/admin/performance/teachers/:instId', async (req, res) => {
         const studentCountMap = {};
         studentCounts.forEach(r => { studentCountMap[r.class_id] = r.cnt; });
 
-        // All marks in the school for the ACTIVE YEAR
         const [allMarks] = await db.execute(
             `SELECT sm.class_id, sm.subject_id, sm.exam_type_id, sm.marks_obtained
                FROM student_marks sm
@@ -5047,8 +4917,6 @@ app.get('/api/admin/performance/teachers/:instId', async (req, res) => {
             [instId, yearId]
         );
 
-        // Aggregate marks by class:subject:exam → {obtained, possible}
-        // (possible uses each subject's resolved max for that exam).
         const agg = {};
         allMarks.forEach(m => {
             const max = resolveExamMax(maxByClass[m.class_id]?.[m.exam_type_id], m.subject_id);
@@ -5061,7 +4929,6 @@ app.get('/api/admin/performance/teachers/:instId', async (req, res) => {
             agg[k].possible += max;
         });
 
-        // teacherId → { ..., detail[] }
         const teachers = {};
         for (const a of assignments) {
             if (!teachers[a.teacher_id]) {
@@ -5101,7 +4968,6 @@ app.get('/api/admin/performance/teachers/:instId', async (req, res) => {
 
 
 // --- 18.5 One teacher's own performance -----------------------------
-//   GET /api/admin/performance/teacher/:teacherId  (active year)
 app.get('/api/admin/performance/teacher/:teacherId', async (req, res) => {
     const { teacherId } = req.params;
     try {
@@ -5111,6 +4977,7 @@ app.get('/api/admin/performance/teacher/:teacherId', async (req, res) => {
         );
         if (u.length === 0) return res.status(404).json({ error: 'Teacher not found' });
         const instId = u[0].institutionId;
+        if (!sameTenant(req, instId)) return res.status(403).json({ error: 'This teacher belongs to another institution.' });
         const yearId = await resolveYearId(instId, req.query.academic_year_id);
 
         const [examTypeRows] = await db.execute(
@@ -5157,7 +5024,6 @@ app.get('/api/admin/performance/teacher/:teacherId', async (req, res) => {
             );
             const exams = examTypeRows.map(t => {
                 let o = 0, p = 0;
-                // This subject's max for this exam (override -> default).
                 const max = resolveExamMax(maxByClass[a.class_id]?.[t.id], a.subject_id);
                 marks.forEach(m => {
                     if (m.exam_type_id !== t.id) return;
@@ -5201,10 +5067,10 @@ app.get('/api/admin/performance/teacher/:teacherId', async (req, res) => {
 
 // === 15.10 PERFORMANCE EXPORT — students + teachers (self-contained) ==
 app.get('/api/admin/performance-export/:instId', async (req, res) => {
-    const { instId } = req.params;
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     try {
         const ExcelJS = require('exceljs');
- 
+
         const BRAND = 'FF3284C7';
         const rollNum = (r) => { const n = parseInt(r, 10); return isNaN(n) ? Number.MAX_SAFE_INTEGER : n; };
         const r1 = (n) => Math.round(n * 10) / 10;
@@ -5218,15 +5084,13 @@ app.get('/api/admin/performance-export/:instId', async (req, res) => {
             });
             return mm;
         };
- 
-        // ---- scope ----
+
         const scope = (req.query.scope || 'all').toString();
         const isClassScope = scope.startsWith('class:');
         const specificClass = isClassScope ? parseInt(scope.slice(6), 10) : null;
         const includeStudents = scope === 'all' || scope === 'students' || isClassScope;
         const includeTeachers = scope === 'all' || scope === 'teachers';
- 
-        // ---- year ----
+
         let year;
         if (req.query.yearId) {
             const [yr] = await db.execute('SELECT * FROM academic_years WHERE id = ? AND institutionId = ?', [req.query.yearId, instId]);
@@ -5239,19 +5103,19 @@ app.get('/api/admin/performance-export/:instId', async (req, res) => {
         }
         const yearId = year.id;
         const yLabel = year.name || '';
- 
+
         const [instRows] = await db.execute('SELECT id, name FROM institutions WHERE id = ?', [instId]);
         const inst = instRows[0] || { name: 'Institution' };
- 
+
         const [classes] = await db.execute('SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section', [instId]);
         const classById = {}; classes.forEach(c => { classById[c.id] = c; });
         const labelOf = (cid) => { const c = classById[cid]; return c ? `${c.className}${c.section ? ' - ' + c.section : ''}` : 'Unassigned'; };
- 
+
         const [students] = await db.execute(
             `SELECT id, name, roll_no, class_id FROM users
               WHERE institutionId = ? AND LOWER(TRIM(role)) = 'student'
                 AND (status IS NULL OR LOWER(TRIM(status)) <> 'alumni')`, [instId]);
- 
+
         const [allSubjects] = await db.execute('SELECT id, name FROM subjects WHERE institutionId = ? ORDER BY name', [instId]);
         const subjectName = {}; allSubjects.forEach(s => { subjectName[s.id] = s.name; });
         const [scRows] = await db.execute(
@@ -5264,10 +5128,10 @@ app.get('/api/admin/performance-export/:instId', async (req, res) => {
             if (!links || links.size === 0) return true;
             return links.has(cid);
         });
- 
+
         const [examTypes] = await db.execute('SELECT id, name, exam_order FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id', [instId]);
         const examName = {}; examTypes.forEach(t => { examName[t.id] = t.name; });
- 
+
         const [maxAll] = await db.execute(
             `SELECT m.exam_type_id, m.class_id, m.subject_id, m.max_marks
                FROM exam_max_marks m JOIN exam_types t ON t.id = m.exam_type_id
@@ -5284,14 +5148,14 @@ app.get('/api/admin/performance-export/:instId', async (req, res) => {
             if (m.default !== undefined && m.default !== null) return Number(m.default);
             return undefined;
         };
- 
+
         const [marks] = await db.execute(
             'SELECT student_id, class_id, subject_id, exam_type_id, marks_obtained FROM student_marks WHERE institutionId = ? AND academic_year_id = ?',
             [instId, yearId]);
-        const markMap = {};                 // `${sid}:${subj}:${exam}` -> obtained
+        const markMap = {};
         const histClass = {};
-        const stuExamSet = {};              // sid -> Set(examTypeId)
-        const examHasDataSchool = {};       // examTypeId -> true
+        const stuExamSet = {};
+        const examHasDataSchool = {};
         marks.forEach(r => {
             markMap[`${r.student_id}:${r.subject_id}:${r.exam_type_id}`] = r.marks_obtained;
             if (histClass[r.student_id] == null) histClass[r.student_id] = r.class_id;
@@ -5299,12 +5163,11 @@ app.get('/api/admin/performance-export/:instId', async (req, res) => {
             examHasDataSchool[r.exam_type_id] = true;
         });
         const classOf = (u) => (histClass[u.id] != null ? histClass[u.id] : u.class_id);
- 
+
         const studentsByClass = {};
         students.forEach(u => { const cid = classOf(u); (studentsByClass[cid] = studentsByClass[cid] || []).push(u); });
         Object.values(studentsByClass).forEach(list => list.sort((a, b) => rollNum(a.roll_no) - rollNum(b.roll_no) || (a.name || '').localeCompare(b.name || '')));
- 
-        // teacher aggregation: class:subject:exam -> {obtained, possible}
+
         const aggCSE = {};
         marks.forEach(m => {
             const mx = maxFor(m.class_id, m.exam_type_id, m.subject_id);
@@ -5318,34 +5181,31 @@ app.get('/api/admin/performance-export/:instId', async (req, res) => {
             `SELECT stm.teacher_id, stm.class_id, stm.subject_id, u.name AS teacher_name
                FROM subject_teacher_map stm JOIN users u ON u.id = stm.teacher_id
               WHERE stm.institutionId = ?`, [instId]);
- 
+
         const pctColor = (p) => p == null ? 'FF9CA3AF' : (p >= 80 ? 'FF059669' : p >= 50 ? 'FF2563EB' : 'FFDC2626');
- 
-        // teacher exam columns = exams that have data anywhere (trim empties)
+
         const teacherExamCols = examTypes.filter(t => examHasDataSchool[t.id]);
- 
-        // widest column count across both sections
+
         const cids = (specificClass != null ? [specificClass] : Object.keys(studentsByClass).map(Number))
             .filter(cid => studentsByClass[cid] && studentsByClass[cid].length)
             .sort((a, b) => labelOf(a).localeCompare(labelOf(b), undefined, { numeric: true }));
         let widestSubjects = 0;
         cids.forEach(cid => { widestSubjects = Math.max(widestSubjects, subjectsForClass(cid).length); });
-        const studentCols = 3 + widestSubjects + 1;            // Roll,Name,Exam + subjects + Overall%
-        const teacherCols = 4 + teacherExamCols.length + 1;    // S.No,Teacher,Class,Subject + exams + Overall%
+        const studentCols = 3 + widestSubjects + 1;
+        const teacherCols = 4 + teacherExamCols.length + 1;
         const maxCols = Math.max(studentCols, teacherCols, 6);
- 
-        // ---- workbook ----
+
         const wb = new ExcelJS.Workbook();
         wb.creator = 'SmartEdz'; wb.created = new Date();
         const ws = wb.addWorksheet('Performance');
         let r = 1;
- 
+
         ws.mergeCells(r, 1, r, maxCols);
         const tt = ws.getCell(r, 1); tt.value = inst.name || 'Institution'; tt.font = { bold: true, size: 14, color: { argb: 'FF111827' } }; r++;
         ws.mergeCells(r, 1, r, maxCols);
         const sb = ws.getCell(r, 1); sb.value = `Performance · ${yLabel}   (each cell = % · green >=80, blue 50-80, red <50)`; sb.font = { size: 10, color: { argb: 'FF6B7280' } }; r++;
         r++;
- 
+
         const heading = (text) => {
             ws.mergeCells(r, 1, r, maxCols);
             const c = ws.getCell(r, 1); c.value = text;
@@ -5373,7 +5233,6 @@ app.get('/api/admin/performance-export/:instId', async (req, res) => {
             });
             row.height = 26; r++;
         };
-        // generic % data row; pcts is array of {pct} for the breakdown cols
         const pctRow = (leftVals, pcts, overall, opts = {}) => {
             const row = ws.getRow(r);
             leftVals.forEach((v, i) => {
@@ -5397,8 +5256,7 @@ app.get('/api/admin/performance-export/:instId', async (req, res) => {
             if (opts.fill) oc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: opts.fill } };
             r++;
         };
- 
-        // ---------- STUDENTS ----------
+
         if (includeStudents) {
             heading('STUDENTS');
             if (cids.length === 0) noteRow('No students with marks for this selection.');
@@ -5406,14 +5264,13 @@ app.get('/api/admin/performance-export/:instId', async (req, res) => {
                 const subjects = subjectsForClass(cid);
                 subHeading(labelOf(cid));
                 headerRow(['Roll', 'Name', 'Exam', ...subjects.map(s => s.name), 'Overall %'], 2);
- 
+
                 studentsByClass[cid].forEach(stu => {
                     const myExams = examTypes.filter(t => (stuExamSet[stu.id] || new Set()).has(t.id));
                     if (myExams.length === 0) {
                         pctRow([stu.roll_no || '—', stu.name, '—'], subjects.map(() => null), null);
                         return;
                     }
-                    // accumulators for the OVERALL row (per subject + grand)
                     const subjAcc = subjects.map(() => ({ o: 0, p: 0, any: false }));
                     let gObt = 0, gPos = 0, gAny = false;
                     let first = true;
@@ -5433,7 +5290,6 @@ app.get('/api/admin/performance-export/:instId', async (req, res) => {
                             cells, eAny && ePos > 0 ? r1((eObt / ePos) * 100) : null);
                         first = false;
                     });
-                    // OVERALL row
                     const oCells = subjAcc.map(a => a.any && a.p > 0 ? r1((a.o / a.p) * 100) : null);
                     pctRow(['', '', 'OVERALL'], oCells, gAny && gPos > 0 ? r1((gObt / gPos) * 100) : null,
                         { bold: true, fill: 'FFEFF3F8' });
@@ -5441,12 +5297,11 @@ app.get('/api/admin/performance-export/:instId', async (req, res) => {
                 r++;
             });
         }
- 
-        // ---------- TEACHERS ----------
+
         if (includeTeachers) {
             heading('TEACHERS');
             headerRow(['S.No', 'Teacher', 'Class', 'Subject', ...teacherExamCols.map(t => t.name), 'Overall %'], 4);
- 
+
             const byTeacher = {};
             assignments.forEach(a => { (byTeacher[a.teacher_id] = byTeacher[a.teacher_id] || { name: a.teacher_name, rows: [] }).rows.push(a); });
             const teacherIds = Object.keys(byTeacher).sort((x, y) => (byTeacher[x].name || '').localeCompare(byTeacher[y].name || ''));
@@ -5472,19 +5327,17 @@ app.get('/api/admin/performance-export/:instId', async (req, res) => {
                         cells, rAny && rPos > 0 ? r1((rObt / rPos) * 100) : null, { leftAlign: 2 });
                     first = false;
                 });
-                // teacher OVERALL row
                 const oCells = examAcc.map(a => a.any && a.p > 0 ? r1((a.o / a.p) * 100) : null);
                 pctRow(['', '', 'OVERALL', ''], oCells, gAny && gPos > 0 ? r1((gObt / gPos) * 100) : null,
                     { bold: true, fill: 'FFEFF3F8', leftAlign: 2 });
                 r++;
             });
         }
- 
-        // widths + freeze
+
         ws.getColumn(1).width = 8; ws.getColumn(2).width = 24;
         for (let i = 3; i <= maxCols; i++) ws.getColumn(i).width = 12;
         ws.views = [{ state: 'frozen', xSplit: 2 }];
- 
+
         const scopeTag = isClassScope ? `Class_${labelOf(specificClass)}` : scope.charAt(0).toUpperCase() + scope.slice(1);
         const fileSafe = `${inst.name || 'institution'}_Performance_${scopeTag}_${yLabel}`.replace(/[^a-z0-9\-_ ]/gi, '_').replace(/\s+/g, '_');
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -5503,14 +5356,13 @@ app.get('/api/admin/performance-export/:instId', async (req, res) => {
 
 // =====================================================================
 // === 19. GALLERY =====================================================
+//   TENANT-SCOPED. institutionId from req.auth; media stream + delete
+//   verify the row's institution. Album delete uses the real (token) role.
 //
-//  REPLACE your whole Gallery section with this. Only 19.3 (upload)
-//  changed: it notifies all active users when a NEW album is started
-//  (the first item of a new title). Subsequent uploads to the same album
-//  do NOT re-notify — otherwise a multi-file upload would spam everyone.
-//
-//  Uses createNotifications / allActiveUserIds from Section 25.
-//  'Gallery' is the module id from Screens/Modules.js.
+//   ⚠ gallery/media/:id is under the /api auth gate — it only works if the
+//     frontend FETCHES it (interceptor adds the token) and renders a blob.
+//     A raw <img src>/<video src> sends no token and 401s. If media renders
+//     today you're already fetching blobs and this is fine.
 // =====================================================================
 
 const galleryUpload = multer({
@@ -5521,6 +5373,7 @@ const galleryUpload = multer({
 // --- 19.1 Get all albums (grouped by title) --------------------------
 app.get('/api/admin/gallery/:instId', async (req, res) => {
     try {
+        const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
         const [rows] = await db.execute(
             `SELECT title,
                     event_date,
@@ -5531,7 +5384,7 @@ app.get('/api/admin/gallery/:instId', async (req, res) => {
               WHERE institutionId = ?
               GROUP BY title, event_date
               ORDER BY event_date DESC`,
-            [req.params.instId]
+            [instId]
         );
 
         const albums = rows.map(r => {
@@ -5551,13 +5404,14 @@ app.get('/api/admin/gallery/:instId', async (req, res) => {
 // --- 19.2 Get items in a specific album ------------------------------
 app.get('/api/admin/gallery/album/:instId/:title', async (req, res) => {
     try {
+        const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
         const [rows] = await db.execute(
             `SELECT id, institutionId, title, file_type, mime_type,
                     event_date, created_by, created_at
                FROM gallery
               WHERE institutionId = ? AND title = ?
               ORDER BY created_at DESC`,
-            [req.params.instId, req.params.title]
+            [instId, req.params.title]
         );
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -5565,14 +5419,15 @@ app.get('/api/admin/gallery/album/:instId/:title', async (req, res) => {
 
 // --- 19.3 Upload media -> store bytes in the DB ----------------------
 app.post('/api/admin/gallery/upload', galleryUpload.single('media'), async (req, res) => {
-    const { title, event_date, institutionId, adminId } = req.body;
+    const institutionId = req.auth.institutionId;
+    const adminId = req.auth.userId;
+    const { title, event_date } = req.body;
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
     const mime = req.file.mimetype || 'application/octet-stream';
     const file_type = mime.startsWith('image') ? 'photo' : 'video';
 
     try {
-        // Is this the first item of a (new) album title? Check BEFORE insert.
         let isNewAlbum = false;
         try {
             const [exist] = await db.execute(
@@ -5586,11 +5441,9 @@ app.post('/api/admin/gallery/upload', galleryUpload.single('media'), async (req,
             `INSERT INTO gallery
                (institutionId, title, file_path, file_data, mime_type, file_type, event_date, created_by)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [institutionId, title, null, req.file.buffer, mime, file_type, event_date, adminId || null]
+            [institutionId, title, null, req.file.buffer, mime, file_type, event_date, adminId]
         );
 
-        // 🔔 Notify everyone only when a NEW album is started. Own try/catch
-        //    so a notify issue can't fail the upload.
         if (isNewAlbum) {
             try {
                 const recipients = await allActiveUserIds(institutionId);
@@ -5612,12 +5465,13 @@ app.post('/api/admin/gallery/upload', galleryUpload.single('media'), async (req,
 app.get('/api/admin/gallery/media/:id', async (req, res) => {
     try {
         const [rows] = await db.execute(
-            'SELECT file_data, mime_type, file_type FROM gallery WHERE id = ?',
+            'SELECT file_data, mime_type, file_type, institutionId FROM gallery WHERE id = ?',
             [req.params.id]
         );
         if (!rows.length || !rows[0].file_data) return res.status(404).send('Not found');
+        if (!sameTenant(req, rows[0].institutionId)) return res.status(403).send('Forbidden');
 
-        const data = rows[0].file_data; 
+        const data = rows[0].file_data;
         const mime = rows[0].mime_type || (rows[0].file_type === 'photo' ? 'image/jpeg' : 'video/mp4');
         const total = data.length;
 
@@ -5662,6 +5516,9 @@ app.get('/api/admin/gallery/media/:id', async (req, res) => {
 // --- 19.5 Delete single item -----------------------------------------
 app.delete('/api/admin/gallery/:id', async (req, res) => {
     try {
+        const [own] = await db.execute('SELECT institutionId FROM gallery WHERE id = ?', [req.params.id]);
+        if (own.length === 0) return res.json({ success: true });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This item belongs to another institution.' });
         await db.execute('DELETE FROM gallery WHERE id = ?', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -5669,13 +5526,13 @@ app.delete('/api/admin/gallery/:id', async (req, res) => {
 
 // --- 19.6 Delete a whole album (Super Admin only) --------------------
 app.delete('/api/admin/gallery/album/:instId/:title', async (req, res) => {
-    const { role } = req.body;
-    if (role !== 'Super Admin') {
+    if (req.auth.role !== 'Super Admin' && req.auth.role !== 'Developer') {
         return res.status(403).json({ error: "You don't have permission to delete albums." });
     }
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     try {
         await db.execute('DELETE FROM gallery WHERE institutionId = ? AND title = ?',
-            [req.params.instId, req.params.title]);
+            [instId, req.params.title]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -5683,33 +5540,14 @@ app.delete('/api/admin/gallery/album/:instId/:title', async (req, res) => {
 
 
 // =====================================================================
-//  BACKEND — Section 19: HOMEWORK
-//
-//  REPLACE your whole Section 19 block with this. Only 19.4 (create)
-//  changed: it now notifies the class's active students. Everything else
-//  is unchanged.
-//
-//  Uses createNotifications / studentIdsForClass from Section 25. No
-//  transaction in 19.4 (single insert), so createNotifications is called
-//  with the global db; it swallows its own errors, so a notify problem
-//  can never break the create.
-//
-//  Reuses parseJsonSafe() and nowSQL() (Section 16) and resolveYearId()
-//  (Timetable section).
-//
-//  ------------------------------------------------------------------
-//  ONE-TIME MIGRATION (run once) — academic-year scoping for homework:
-//
-//    ALTER TABLE homework
-//      ADD COLUMN academic_year_id INT NULL AFTER institutionId;
-//    UPDATE homework h
-//      JOIN academic_years y
-//        ON y.institutionId = h.institutionId AND y.isActive = 1
-//       SET h.academic_year_id = y.id
-//     WHERE h.academic_year_id IS NULL;
-//    CREATE INDEX idx_homework_year ON homework (academic_year_id);
+//  BACKEND — HOMEWORK  (TENANT-SCOPED)
+//   institutionId/actor from req.auth. Create/update require the class to
+//   belong to your institution (class_id is global, and the student read
+//   keys on class_id — so a foreign class would otherwise leak/spam into
+//   another school's feed). Student read is also institution-filtered.
+//   Submit = as yourself; submission delete = owner or staff; grade =
+//   grader from token. (Migration unchanged — see your header block.)
 // =====================================================================
-
 
 // --- 19.1 List homework for a teacher/admin -------------------------
 app.get('/api/admin/homework/teacher/:userId', async (req, res) => {
@@ -5719,6 +5557,7 @@ app.get('/api/admin/homework/teacher/:userId', async (req, res) => {
             'SELECT id, role, institutionId FROM users WHERE id = ?', [userId]);
         if (users.length === 0) return res.status(404).json({ error: 'User not found' });
         const me = users[0];
+        if (!sameTenant(req, me.institutionId)) return res.status(403).json({ error: 'This user belongs to another institution.' });
         const isAdmin = me.role === 'Super Admin' || me.role === 'Developer';
 
         const yearId = await resolveYearId(me.institutionId, req.query.academic_year_id);
@@ -5767,6 +5606,7 @@ app.get('/api/admin/homework/student/:studentId', async (req, res) => {
         const [u] = await db.execute(
             'SELECT institutionId, class_id FROM users WHERE id = ?', [studentId]);
         if (u.length === 0) return res.status(404).json({ error: 'Student not found' });
+        if (!sameTenant(req, u[0].institutionId)) return res.status(403).json({ error: 'This student belongs to another institution.' });
         if (!u[0].class_id) return res.json([]);
 
         const yearId = await resolveYearId(u[0].institutionId, req.query.academic_year_id);
@@ -5782,9 +5622,9 @@ app.get('/api/admin/homework/student/:studentId', async (req, res) => {
                LEFT JOIN subjects sub ON sub.id = h.subject_id
                LEFT JOIN homework_submissions s
                       ON s.homework_id = h.id AND s.student_id = ?
-              WHERE h.class_id = ? AND h.academic_year_id = ?
+              WHERE h.class_id = ? AND h.academic_year_id = ? AND h.institutionId = ?
               ORDER BY h.due_date DESC`,
-            [studentId, u[0].class_id, yearId]
+            [studentId, u[0].class_id, yearId, u[0].institutionId]
         );
         const decorated = rows.map(r => ({
             ...r,
@@ -5812,6 +5652,7 @@ app.get('/api/admin/homework/:id', async (req, res) => {
         );
         if (rows.length === 0) return res.status(404).json({ error: 'Homework not found' });
         const r = rows[0];
+        if (!sameTenant(req, r.institutionId)) return res.status(403).json({ error: 'This homework belongs to another institution.' });
         res.json({
             ...r,
             questions:   parseJsonSafe(r.questions, []),
@@ -5823,18 +5664,21 @@ app.get('/api/admin/homework/:id', async (req, res) => {
 
 
 // --- 19.4 Create homework (+ notify the class's active students) ----
-//   Body: { institutionId, title, description, homework_type, class_id,
-//           subject_id, due_date, questions[], attachments[], created_by,
-//           academic_year_id? }
 app.post('/api/admin/homework', async (req, res) => {
+    const institutionId = req.auth.institutionId;
+    const created_by = req.auth.userId;
     const {
-        institutionId, title, description, homework_type,
-        class_id, subject_id, due_date, questions, attachments, created_by
+        title, description, homework_type,
+        class_id, subject_id, due_date, questions, attachments
     } = req.body;
-    if (!institutionId || !title || !class_id || !due_date) {
-        return res.status(400).json({ error: 'institutionId, title, class_id and due_date are required.' });
+    if (!title || !class_id || !due_date) {
+        return res.status(400).json({ error: 'title, class_id and due_date are required.' });
     }
     try {
+        const [c] = await db.execute('SELECT institutionId FROM classes WHERE id = ?', [class_id]);
+        if (c.length === 0 || !sameTenant(req, c[0].institutionId)) {
+            return res.status(403).json({ error: 'That class belongs to another institution.' });
+        }
         const yearId = await resolveYearId(institutionId, req.body.academic_year_id);
 
         const [result] = await db.execute(
@@ -5845,12 +5689,9 @@ app.post('/api/admin/homework', async (req, res) => {
             [institutionId, yearId, title, description || null, homework_type || 'PDF',
              class_id, subject_id || null, due_date,
              JSON.stringify(questions || []), JSON.stringify(attachments || []),
-             created_by || null]
+             created_by]
         );
 
-        // 🔔 Notify the class's active students. 'Homework' is the module
-        //    id from Screens/Modules.js. createNotifications swallows its
-        //    own errors, so it can't break the create.
         const recipients = await studentIdsForClass(class_id);
         await createNotifications({
             institutionId, recipientIds: recipients, type: 'homework',
@@ -5870,6 +5711,15 @@ app.put('/api/admin/homework/:id', async (req, res) => {
         class_id, subject_id, due_date, questions, attachments
     } = req.body;
     try {
+        const [own] = await db.execute('SELECT institutionId FROM homework WHERE id = ?', [req.params.id]);
+        if (own.length === 0) return res.status(404).json({ error: 'Homework not found.' });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This homework belongs to another institution.' });
+        if (class_id) {
+            const [c] = await db.execute('SELECT institutionId FROM classes WHERE id = ?', [class_id]);
+            if (c.length === 0 || !sameTenant(req, c[0].institutionId)) {
+                return res.status(403).json({ error: 'That class belongs to another institution.' });
+            }
+        }
         await db.execute(
             `UPDATE homework
                 SET title = ?, description = ?, homework_type = ?, class_id = ?,
@@ -5888,7 +5738,9 @@ app.put('/api/admin/homework/:id', async (req, res) => {
 // --- 19.6 Delete homework -------------------------------------------
 app.delete('/api/admin/homework/:id', async (req, res) => {
     try {
-        // submissions cascade-delete via FK
+        const [own] = await db.execute('SELECT institutionId FROM homework WHERE id = ?', [req.params.id]);
+        if (own.length === 0) return res.json({ success: true });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This homework belongs to another institution.' });
         await db.execute('DELETE FROM homework WHERE id = ?', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -5899,8 +5751,9 @@ app.delete('/api/admin/homework/:id', async (req, res) => {
 app.get('/api/admin/homework/:id/submissions', async (req, res) => {
     try {
         const [hw] = await db.execute(
-            'SELECT class_id FROM homework WHERE id = ?', [req.params.id]);
+            'SELECT class_id, institutionId FROM homework WHERE id = ?', [req.params.id]);
         if (hw.length === 0) return res.status(404).json({ error: 'Homework not found' });
+        if (!sameTenant(req, hw[0].institutionId)) return res.status(403).json({ error: 'This homework belongs to another institution.' });
 
         const [rows] = await db.execute(
             `SELECT u.id AS student_id, u.name AS student_name, u.roll_no,
@@ -5929,9 +5782,12 @@ app.get('/api/admin/homework/:id/submissions', async (req, res) => {
 // --- 19.8 Student submits (or resubmits) homework -------------------
 app.post('/api/admin/homework/:id/submit', async (req, res) => {
     const { id } = req.params;
-    const { student_id, written_answer, files } = req.body;
-    if (!student_id) return res.status(400).json({ error: 'student_id required.' });
+    const { written_answer, files } = req.body;
+    const student_id = req.auth.userId;
     try {
+        const [hw] = await db.execute('SELECT institutionId FROM homework WHERE id = ?', [id]);
+        if (hw.length === 0) return res.status(404).json({ error: 'Homework not found' });
+        if (!sameTenant(req, hw[0].institutionId)) return res.status(403).json({ error: 'This homework belongs to another institution.' });
         await db.execute(
             `INSERT INTO homework_submissions
                (homework_id, student_id, written_answer, files, submitted_at)
@@ -5955,9 +5811,17 @@ app.post('/api/admin/homework/:id/submit', async (req, res) => {
 // --- 19.9 Student deletes their own submission ----------------------
 app.delete('/api/admin/homework/submission/:submissionId', async (req, res) => {
     try {
-        await db.execute(
-            'DELETE FROM homework_submissions WHERE id = ?',
+        const [s] = await db.execute(
+            `SELECT s.student_id, h.institutionId
+               FROM homework_submissions s JOIN homework h ON h.id = s.homework_id
+              WHERE s.id = ?`,
             [req.params.submissionId]);
+        if (s.length === 0) return res.json({ success: true });
+        if (!sameTenant(req, s[0].institutionId)) return res.status(403).json({ error: 'This submission belongs to another institution.' });
+        const isOwner = String(s[0].student_id) === String(req.auth.userId);
+        const isStudent = String(req.auth.role || '').toLowerCase() === 'student';
+        if (isStudent && !isOwner) return res.status(403).json({ error: 'You can only delete your own submission.' });
+        await db.execute('DELETE FROM homework_submissions WHERE id = ?', [req.params.submissionId]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -5965,13 +5829,21 @@ app.delete('/api/admin/homework/submission/:submissionId', async (req, res) => {
 
 // --- 19.10 Teacher grades a submission ------------------------------
 app.put('/api/admin/homework/grade/:submissionId', async (req, res) => {
-    const { grade, remarks, graded_by } = req.body;
+    const { grade, remarks } = req.body;
+    const graded_by = req.auth.userId;
     try {
+        const [s] = await db.execute(
+            `SELECT h.institutionId
+               FROM homework_submissions s JOIN homework h ON h.id = s.homework_id
+              WHERE s.id = ?`,
+            [req.params.submissionId]);
+        if (s.length === 0) return res.status(404).json({ error: 'Submission not found' });
+        if (!sameTenant(req, s[0].institutionId)) return res.status(403).json({ error: 'This submission belongs to another institution.' });
         await db.execute(
             `UPDATE homework_submissions
                 SET grade = ?, remarks = ?, graded_by = ?, graded_at = ?
               WHERE id = ?`,
-            [grade || null, remarks || null, graded_by || null, nowSQL(),
+            [grade || null, remarks || null, graded_by, nowSQL(),
              req.params.submissionId]
         );
         res.json({ success: true });
@@ -5981,22 +5853,15 @@ app.put('/api/admin/homework/grade/:submissionId', async (req, res) => {
 
 
 // =====================================================================
-//  BACKEND — Section 20: MEALS
-//
-//  REPLACE your whole Section 20 block with this. Only 20.3 (save menu)
-//  changed: after the weekly menu is saved it notifies all active users
-//  that the food menu was updated. One notification per save (not per
-//  cell), so it isn't spammy. 20.1 and 20.2 are unchanged.
-//
-//  Uses createNotifications / allActiveUserIds from Section 25.
-//  'Meals' is the module id from Screens/Modules.js. Reads optional
-//  actor_id from the body if your frontend sends it.
+//  BACKEND — Section 20: MEALS  (TENANT-SCOPED)
+//   institutionId/actor from req.auth. Slots are scoped by institutionId;
+//   the weekly menu only writes to this institution's own slot ids
+//   (slot_id is global and the menu's unique key is slot-based).
 // =====================================================================
-
 
 // --- 20.1 Full meals data for a school ------------------------------
 app.get('/api/admin/meals/:instId', async (req, res) => {
-    const { instId } = req.params;
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     try {
         const [slots] = await db.execute(
             'SELECT * FROM meal_slots WHERE institutionId = ? ORDER BY slot_order, id',
@@ -6015,9 +5880,10 @@ app.get('/api/admin/meals/:instId', async (req, res) => {
 
 // --- 20.2 Save the school's meal slots ------------------------------
 app.post('/api/admin/meals/slots', async (req, res) => {
-    const { institutionId, slots } = req.body;
-    if (!institutionId || !Array.isArray(slots)) {
-        return res.status(400).json({ error: 'institutionId and slots[] required.' });
+    const { slots } = req.body;
+    const institutionId = req.auth.institutionId;
+    if (!Array.isArray(slots)) {
+        return res.status(400).json({ error: 'slots[] required.' });
     }
     const conn = await db.getConnection();
     try {
@@ -6063,15 +5929,22 @@ app.post('/api/admin/meals/slots', async (req, res) => {
 
 // --- 20.3 Save the weekly menu (+ notify all active users) ----------
 app.post('/api/admin/meals/menu', async (req, res) => {
-    const { institutionId, entries, actor_id } = req.body;
-    if (!institutionId || !Array.isArray(entries)) {
-        return res.status(400).json({ error: 'institutionId and entries[] required.' });
+    const { entries } = req.body;
+    const institutionId = req.auth.institutionId;
+    const actor_id = req.auth.userId;
+    if (!Array.isArray(entries)) {
+        return res.status(400).json({ error: 'entries[] required.' });
     }
     const conn = await db.getConnection();
     try {
+        // slot_id is a global id; only let this school write to its own slots.
+        const [vSlot] = await conn.execute('SELECT id FROM meal_slots WHERE institutionId = ?', [institutionId]);
+        const slotOk = new Set(vSlot.map(r => r.id));
+
         await conn.beginTransaction();
         for (const e of entries) {
             if (!e.slot_id || e.day_index === undefined || e.day_index === null) continue;
+            if (!slotOk.has(Number(e.slot_id))) continue;
             const items = (e.items || '').trim();
             if (items === '') {
                 await conn.execute(
@@ -6089,8 +5962,6 @@ app.post('/api/admin/meals/menu', async (req, res) => {
         }
         await conn.commit();
 
-        // 🔔 One notification per save (not per cell). Own try/catch so a
-        //    notify issue can't fail the save.
         try {
             const recipients = await allActiveUserIds(institutionId);
             await createNotifications({
@@ -6111,19 +5982,13 @@ app.post('/api/admin/meals/menu', async (req, res) => {
 
 
 // =====================================================================
-// === 21. PARENT TEACHER MEETINGS (PTM) ===============================
-//
-//  REPLACE your whole PTM section with this. 21.3 (create) and 21.4
-//  (update) now notify the targeted students. An update re-notifies
-//  because the meeting time may change. Recipients respect class + section
-//  targeting (NULL = everyone / every section), matching the 21.2 student
-//  query. Uses createNotifications from Section 25. 'PTM' is the module id
-//  from Screens/Modules.js.
+// === 21. PARENT TEACHER MEETINGS (PTM)  (TENANT-SCOPED) ==============
+//   List uses identity from the token; create/update take institutionId
+//   + actor from the token; update/delete verify ownership. The recipient
+//   helper is institution-filtered, so a stray class_id can't reach
+//   another school.
 // =====================================================================
 
-// Who a PTM is for:
-//   class_id NULL -> all active students in the institution
-//   class_id set  -> that class's active students (optionally one section)
 async function ptmRecipientIds(institutionId, classId, section) {
     if (!institutionId) return [];
     let sql = `SELECT id FROM users
@@ -6138,35 +6003,29 @@ async function ptmRecipientIds(institutionId, classId, section) {
 
 // --- 21.1 List PTMs for a School (Admin/Teacher view) ---
 app.get('/api/admin/ptm/:instId', async (req, res) => {
-    const { userId } = req.query;
-    if (!userId) return res.status(400).json({ error: 'userId is required' });
-
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    const userId = req.auth.userId;
+    const userRole = req.auth.role;
     try {
-        const [users] = await db.execute('SELECT role FROM users WHERE id = ?', [userId]);
-        if (users.length === 0) return res.status(404).json({ error: 'User not found' });
-
-        const userRole = users[0].role;
         const isSystemAdmin = (userRole === 'Super Admin' || userRole === 'Developer' || userRole === 'Admin');
 
-        let sql = '';
-        let params = [];
-
+        let sql, params;
         if (isSystemAdmin) {
             sql = `SELECT p.*, c.className, t.name AS teacher_name
-                   FROM ptm_meetings p
-                   LEFT JOIN classes c ON c.id = p.class_id
-                   LEFT JOIN users t ON t.id = p.teacher_id
-                   WHERE p.institutionId = ?
-                   ORDER BY p.meeting_datetime DESC`;
-            params = [req.params.instId];
+                     FROM ptm_meetings p
+                     LEFT JOIN classes c ON c.id = p.class_id
+                     LEFT JOIN users t ON t.id = p.teacher_id
+                    WHERE p.institutionId = ?
+                    ORDER BY p.meeting_datetime DESC`;
+            params = [instId];
         } else {
             sql = `SELECT p.*, c.className, t.name AS teacher_name
-                   FROM ptm_meetings p
-                   LEFT JOIN classes c ON c.id = p.class_id
-                   LEFT JOIN users t ON t.id = p.teacher_id
-                   WHERE p.institutionId = ? AND p.teacher_id = ?
-                   ORDER BY p.meeting_datetime DESC`;
-            params = [req.params.instId, userId];
+                     FROM ptm_meetings p
+                     LEFT JOIN classes c ON c.id = p.class_id
+                     LEFT JOIN users t ON t.id = p.teacher_id
+                    WHERE p.institutionId = ? AND p.teacher_id = ?
+                    ORDER BY p.meeting_datetime DESC`;
+            params = [instId, userId];
         }
 
         const [rows] = await db.execute(sql, params);
@@ -6182,6 +6041,7 @@ app.get('/api/admin/ptm/student/:studentId', async (req, res) => {
         const [u] = await db.execute('SELECT institutionId, class_id, section FROM users WHERE id = ?', [req.params.studentId]);
         if (u.length === 0) return res.status(404).json({ error: 'Student not found' });
         const { institutionId, class_id, section } = u[0];
+        if (!sameTenant(req, institutionId)) return res.status(403).json({ error: 'This student belongs to another institution.' });
 
         const [rows] = await db.execute(
             `SELECT p.*, c.className, t.name AS teacher_name
@@ -6200,29 +6060,29 @@ app.get('/api/admin/ptm/student/:studentId', async (req, res) => {
 
 // --- 21.3 Create PTM (+ notify targeted students) ---
 app.post('/api/admin/ptm', async (req, res) => {
+    const institutionId = req.auth.institutionId;
+    const created_by = req.auth.userId;
     const {
-        institutionId, meeting_datetime, teacher_id, class_id,
-        section, subject_focus, notes, meeting_link, status, created_by
+        meeting_datetime, teacher_id, class_id,
+        section, subject_focus, notes, meeting_link, status
     } = req.body;
-    
-    if (!institutionId || !meeting_datetime || !teacher_id || !subject_focus) {
+
+    if (!meeting_datetime || !teacher_id || !subject_focus) {
         return res.status(400).json({ error: 'Missing required fields.' });
     }
 
     try {
         const [result] = await db.execute(
-            `INSERT INTO ptm_meetings 
-               (institutionId, meeting_datetime, teacher_id, class_id, section, subject_focus, notes, meeting_link, status, created_by) 
+            `INSERT INTO ptm_meetings
+               (institutionId, meeting_datetime, teacher_id, class_id, section, subject_focus, notes, meeting_link, status, created_by)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
-                institutionId, meeting_datetime, teacher_id, class_id || null, 
-                section || null, subject_focus, notes || null, meeting_link || null, 
-                status || 'Scheduled', created_by || null
+                institutionId, meeting_datetime, teacher_id, class_id || null,
+                section || null, subject_focus, notes || null, meeting_link || null,
+                status || 'Scheduled', created_by
             ]
         );
 
-        // 🔔 Notify the targeted students. Own try/catch so a notify issue
-        //    can't fail the create.
         try {
             const recipients = await ptmRecipientIds(institutionId, class_id || null, section || null);
             await createNotifications({
@@ -6241,12 +6101,17 @@ app.post('/api/admin/ptm', async (req, res) => {
 app.put('/api/admin/ptm/:id', async (req, res) => {
     const {
         meeting_datetime, teacher_id, class_id, section,
-        subject_focus, notes, meeting_link, status, actor_id
+        subject_focus, notes, meeting_link, status
     } = req.body;
+    const actor_id = req.auth.userId;
     try {
+        const [own] = await db.execute('SELECT institutionId FROM ptm_meetings WHERE id = ?', [req.params.id]);
+        if (own.length === 0) return res.status(404).json({ error: 'Meeting not found' });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This meeting belongs to another institution.' });
+
         await db.execute(
-            `UPDATE ptm_meetings 
-                SET meeting_datetime = ?, teacher_id = ?, class_id = ?, section = ?, 
+            `UPDATE ptm_meetings
+                SET meeting_datetime = ?, teacher_id = ?, class_id = ?, section = ?,
                     subject_focus = ?, notes = ?, meeting_link = ?, status = ?
               WHERE id = ?`,
             [
@@ -6256,20 +6121,15 @@ app.put('/api/admin/ptm/:id', async (req, res) => {
             ]
         );
 
-        // 🔔 Re-notify. institutionId isn't in the body, so read it from row.
         try {
-            const [rows] = await db.execute(
-                'SELECT institutionId FROM ptm_meetings WHERE id = ?', [req.params.id]);
-            if (rows.length) {
-                const instId = rows[0].institutionId;
-                const recipients = await ptmRecipientIds(instId, class_id || null, section || null);
-                await createNotifications({
-                    institutionId: instId, recipientIds: recipients, type: 'ptm',
-                    title: 'PTM updated',
-                    body: subject_focus || 'A PTM has been updated.',
-                    link: 'PTM', entity_id: req.params.id, actor_id
-                });
-            }
+            const instId = own[0].institutionId;
+            const recipients = await ptmRecipientIds(instId, class_id || null, section || null);
+            await createNotifications({
+                institutionId: instId, recipientIds: recipients, type: 'ptm',
+                title: 'PTM updated',
+                body: subject_focus || 'A PTM has been updated.',
+                link: 'PTM', entity_id: req.params.id, actor_id
+            });
         } catch (e) { console.warn('[notify ptm]', e.message); }
 
         res.json({ success: true });
@@ -6279,6 +6139,9 @@ app.put('/api/admin/ptm/:id', async (req, res) => {
 // --- 21.5 Delete PTM ---
 app.delete('/api/admin/ptm/:id', async (req, res) => {
     try {
+        const [own] = await db.execute('SELECT institutionId FROM ptm_meetings WHERE id = ?', [req.params.id]);
+        if (own.length === 0) return res.json({ success: true });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This meeting belongs to another institution.' });
         await db.execute('DELETE FROM ptm_meetings WHERE id = ?', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -6288,34 +6151,20 @@ app.delete('/api/admin/ptm/:id', async (req, res) => {
 
 
 // =====================================================================
-// === 22. ONLINE CLASSES ==============================================
+// === 22. ONLINE CLASSES  (TENANT-SCOPED) =============================
+//   List uses identity from token; create/update take institutionId +
+//   actor from token and require the class (when given) to be yours;
+//   update/delete verify ownership; video stream verifies tenant.
 //
-//  REPLACE your whole Section 22 block with this. Changes:
-//    • 22.4 (create) and 22.5 (update) now notify the relevant students
-//      (built INTO the routes — no separate trigger). An update re-notifies
-//      because the class time / meet link may have changed.
-//  22.1, 22.2, 22.3, 22.6 are unchanged.
-//
-//  Uses createNotifications / studentIdsForClass from Section 25. No
-//  transaction in these routes (single statement), so createNotifications
-//  is called with the global db; it swallows its own errors, so a notify
-//  problem can never break the save.
-//
-//  Recipients: a class-scoped online class (class_id set) → that class's
-//  active students; a school-wide one (class_id NULL, visible to all per
-//  22.2) → every active student in the institution. The creator/editor is
-//  staff, not a student, so they're naturally not in the recipient list.
+//   ⚠ online-classes/video/:id is under the /api auth gate — only works if
+//     the frontend FETCHES it (token via interceptor) and renders a blob.
 // =====================================================================
 
-// Use Memory Storage for storing directly in DB bytes
-const memoryUpload = multer({ 
-    storage: multer.memoryStorage(), 
+const memoryUpload = multer({
+    storage: multer.memoryStorage(),
     limits: { fileSize: 500 * 1024 * 1024 } // 500MB limit
 });
 
-// Who should hear about an online class:
-//   class_id set   -> active students of that class
-//   class_id NULL  -> every active student in the institution (school-wide)
 async function onlineClassRecipientIds(institutionId, classId) {
     if (classId) return studentIdsForClass(classId);
     if (!institutionId) return [];
@@ -6330,20 +6179,14 @@ async function onlineClassRecipientIds(institutionId, classId) {
 
 // --- 22.1 List Classes for Admin/Teacher ---
 app.get('/api/admin/online-classes/:instId', async (req, res) => {
-    const { instId } = req.params;
-    const { userId } = req.query;
-    if (!userId) return res.status(400).json({ error: 'userId is required' });
-
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    const userId = req.auth.userId;
+    const roleName = req.auth.role;
     try {
-        const [users] = await db.execute(`SELECT id, role FROM users WHERE id = ?`, [userId]);
-        if (users.length === 0) return res.status(404).json({ error: 'User not found' });
-
-        const user = users[0];
-        const roleName = user.role;
         const isSystemAdmin = (roleName === 'Super Admin' || roleName === 'Developer');
 
-        let query = isSystemAdmin 
-            ? `SELECT o.id, o.title, o.class_type, o.class_id, o.subject_id, o.teacher_id, 
+        const query = isSystemAdmin
+            ? `SELECT o.id, o.title, o.class_type, o.class_id, o.subject_id, o.teacher_id,
                        o.class_datetime, o.meet_link, o.topic, o.description, o.created_by,
                        IF(o.video_data IS NOT NULL, 1, 0) as has_video_data,
                        c.className, c.section, s.name AS subject_name, t.name AS teacher_name
@@ -6353,7 +6196,7 @@ app.get('/api/admin/online-classes/:instId', async (req, res) => {
                   LEFT JOIN users t ON t.id = o.teacher_id
                  WHERE o.institutionId = ?
                  ORDER BY o.class_datetime DESC`
-            : `SELECT o.id, o.title, o.class_type, o.class_id, o.subject_id, o.teacher_id, 
+            : `SELECT o.id, o.title, o.class_type, o.class_id, o.subject_id, o.teacher_id,
                        o.class_datetime, o.meet_link, o.topic, o.description, o.created_by,
                        IF(o.video_data IS NOT NULL, 1, 0) as has_video_data,
                        c.className, c.section, s.name AS subject_name, t.name AS teacher_name
@@ -6375,9 +6218,10 @@ app.get('/api/admin/online-classes/student/:studentId', async (req, res) => {
     try {
         const [u] = await db.execute('SELECT institutionId, class_id FROM users WHERE id = ?', [req.params.studentId]);
         if (u.length === 0) return res.status(404).json({ error: 'Student not found' });
-        
+        if (!sameTenant(req, u[0].institutionId)) return res.status(403).json({ error: 'This student belongs to another institution.' });
+
         const [rows] = await db.execute(
-            `SELECT o.id, o.title, o.class_type, o.class_id, o.subject_id, o.teacher_id, 
+            `SELECT o.id, o.title, o.class_type, o.class_id, o.subject_id, o.teacher_id,
                     o.class_datetime, o.meet_link, o.topic, o.description,
                     IF(o.video_data IS NOT NULL, 1, 0) as has_video_data,
                     c.className, c.section, s.name AS subject_name, t.name AS teacher_name
@@ -6396,8 +6240,9 @@ app.get('/api/admin/online-classes/student/:studentId', async (req, res) => {
 // --- 22.3 Stream Video Bytes from DB ---
 app.get('/api/admin/online-classes/video/:id', async (req, res) => {
     try {
-        const [rows] = await db.execute('SELECT video_data, mime_type FROM online_classes WHERE id = ?', [req.params.id]);
+        const [rows] = await db.execute('SELECT video_data, mime_type, institutionId FROM online_classes WHERE id = ?', [req.params.id]);
         if (!rows.length || !rows[0].video_data) return res.status(404).send('Not found');
+        if (!sameTenant(req, rows[0].institutionId)) return res.status(403).send('Forbidden');
 
         const data = rows[0].video_data;
         const mime = rows[0].mime_type || 'video/mp4';
@@ -6424,22 +6269,27 @@ app.get('/api/admin/online-classes/video/:id', async (req, res) => {
 
 // --- 22.4 Create Class (+ notify students) ---
 app.post('/api/admin/online-classes', memoryUpload.single('videoFile'), async (req, res) => {
-    const { institutionId, title, class_type, class_id, subject_id, teacher_id, class_datetime, meet_link, topic, description, created_by } = req.body;
+    const institutionId = req.auth.institutionId;
+    const created_by = req.auth.userId;
+    const { title, class_type, class_id, subject_id, teacher_id, class_datetime, meet_link, topic, description } = req.body;
     try {
+        if (class_id) {
+            const [c] = await db.execute('SELECT institutionId FROM classes WHERE id = ?', [class_id]);
+            if (c.length === 0 || !sameTenant(req, c[0].institutionId)) {
+                return res.status(403).json({ error: 'That class belongs to another institution.' });
+            }
+        }
         const [result] = await db.execute(
-            `INSERT INTO online_classes 
+            `INSERT INTO online_classes
                (institutionId, title, class_type, class_id, subject_id, teacher_id, class_datetime, meet_link, video_data, mime_type, topic, description, created_by)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
-                institutionId, title, class_type, class_id || null, subject_id, teacher_id, 
-                class_datetime, meet_link || null, req.file ? req.file.buffer : null, 
+                institutionId, title, class_type, class_id || null, subject_id, teacher_id,
+                class_datetime, meet_link || null, req.file ? req.file.buffer : null,
                 req.file ? req.file.mimetype : null, topic || null, description || null, created_by
             ]
         );
 
-        // 🔔 Notify the relevant students. 'OnlineClasses' is the module id
-        //    from Screens/Modules.js. Helper self-catches, so it can't break
-        //    the create.
         const recipients = await onlineClassRecipientIds(institutionId, class_id || null);
         await createNotifications({
             institutionId, recipientIds: recipients, type: 'online_class',
@@ -6453,8 +6303,19 @@ app.post('/api/admin/online-classes', memoryUpload.single('videoFile'), async (r
 
 // --- 22.5 Update Class (+ re-notify students; time/link may have changed) ---
 app.put('/api/admin/online-classes/:id', memoryUpload.single('videoFile'), async (req, res) => {
-    const { title, class_type, class_id, subject_id, teacher_id, class_datetime, meet_link, topic, description, clear_video, actor_id } = req.body;
+    const { title, class_type, class_id, subject_id, teacher_id, class_datetime, meet_link, topic, description, clear_video } = req.body;
+    const actor_id = req.auth.userId;
     try {
+        const [own] = await db.execute('SELECT institutionId FROM online_classes WHERE id = ?', [req.params.id]);
+        if (own.length === 0) return res.status(404).json({ error: 'Class not found' });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This class belongs to another institution.' });
+        if (class_id) {
+            const [c] = await db.execute('SELECT institutionId FROM classes WHERE id = ?', [class_id]);
+            if (c.length === 0 || !sameTenant(req, c[0].institutionId)) {
+                return res.status(403).json({ error: 'That class belongs to another institution.' });
+            }
+        }
+
         let sql = `UPDATE online_classes SET title=?, class_type=?, class_id=?, subject_id=?, teacher_id=?, class_datetime=?, meet_link=?, topic=?, description=?`;
         let params = [title, class_type, class_id || null, subject_id, teacher_id, class_datetime, meet_link || null, topic || null, description || null];
 
@@ -6470,19 +6331,13 @@ app.put('/api/admin/online-classes/:id', memoryUpload.single('videoFile'), async
 
         await db.execute(sql, params);
 
-        // 🔔 Re-notify students. institutionId isn't in the body on update,
-        //    so read it from the row. class_id comes from the (updated) body.
-        const [ocRows] = await db.execute(
-            'SELECT institutionId FROM online_classes WHERE id = ?', [req.params.id]);
-        if (ocRows.length) {
-            const instId = ocRows[0].institutionId;
-            const recipients = await onlineClassRecipientIds(instId, class_id || null);
-            await createNotifications({
-                institutionId: instId, recipientIds: recipients, type: 'online_class',
-                title: 'Online class updated', body: title,
-                link: 'OnlineClasses', entity_id: req.params.id, actor_id
-            });
-        }
+        const instId = own[0].institutionId;
+        const recipients = await onlineClassRecipientIds(instId, class_id || null);
+        await createNotifications({
+            institutionId: instId, recipientIds: recipients, type: 'online_class',
+            title: 'Online class updated', body: title,
+            link: 'OnlineClasses', entity_id: req.params.id, actor_id
+        });
 
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -6491,6 +6346,9 @@ app.put('/api/admin/online-classes/:id', memoryUpload.single('videoFile'), async
 // --- 22.6 Delete Class ---
 app.delete('/api/admin/online-classes/:id', async (req, res) => {
     try {
+        const [own] = await db.execute('SELECT institutionId FROM online_classes WHERE id = ?', [req.params.id]);
+        if (own.length === 0) return res.json({ success: true });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This class belongs to another institution.' });
         await db.execute('DELETE FROM online_classes WHERE id = ?', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -6499,37 +6357,15 @@ app.delete('/api/admin/online-classes/:id', async (req, res) => {
 
 
 // =====================================================================
-// === 21. DIGITAL LABS ================================================
+// === 21. DIGITAL LABS  (TENANT-SCOPED) ===============================
+//   institutionId/actor from token; create/update require the class to be
+//   yours and (on edit) the lab to be yours; student read is institution-
+//   filtered; resource stream verifies tenant via the parent lab; delete
+//   verifies ownership. (lab_resources.url-nullable migration unchanged.)
 //
-//  REPLACE your whole Section 21 block with this.
-//
-//  Changes vs your current Section 21:
-//    • 21.4 now fans out a notification to the class's active students
-//      on BOTH create and edit (built INTO the route — no separate
-//      trigger). An edit re-notifies too, since it may change a
-//      live-class time students need to know about.
-//    • Everything else (21.1, 21.2, 21.3, 21.5, 21.6) is unchanged.
-//
-//  Uses the Section 25 helpers createNotifications / studentIdsForClass
-//  (keep Section 25 in this file). The notify runs INSIDE the transaction
-//  (conn is passed to createNotifications); the helper swallows its own
-//  errors, so a notification problem can never break the lab create.
-//  REQUIRES the updated createNotifications that accepts (fields, conn).
-//
-//  ------------------------------------------------------------------
-//  ONE-TIME MIGRATION — fixes "url cannot be null" on uploaded files.
-//  An uploaded PDF/video resource has NO url, so the column must allow
-//  NULL. Run once (safe to re-run; no-op if already nullable):
-//
-//    ALTER TABLE lab_resources MODIFY url VARCHAR(2048) NULL DEFAULT NULL;
-//
-//  If your `url` column is a different type/length, just restate that
-//  type with NULL — the only goal is dropping NOT NULL, e.g.
-//    ALTER TABLE lab_resources MODIFY url TEXT NULL;
-//  ------------------------------------------------------------------
+//   ⚠ labs/resource/:id is under the /api auth gate — only works if the
+//     frontend FETCHES it (token via interceptor) and renders a blob.
 // =====================================================================
-
-// Files are accepted as multipart uploads (multer) and stored as bytes.
 
 const labUpload = multer({
     storage: multer.memoryStorage(),
@@ -6543,6 +6379,7 @@ app.get('/api/admin/labs/teacher/:userId', async (req, res) => {
         const [users] = await db.execute('SELECT id, role, institutionId FROM users WHERE id = ?', [userId]);
         if (users.length === 0) return res.status(404).json({ error: 'User not found' });
         const me = users[0];
+        if (!sameTenant(req, me.institutionId)) return res.status(403).json({ error: 'This user belongs to another institution.' });
         const isAdmin = me.role === 'Super Admin' || me.role === 'Developer';
 
         const baseSelect = `
@@ -6570,20 +6407,22 @@ app.get('/api/admin/labs/student/:studentId', async (req, res) => {
     try {
         const [u] = await db.execute('SELECT institutionId, class_id FROM users WHERE id = ?', [req.params.studentId]);
         if (u.length === 0 || !u[0].class_id) return res.json([]);
+        if (!sameTenant(req, u[0].institutionId)) return res.status(403).json({ error: 'This student belongs to another institution.' });
 
         const [labs] = await db.execute(
             `SELECT l.*, sub.name AS subject_name, usr.name AS created_by_name
-             FROM digital_labs l 
-             LEFT JOIN subjects sub ON sub.id = l.subject_id
-             LEFT JOIN users usr ON usr.id = l.created_by
-             WHERE l.class_id = ? ORDER BY l.created_at DESC`, [u[0].class_id]);
+               FROM digital_labs l
+               LEFT JOIN subjects sub ON sub.id = l.subject_id
+               LEFT JOIN users usr ON usr.id = l.created_by
+              WHERE l.class_id = ? AND l.institutionId = ? ORDER BY l.created_at DESC`,
+            [u[0].class_id, u[0].institutionId]);
 
         if (labs.length === 0) return res.json([]);
 
         const labIds = labs.map(l => l.id);
         const [resources] = await db.execute(
-            `SELECT id, lab_id, resource_type, title, url, IF(file_data IS NOT NULL, 1, 0) as has_file 
-             FROM lab_resources WHERE lab_id IN (${labIds.map(() => '?').join(',')})`, labIds);
+            `SELECT id, lab_id, resource_type, title, url, IF(file_data IS NOT NULL, 1, 0) as has_file
+               FROM lab_resources WHERE lab_id IN (${labIds.map(() => '?').join(',')})`, labIds);
 
         res.json(labs.map(l => ({ ...l, resources: resources.filter(r => r.lab_id === l.id) })));
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -6592,8 +6431,12 @@ app.get('/api/admin/labs/student/:studentId', async (req, res) => {
 // --- 21.3 Stream Resource File (Video/PDF) ---
 app.get('/api/admin/labs/resource/:id', async (req, res) => {
     try {
-        const [rows] = await db.execute('SELECT file_data, mime_type FROM lab_resources WHERE id = ?', [req.params.id]);
+        const [rows] = await db.execute(
+            `SELECT r.file_data, r.mime_type, l.institutionId
+               FROM lab_resources r JOIN digital_labs l ON l.id = r.lab_id
+              WHERE r.id = ?`, [req.params.id]);
         if (!rows.length || !rows[0].file_data) return res.status(404).send('Not found');
+        if (!sameTenant(req, rows[0].institutionId)) return res.status(403).send('Forbidden');
 
         const data = rows[0].file_data;
         const mime = rows[0].mime_type || 'application/octet-stream';
@@ -6605,13 +6448,27 @@ app.get('/api/admin/labs/resource/:id', async (req, res) => {
 });
 
 // --- 21.4 Create/Update Lab (Multipart via Multer) ---
-//   Notify the class's active students on BOTH create and edit (an edit
-//   may change a live-class time, so students need to know). The title
-//   reflects which it was; clicking opens the lab to see the new details.
 app.post('/api/admin/labs', labUpload.any(), async (req, res) => {
-    const { id, institutionId, title, description, class_id, subject_id, created_by, resources: resourcesRaw } = req.body;
+    const institutionId = req.auth.institutionId;
+    const created_by = req.auth.userId;
+    const { id, title, description, class_id, subject_id, resources: resourcesRaw } = req.body;
 
-    // Parse the stringified JSON array sent from the frontend
+    // Ownership + class guards run on the pool BEFORE we take a transaction
+    // connection, so there's no transaction/connection to leak on a 403.
+    try {
+        if (class_id) {
+            const [cc] = await db.execute('SELECT institutionId FROM classes WHERE id = ?', [class_id]);
+            if (cc.length === 0 || !sameTenant(req, cc[0].institutionId)) {
+                return res.status(403).json({ error: 'That class belongs to another institution.' });
+            }
+        }
+        if (id) {
+            const [lo] = await db.execute('SELECT institutionId FROM digital_labs WHERE id = ?', [id]);
+            if (lo.length === 0) return res.status(404).json({ error: 'Lab not found' });
+            if (!sameTenant(req, lo[0].institutionId)) return res.status(403).json({ error: 'This lab belongs to another institution.' });
+        }
+    } catch (err) { return res.status(500).json({ error: err.message }); }
+
     const resources = JSON.parse(resourcesRaw || '[]');
     const conn = await db.getConnection();
 
@@ -6626,7 +6483,6 @@ app.post('/api/admin/labs', labUpload.any(), async (req, res) => {
                 [title, description, class_id, subject_id || null, id]
             );
 
-            // Fetch existing files into memory BEFORE deleting
             const [oldRes] = await conn.execute(
                 'SELECT id, file_data, mime_type FROM lab_resources WHERE lab_id=?',
                 [id]
@@ -6644,39 +6500,26 @@ app.post('/api/admin/labs', labUpload.any(), async (req, res) => {
 
         for (let i = 0; i < resources.length; i++) {
             const r = resources[i];
-
-            // Find the physical file in req.files matching the dynamic fieldname
             const file = req.files && req.files.find(f => f.fieldname === `file_${i}`);
-
-            // Map the frontend ID back to the existing database record
             const oldResource = existingResources.find(old => String(old.id) === String(r.id));
 
             let finalBuffer = null;
             let finalMime = null;
 
-            // 1. If a brand new file was uploaded, use the multer buffer
             if (file) {
                 finalBuffer = file.buffer;
                 finalMime = file.mimetype;
-            }
-            // 2. Otherwise, if it's supposed to be a file and we have old data, restore the old data
-            else if (oldResource && r.source === 'file') {
+            } else if (oldResource && r.source === 'file') {
                 finalBuffer = oldResource.file_data;
                 finalMime = oldResource.mime_type;
             }
 
-            // url is NULL for uploaded files (column must allow NULL — see migration above)
             await conn.execute(
                 `INSERT INTO lab_resources (lab_id, resource_type, title, url, file_data, mime_type, scheduled_at, resource_order) VALUES (?,?,?,?,?,?,?,?)`,
                 [labId, r.resource_type, r.title, r.url || null, finalBuffer, finalMime, r.scheduled_at || null, i]
             );
         }
 
-        // 🔔 Notify the class's active students on create AND edit,
-        //    INSIDE this transaction (pass conn). createNotifications
-        //    swallows its own errors, so it can never break the lab save.
-        //    'DigitalLabs' is the module id from Screens/Modules.js (the tab
-        //    the dashboard opens on click) — NOT the "Digital Labs" label.
         {
             const recipients = await studentIdsForClass(class_id);
             await createNotifications({
@@ -6718,12 +6561,13 @@ app.get('/api/admin/labs/:id', async (req, res) => {
         }
 
         const lab = labs[0];
+        if (!sameTenant(req, lab.institutionId)) return res.status(403).json({ error: 'This lab belongs to another institution.' });
 
         const [resources] = await db.execute(
             `SELECT id, lab_id, resource_type, title, url, scheduled_at, resource_order,
                     IF(file_data IS NOT NULL, 1, 0) as has_file
-             FROM lab_resources 
-             WHERE lab_id = ? 
+             FROM lab_resources
+             WHERE lab_id = ?
              ORDER BY resource_order ASC`,
             [labId]
         );
@@ -6737,13 +6581,12 @@ app.get('/api/admin/labs/:id', async (req, res) => {
 });
 
 // --- 21.6 Delete Lab ---
-//   Delete the lab's resources FIRST, then the lab itself, in one
-//   transaction. This avoids the foreign-key constraint error that made
-//   deleting a lab with resources fail ("Delete failed"). Works whether or
-//   not the lab_resources -> digital_labs FK is set to ON DELETE CASCADE.
 app.delete('/api/admin/labs/:id', async (req, res) => {
     const conn = await db.getConnection();
     try {
+        const [own] = await conn.execute('SELECT institutionId FROM digital_labs WHERE id = ?', [req.params.id]);
+        if (own.length === 0) return res.json({ success: true });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This lab belongs to another institution.' });
         await conn.beginTransaction();
         await conn.execute('DELETE FROM lab_resources WHERE lab_id = ?', [req.params.id]);
         await conn.execute('DELETE FROM digital_labs WHERE id = ?', [req.params.id]);
