@@ -6603,29 +6603,14 @@ app.delete('/api/admin/labs/:id', async (req, res) => {
 
 
 // =====================================================================
-// === 23. ADMISSIONS / DIRECTORY ======================================
-// --- Pre-Admissions Storage ---
-//
-//  REPLACE your whole Section 23 block with this.
-//
-//  Changes in this version:
-//   • Reverted the year filter to a PLAIN CALENDAR YEAR. The academic-
-//     calendar (from/to) logic is gone. The client sends `year=YYYY` and
-//     records are scoped with YEAR(submission_date) = year. Omitting `year`
-//     (the "All Years" option) returns every year.
-//   • Added a lightweight endpoint that returns the distinct submission
-//     years present for an institution, so the client can build the year
-//     dropdown dynamically (a year only appears once data exists for it).
-//
-//  No migration required — pre_admissions is unchanged.
+// === 23. ADMISSIONS / DIRECTORY — Pre-Admissions  (TENANT-SCOPED) ====
+//   instId/userId/role from req.auth; create takes institutionId from the
+//   token; update/delete verify ownership. Calendar-year filter unchanged.
 // =====================================================================
 
 // --- 23.0 Distinct submission years (for the year-filter dropdown) ---
-//   GET /api/admin/preadmissions/:instId/years
-//   Returns e.g. [2027, 2026] (newest first). Distinct path from
-//   /preadmissions/:instId, so it does not collide with the list route.
 app.get('/api/admin/preadmissions/:instId/years', async (req, res) => {
-    const { instId } = req.params;
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     try {
         const [rows] = await db.query(
             `SELECT DISTINCT YEAR(submission_date) AS yr
@@ -6641,20 +6626,12 @@ app.get('/api/admin/preadmissions/:instId/years', async (req, res) => {
 });
 
 // --- 23.1 GET all records (Secured, calendar-year scoped) -----------
-//   GET /api/admin/preadmissions/:instId?userId=..&search=..&year=YYYY
-//   `year` is a calendar year (filters YEAR(submission_date)); omit it to
-//   return all years.
 app.get('/api/admin/preadmissions/:instId', async (req, res) => {
-    const { instId } = req.params;
-    const { search, year, userId } = req.query;
-
-    if (!userId) return res.status(400).json({ error: 'userId required' });
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    const { search, year } = req.query;
+    const roleName = req.auth.role;
 
     try {
-        const [users] = await db.execute('SELECT role FROM users WHERE id = ?', [userId]);
-        if (users.length === 0) return res.status(404).json({ error: 'User not found' });
-
-        const roleName = users[0].role;
         const isSystemAdmin = (roleName === 'Super Admin' || roleName === 'Developer');
 
         const [perms] = await db.execute(`
@@ -6673,7 +6650,6 @@ app.get('/api/admin/preadmissions/:instId', async (req, res) => {
         let whereClauses = ["institutionId = ?"];
         const queryParams = [instId];
 
-        // Calendar-year scoping: applications submitted in the selected year.
         const yr = parseInt(year, 10);
         if (year && year !== 'all' && !isNaN(yr)) {
             whereClauses.push("YEAR(submission_date) = ?");
@@ -6698,9 +6674,10 @@ app.get('/api/admin/preadmissions/:instId', async (req, res) => {
 // --- 23.2 POST new record -------------------------------------------
 app.post('/api/admin/preadmissions', async (req, res) => {
     const fields = req.body;
+    fields.institutionId = req.auth.institutionId; // tenant from token
 
-    if (!fields.institutionId || !fields.admission_no || !fields.student_name || !fields.joining_grade) {
-        return res.status(400).json({ message: "Institution ID, Admission No, Name, and Grade are required." });
+    if (!fields.admission_no || !fields.student_name || !fields.joining_grade) {
+        return res.status(400).json({ message: "Admission No, Name, and Grade are required." });
     }
 
     const query = `
@@ -6718,7 +6695,7 @@ app.post('/api/admin/preadmissions', async (req, res) => {
         fields.institutionId,
         fields.admission_no,
         fields.student_name,
-        fields.photo_url || null, // Directly using Base64 string from body
+        fields.photo_url || null,
         v(fields.dob),
         v(fields.pen_no),
         v(fields.phone_no),
@@ -6731,7 +6708,7 @@ app.post('/api/admin/preadmissions', async (req, res) => {
         v(fields.school_joined_date),
         v(fields.school_joined_grade),
         v(fields.school_outgoing_date),
-        v(fields.school_outgoing_grade), // column kept; UI no longer sends it (stays null)
+        v(fields.school_outgoing_grade),
         v(fields.tc_issued_date),
         v(fields.tc_number),
         v(fields.address),
@@ -6749,7 +6726,7 @@ app.post('/api/admin/preadmissions', async (req, res) => {
     }
 });
 
-// --- 23.3 PUT update record -----------------------------------------
+// --- 23.3 PUT update record (ownership) -----------------------------
 app.put('/api/admin/preadmissions/:id', async (req, res) => {
     const { id } = req.params;
     const fields = req.body;
@@ -6773,10 +6750,13 @@ app.put('/api/admin/preadmissions/:id', async (req, res) => {
 
     if (setClauses.length === 0) return res.status(400).json({ message: "No fields to update." });
 
-    const query = `UPDATE pre_admissions SET ${setClauses.join(', ')} WHERE id = ?`;
-    params.push(id);
-
     try {
+        const [own] = await db.execute('SELECT institutionId FROM pre_admissions WHERE id = ?', [id]);
+        if (own.length === 0) return res.status(404).json({ message: "Record not found." });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ message: "This record belongs to another institution." });
+
+        const query = `UPDATE pre_admissions SET ${setClauses.join(', ')} WHERE id = ?`;
+        params.push(id);
         const [result] = await db.query(query, params);
         if (result.affectedRows === 0) return res.status(404).json({ message: "Record not found." });
         res.status(200).json({ message: "Updated successfully." });
@@ -6785,9 +6765,12 @@ app.put('/api/admin/preadmissions/:id', async (req, res) => {
     }
 });
 
-// --- 23.4 DELETE record ---------------------------------------------
+// --- 23.4 DELETE record (ownership) ---------------------------------
 app.delete('/api/admin/preadmissions/:id', async (req, res) => {
     try {
+        const [own] = await db.execute('SELECT institutionId FROM pre_admissions WHERE id = ?', [req.params.id]);
+        if (own.length === 0) return res.status(404).json({ message: "Record not found." });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ message: "This record belongs to another institution." });
         const [result] = await db.query("DELETE FROM pre_admissions WHERE id = ?", [req.params.id]);
         if (result.affectedRows === 0) return res.status(404).json({ message: "Record not found." });
         res.status(200).json({ message: "Deleted successfully." });
@@ -6799,32 +6782,22 @@ app.delete('/api/admin/preadmissions/:id', async (req, res) => {
 
 
 // =====================================================================
-// === 24. STUDY MATERIALS =============================================
-//
-//  REPLACE your whole Section 24 block with this. Only 24.3 (create)
-//  changed: it now notifies the class's active students. Files are still
-//  Base64 in the JSON payload; everything else is unchanged.
-//
-//  Uses createNotifications / studentIdsForClass from Section 25.
-//  'StudyMaterials' is the module id from Screens/Modules.js.
+// === 24. STUDY MATERIALS  (TENANT-SCOPED) ============================
+//   instId/userId/role/uploader from req.auth; create/update require the
+//   class (when given) to be yours; student read is institution-filtered;
+//   update/delete verify ownership.
 // =====================================================================
 
 // --- 24.1 List Materials (Admin/Teacher) ---
 app.get('/api/admin/study-materials/:instId', async (req, res) => {
-    const { instId } = req.params;
-    const { userId } = req.query;
-
-    if (!userId) return res.status(400).json({ error: 'userId is required' });
-
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    const userId = req.auth.userId;
+    const roleName = req.auth.role;
     try {
-        const [users] = await db.execute('SELECT role, institutionId FROM users WHERE id = ?', [userId]);
-        if (users.length === 0) return res.status(404).json({ error: 'User not found' });
-        
-        const roleName = users[0].role;
         const isSystemAdmin = (roleName === 'Super Admin' || roleName === 'Developer');
 
         const [perms] = await db.execute(`
-            SELECT p.can_read 
+            SELECT p.can_read
               FROM permissions p
               JOIN roles r ON r.id = p.role_id
              WHERE r.role_name = ? AND r.institutionId = ? AND p.module_name = 'StudyMaterials'
@@ -6854,8 +6827,8 @@ app.get('/api/admin/study-materials/:instId', async (req, res) => {
 
         const [rows] = await db.execute(query, params);
         res.json(rows);
-    } catch (err) { 
-        res.status(500).json({ error: err.message }); 
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
 });
 
@@ -6864,6 +6837,7 @@ app.get('/api/admin/study-materials/student/:studentId', async (req, res) => {
     try {
         const [u] = await db.execute('SELECT institutionId, class_id FROM users WHERE id = ?', [req.params.studentId]);
         if (u.length === 0) return res.status(404).json({ error: 'Student not found' });
+        if (!sameTenant(req, u[0].institutionId)) return res.status(403).json({ error: 'This student belongs to another institution.' });
 
         const [rows] = await db.execute(
             `SELECT m.*, c.className, c.section, s.name AS subject_name, u.name AS uploaded_by_name
@@ -6881,24 +6855,31 @@ app.get('/api/admin/study-materials/student/:studentId', async (req, res) => {
 
 // --- 24.3 Create Material (+ notify the class's students) ---
 app.post('/api/admin/study-materials', async (req, res) => {
-    const { 
-        institutionId, title, description, class_id, subject_id, 
-        material_type, external_link, uploaded_by, materialFile 
+    const institutionId = req.auth.institutionId;
+    const uploaded_by = req.auth.userId;
+    const {
+        title, description, class_id, subject_id,
+        material_type, external_link, materialFile
     } = req.body;
 
     try {
+        if (class_id) {
+            const [c] = await db.execute('SELECT institutionId FROM classes WHERE id = ?', [class_id]);
+            if (c.length === 0 || !sameTenant(req, c[0].institutionId)) {
+                return res.status(403).json({ error: 'That class belongs to another institution.' });
+            }
+        }
+
         const [result] = await db.execute(
-            `INSERT INTO study_materials 
+            `INSERT INTO study_materials
                (institutionId, title, description, class_id, subject_id, material_type, file_path, external_link, uploaded_by)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
-                institutionId, title, description || null, class_id, subject_id || null, 
+                institutionId, title, description || null, class_id, subject_id || null,
                 material_type || 'Notes', materialFile || null, external_link || null, uploaded_by
             ]
         );
 
-        // 🔔 Notify the class's active students. Own try/catch so a notify
-        //    issue can't fail the create.
         try {
             if (class_id) {
                 const recipients = await studentIdsForClass(class_id);
@@ -6914,24 +6895,33 @@ app.post('/api/admin/study-materials', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 24.4 Update Material ---
+// --- 24.4 Update Material (ownership + class ownership) ---
 app.put('/api/admin/study-materials/:id', async (req, res) => {
-    const { 
-        title, description, class_id, subject_id, 
-        material_type, external_link, materialFile 
+    const {
+        title, description, class_id, subject_id,
+        material_type, external_link, materialFile
     } = req.body;
-    
+
     try {
+        const [own] = await db.execute('SELECT institutionId FROM study_materials WHERE id = ?', [req.params.id]);
+        if (own.length === 0) return res.status(404).json({ error: 'Material not found.' });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This material belongs to another institution.' });
+        if (class_id) {
+            const [c] = await db.execute('SELECT institutionId FROM classes WHERE id = ?', [class_id]);
+            if (c.length === 0 || !sameTenant(req, c[0].institutionId)) {
+                return res.status(403).json({ error: 'That class belongs to another institution.' });
+            }
+        }
+
         let updateQuery = `
-            UPDATE study_materials 
+            UPDATE study_materials
                SET title=?, description=?, class_id=?, subject_id=?, material_type=?, external_link=?
         `;
         let params = [
-            title, description || null, class_id, subject_id || null, 
+            title, description || null, class_id, subject_id || null,
             material_type || 'Notes', external_link || null
         ];
 
-        // Only update the file if a new Base64 string was sent
         if (materialFile !== undefined) {
             updateQuery += `, file_path=?`;
             params.push(materialFile || null);
@@ -6945,10 +6935,12 @@ app.put('/api/admin/study-materials/:id', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 24.5 Delete Material ---
+// --- 24.5 Delete Material (ownership) ---
 app.delete('/api/admin/study-materials/:id', async (req, res) => {
     try {
-        // Because the file is stored as LONGTEXT, deleting the row deletes the file data automatically.
+        const [own] = await db.execute('SELECT institutionId FROM study_materials WHERE id = ?', [req.params.id]);
+        if (own.length === 0) return res.json({ success: true });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This material belongs to another institution.' });
         await db.execute('DELETE FROM study_materials WHERE id = ?', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -6957,31 +6949,41 @@ app.delete('/api/admin/study-materials/:id', async (req, res) => {
 
 
 // =====================================================================
-//  BACKEND — Section 22: SYLLABUS  (v5 — fast viewer, self-contained)
+//  BACKEND — Section 22: SYLLABUS  (v5 — TENANT-SCOPED)
+//   Detection/slicing helpers unchanged. Every route now verifies the
+//   syllabus/chapter/keyword belongs to the caller's institution (by-id
+//   routes resolve institutionId via join). Create/update require the
+//   class to be yours so the fan-out notify can't reach another school.
 //
-//  REPLACE your whole Section 22 block (v4) with this.
-//  No separate file, no require('./syllabusDetect') needed.
-//  Requires (run in backend, commit package.json):
-//      npm install pdfjs-dist@3.11.174 pdf-lib --save
+//   ⚠ syllabus/chapter/:id/pdf is loaded by the viewer iframe — it's under
+//     the /api gate, so it only works if the frontend FETCHES it (token via
+//     interceptor) and renders a blob URL, not a raw <iframe src>.
 //
-//  What changed vs v4:
-//    • Chapters are sliced ONCE at upload and stored, so opening a
-//      chapter is instant (no re-slicing the whole book each click).
-//    • New endpoint  GET /chapter/:id/pdf  returns the chapter as a real
-//      application/pdf file — the iframe loads it directly (no giant
-//      base64 in the browser). This is what fixes the stuck spinner.
-//
-//  What changed vs v5 (this build):
-//    • Keywords now support an `example` column in addition to
-//      `definition`. The add-keyword endpoint (22.16) stores it.
-//      Run this migration once:
-//        ALTER TABLE syllabus_keywords ADD COLUMN example text AFTER definition;
-//
-//  Reuses nowSQL() from Section 16.
+//   Requires: npm install pdfjs-dist@3.11.174 pdf-lib --save
+//   Reuses nowSQL() (Section 16), studentIdsForClass/createNotifications (25).
 // =====================================================================
 
 const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
 const { PDFDocument } = require('pdf-lib');
+
+// ---- tenant helpers: resolve a syllabus' institution from any id ----
+async function _sylInstBySyllabus(id) {
+    const [r] = await db.execute('SELECT institutionId FROM syllabus WHERE id = ?', [id]);
+    return r.length ? r[0].institutionId : null;
+}
+async function _sylInstByChapter(id) {
+    const [r] = await db.execute(
+        `SELECT s.institutionId FROM syllabus_chapters c
+           JOIN syllabus s ON s.id = c.syllabus_id WHERE c.id = ?`, [id]);
+    return r.length ? r[0].institutionId : null;
+}
+async function _sylInstByKeyword(id) {
+    const [r] = await db.execute(
+        `SELECT s.institutionId FROM syllabus_keywords k
+           JOIN syllabus_chapters c ON c.id = k.chapter_id
+           JOIN syllabus s ON s.id = c.syllabus_id WHERE k.id = ?`, [id]);
+    return r.length ? r[0].institutionId : null;
+}
 
 // ---------------------------------------------------------------------
 //  Detection helpers
@@ -7135,7 +7137,6 @@ function _formatChapterTitle(clean, seq) {
 
 // ---------------------------------------------------------------------
 //  Slicing helpers
-//  sliceAll loads the source ONCE and cuts many ranges — fast at upload.
 // ---------------------------------------------------------------------
 async function sliceAll(buffer, ranges) {
     const src = await PDFDocument.load(buffer, { ignoreEncryption: true });
@@ -7161,7 +7162,6 @@ async function slicePdf(buffer, from, to) {
     return slices[0];
 }
 
-// Re-cut a single chapter's slice from its parent book (after edits)
 async function resliceChapter(chapterId) {
     const [rows] = await db.execute(
         `SELECT c.page_from, c.page_to, s.doc_data, s.page_offset
@@ -7190,7 +7190,7 @@ async function resliceChapter(chapterId) {
 
 // --- 22.1 Syllabus Management list ----------------------------------
 app.get('/api/admin/syllabus/list/:instId', async (req, res) => {
-    const { instId } = req.params;
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     const { classId } = req.query;
     try {
         let sql = `
@@ -7220,19 +7220,23 @@ app.get('/api/admin/syllabus/list/:instId', async (req, res) => {
 
 // --- 22.2 Create a syllabus -----------------------------------------
 app.post('/api/admin/syllabus', async (req, res) => {
-    const {
-        institutionId, academic_year_id, class_id, subject_id, teacher_id, created_by
-    } = req.body;
-    if (!institutionId || !class_id || !subject_id) {
-        return res.status(400).json({ error: 'institutionId, class_id and subject_id are required.' });
+    const institutionId = req.auth.institutionId;
+    const created_by = req.auth.userId;
+    const { academic_year_id, class_id, subject_id, teacher_id } = req.body;
+    if (!class_id || !subject_id) {
+        return res.status(400).json({ error: 'class_id and subject_id are required.' });
     }
     try {
+        const [c] = await db.execute('SELECT institutionId FROM classes WHERE id = ?', [class_id]);
+        if (c.length === 0 || !sameTenant(req, c[0].institutionId)) {
+            return res.status(403).json({ error: 'That class belongs to another institution.' });
+        }
         const [result] = await db.execute(
             `INSERT INTO syllabus
                (institutionId, academic_year_id, class_id, subject_id, teacher_id, created_by)
              VALUES (?, ?, ?, ?, ?, ?)`,
             [institutionId, academic_year_id || null, class_id, subject_id,
-             teacher_id || null, created_by || null]
+             teacher_id || null, created_by]
         );
         res.json({ success: true, id: result.insertId });
     } catch (err) {
@@ -7248,6 +7252,15 @@ app.post('/api/admin/syllabus', async (req, res) => {
 app.put('/api/admin/syllabus/:id', async (req, res) => {
     const { class_id, subject_id, teacher_id } = req.body;
     try {
+        const inst = await _sylInstBySyllabus(req.params.id);
+        if (inst === null) return res.status(404).json({ error: 'Syllabus not found.' });
+        if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This syllabus belongs to another institution.' });
+        if (class_id) {
+            const [c] = await db.execute('SELECT institutionId FROM classes WHERE id = ?', [class_id]);
+            if (c.length === 0 || !sameTenant(req, c[0].institutionId)) {
+                return res.status(403).json({ error: 'That class belongs to another institution.' });
+            }
+        }
         await db.execute(
             `UPDATE syllabus SET class_id = ?, subject_id = ?, teacher_id = ? WHERE id = ?`,
             [class_id, subject_id, teacher_id || null, req.params.id]
@@ -7260,6 +7273,9 @@ app.put('/api/admin/syllabus/:id', async (req, res) => {
 // --- 22.4 Delete a syllabus -----------------------------------------
 app.delete('/api/admin/syllabus/:id', async (req, res) => {
     try {
+        const inst = await _sylInstBySyllabus(req.params.id);
+        if (inst === null) return res.json({ success: true });
+        if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This syllabus belongs to another institution.' });
         await db.execute('DELETE FROM syllabus WHERE id = ?', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -7268,7 +7284,8 @@ app.delete('/api/admin/syllabus/:id', async (req, res) => {
 
 // --- 22.5 Resolve a syllabus by class + subject ---------------------
 app.get('/api/admin/syllabus/resolve/:instId/:classId/:subjectId', async (req, res) => {
-    const { instId, classId, subjectId } = req.params;
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    const { classId, subjectId } = req.params;
     try {
         const [rows] = await db.execute(
             `SELECT s.id, s.teacher_id, t.name AS teacher_name
@@ -7284,6 +7301,9 @@ app.get('/api/admin/syllabus/resolve/:instId/:classId/:subjectId', async (req, r
 // --- 22.6 Chapters of a syllabus ------------------------------------
 app.get('/api/admin/syllabus/:syllabusId/chapters', async (req, res) => {
     try {
+        const inst = await _sylInstBySyllabus(req.params.syllabusId);
+        if (inst === null) return res.json([]);
+        if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This syllabus belongs to another institution.' });
         const [rows] = await db.execute(
             `SELECT c.id, c.syllabus_id, c.chapter_order, c.title,
                     c.page_from, c.page_to, c.doc_pages,
@@ -7304,40 +7324,48 @@ app.get('/api/admin/syllabus/:syllabusId/chapters', async (req, res) => {
 app.get('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
     try {
         const [rows] = await db.execute(
-            `SELECT doc_name, doc_pages, page_offset, (doc_data IS NOT NULL) AS has_book
+            `SELECT institutionId, doc_name, doc_pages, page_offset, (doc_data IS NOT NULL) AS has_book
                FROM syllabus WHERE id = ?`,
             [req.params.syllabusId]
         );
-        res.json(rows[0] || { has_book: 0 });
+        if (!rows.length) return res.json({ has_book: 0 });
+        if (!sameTenant(req, rows[0].institutionId)) return res.status(403).json({ error: 'This syllabus belongs to another institution.' });
+        const { doc_name, doc_pages, page_offset, has_book } = rows[0];
+        res.json({ doc_name, doc_pages, page_offset, has_book });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 
 // --- 22.8 Upload textbook -> detect chapters -> pre-slice each ------
 app.put('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
-    const { doc_name, doc_data, page_offset, actor_id } = req.body;
+    const { doc_name, doc_data, page_offset } = req.body;
+    const actor_id = req.auth.userId;
     const syllabusId = req.params.syllabusId;
     if (!doc_data) return res.status(400).json({ error: 'doc_data is required.' });
- 
+
     try {
+        const inst = await _sylInstBySyllabus(syllabusId);
+        if (inst === null) return res.status(404).json({ error: 'Syllabus not found.' });
+        if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This syllabus belongs to another institution.' });
+
         const base64 = String(doc_data).replace(/^data:[^;]+;base64,/, '');
         const buffer = Buffer.from(base64, 'base64');
         const offset = parseInt(page_offset, 10) || 0;
- 
+
         const { total, chapters } = await detectChapters(buffer);
- 
+
         await db.execute(
             `UPDATE syllabus
                 SET doc_name = ?, doc_data = ?, doc_pages = ?, page_offset = ?, updated_at = ?
               WHERE id = ?`,
             [doc_name || null, doc_data, total, offset, nowSQL(), syllabusId]
         );
- 
+
         await db.execute('DELETE FROM syllabus_chapters WHERE syllabus_id = ?', [syllabusId]);
- 
+
         const ranges = chapters.map(c => [c.page_from + offset, c.page_to + offset]);
         const { slices } = await sliceAll(buffer, ranges);
- 
+
         let order = 0;
         for (let i = 0; i < chapters.length; i++) {
             const ch = chapters[i];
@@ -7350,9 +7378,7 @@ app.put('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
                 [syllabusId, order++, ch.title, ch.page_from, ch.page_to, doc_name || null, dataUri, pages]
             );
         }
- 
-        // 🔔 Notify the class's active students that material is available.
-        //    Own try/catch so a notify-side issue can't fail the upload.
+
         try {
             const [info] = await db.execute(
                 `SELECT s.institutionId, s.class_id, sub.name AS subject_name
@@ -7373,7 +7399,7 @@ app.put('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
                 });
             }
         } catch (e) { console.warn('[notify syllabus]', e.message); }
- 
+
         res.json({ success: true, total_pages: total, chapters: chapters.length });
     } catch (err) {
         console.error('Textbook detection failed:', err);
@@ -7385,8 +7411,12 @@ app.put('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
 // --- 22.9 Change page offset -> re-slice all chapters ---------------
 app.put('/api/admin/syllabus/:syllabusId/book/offset', async (req, res) => {
     try {
-        const offset = parseInt(req.body.page_offset, 10) || 0;
         const sid = req.params.syllabusId;
+        const inst = await _sylInstBySyllabus(sid);
+        if (inst === null) return res.status(404).json({ error: 'Syllabus not found.' });
+        if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This syllabus belongs to another institution.' });
+
+        const offset = parseInt(req.body.page_offset, 10) || 0;
         await db.execute('UPDATE syllabus SET page_offset = ? WHERE id = ?', [offset, sid]);
 
         const [bookRows] = await db.execute('SELECT doc_data FROM syllabus WHERE id = ?', [sid]);
@@ -7411,6 +7441,9 @@ app.put('/api/admin/syllabus/:syllabusId/book/offset', async (req, res) => {
 // --- 22.10 A chapter as a real PDF file (iframe loads this) ---------
 app.get('/api/admin/syllabus/chapter/:id/pdf', async (req, res) => {
     try {
+        const inst = await _sylInstByChapter(req.params.id);
+        if (inst === null) return res.status(404).send('No document');
+        if (!sameTenant(req, inst)) return res.status(403).send('Forbidden');
         const [rows] = await db.execute('SELECT doc_data FROM syllabus_chapters WHERE id = ?', [req.params.id]);
         if (!rows.length || !rows[0].doc_data) return res.status(404).send('No document');
         const base64 = String(rows[0].doc_data).replace(/^data:[^;]+;base64,/, '');
@@ -7426,6 +7459,9 @@ app.get('/api/admin/syllabus/chapter/:id/pdf', async (req, res) => {
 // --- 22.10b A chapter's stored slice as JSON (kept for compatibility)
 app.get('/api/admin/syllabus/chapter/:id/doc', async (req, res) => {
     try {
+        const inst = await _sylInstByChapter(req.params.id);
+        if (inst === null) return res.json({});
+        if (!sameTenant(req, inst)) return res.status(403).json({ error: 'Forbidden' });
         const [rows] = await db.execute(
             'SELECT doc_name, doc_data, doc_pages FROM syllabus_chapters WHERE id = ?', [req.params.id]);
         if (!rows.length || !rows[0].doc_data) return res.json({});
@@ -7436,11 +7472,16 @@ app.get('/api/admin/syllabus/chapter/:id/doc', async (req, res) => {
 
 // --- 22.11 Create a chapter (manual) -> slice it --------------------
 app.post('/api/admin/syllabus/chapters', async (req, res) => {
-    const { syllabus_id, title, page_from, page_to, actor_id } = req.body;
+    const { syllabus_id, title, page_from, page_to } = req.body;
+    const actor_id = req.auth.userId;
     if (!syllabus_id || !title) {
         return res.status(400).json({ error: 'syllabus_id and title are required.' });
     }
     try {
+        const inst = await _sylInstBySyllabus(syllabus_id);
+        if (inst === null) return res.status(404).json({ error: 'Syllabus not found.' });
+        if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This syllabus belongs to another institution.' });
+
         const [[{ maxOrder }]] = await db.execute(
             `SELECT COALESCE(MAX(chapter_order), -1) + 1 AS maxOrder
                FROM syllabus_chapters WHERE syllabus_id = ?`, [syllabus_id]);
@@ -7450,9 +7491,7 @@ app.post('/api/admin/syllabus/chapters', async (req, res) => {
             [syllabus_id, maxOrder, title, page_from || null, page_to || null]);
         await resliceChapter(result.insertId);
         await db.execute('UPDATE syllabus SET updated_at = ? WHERE id = ?', [nowSQL(), syllabus_id]);
- 
-        // 🔔 Notify the class's active students about the new chapter.
-        //    Own try/catch so a notify issue can't fail the create.
+
         try {
             const [info] = await db.execute(
                 `SELECT s.institutionId, s.class_id, sub.name AS subject_name
@@ -7471,7 +7510,7 @@ app.post('/api/admin/syllabus/chapters', async (req, res) => {
                 });
             }
         } catch (e) { console.warn('[notify syllabus chapter]', e.message); }
- 
+
         res.json({ success: true, id: result.insertId });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -7481,6 +7520,9 @@ app.post('/api/admin/syllabus/chapters', async (req, res) => {
 app.put('/api/admin/syllabus/chapters/:id', async (req, res) => {
     const { title, page_from, page_to } = req.body;
     try {
+        const inst = await _sylInstByChapter(req.params.id);
+        if (inst === null) return res.status(404).json({ error: 'Chapter not found.' });
+        if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This chapter belongs to another institution.' });
         await db.execute(
             `UPDATE syllabus_chapters SET title = ?, page_from = ?, page_to = ? WHERE id = ?`,
             [title, page_from || null, page_to || null, req.params.id]);
@@ -7493,6 +7535,9 @@ app.put('/api/admin/syllabus/chapters/:id', async (req, res) => {
 // --- 22.13 Delete a chapter -----------------------------------------
 app.delete('/api/admin/syllabus/chapters/:id', async (req, res) => {
     try {
+        const inst = await _sylInstByChapter(req.params.id);
+        if (inst === null) return res.json({ success: true });
+        if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This chapter belongs to another institution.' });
         await db.execute('DELETE FROM syllabus_chapters WHERE id = ?', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -7503,6 +7548,9 @@ app.delete('/api/admin/syllabus/chapters/:id', async (req, res) => {
 app.put('/api/admin/syllabus/chapter/:id/periods', async (req, res) => {
     const { periods, start_date, end_date } = req.body;
     try {
+        const inst = await _sylInstByChapter(req.params.id);
+        if (inst === null) return res.status(404).json({ error: 'Chapter not found.' });
+        if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This chapter belongs to another institution.' });
         await db.execute(
             `UPDATE syllabus_chapters SET periods = ?, start_date = ?, end_date = ? WHERE id = ?`,
             [periods || 0, start_date || null, end_date || null, req.params.id]);
@@ -7512,9 +7560,11 @@ app.put('/api/admin/syllabus/chapter/:id/periods', async (req, res) => {
 
 
 // --- 22.15 Keywords for a chapter -----------------------------------
-//  SELECT * already returns the new `example` column.
 app.get('/api/admin/syllabus/chapter/:id/keywords', async (req, res) => {
     try {
+        const inst = await _sylInstByChapter(req.params.id);
+        if (inst === null) return res.json([]);
+        if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This chapter belongs to another institution.' });
         const [rows] = await db.execute(
             'SELECT * FROM syllabus_keywords WHERE chapter_id = ? ORDER BY term', [req.params.id]);
         res.json(rows);
@@ -7527,6 +7577,9 @@ app.post('/api/admin/syllabus/chapter/:id/keywords', async (req, res) => {
     const { term, definition, example } = req.body;
     if (!term || !term.trim()) return res.status(400).json({ error: 'term is required.' });
     try {
+        const inst = await _sylInstByChapter(req.params.id);
+        if (inst === null) return res.status(404).json({ error: 'Chapter not found.' });
+        if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This chapter belongs to another institution.' });
         const [result] = await db.execute(
             'INSERT INTO syllabus_keywords (chapter_id, term, definition, example) VALUES (?, ?, ?, ?)',
             [req.params.id, term.trim(), definition || null, example || null]);
@@ -7538,6 +7591,9 @@ app.post('/api/admin/syllabus/chapter/:id/keywords', async (req, res) => {
 // --- 22.17 Delete a keyword -----------------------------------------
 app.delete('/api/admin/syllabus/keywords/:keywordId', async (req, res) => {
     try {
+        const inst = await _sylInstByKeyword(req.params.keywordId);
+        if (inst === null) return res.json({ success: true });
+        if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This keyword belongs to another institution.' });
         await db.execute('DELETE FROM syllabus_keywords WHERE id = ?', [req.params.keywordId]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -7546,27 +7602,50 @@ app.delete('/api/admin/syllabus/keywords/:keywordId', async (req, res) => {
 
 
 // ====================================================================
-// === GROUP CHAT MODULE (UNIFIED PERMISSIONS & MULTI-TENANT) ========
+// === GROUP CHAT MODULE  (TENANT-SCOPED) =============================
+//   Actor identity (userId/role/institutionId) now comes from req.auth,
+//   not from the body/query. Every group route verifies the group belongs
+//   to the actor's institution; member/list queries are scoped to the
+//   actor's institution.
+//
+//   ⚠ SOCKET.IO AUTH GAP — IMPORTANT:
+//     Socket.IO connections do NOT pass through the Express /api JWT gate,
+//     so the socket handlers below still trust the `userId` in each event
+//     payload. The institution cross-checks added here stop a *truthful*
+//     user from reaching another tenant's group, but a client could still
+//     spoof `userId`. The real fix is to authenticate the socket HANDSHAKE
+//     (verify the JWT in an io.use() middleware and read socket.user.id
+//     instead of payload.userId). That needs the frontend to send the
+//     token when it connects. Say the word and I'll wire up both sides.
 // ====================================================================
 
 // --- 1. Unified Helper for Group Permissions ---
+//   Identity from the token. When the route targets a specific group, the
+//   group must belong to the actor's institution (cross-tenant 403).
 const checkGroupPermission = (action) => async (req, res, next) => {
     try {
-        const userId = req.body.userId || req.query.userId;
-        if (!userId) return res.status(400).json({ message: 'userId is required.' });
+        const userId = req.auth.userId;
+        const role = req.auth.role;
+        const institutionId = req.auth.institutionId;
 
-        const [users] = await db.execute(
-            'SELECT role, institutionId FROM users WHERE id = ?', [userId]
-        );
-        if (users.length === 0) return res.status(404).json({ message: 'User not found' });
-        const user = users[0];
+        // If this action targets a specific group, it must be in our tenant.
+        if (req.params.groupId) {
+            const [grp] = await db.execute(
+                'SELECT created_by, institutionId FROM `groups` WHERE id = ?',
+                [req.params.groupId]
+            );
+            if (grp.length === 0) return res.status(404).json({ message: 'Group not found.' });
+            if (!sameTenant(req, grp[0].institutionId)) {
+                return res.status(403).json({ message: 'This group belongs to another institution.' });
+            }
+            req._groupCreatedBy = grp[0].created_by;
+        }
 
-        const isSystemAdmin = (user.role === 'Super Admin' || user.role === 'Developer');
-
+        const isSystemAdmin = (role === 'Super Admin' || role === 'Developer');
         if (isSystemAdmin) {
             req.isAdminEquivalent = true;
-            req.actorRole = user.role;
-            req.actorInstId = user.institutionId;
+            req.actorRole = role;
+            req.actorInstId = institutionId;
             return next();
         }
 
@@ -7575,25 +7654,21 @@ const checkGroupPermission = (action) => async (req, res, next) => {
               FROM permissions p
               JOIN roles r ON p.role_id = r.id
              WHERE r.role_name = ? AND r.institutionId = ? AND p.module_name = 'GroupChat'
-        `, [user.role, user.institutionId]);
+        `, [role, institutionId]);
 
         if (perms.length > 0 && perms[0][`can_${action}`]) {
             req.isAdminEquivalent = true;
-            req.actorRole = user.role;
-            req.actorInstId = user.institutionId;
+            req.actorRole = role;
+            req.actorInstId = institutionId;
             return next();
         }
 
         // Creator of the group can still edit/delete their own group
         if ((action === 'edit' || action === 'delete') && req.params.groupId) {
-            const [grp] = await db.execute(
-                'SELECT created_by FROM `groups` WHERE id = ?',
-                [req.params.groupId]
-            );
-            if (grp.length > 0 && String(grp[0].created_by) === String(userId)) {
+            if (String(req._groupCreatedBy) === String(userId)) {
                 req.isAdminEquivalent = false;
-                req.actorRole = user.role;
-                req.actorInstId = user.institutionId;
+                req.actorRole = role;
+                req.actorInstId = institutionId;
                 return next();
             }
         }
@@ -7607,15 +7682,8 @@ const checkGroupPermission = (action) => async (req, res, next) => {
 
 // --- 2. Group Options (classes + roles for group creation UI) ---
 app.get('/api/groups/options', async (req, res) => {
-    const { userId, instId } = req.query;
-    if (!userId || !instId) return res.status(400).json({ error: 'userId and instId are required' });
-
+    const instId = req.auth.role === 'Developer' ? (req.query.instId || req.auth.institutionId) : req.auth.institutionId;
     try {
-        const [users] = await db.execute(
-            'SELECT role, institutionId FROM users WHERE id = ?', [userId]
-        );
-        if (users.length === 0) return res.status(404).json({ error: 'User not found' });
-
         const [roles] = await db.execute(`
             SELECT DISTINCT role_name
               FROM roles
@@ -7647,11 +7715,8 @@ app.get('/api/groups/options', async (req, res) => {
 
 // --- 2.1 Get Users for Specific Selection ---
 app.get('/api/groups/users-options', async (req, res) => {
-    const { instId } = req.query;
-    if (!instId) return res.status(400).json({ error: 'instId is required' });
-
+    const instId = req.auth.role === 'Developer' ? (req.query.instId || req.auth.institutionId) : req.auth.institutionId;
     try {
-        // UPDATED: Added a LEFT JOIN to attach the exact class name to each user
         const [users] = await db.execute(`
             SELECT 
                 u.id, 
@@ -7667,7 +7732,6 @@ app.get('/api/groups/users-options', async (req, res) => {
             WHERE u.institutionId = ?
             ORDER BY u.name ASC
         `, [instId]);
-        
         res.json(users);
     } catch (error) {
         console.error('Error fetching users for group options:', error.message);
@@ -7678,31 +7742,32 @@ app.get('/api/groups/users-options', async (req, res) => {
 // --- 3. Create Group ---
 app.post('/api/groups', checkGroupPermission('edit'), async (req, res) => {
     try {
+        const userId = req.auth.userId;
+        const institutionId = req.auth.institutionId;
         const {
-            userId, institutionId, name, description,
+            name, description,
             selectedCategories = [], selectedUserIds = [], backgroundColor, isReadOnly
         } = req.body;
- 
-        if (!userId || !institutionId || !name || (selectedCategories.length === 0 && selectedUserIds.length === 0)) {
-            return res.status(400).json({ message: 'userId, institutionId, name and at least one member or category are required.' });
+
+        if (!name || (selectedCategories.length === 0 && selectedUserIds.length === 0)) {
+            return res.status(400).json({ message: 'name and at least one member or category are required.' });
         }
- 
+
         let memberIds = [];
- 
-        // --- STEP 1: Process Categories (Roles/Classes) if any ---
+
         if (selectedCategories.length > 0) {
             let finalCategories = selectedCategories;
- 
+
             if (!req.isAdminEquivalent) {
                 finalCategories = selectedCategories.filter(cat =>
                     cat !== 'All' && cat !== 'Super Admin' && cat !== 'Developer' && cat !== 'Teacher'
                 );
             }
- 
+
             if (finalCategories.length > 0) {
                 let whereClauses = [];
                 let queryParams = [];
- 
+
                 finalCategories.forEach(category => {
                     if (category === 'All' && req.isAdminEquivalent) {
                         whereClauses.push('u.institutionId = ?');
@@ -7716,35 +7781,43 @@ app.post('/api/groups', checkGroupPermission('edit'), async (req, res) => {
                         queryParams.push(category, category, category, institutionId);
                     }
                 });
- 
+
                 const finalWhereClause = whereClauses.join(' OR ');
- 
+
                 const getUsersQuery = `
                     SELECT DISTINCT u.id
                       FROM users u
                       LEFT JOIN classes c ON u.class_id = c.id
                      WHERE ${finalWhereClause}
                 `;
- 
+
                 const [usersToAdd] = await db.execute(getUsersQuery, queryParams);
                 memberIds = usersToAdd.map(u => u.id);
             }
         }
- 
-        // --- STEP 2: Process Explicit User IDs ---
+
         const explicitUserIds = Array.isArray(selectedUserIds) ? selectedUserIds.map(id => parseInt(id, 10)) : [];
- 
-        // --- STEP 3: Combine and Deduplicate ---
-        const allMemberIds = [...new Set([parseInt(userId, 10), ...memberIds, ...explicitUserIds])];
- 
+
+        // Only members that belong to THIS institution may be added.
+        const candidateIds = [...new Set([parseInt(userId, 10), ...memberIds, ...explicitUserIds])].filter(Boolean);
+        let allMemberIds = candidateIds;
+        if (candidateIds.length) {
+            const placeholders = candidateIds.map(() => '?').join(',');
+            const [valid] = await db.execute(
+                `SELECT id FROM users WHERE institutionId = ? AND id IN (${placeholders})`,
+                [institutionId, ...candidateIds]
+            );
+            allMemberIds = valid.map(r => r.id);
+        }
+
         if (allMemberIds.length === 0) {
             return res.status(400).json({ message: 'No valid members found to add.' });
         }
- 
+
         const conn = await db.getConnection();
         try {
             await conn.beginTransaction();
- 
+
             const [groupResult] = await conn.execute(
                 `INSERT INTO \`groups\`
                    (institutionId, name, description, created_by, background_color, is_read_only)
@@ -7753,23 +7826,20 @@ app.post('/api/groups', checkGroupPermission('edit'), async (req, res) => {
                  backgroundColor || '#e5ddd5', isReadOnly ? 1 : 0]
             );
             const groupId = groupResult.insertId;
- 
+
             for (const memberId of allMemberIds) {
                 await conn.execute(
                     'INSERT IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)',
                     [groupId, memberId]
                 );
             }
- 
-            // 🔔 Notify everyone added to the group (creator excluded via
-            //    actor_id). Inside the transaction (conn); self-catching, so
-            //    it can never break the group creation.
+
             await createNotifications({
                 institutionId, recipientIds: allMemberIds, type: 'group_chat',
                 title: 'Added to a group', body: name,
                 link: 'GroupChat', entity_id: groupId, actor_id: userId
             }, conn);
- 
+
             await conn.commit();
             res.status(201).json({ message: 'Group created successfully!', groupId });
         } catch (err) {
@@ -7786,16 +7856,10 @@ app.post('/api/groups', checkGroupPermission('edit'), async (req, res) => {
 
 // --- 4. List Groups for a User ---
 app.get('/api/groups', async (req, res) => {
-    const { userId, instId } = req.query;
-    if (!userId || !instId) return res.status(400).json({ error: 'userId and instId are required' });
-
+    const userId = req.auth.userId;
+    const instId = req.auth.role === 'Developer' ? (req.query.instId || req.auth.institutionId) : req.auth.institutionId;
     try {
-        const [users] = await db.execute(
-            'SELECT role, institutionId FROM users WHERE id = ?', [userId]
-        );
-        if (users.length === 0) return res.status(404).json({ error: 'User not found' });
-
-        const isSystemAdmin = (users[0].role === 'Super Admin' || users[0].role === 'Developer');
+        const isSystemAdmin = (req.auth.role === 'Super Admin' || req.auth.role === 'Developer');
 
         const [groups] = await db.execute(`
             SELECT
@@ -7850,16 +7914,10 @@ app.get('/api/groups', async (req, res) => {
 // --- 5. Get Group Details ---
 app.get('/api/groups/:groupId/details', async (req, res) => {
     const { groupId } = req.params;
-    const { userId } = req.query;
-    if (!userId) return res.status(400).json({ error: 'userId is required' });
-
+    const userId = req.auth.userId;
     try {
-        const [users] = await db.execute(
-            'SELECT role, institutionId FROM users WHERE id = ?', [userId]
-        );
-        if (users.length === 0) return res.status(404).json({ error: 'User not found' });
-
-        const { role, institutionId } = users[0];
+        const role = req.auth.role;
+        const institutionId = req.auth.institutionId;
         const isSystemAdmin = (role === 'Super Admin' || role === 'Developer');
 
         const [grp] = await db.execute(
@@ -7869,10 +7927,10 @@ app.get('/api/groups/:groupId/details', async (req, res) => {
         if (grp.length === 0) return res.status(404).json({ message: 'Group not found.' });
 
         if (!isSystemAdmin) {
-           const [memberCheck] = await db.execute(
-        'SELECT group_id FROM group_members WHERE group_id = ? AND user_id = ?',
-        [parseInt(groupId, 10), parseInt(userId, 10)]
-    );
+            const [memberCheck] = await db.execute(
+                'SELECT group_id FROM group_members WHERE group_id = ? AND user_id = ?',
+                [parseInt(groupId, 10), parseInt(userId, 10)]
+            );
             if (memberCheck.length === 0) {
                 return res.status(403).json({ message: 'Access denied.' });
             }
@@ -7889,6 +7947,10 @@ app.get('/api/groups/:groupId/details', async (req, res) => {
 app.get('/api/groups/:groupId/members', async (req, res) => {
     const { groupId } = req.params;
     try {
+        const [grp] = await db.execute('SELECT institutionId FROM `groups` WHERE id = ?', [groupId]);
+        if (grp.length === 0) return res.json([]);
+        if (!sameTenant(req, grp[0].institutionId)) return res.status(403).json({ message: 'This group belongs to another institution.' });
+
         const [members] = await db.execute(`
             SELECT u.id, u.name, u.role, u.profile_pic
               FROM users u
@@ -7896,7 +7958,6 @@ app.get('/api/groups/:groupId/members', async (req, res) => {
              WHERE gm.group_id = ?
              ORDER BY u.name ASC
         `, [groupId]);
-        
         res.json(members);
     } catch (error) {
         console.error('Error fetching group members:', error);
@@ -7905,18 +7966,18 @@ app.get('/api/groups/:groupId/members', async (req, res) => {
 });
 
 // --- 5.2 Add Members to Group ---
-app.post('/api/groups/:groupId/members', async (req, res) => {
+app.post('/api/groups/:groupId/members', checkGroupPermission('edit'), async (req, res) => {
     const { groupId } = req.params;
-    const { institutionId, selectedCategories = [], selectedUserIds = [] } = req.body;
+    const institutionId = req.auth.institutionId;
+    const { selectedCategories = [], selectedUserIds = [] } = req.body;
 
-    if (!institutionId || (selectedCategories.length === 0 && selectedUserIds.length === 0)) {
-        return res.status(400).json({ message: 'Invalid data provided. Select at least one category or user.' });
+    if (selectedCategories.length === 0 && selectedUserIds.length === 0) {
+        return res.status(400).json({ message: 'Select at least one category or user.' });
     }
 
     try {
         let memberIds = [];
 
-        // --- STEP 1: Process Categories ---
         if (selectedCategories.length > 0) {
             let whereClauses = [];
             let queryParams = [];
@@ -7941,15 +8002,23 @@ app.post('/api/groups/:groupId/members', async (req, res) => {
                 LEFT JOIN classes c ON u.class_id = c.id 
                 WHERE ${finalWhereClause}
             `, queryParams);
-            
+
             memberIds = usersToAdd.map(u => u.id);
         }
 
-        // --- STEP 2: Process Explicit User IDs ---
         const explicitUserIds = Array.isArray(selectedUserIds) ? selectedUserIds.map(id => parseInt(id, 10)) : [];
 
-        // --- STEP 3: Combine and Deduplicate ---
-        const allMemberIds = [...new Set([...memberIds, ...explicitUserIds])];
+        // Only this institution's users may be added.
+        const candidateIds = [...new Set([...memberIds, ...explicitUserIds])].filter(Boolean);
+        let allMemberIds = [];
+        if (candidateIds.length) {
+            const placeholders = candidateIds.map(() => '?').join(',');
+            const [valid] = await db.execute(
+                `SELECT id FROM users WHERE institutionId = ? AND id IN (${placeholders})`,
+                [institutionId, ...candidateIds]
+            );
+            allMemberIds = valid.map(r => r.id);
+        }
 
         if (allMemberIds.length === 0) {
             return res.status(400).json({ message: 'No valid users found to add.' });
@@ -7979,7 +8048,7 @@ app.post('/api/groups/:groupId/members', async (req, res) => {
 });
 
 // --- 5.3 Remove Member from Group ---
-app.delete('/api/groups/:groupId/members/:memberId', async (req, res) => {
+app.delete('/api/groups/:groupId/members/:memberId', checkGroupPermission('edit'), async (req, res) => {
     const { groupId, memberId } = req.params;
     try {
         await db.execute(
@@ -7996,11 +8065,13 @@ app.delete('/api/groups/:groupId/members/:memberId', async (req, res) => {
 // --- 6. Mark Group as Seen ---
 app.post('/api/groups/:groupId/seen', async (req, res) => {
     const { groupId } = req.params;
-    const { userId } = req.body;
-    if (!userId) return res.status(400).json({ error: 'userId is required' });
-
+    const userId = req.auth.userId;
     try {
-    await db.execute(`
+        const [grp] = await db.execute('SELECT institutionId FROM `groups` WHERE id = ?', [groupId]);
+        if (grp.length === 0) return res.sendStatus(404);
+        if (!sameTenant(req, grp[0].institutionId)) return res.status(403).json({ message: 'This group belongs to another institution.' });
+
+        await db.execute(`
             INSERT INTO group_last_seen (group_id, user_id, last_seen_timestamp)
             VALUES (?, ?, NOW())
             ON DUPLICATE KEY UPDATE last_seen_timestamp = NOW()
@@ -8016,7 +8087,6 @@ app.post('/api/groups/:groupId/seen', async (req, res) => {
 app.put('/api/groups/:groupId', checkGroupPermission('edit'), async (req, res) => {
     const { groupId } = req.params;
     const { name, backgroundColor, isReadOnly } = req.body;
-
     try {
         await db.execute(
             'UPDATE `groups` SET name = ?, background_color = ?, is_read_only = ? WHERE id = ?',
@@ -8032,10 +8102,8 @@ app.put('/api/groups/:groupId', checkGroupPermission('edit'), async (req, res) =
 // --- 8. Update Group Display Picture ---
 app.put('/api/groups/:groupId/dp', checkGroupPermission('edit'), async (req, res) => {
     const { groupId } = req.params;
-    const { group_dp } = req.body; 
-
+    const { group_dp } = req.body;
     if (!group_dp) return res.status(400).json({ message: 'No image data provided.' });
-
     try {
         await db.execute(
             'UPDATE `groups` SET group_dp_url = ? WHERE id = ?',
@@ -8069,23 +8137,22 @@ app.delete('/api/groups/:groupId', checkGroupPermission('delete'), async (req, r
 // --- 10. Get Chat History ---
 app.get('/api/groups/:groupId/history', async (req, res) => {
     const { groupId } = req.params;
-    const { userId, page = 1, limit = 20 } = req.query;
+    const userId = req.auth.userId;
+    const { page = 1, limit = 20 } = req.query;
     const groupIdInt = parseInt(groupId, 10);
-    if (!userId) return res.status(400).json({ error: 'userId is required' });
-
     try {
-        const [users] = await db.execute(
-            'SELECT role, institutionId FROM users WHERE id = ?', [userId]
-        );
-        if (users.length === 0) return res.status(404).json({ error: 'User not found' });
+        const role = req.auth.role;
+        const isSystemAdmin = (role === 'Super Admin' || role === 'Developer');
 
-        const isSystemAdmin = (users[0].role === 'Super Admin' || users[0].role === 'Developer');
+        const [grp] = await db.execute('SELECT institutionId FROM `groups` WHERE id = ?', [groupIdInt]);
+        if (grp.length === 0) return res.status(404).json({ message: 'Group not found.' });
+        if (!sameTenant(req, grp[0].institutionId)) return res.status(403).json({ message: 'This group belongs to another institution.' });
 
         if (!isSystemAdmin) {
-           const [memberCheck] = await db.execute(
-        'SELECT group_id FROM group_members WHERE group_id = ? AND user_id = ?',
-        [groupIdInt, parseInt(userId, 10)]
-    );
+            const [memberCheck] = await db.execute(
+                'SELECT group_id FROM group_members WHERE group_id = ? AND user_id = ?',
+                [groupIdInt, parseInt(userId, 10)]
+            );
             if (memberCheck.length === 0) {
                 return res.status(403).json({ message: 'Access denied.' });
             }
@@ -8147,27 +8214,22 @@ app.get('/api/groups/:groupId/history', async (req, res) => {
 
 // --- 11. Upload Chat Media (Base64) ---
 app.post('/api/groups/media', async (req, res) => {
-    const { userId, media, fileName, fileSize, fileMimeType } = req.body;
-    
-    if (!userId) return res.status(400).json({ error: 'userId is required' });
+    const { media, fileName, fileSize, fileMimeType } = req.body;
     if (!media) return res.status(400).json({ message: 'No media data provided.' });
 
     const MAX_SIZE_BYTES = 3 * 1024 * 1024; // 3MB limit
 
-    // Strict Size Validation
     if (fileSize && fileSize > MAX_SIZE_BYTES) {
         return res.status(413).json({ message: 'File exceeds the 3MB limit.' });
     }
-    
-    // A base64 string length * 0.75 roughly equals the file size in bytes
-    const estimatedSize = media.length * 0.75; 
+
+    const estimatedSize = media.length * 0.75;
     if (estimatedSize > (MAX_SIZE_BYTES * 1.1)) {
-         return res.status(413).json({ message: 'Payload is too large. Limit is 3MB.' });
+        return res.status(413).json({ message: 'Payload is too large. Limit is 3MB.' });
     }
 
-    // Immediately return the Base64 string so Socket.io can broadcast it
     res.status(201).json({
-        fileUrl: media, 
+        fileUrl: media,
         fileSize: fileSize || null,
         fileMimeType: fileMimeType || 'unknown',
         fileName: fileName || 'file'
@@ -8176,6 +8238,10 @@ app.post('/api/groups/media', async (req, res) => {
 
 // ====================================================================
 // === SOCKET.IO --- Real-Time Chat ===================================
+//   See the SOCKET.IO AUTH GAP note at the top of this section. The
+//   handlers below additionally enforce that the acting user and the
+//   group share an institution (Developer excepted), so a truthful
+//   Super Admin of one school can't post into / delete from another's.
 // ====================================================================
 
 io.on('connection', (socket) => {
@@ -8186,106 +8252,121 @@ io.on('connection', (socket) => {
             socket.join(`group-${data.groupId}`);
         }
     });
-socket.on('sendMessage', async (data) => {
-    const {
-        userId, groupId, messageType, messageText,
-        fileUrl, fileName, fileSize, fileMimeType,
-        replyToMessageId, clientMessageId
-    } = data;
 
-    if (!userId || !groupId || !messageType) return;
-    if (messageType === 'text' && !messageText?.trim()) return;
-    if (messageType !== 'text' && !fileUrl) return;
+    socket.on('sendMessage', async (data) => {
+        const {
+            userId, groupId, messageType, messageText,
+            fileUrl, fileName, fileSize, fileMimeType,
+            replyToMessageId, clientMessageId
+        } = data;
 
-    const roomName = `group-${groupId}`;
-    const conn = await db.getConnection();
+        if (!userId || !groupId || !messageType) return;
+        if (messageType === 'text' && !messageText?.trim()) return;
+        if (messageType !== 'text' && !fileUrl) return;
 
-    try {
-        const [[groupRow]] = await conn.execute(
-            'SELECT is_read_only, created_by, institutionId FROM `groups` WHERE id = ?',
-            [groupId]
-        );
-        const [[userRow]] = await conn.execute(
-            'SELECT role, institutionId FROM users WHERE id = ?',
-            [userId]
-        );
+        const roomName = `group-${groupId}`;
+        const conn = await db.getConnection();
 
-        if (!groupRow || !userRow) {
+        try {
+            const [[groupRow]] = await conn.execute(
+                'SELECT is_read_only, created_by, institutionId FROM `groups` WHERE id = ?',
+                [groupId]
+            );
+            const [[userRow]] = await conn.execute(
+                'SELECT role, institutionId FROM users WHERE id = ?',
+                [userId]
+            );
+
+            if (!groupRow || !userRow) {
+                conn.release();
+                return;
+            }
+
+            const isSystemAdmin = userRow.role === 'Super Admin' || userRow.role === 'Developer';
+            const isDeveloper = userRow.role === 'Developer';
+
+            // Tenant guard: the user and the group must share an institution
+            // (Developer may span tenants).
+            if (!isDeveloper && String(groupRow.institutionId) !== String(userRow.institutionId)) {
+                socket.emit('messageError', {
+                    message: 'You cannot post to this group.',
+                    clientMessageId: clientMessageId || null
+                });
+                conn.release();
+                return;
+            }
+
+            const isReadOnly = groupRow.is_read_only == 1;
+            const isCreator = String(groupRow.created_by) === String(userId);
+
+            if (isReadOnly && !isSystemAdmin && !isCreator) {
+                socket.emit('messageError', {
+                    message: 'Only admins can send messages in this group.',
+                    clientMessageId: clientMessageId || null
+                });
+                conn.release();
+                return;
+            }
+
+            const [[memberRow]] = await conn.execute(
+                'SELECT user_id FROM group_members WHERE group_id = ? AND user_id = ?',
+                [groupId, userId]
+            );
+
+            if (!memberRow && !isSystemAdmin) {
+                socket.emit('messageError', { message: 'You are not a member of this group.' });
+                conn.release();
+                return;
+            }
+
+            await conn.beginTransaction();
+
+            const [result] = await conn.execute(
+                `INSERT INTO group_chat_messages
+                   (user_id, group_id, message_type, message_text,
+                    file_url, file_name, file_size, file_mime_type, reply_to_message_id)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [userId, groupId, messageType, messageText || null,
+                 fileUrl || null, fileName || null, fileSize || null,
+                 fileMimeType || null, replyToMessageId || null]
+            );
+
+            const newMessageId = result.insertId;
+
+            const [rows] = await conn.execute(`
+                SELECT
+                    m.id, m.message_text,
+                  DATE_FORMAT(m.timestamp, '%Y-%m-%dT%H:%i:%sZ') AS timestamp,
+                    m.user_id, m.group_id, m.message_type,
+                    m.file_url, m.file_size, m.file_mime_type,
+                    m.is_edited, m.is_deleted, m.deleted_by,
+                    m.is_pinned, m.file_name, m.reply_to_message_id,
+                    u.name AS full_name, u.role,
+                    u.profile_pic AS profile_image_url, u.roll_no,
+                    reply_m.message_text AS reply_text,
+                    reply_m.message_type AS reply_type,
+                    reply_u.name AS reply_sender_name
+                FROM group_chat_messages m
+                JOIN users u ON m.user_id = u.id
+                LEFT JOIN group_chat_messages reply_m ON m.reply_to_message_id = reply_m.id
+                LEFT JOIN users reply_u ON reply_m.user_id = reply_u.id
+                WHERE m.id = ?
+            `, [newMessageId]);
+
+            await conn.commit();
+
+            const broadcastMessage = { ...rows[0], clientMessageId: clientMessageId || null };
+            io.to(roomName).emit('newMessage', broadcastMessage);
+            io.emit('updateGroupList', { groupId });
+
+        } catch (error) {
+            await conn.rollback();
+            console.error('Failed to save message:', error);
+        } finally {
             conn.release();
-            return;
         }
+    });
 
-        const isReadOnly = groupRow.is_read_only == 1;
-        const isSystemAdmin = userRow.role === 'Super Admin' || userRow.role === 'Developer';
-        const isCreator = String(groupRow.created_by) === String(userId);
-
-        if (isReadOnly && !isSystemAdmin && !isCreator) {
-            socket.emit('messageError', {
-                message: 'Only admins can send messages in this group.',
-                clientMessageId: clientMessageId || null
-            });
-            conn.release();
-            return;
-        }
-
-        const [[memberRow]] = await conn.execute(
-            'SELECT user_id FROM group_members WHERE group_id = ? AND user_id = ?',
-            [groupId, userId]
-        );
-
-        if (!memberRow && !isSystemAdmin) {
-            socket.emit('messageError', { message: 'You are not a member of this group.' });
-            conn.release();
-            return;
-        }
-
-        await conn.beginTransaction();
-
-        const [result] = await conn.execute(
-            `INSERT INTO group_chat_messages
-               (user_id, group_id, message_type, message_text,
-                file_url, file_name, file_size, file_mime_type, reply_to_message_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [userId, groupId, messageType, messageText || null,
-             fileUrl || null, fileName || null, fileSize || null,
-             fileMimeType || null, replyToMessageId || null]
-        );
-
-        const newMessageId = result.insertId;
-
-        const [rows] = await conn.execute(`
-            SELECT
-                m.id, m.message_text,
-              DATE_FORMAT(m.timestamp, '%Y-%m-%dT%H:%i:%sZ') AS timestamp,
-                m.user_id, m.group_id, m.message_type,
-                m.file_url, m.file_size, m.file_mime_type,
-                m.is_edited, m.is_deleted, m.deleted_by,
-                m.is_pinned, m.file_name, m.reply_to_message_id,
-                u.name AS full_name, u.role,
-                u.profile_pic AS profile_image_url, u.roll_no,
-                reply_m.message_text AS reply_text,
-                reply_m.message_type AS reply_type,
-                reply_u.name AS reply_sender_name
-            FROM group_chat_messages m
-            JOIN users u ON m.user_id = u.id
-            LEFT JOIN group_chat_messages reply_m ON m.reply_to_message_id = reply_m.id
-            LEFT JOIN users reply_u ON reply_m.user_id = reply_u.id
-            WHERE m.id = ?
-        `, [newMessageId]);
-
-        await conn.commit();
-
-        const broadcastMessage = { ...rows[0], clientMessageId: clientMessageId || null };
-        io.to(roomName).emit('newMessage', broadcastMessage);
-        io.emit('updateGroupList', { groupId });
-
-    } catch (error) {
-        await conn.rollback();
-        console.error('Failed to save message:', error);
-    } finally {
-        conn.release();
-    }
-});
     socket.on('deleteMessage', async (data) => {
         const { messageId, userId, groupId } = data;
         if (!messageId || !userId || !groupId) return;
@@ -8294,7 +8375,9 @@ socket.on('sendMessage', async (data) => {
         const conn = await db.getConnection();
         try {
             const [msgRows] = await conn.execute(
-                'SELECT user_id FROM group_chat_messages WHERE id = ?', [messageId]
+                `SELECT m.user_id, g.institutionId
+                   FROM group_chat_messages m JOIN \`groups\` g ON g.id = m.group_id
+                  WHERE m.id = ?`, [messageId]
             );
             if (msgRows.length === 0) return;
 
@@ -8305,6 +8388,10 @@ socket.on('sendMessage', async (data) => {
 
             const { role, institutionId } = userRows[0];
             const isSystemAdmin = (role === 'Super Admin' || role === 'Developer');
+            const isDeveloper = role === 'Developer';
+
+            // Tenant guard: the message's group must be in the actor's tenant.
+            if (!isDeveloper && String(msgRows[0].institutionId) !== String(institutionId)) return;
 
             const [perms] = await conn.execute(`
                 SELECT p.can_delete
@@ -8351,6 +8438,8 @@ socket.on('sendMessage', async (data) => {
             );
             if (msgRows.length === 0) return;
 
+            // Edit is owner-only, so cross-tenant edits are impossible (you
+            // can only edit a message you authored).
             if (String(msgRows[0].user_id) !== String(userId)) return;
 
             await conn.execute(
@@ -8409,58 +8498,42 @@ socket.on('sendMessage', async (data) => {
     socket.on('disconnect', () => {
         console.log(`User disconnected: ${socket.id}`);
     });
-}); 
+});
+
 
 
 // =====================================================================
-//  BACKEND — Section 23: ALUMNI
+//  BACKEND — Section 23: ALUMNI  (TENANT-SCOPED)
+//   instId from req.auth; create takes institutionId from the token;
+//   detail/photo/update/delete verify ownership. The promote route only
+//   processes students that belong to the caller's institution — without
+//   that, a crafted student_id could pull another school's student into
+//   your alumni AND flip their account to 'alumni' (deactivating them).
 //
-//  Append this whole block to backend/index.js, just BEFORE the final
-//  `const PORT = ...` line. (Replaces your previous Section 23.)
+//   ⚠ alumni/pic/:id streams the photo — it's under the /api gate, so a
+//     raw <img src> won't carry the token. Fetch it as a blob if needed.
 //
-//  Changes in this version:
-//    • The year filter is now a PLAIN CALENDAR YEAR (auto), mirroring
-//      Pre-Admissions. The academic-year (academic_years) logic is gone.
-//      - 23.1 returns the distinct YEAR(created_at) values present in the
-//        alumni table (newest first) so the dropdown is built from data.
-//      - 23.2 filters with YEAR(created_at) = ? when a numeric `year` is
-//        passed; omit it (or pass `all`) to return every year.
-//    • 23.3b streams an alumni's photo by id (unchanged).
-//    • 23.5 promote still anchors passout to the institution's ACTIVE
-//      academic year (unchanged — that drives the displayed passout_year,
-//      not the new filter).
-//
-//  No migration required — alumni already has created_at (CURRENT_TIMESTAMP).
-//  Reuses nowSQL() from Section 16.
+//   Reuses nowSQL() (Section 16).
 // =====================================================================
-
 
 // --- 23.1 Years for the filter — distinct calendar years from data --
-//   GET /api/admin/alumni/years/:instId
-//   Returns e.g. [2027, 2026] (newest first), taken from YEAR(created_at).
-//   A year only appears once at least one alumni record exists for it.
 app.get('/api/admin/alumni/years/:instId', async (req, res) => {
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     try {
         const [rows] = await db.execute(
             `SELECT DISTINCT YEAR(created_at) AS yr
                FROM alumni
               WHERE institutionId = ? AND created_at IS NOT NULL
               ORDER BY yr DESC`,
-            [req.params.instId]
+            [instId]
         );
         res.json(rows.map(r => r.yr).filter(Boolean));
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-
 // --- 23.2 Alumni list (card data) -----------------------------------
-//   GET /api/admin/alumni/:instId?year=YYYY&q=optional
-//   `year` is a calendar year (filters YEAR(created_at)); omit it or pass
-//   `all` to return every year. Light payload for the cards — excludes the
-//   heavy profile_pic/notes, but tells the card whether a photo exists via
-//   has_pic.
 app.get('/api/admin/alumni/:instId', async (req, res) => {
-    const { instId } = req.params;
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     const { year, q } = req.query;
     try {
         let sql = `
@@ -8489,27 +8562,23 @@ app.get('/api/admin/alumni/:instId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-
 // --- 23.3 Single alumni (full detail incl. picture) -----------------
 app.get('/api/admin/alumni/detail/:id', async (req, res) => {
     try {
-        const [rows] = await db.execute(
-            'SELECT * FROM alumni WHERE id = ?', [req.params.id]);
+        const [rows] = await db.execute('SELECT * FROM alumni WHERE id = ?', [req.params.id]);
         if (rows.length === 0) return res.status(404).json({ error: 'Alumni not found' });
+        if (!sameTenant(req, rows[0].institutionId)) return res.status(403).json({ error: 'This record belongs to another institution.' });
         res.json(rows[0]);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-
 // --- 23.3b Alumni photo (streams the stored picture) ----------------
-//   GET /api/admin/alumni/pic/:id
-//   profile_pic is stored as a data URL (data:image/...;base64,....).
-//   We decode it and serve real image bytes so the cards can show it.
 app.get('/api/admin/alumni/pic/:id', async (req, res) => {
     try {
         const [rows] = await db.execute(
-            'SELECT profile_pic FROM alumni WHERE id = ?', [req.params.id]);
+            'SELECT profile_pic, institutionId FROM alumni WHERE id = ?', [req.params.id]);
         if (!rows.length || !rows[0].profile_pic) return res.status(404).send('No image');
+        if (!sameTenant(req, rows[0].institutionId)) return res.status(403).send('Forbidden');
 
         const pic = String(rows[0].profile_pic);
         const m = /^data:([^;]+);base64,(.+)$/s.exec(pic);
@@ -8520,20 +8589,20 @@ app.get('/api/admin/alumni/pic/:id', async (req, res) => {
             res.setHeader('Cache-Control', 'private, max-age=3600');
             return res.end(buf);
         }
-        // Not a data URL — treat it as an external URL/path
         return res.redirect(pic);
     } catch (err) { res.status(500).send(err.message); }
 });
 
-
 // --- 23.4 Manually add an alumni ------------------------------------
 app.post('/api/admin/alumni', async (req, res) => {
     const b = req.body;
-    if (!b.institutionId) return res.status(400).json({ error: 'institutionId required.' });
+    const institutionId = req.auth.institutionId;
+    const created_by = req.auth.userId;
     try {
         let snap = {};
         if (b.user_id) {
-            const [u] = await db.execute('SELECT * FROM users WHERE id = ?', [b.user_id]);
+            // Snapshot only from a user in THIS institution.
+            const [u] = await db.execute('SELECT * FROM users WHERE id = ? AND institutionId = ?', [b.user_id, institutionId]);
             if (u.length) {
                 const s = u[0];
                 snap = {
@@ -8544,7 +8613,7 @@ app.post('/api/admin/alumni', async (req, res) => {
                 };
             }
         }
-        const merged = { ...snap, ...b };   // explicit body fields win
+        const merged = { ...snap, ...b, institutionId, created_by };
         const [result] = await db.execute(
             `INSERT INTO alumni
                (institutionId, user_id, academic_year_id, passout_year, final_class,
@@ -8568,26 +8637,18 @@ app.post('/api/admin/alumni', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-
 // --- 23.5 Promote a batch of students to Alumni ---------------------
-//   Called by the PROMOTION TAB when destination = "Alumni (Passout)".
-//   Body: { institutionId, student_ids: [..], final_class, created_by }
-//   The passout year/academic_year_id are taken from the institution's
-//   ACTIVE academic year on the server, so they are always correct.
 app.post('/api/admin/alumni/promote', async (req, res) => {
-    const {
-        institutionId, student_ids, academic_year_id,
-        passout_year, final_class, created_by
-    } = req.body;
-    if (!institutionId || !Array.isArray(student_ids) || student_ids.length === 0) {
-        return res.status(400).json({ error: 'institutionId and student_ids[] required.' });
+    const institutionId = req.auth.institutionId;
+    const created_by = req.auth.userId;
+    const { student_ids, academic_year_id, passout_year, final_class } = req.body;
+    if (!Array.isArray(student_ids) || student_ids.length === 0) {
+        return res.status(400).json({ error: 'student_ids[] required.' });
     }
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
 
-        // Anchor passout to the institution's ACTIVE academic year.
-        // Fall back to whatever the client sent only if none is active.
         const [ay] = await conn.execute(
             'SELECT id, name FROM academic_years WHERE institutionId = ? AND isActive = 1 LIMIT 1',
             [institutionId]
@@ -8601,7 +8662,11 @@ app.post('/api/admin/alumni/promote', async (req, res) => {
             if (!u.length) continue;
             const s = u[0];
 
-            // skip if already an alumni record for this user + year
+            // Only promote students that belong to THIS institution. Stops a
+            // crafted id from importing another school's student and from
+            // flipping their account to 'alumni'.
+            if (!sameTenant(req, s.institutionId)) continue;
+
             const [exists] = await conn.execute(
                 'SELECT id FROM alumni WHERE user_id = ? AND academic_year_id = ?',
                 [sid, yearId]
@@ -8619,7 +8684,6 @@ app.post('/api/admin/alumni/promote', async (req, res) => {
                  s.dob ?? null, s.address ?? null, s.profile_pic ?? null,
                  s.roll_no ?? null, s.admission_no ?? null, created_by ?? null]
             );
-            // mark the original account as alumni (off the active roster)
             await conn.execute(
                 "UPDATE users SET status = 'alumni' WHERE id = ?", [sid]);
             added++;
@@ -8632,8 +8696,7 @@ app.post('/api/admin/alumni/promote', async (req, res) => {
     } finally { conn.release(); }
 });
 
-
-// --- 23.6 Update the editable / extra fields ------------------------
+// --- 23.6 Update the editable / extra fields (ownership) ------------
 app.put('/api/admin/alumni/:id', async (req, res) => {
     const b = req.body;
     const fields = [
@@ -8646,27 +8709,32 @@ app.put('/api/admin/alumni/:id', async (req, res) => {
     fields.forEach(f => {
         if (b[f] !== undefined) { sets.push(`${f} = ?`); params.push(b[f] || null); }
     });
-    if (sets.length === 0) return res.json({ success: true });   // nothing to change
-    params.push(req.params.id);
+    if (sets.length === 0) return res.json({ success: true });
     try {
+        const [own] = await db.execute('SELECT institutionId FROM alumni WHERE id = ?', [req.params.id]);
+        if (own.length === 0) return res.status(404).json({ error: 'Alumni not found' });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This record belongs to another institution.' });
+        params.push(req.params.id);
         await db.execute(`UPDATE alumni SET ${sets.join(', ')} WHERE id = ?`, params);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-
-// --- 23.7 Delete an alumni record -----------------------------------
+// --- 23.7 Delete an alumni record (ownership) ----------------------
 app.delete('/api/admin/alumni/:id', async (req, res) => {
     try {
+        const [own] = await db.execute('SELECT institutionId FROM alumni WHERE id = ?', [req.params.id]);
+        if (own.length === 0) return res.json({ success: true });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This record belongs to another institution.' });
         await db.execute('DELETE FROM alumni WHERE id = ?', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-
 // --- 23.8 Candidates for manual add ---------------------------------
 app.get('/api/admin/alumni/candidates/:instId/:classId', async (req, res) => {
-    const { instId, classId } = req.params;
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    const { classId } = req.params;
     try {
         const [rows] = await db.execute(
             `SELECT id, name, roll_no, email, phone
@@ -8685,45 +8753,31 @@ app.get('/api/admin/alumni/candidates/:instId/:classId', async (req, res) => {
 
 
 // =====================================================================
-// === 14. LESSON PLAN MODULE ==========================================
-//
-//  REPLACE your whole Section 14 block with this. Only the POST changed:
-//  it now notifies EVERY active user that the guideline was updated.
-//  GET and DELETE are unchanged.
-//
-//  Uses createNotifications / allActiveUserIds from Section 25. No
-//  transaction here (single insert), so createNotifications is called
-//  with the global db; it swallows its own errors, so a notify problem
-//  can never break the upload.
-//
-//  Audience: allActiveUserIds = every active user in the institution
-//  (students + staff). The uploader is still excluded via actor_id (sent
-//  by LessonPlan.jsx) so they aren't notified about their own upload.
+// === 14. LESSON PLAN MODULE  (TENANT-SCOPED) =========================
+//   instId/actor from req.auth; delete verifies ownership.
 // =====================================================================
 
-// Get the single latest Guideline image for the school
 app.get('/api/admin/lesson-plans/:instId', async (req, res) => {
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     try {
         const [rows] = await db.execute(
             'SELECT id, image_data FROM lesson_plans WHERE institutionId = ? ORDER BY created_at DESC LIMIT 1',
-            [req.params.instId]
+            [instId]
         );
         res.json(rows[0] || null);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Update/Upload the Guideline image (+ notify all active users)
 app.post('/api/admin/lesson-plans', async (req, res) => {
-    const { institutionId, image_data, actor_id } = req.body;
+    const institutionId = req.auth.institutionId;
+    const actor_id = req.auth.userId;
+    const { image_data } = req.body;
     try {
-        // We simply insert a new one, and the GET request always picks the latest
         const [result] = await db.execute(
             'INSERT INTO lesson_plans (institutionId, image_data, title) VALUES (?, ?, ?)',
             [institutionId, image_data, 'Active Guideline']
         );
 
-        // 🔔 Notify every active user (uploader excluded via actor_id).
-        //    'LessonPlan' is the module id from Screens/Modules.js.
         const recipients = await allActiveUserIds(institutionId);
         await createNotifications({
             institutionId, recipientIds: recipients, type: 'lesson_plan',
@@ -8738,6 +8792,9 @@ app.post('/api/admin/lesson-plans', async (req, res) => {
 
 app.delete('/api/admin/lesson-plans/:id', async (req, res) => {
     try {
+        const [own] = await db.execute('SELECT institutionId FROM lesson_plans WHERE id = ?', [req.params.id]);
+        if (own.length === 0) return res.json({ success: true });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This guideline belongs to another institution.' });
         await db.execute('DELETE FROM lesson_plans WHERE id = ?', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -8746,55 +8803,16 @@ app.delete('/api/admin/lesson-plans/:id', async (req, res) => {
 
 
 // =====================================================================
-//  BACKEND — Section 25: NOTIFICATIONS  (CORE ONLY)
-//
-//  REPLACE your entire current Section 25 with this block. Compared to
-//  what you have now, this version DELETES the "NOTIFICATION TRIGGERS"
-//  sub-block (the homework/labs/lesson-plan routes) and the LINK_* consts.
-//
-//  WHY: each module now fires its own notification from INSIDE its own
-//  route (Digital Labs is already done in Section 21). Keeping trigger
-//  routes here too created duplicate app.post() handlers — the first one
-//  registered won, so the notify version never ran. With this section
-//  holding zero module routes, there is nothing left to collide with.
-//
-//  Contents:
-//    • Helpers: createNotifications (conn-aware, self-catching),
-//      studentIdsForClass, allActiveUserIds, staffUserIds
-//    • CRUD the bell + Notifications screen call: 25.1–25.6
-//
-//  ------------------------------------------------------------------
-//  ONE-TIME MIGRATION — create the table once (skip if it already exists):
-//
-//    CREATE TABLE notifications (
-//      id            INT AUTO_INCREMENT PRIMARY KEY,
-//      institutionId INT NOT NULL,
-//      recipient_id  INT NOT NULL,
-//      type          VARCHAR(40)  NOT NULL,
-//      title         VARCHAR(255) NOT NULL,
-//      body          VARCHAR(500) DEFAULT NULL,
-//      link          VARCHAR(120) DEFAULT NULL,
-//      entity_id     INT DEFAULT NULL,
-//      actor_id      INT DEFAULT NULL,
-//      is_read       TINYINT(1) NOT NULL DEFAULT 0,
-//      created_at    TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-//      KEY idx_recipient (recipient_id, is_read, created_at),
-//      KEY idx_inst (institutionId),
-//      CONSTRAINT fk_notif_inst FOREIGN KEY (institutionId)
-//        REFERENCES institutions (id) ON DELETE CASCADE,
-//      CONSTRAINT fk_notif_recipient FOREIGN KEY (recipient_id)
-//        REFERENCES users (id) ON DELETE CASCADE
-//    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+//  BACKEND — Section 25: NOTIFICATIONS  (CORE ONLY, TENANT-SCOPED)
+//   Notifications are personal: a user may only read/clear their OWN.
+//   List/count/read-all/clear are pinned to the token user; read-one and
+//   delete-one verify the row's recipient is the token user.
+//   Helpers (createNotifications / studentIdsForClass / allActiveUserIds /
+//   staffUserIds) are unchanged.
 // =====================================================================
 
 
 // --- 25.0 Shared helpers --------------------------------------------
-
-// Fan-out insert: one row per recipient. The actor (actor_id) is never
-// notified about their own action. Pass a transaction connection as the
-// 2nd arg to insert INSIDE that transaction (defaults to the global db).
-// Swallows its own DB errors (logs, never throws) so a notification
-// problem can never break the create that called it.
 async function createNotifications(
     { institutionId, recipientIds, type, title, body, link, entity_id, actor_id },
     dbOrConnection = db
@@ -8813,8 +8831,6 @@ async function createNotifications(
     ]));
 
     try {
-        // Bulk multi-row insert. .query (not .execute) — execute can't
-        // expand the nested array for `VALUES ?`.
         await dbOrConnection.query(
             `INSERT INTO notifications
                (institutionId, recipient_id, type, title, body, link, entity_id, actor_id)
@@ -8828,7 +8844,6 @@ async function createNotifications(
     return ids.length;
 }
 
-// Active students of a class (excludes alumni / inactive).
 async function studentIdsForClass(classId) {
     if (!classId) return [];
     const [rows] = await db.execute(
@@ -8840,7 +8855,6 @@ async function studentIdsForClass(classId) {
     return rows.map(r => r.id);
 }
 
-// Every active user in the institution (excludes alumni / inactive).
 async function allActiveUserIds(institutionId) {
     const [rows] = await db.execute(
         `SELECT id FROM users
@@ -8851,8 +8865,6 @@ async function allActiveUserIds(institutionId) {
     return rows.map(r => r.id);
 }
 
-// Active staff = every active, non-student user in the institution.
-// (Used by the Lesson Plan route when you wire it up.)
 async function staffUserIds(institutionId) {
     if (!institutionId) return [];
     const [rows] = await db.execute(
@@ -8866,10 +8878,12 @@ async function staffUserIds(institutionId) {
 }
 
 
-// --- 25.1 List a user's notifications -------------------------------
-//   GET /api/notifications/:userId?filter=all|unread&limit=50
+// --- 25.1 List a user's notifications (self only) -------------------
 app.get('/api/notifications/:userId', async (req, res) => {
-    const { userId } = req.params;
+    if (String(req.params.userId) !== String(req.auth.userId)) {
+        return res.status(403).json({ error: 'You can only read your own notifications.' });
+    }
+    const userId = req.auth.userId;
     const { filter = 'all', limit = 50 } = req.query;
     try {
         let where = 'recipient_id = ?';
@@ -8889,58 +8903,71 @@ app.get('/api/notifications/:userId', async (req, res) => {
 });
 
 
-// --- 25.2 Unread count (for the bell badge) -------------------------
-//   GET /api/notifications/:userId/unread-count
+// --- 25.2 Unread count (self only) ----------------------------------
 app.get('/api/notifications/:userId/unread-count', async (req, res) => {
+    if (String(req.params.userId) !== String(req.auth.userId)) {
+        return res.status(403).json({ error: 'You can only read your own notifications.' });
+    }
     try {
         const [rows] = await db.execute(
             'SELECT COUNT(*) AS count FROM notifications WHERE recipient_id = ? AND is_read = 0',
-            [req.params.userId]
+            [req.auth.userId]
         );
         res.json({ count: Number(rows[0]?.count || 0) });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 
-// --- 25.3 Mark one notification read --------------------------------
-//   PUT /api/notifications/:id/read
+// --- 25.3 Mark one notification read (must be yours) ----------------
 app.put('/api/notifications/:id/read', async (req, res) => {
     try {
+        const [n] = await db.execute('SELECT recipient_id FROM notifications WHERE id = ?', [req.params.id]);
+        if (n.length === 0) return res.json({ success: true });
+        if (String(n[0].recipient_id) !== String(req.auth.userId)) {
+            return res.status(403).json({ error: 'This notification is not yours.' });
+        }
         await db.execute('UPDATE notifications SET is_read = 1 WHERE id = ? AND is_read = 0', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 
-// --- 25.4 Mark ALL of a user's notifications read -------------------
-//   PUT /api/notifications/:userId/read-all
-//   (distinct literal segment 'read-all' — never collides with :id/read)
+// --- 25.4 Mark ALL of a user's notifications read (self only) -------
 app.put('/api/notifications/:userId/read-all', async (req, res) => {
+    if (String(req.params.userId) !== String(req.auth.userId)) {
+        return res.status(403).json({ error: 'You can only update your own notifications.' });
+    }
     try {
         await db.execute(
             'UPDATE notifications SET is_read = 1 WHERE recipient_id = ? AND is_read = 0',
-            [req.params.userId]
+            [req.auth.userId]
         );
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 
-// --- 25.5 Delete one notification -----------------------------------
-//   DELETE /api/notifications/:id
+// --- 25.5 Delete one notification (must be yours) -------------------
 app.delete('/api/notifications/:id', async (req, res) => {
     try {
+        const [n] = await db.execute('SELECT recipient_id FROM notifications WHERE id = ?', [req.params.id]);
+        if (n.length === 0) return res.json({ success: true });
+        if (String(n[0].recipient_id) !== String(req.auth.userId)) {
+            return res.status(403).json({ error: 'This notification is not yours.' });
+        }
         await db.execute('DELETE FROM notifications WHERE id = ?', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 
-// --- 25.6 Clear ALL of a user's notifications -----------------------
-//   DELETE /api/notifications/:userId/clear
+// --- 25.6 Clear ALL of a user's notifications (self only) -----------
 app.delete('/api/notifications/:userId/clear', async (req, res) => {
+    if (String(req.params.userId) !== String(req.auth.userId)) {
+        return res.status(403).json({ error: 'You can only clear your own notifications.' });
+    }
     try {
-        await db.execute('DELETE FROM notifications WHERE recipient_id = ?', [req.params.userId]);
+        await db.execute('DELETE FROM notifications WHERE recipient_id = ?', [req.auth.userId]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -8948,28 +8975,10 @@ app.delete('/api/notifications/:userId/clear', async (req, res) => {
 
 
 // =====================================================================
-//  BACKEND — OVERVIEW CONFIG (per-role dashboard cards)
-//
-//  Append this block to backend/index.js (anywhere with the other admin
-//  routes, before the final `const PORT = ...`). Stores which Overview
-//  cards each role sees. A role with no row falls back to the frontend's
-//  persona defaults, so this is an override layer, not a requirement.
-//
-//  ONE-TIME MIGRATION — run once in your DB:
-//    CREATE TABLE IF NOT EXISTS overview_config (
-//      id            INT AUTO_INCREMENT PRIMARY KEY,
-//      institutionId INT NOT NULL,
-//      role_name     VARCHAR(100) NOT NULL,
-//      card_ids      JSON NOT NULL,
-//      updated_at    DATETIME NULL,
-//      UNIQUE KEY uniq_inst_role (institutionId, role_name)
-//    );
-//  (If your MySQL has no JSON type, use TEXT for card_ids — the code
-//   stores/reads a JSON string either way.)
+//  BACKEND — OVERVIEW CONFIG (per-role dashboard cards)  (TENANT-SCOPED)
+//   instId from req.auth; resolve/upsert are scoped to the token tenant.
 // =====================================================================
 
-// card_ids may come back as a JSON string or an already-parsed array
-// depending on the column type / driver. Normalise to an array.
 function parseCardIds(v) {
     if (Array.isArray(v)) return v;
     if (v === null || v === undefined) return [];
@@ -8978,13 +8987,12 @@ function parseCardIds(v) {
 }
 
 // --- OC.1 Full config map for a school (Settings UI) ---------------
-//   GET /api/admin/overview-config/:instId
-//   -> { "Super Admin": ["total_users",...], "Teacher": [...] }
 app.get('/api/admin/overview-config/:instId', async (req, res) => {
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     try {
         const [rows] = await db.execute(
             'SELECT role_name, card_ids FROM overview_config WHERE institutionId = ?',
-            [req.params.instId]
+            [instId]
         );
         const map = {};
         rows.forEach(r => { map[r.role_name] = parseCardIds(r.card_ids); });
@@ -8993,14 +9001,11 @@ app.get('/api/admin/overview-config/:instId', async (req, res) => {
 });
 
 // --- OC.2 Resolve one role's cards (read by the Overview itself) ----
-//   GET /api/overview-config/resolve?instId=<id>&role=<role name>
-//   -> { card_ids: [...] }  or  { card_ids: null } when unconfigured.
-//   Query params avoid path-encoding issues with role names that have
-//   spaces (e.g. "Super Admin").
 app.get('/api/overview-config/resolve', async (req, res) => {
-    const { instId, role } = req.query;
-    if (!instId || !role) {
-        return res.status(400).json({ error: 'instId and role are required.' });
+    const { role } = req.query;
+    const instId = req.auth.role === 'Developer' ? (req.query.instId || req.auth.institutionId) : req.auth.institutionId;
+    if (!role) {
+        return res.status(400).json({ error: 'role is required.' });
     }
     try {
         const [rows] = await db.execute(
@@ -9012,12 +9017,11 @@ app.get('/api/overview-config/resolve', async (req, res) => {
 });
 
 // --- OC.3 Upsert one role's cards (Settings UI save) ---------------
-//   POST /api/admin/overview-config
-//   Body: { institutionId, role_name, card_ids: ["total_users", ...] }
 app.post('/api/admin/overview-config', async (req, res) => {
-    const { institutionId, role_name, card_ids } = req.body;
-    if (!institutionId || !role_name || !Array.isArray(card_ids)) {
-        return res.status(400).json({ error: 'institutionId, role_name and card_ids[] are required.' });
+    const institutionId = req.auth.institutionId;
+    const { role_name, card_ids } = req.body;
+    if (!role_name || !Array.isArray(card_ids)) {
+        return res.status(400).json({ error: 'role_name and card_ids[] are required.' });
     }
     try {
         await db.execute(
@@ -9032,11 +9036,12 @@ app.post('/api/admin/overview-config', async (req, res) => {
 
 // =====================================================================
 //  BACKEND — OVERVIEW PERFORMANCE ANALYTICS (one call, school-wide)
+// =====================================================================
 app.get('/api/admin/performance/overview/:instId', async (req, res) => {
-    const { instId } = req.params;
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     try {
         const yearId = await resolveYearId(instId, req.query.academic_year_id);
- 
+
         const [classes] = await db.execute(
             'SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section',
             [instId]
@@ -9045,8 +9050,7 @@ app.get('/api/admin/performance/overview/:instId', async (req, res) => {
             'SELECT id, name FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id',
             [instId]
         );
- 
-        // Per class+exam max marks: { [class_id]: { [exam_type_id]: { default, bySubject } } }
+
         const [maxRows] = await db.execute(
             `SELECT m.exam_type_id, m.class_id, m.subject_id, m.max_marks
                FROM exam_max_marks m
@@ -9069,8 +9073,7 @@ app.get('/api/admin/performance/overview/:instId', async (req, res) => {
             if (e.default !== undefined && e.default !== null) return Number(e.default);
             return null;
         };
- 
-        // Entered marks for the active year (students only, no alumni).
+
         const [marks] = await db.execute(
             `SELECT sm.student_id, sm.class_id, sm.subject_id, sm.exam_type_id, sm.marks_obtained,
                     u.name AS student_name, u.roll_no
@@ -9081,8 +9084,8 @@ app.get('/api/admin/performance/overview/:instId', async (req, res) => {
                 AND (u.status IS NULL OR LOWER(TRIM(u.status)) <> 'alumni')`,
             [instId, yearId]
         );
- 
-        const students = {};            // student_id -> { name, roll, class_id, obtained, possible }
+
+        const students = {};
         const completedExams = new Set();
         marks.forEach(m => {
             if (m.marks_obtained === null || m.marks_obtained === undefined) return;
@@ -9096,7 +9099,7 @@ app.get('/api/admin/performance/overview/:instId', async (req, res) => {
             s.obtained += obt;
             s.possible += poss;
         });
- 
+
         const round1 = (n) => Math.round(n * 10) / 10;
         const classMeta = {};
         classes.forEach(c => {
@@ -9106,7 +9109,7 @@ app.get('/api/admin/performance/overview/:instId', async (req, res) => {
                 obtained: 0, possible: 0, top: null
             };
         });
- 
+
         Object.values(students).forEach(s => {
             const cm = classMeta[s.class_id];
             if (!cm || s.possible <= 0) return;
@@ -9120,7 +9123,7 @@ app.get('/api/admin/performance/overview/:instId', async (req, res) => {
                 };
             }
         });
- 
+
         const top_classes = Object.values(classMeta)
             .filter(c => c.possible > 0)
             .map(c => ({
@@ -9129,20 +9132,22 @@ app.get('/api/admin/performance/overview/:instId', async (req, res) => {
                 obtained: Math.round(c.obtained), possible: Math.round(c.possible)
             }))
             .sort((a, b) => b.pct - a.pct);
- 
+
         const top_performers = Object.values(classMeta)
             .filter(c => c.top)
             .map(c => ({ class_id: c.class_id, class_group: c.class_group, ...c.top }))
             .sort((a, b) => b.pct - a.pct);
- 
+
         const exams_completed = examTypes.filter(t => completedExams.has(Number(t.id))).map(t => t.name);
- 
+
         res.json({ academic_year_id: yearId, exams_completed, top_performers, top_classes });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// --- Overview persona for the logged-in user (self) -----------------
 app.get('/api/overview/me/:instId/:userId', async (req, res) => {
-    const { instId, userId } = req.params;
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    const userId = req.auth.userId; // always "me"
     try {
         const [rows] = await db.execute(
             'SELECT id, role, class_id FROM users WHERE id = ? AND institutionId = ? LIMIT 1',
