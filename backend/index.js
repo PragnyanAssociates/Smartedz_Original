@@ -5540,13 +5540,16 @@ app.delete('/api/admin/gallery/album/:instId/:title', async (req, res) => {
 
 
 // =====================================================================
-//  BACKEND — HOMEWORK  (TENANT-SCOPED)
+//  BACKEND — HOMEWORK  (TENANT-SCOPED — NO academic-year scoping)
 //   institutionId/actor from req.auth. Create/update require the class to
-//   belong to your institution (class_id is global, and the student read
-//   keys on class_id — so a foreign class would otherwise leak/spam into
-//   another school's feed). Student read is also institution-filtered.
-//   Submit = as yourself; submission delete = owner or staff; grade =
-//   grader from token. (Migration unchanged — see your header block.)
+//   belong to your institution. Student read is institution + class
+//   scoped. Submit = as yourself; submission delete = owner or staff;
+//   grade = grader from token.
+//
+//   Academic-year logic has been REMOVED from Homework. The
+//   `homework.academic_year_id` column is left NULL for new rows and
+//   ignored on reads (every homework shows until it is deleted). No
+//   migration needed; you may drop that column later if you wish.
 // =====================================================================
 
 // --- 19.1 List homework for a teacher/admin -------------------------
@@ -5559,8 +5562,6 @@ app.get('/api/admin/homework/teacher/:userId', async (req, res) => {
         const me = users[0];
         if (!sameTenant(req, me.institutionId)) return res.status(403).json({ error: 'This user belongs to another institution.' });
         const isAdmin = me.role === 'Super Admin' || me.role === 'Developer';
-
-        const yearId = await resolveYearId(me.institutionId, req.query.academic_year_id);
 
         const baseSelect = `
             SELECT h.id, h.title, h.description, h.homework_type,
@@ -5579,15 +5580,15 @@ app.get('/api/admin/homework/teacher/:userId', async (req, res) => {
         if (isAdmin) {
             [rows] = await db.execute(
                 `${baseSelect}
-                  WHERE h.institutionId = ? AND h.academic_year_id = ?
+                  WHERE h.institutionId = ?
                   ORDER BY h.created_at DESC`,
-                [me.institutionId, yearId]);
+                [me.institutionId]);
         } else {
             [rows] = await db.execute(
                 `${baseSelect}
-                  WHERE h.created_by = ? AND h.academic_year_id = ?
+                  WHERE h.created_by = ?
                   ORDER BY h.created_at DESC`,
-                [userId, yearId]);
+                [userId]);
         }
         const decorated = rows.map(r => ({
             ...r,
@@ -5609,8 +5610,6 @@ app.get('/api/admin/homework/student/:studentId', async (req, res) => {
         if (!sameTenant(req, u[0].institutionId)) return res.status(403).json({ error: 'This student belongs to another institution.' });
         if (!u[0].class_id) return res.json([]);
 
-        const yearId = await resolveYearId(u[0].institutionId, req.query.academic_year_id);
-
         const [rows] = await db.execute(
             `SELECT h.id, h.title, h.description, h.homework_type,
                     h.class_id, h.subject_id, h.due_date, h.questions, h.attachments,
@@ -5622,9 +5621,9 @@ app.get('/api/admin/homework/student/:studentId', async (req, res) => {
                LEFT JOIN subjects sub ON sub.id = h.subject_id
                LEFT JOIN homework_submissions s
                       ON s.homework_id = h.id AND s.student_id = ?
-              WHERE h.class_id = ? AND h.academic_year_id = ? AND h.institutionId = ?
+              WHERE h.class_id = ? AND h.institutionId = ?
               ORDER BY h.due_date DESC`,
-            [studentId, u[0].class_id, yearId, u[0].institutionId]
+            [studentId, u[0].class_id, u[0].institutionId]
         );
         const decorated = rows.map(r => ({
             ...r,
@@ -5679,14 +5678,13 @@ app.post('/api/admin/homework', async (req, res) => {
         if (c.length === 0 || !sameTenant(req, c[0].institutionId)) {
             return res.status(403).json({ error: 'That class belongs to another institution.' });
         }
-        const yearId = await resolveYearId(institutionId, req.body.academic_year_id);
 
         const [result] = await db.execute(
             `INSERT INTO homework
-               (institutionId, academic_year_id, title, description, homework_type,
+               (institutionId, title, description, homework_type,
                 class_id, subject_id, due_date, questions, attachments, created_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [institutionId, yearId, title, description || null, homework_type || 'PDF',
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [institutionId, title, description || null, homework_type || 'PDF',
              class_id, subject_id || null, due_date,
              JSON.stringify(questions || []), JSON.stringify(attachments || []),
              created_by]

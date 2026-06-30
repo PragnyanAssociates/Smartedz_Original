@@ -3,7 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   Loader2, Upload, FileText, Eye, Trash2, Edit, Paperclip,
-  CheckCircle2, Clock, XCircle, BookOpen, X, ClipboardList, Send, CalendarRange
+  CheckCircle2, Clock, XCircle, BookOpen, X, ClipboardList, Send
 } from 'lucide-react';
 import { fmtDate, fileToBase64, statusStyle } from './HwUtils';
 import FileViewer from './FileViewer';
@@ -13,8 +13,7 @@ import FileViewer from './FileViewer';
 //   • PDF type     -> upload files (base64)
 //   • Written type -> in-app text answer screen
 //  Students can delete their submission until it's graded.
-//  Homework is scoped to the school's ACTIVE academic year (backend),
-//  shown as a read-only badge in the header.
+//  (Homework is no longer scoped to an academic year.)
 // =====================================================================
 
 export default function StudentHomework() {
@@ -26,7 +25,6 @@ export default function StudentHomework() {
   const [filter, setFilter]     = useState('All');
   const [busy, setBusy]         = useState(null);   // homework id being acted on
   const [writingFor, setWriting] = useState(null);  // homework obj for written screen
-  const [yearName, setYearName] = useState('');
 
   const load = useCallback(async () => {
     if (!user?.id) return;
@@ -47,22 +45,6 @@ export default function StudentHomework() {
   }, [user]);
 
   useEffect(() => { load(); }, [load]);
-
-  // Active academic year name for the header badge.
-  useEffect(() => {
-    if (!user?.institutionId) return;
-    let cancelled = false;
-    fetch(`${API_BASE_URL}/admin/data/${user.institutionId}`)
-      .then(r => r.json())
-      .then(d => {
-        if (cancelled) return;
-        const list = d.academicYears || [];
-        const active = list.find(y => y.isActive) || list[0];
-        if (active) setYearName(active.name || '');
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [user]);
 
   useEffect(() => {
     if (items.length > 0 && !selectedId) setSelId(items[0].id);
@@ -134,14 +116,6 @@ export default function StudentHomework() {
     setBusy(null);
   };
 
-  const YearBadge = () => (
-    yearName ? (
-      <div className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-primary/5 ring-1 ring-primary/15 text-primary text-xs font-semibold whitespace-nowrap self-start sm:self-auto shrink-0">
-        <CalendarRange className="size-3.5" /> Academic Year: {yearName}
-      </div>
-    ) : null
-  );
-
   if (loading) {
     return <div className="h-64 flex items-center justify-center animate-in fade-in duration-300"><Loader2 className="animate-spin size-8 text-primary" /></div>;
   }
@@ -157,7 +131,6 @@ export default function StudentHomework() {
           </h1>
           <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">View and submit your class assignments.</p>
         </header>
-        <YearBadge />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 flex-1 items-start">

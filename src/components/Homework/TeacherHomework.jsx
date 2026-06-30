@@ -3,7 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   Plus, Edit, Trash2, X, Eye, Search, Loader2, ArrowLeft,
-  Paperclip, FileText, Star, ClipboardList, BookOpen, ChevronDown, Save, CalendarRange
+  Paperclip, FileText, Star, ClipboardList, BookOpen, ChevronDown, Save
 } from 'lucide-react';
 import { fmtDate, isoDate, fileToBase64 } from './HwUtils';
 import FileViewer from './FileViewer';
@@ -18,31 +18,13 @@ const rollNum = (s) => {
 //  TeacherHomework - two views:
 //    'list'        -> all homework (create / edit / delete)
 //    'submissions' -> roster for one homework (view & grade)
-//  Homework is scoped to the school's ACTIVE academic year (backend),
-//  shown as a read-only badge in the header.
+//  (Homework is no longer scoped to an academic year.)
 // =====================================================================
 
 export default function TeacherHomework({ canManage = true }) {
   const { user } = useAuth();
   const [view, setView]       = useState('list');
   const [activeHw, setActiveHw] = useState(null);
-  const [yearName, setYearName] = useState('');
-
-  // Active academic year name for the header badge.
-  useEffect(() => {
-    if (!user?.institutionId) return;
-    let cancelled = false;
-    fetch(`${API_BASE_URL}/admin/data/${user.institutionId}`)
-      .then(r => r.json())
-      .then(d => {
-        if (cancelled) return;
-        const list = d.academicYears || [];
-        const active = list.find(y => y.isActive) || list[0];
-        if (active) setYearName(active.name || '');
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [user]);
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
@@ -56,11 +38,6 @@ export default function TeacherHomework({ canManage = true }) {
             Create assignments, then review and grade student submissions.
           </p>
         </header>
-        {yearName && (
-          <div className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-primary/5 ring-1 ring-primary/15 text-primary text-xs font-semibold whitespace-nowrap self-start sm:self-auto shrink-0">
-            <CalendarRange className="size-3.5" /> Academic Year: {yearName}
-          </div>
-        )}
       </div>
 
       {view === 'list' ? (
