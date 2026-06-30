@@ -14,6 +14,61 @@ import {
 const mediaUrl = (id, download = false) =>
   `${API_BASE_URL}/admin/gallery/media/${id}${download ? '?download=1' : ''}`;
 
+// Media lives behind the /api auth gate, so a native <img src>/<video src>
+// (which sends no Authorization header) 401s. These helpers FETCH the bytes
+// (the auth interceptor adds the token), then expose a local object URL.
+function useAuthedMedia(id) {
+  const [url, setUrl] = useState(null);
+  useEffect(() => {
+    if (id == null) return;
+    let revoked = false;
+    let objUrl = null;
+    fetch(mediaUrl(id))
+      .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.blob(); })
+      .then(blob => {
+        if (revoked) return;
+        objUrl = URL.createObjectURL(blob);
+        setUrl(objUrl);
+      })
+      .catch(() => { if (!revoked) setUrl(null); });
+    return () => { revoked = true; if (objUrl) URL.revokeObjectURL(objUrl); };
+  }, [id]);
+  return url;
+}
+
+function AuthedImage({ id, className, alt = '', onError }) {
+  const url = useAuthedMedia(id);
+  if (!url) return <div className={`${className} bg-zinc-100 animate-pulse`} />;
+  return <img src={url} className={className} alt={alt} onError={onError} />;
+}
+
+function AuthedVideoThumb({ id, className }) {
+  const url = useAuthedMedia(id);
+  if (!url) return <div className={`${className} bg-zinc-100 animate-pulse`} />;
+  return <VideoThumb src={url} className={className} />;
+}
+
+// Fetch a protected media item as a blob and trigger a browser download.
+// (A native <a href> would send no token and 401.)
+async function authedDownload(id, filenameHint) {
+  try {
+    const res = await fetch(mediaUrl(id, true));
+    if (!res.ok) throw new Error(String(res.status));
+    const blob = await res.blob();
+    let filename = filenameHint || `media-${id}`;
+    const cd = res.headers.get('Content-Disposition') || '';
+    const m = cd.match(/filename="?([^"]+)"?/);
+    if (m) filename = m[1];
+    const obj = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = obj; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(obj);
+  } catch (e) {
+    alert('Download failed.');
+  }
+}
+
 const fmtDMY = (val) => {
   if (!val) return '—';
   const d = new Date(val);
@@ -89,8 +144,8 @@ function AlbumCover({ album }) {
   const [imgError, setImgError] = useState(false);
   if (album.cover_type === 'photo' && album.cover_id != null && !imgError) {
     return (
-      <img
-        src={mediaUrl(album.cover_id)}
+      <AuthedImage
+        id={album.cover_id}
         className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
         alt={album.title}
         onError={() => setImgError(true)}
@@ -342,10 +397,10 @@ function AlbumDetail({ albumTitle, onBack }) {
               className="group relative aspect-square rounded-lg overflow-hidden bg-zinc-100 ring-1 ring-black/5 cursor-pointer hover:ring-zinc-300 transition-all"
             >
               {item.file_type === 'photo' ? (
-                <img src={mediaUrl(item.id)} className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-300" alt="" />
+                <AuthedImage id={item.id} className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-300" alt="" />
               ) : (
                 <>
-                  <VideoThumb src={mediaUrl(item.id)} className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-300" />
+                  <AuthedVideoThumb id={item.id} className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-300" />
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                     <div className="bg-white/15 p-2.5 rounded-full backdrop-blur-sm ring-1 ring-white/25">
                       <Play className="size-5 text-white fill-current" />
@@ -359,9 +414,12 @@ function AlbumDetail({ albumTitle, onBack }) {
                     <Trash2 className="size-3.5" />
                   </button>
                 )}
-                <a href={mediaUrl(item.id, true)} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} title="Download" className="p-1.5 bg-white/90 hover:bg-white text-zinc-600 hover:text-primary rounded-md shadow-sm ring-1 ring-black/5">
+                <button
+                  onClick={(e) => { e.stopPropagation(); authedDownload(item.id); }}
+                  title="Download"
+                  className="p-1.5 bg-white/90 hover:bg-white text-zinc-600 hover:text-primary rounded-md shadow-sm ring-1 ring-black/5">
                   <Download className="size-3.5" />
-                </a>
+                </button>
               </div>
             </div>
           ))}
@@ -374,19 +432,31 @@ function AlbumDetail({ albumTitle, onBack }) {
       )}
 
       {selectedMedia && (
-        <div className="fixed inset-0 z-50 bg-zinc-900/95 backdrop-blur-sm flex items-center justify-center p-4 sm:p-8" onClick={() => setSelectedMedia(null)}>
-          <button className="absolute top-4 sm:top-6 right-4 sm:right-6 p-2 text-zinc-400 hover:text-white bg-zinc-800/50 rounded-md"><X className="size-6" /></button>
-          <div className="max-w-5xl w-full max-h-full flex items-center justify-center" onClick={e => e.stopPropagation()}>
-            {selectedMedia.file_type === 'photo' ? (
-              <img src={mediaUrl(selectedMedia.id)} className="max-w-full max-h-[85vh] rounded-lg shadow-2xl object-contain" alt="" />
-            ) : (
-              <video controls autoPlay playsInline className="w-full rounded-lg shadow-2xl max-h-[85vh] outline-none">
-                <source src={mediaUrl(selectedMedia.id)} type={selectedMedia.mime_type || 'video/mp4'} />
-              </video>
-            )}
-          </div>
-        </div>
+        <Lightbox media={selectedMedia} onClose={() => setSelectedMedia(null)} />
       )}
+    </div>
+  );
+}
+
+// =====================================================================
+//  Lightbox — full-screen viewer (fetches the media as a blob too)
+// =====================================================================
+function Lightbox({ media, onClose }) {
+  const url = useAuthedMedia(media.id);
+  return (
+    <div className="fixed inset-0 z-50 bg-zinc-900/95 backdrop-blur-sm flex items-center justify-center p-4 sm:p-8" onClick={onClose}>
+      <button className="absolute top-4 sm:top-6 right-4 sm:right-6 p-2 text-zinc-400 hover:text-white bg-zinc-800/50 rounded-md"><X className="size-6" /></button>
+      <div className="max-w-5xl w-full max-h-full flex items-center justify-center" onClick={e => e.stopPropagation()}>
+        {!url ? (
+          <Loader2 className="animate-spin text-white size-8" />
+        ) : media.file_type === 'photo' ? (
+          <img src={url} className="max-w-full max-h-[85vh] rounded-lg shadow-2xl object-contain" alt="" />
+        ) : (
+          <video controls autoPlay playsInline className="w-full rounded-lg shadow-2xl max-h-[85vh] outline-none">
+            <source src={url} type={media.mime_type || 'video/mp4'} />
+          </video>
+        )}
+      </div>
     </div>
   );
 }

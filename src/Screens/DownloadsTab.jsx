@@ -9,9 +9,20 @@ const SELECT_CLS = "h-9 rounded-md border border-zinc-200 bg-white pl-3 pr-8 tex
 
 const fmtWhen = (v) => {
   if (!v) return '';
-  const d = new Date(v);
+  // MySQL sends "YYYY-MM-DD HH:MM:SS" with no zone. It's stored in UTC,
+  // so normalise to an ISO-UTC string, then render in IST.
+  let iso = v;
+  if (typeof v === 'string' && v.indexOf('T') === -1) {
+    iso = v.replace(' ', 'T') + 'Z';          // "2026-06-30 06:38:00" -> "2026-06-30T06:38:00Z"
+  }
+  const d = new Date(iso);
   if (isNaN(d.getTime())) return '';
-  return d.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleString('en-GB', {
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+    hour12: false,
+    timeZone: 'Asia/Kolkata'                   // always show IST
+  });
 };
 
 // =====================================================================
