@@ -11,13 +11,35 @@ const apiClient = axios.create({
 });
 
 // This interceptor runs automatically BEFORE any API request is sent.
+//
+//  ⚠ Token source: the app's window.fetch interceptor (AuthContext) attaches
+//  the JWT from localStorage under the key "smartedz_token". This axios
+//  client must use the SAME token or every axios call (the whole group-chat
+//  module) goes out with no Authorization header and is rejected 401 by the
+//  /api gate. We read "smartedz_token" from localStorage first (the known-good
+//  source), then fall back to the storage util under both key names so nothing
+//  breaks regardless of where the token actually lives.
 apiClient.interceptors.request.use(
   async (config) => {
     try {
-      // 1. Get the user's token from storage.
-      const token = await storage.get("userToken");
+      let token = null;
 
-      // 2. If token exists, attach it to the Authorization header.
+      // 1. Primary: the exact key/source the working fetch interceptor uses.
+      try {
+        if (typeof localStorage !== "undefined") {
+          token = localStorage.getItem("smartedz_token");
+        }
+      } catch (_) {}
+
+      // 2. Fallbacks via the storage util (in case it's kept there instead).
+      if (!token) {
+        try { token = await storage.get("smartedz_token"); } catch (_) {}
+      }
+      if (!token) {
+        try { token = await storage.get("userToken"); } catch (_) {}
+      }
+
+      // 3. If a token was found, attach it to the Authorization header.
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
       }
@@ -25,7 +47,7 @@ apiClient.interceptors.request.use(
       console.error("Error fetching token from storage:", err);
     }
 
-    // 3. Return the updated request config so the call can proceed.
+    // 4. Return the updated request config so the call can proceed.
     return config;
   },
   (error) => {
@@ -33,9 +55,6 @@ apiClient.interceptors.request.use(
     return Promise.reject(error);
   }
 );
-
-// ❌ Remove hardcoded base URL export
-// export { API_BASE_URL }; <-- DELETE THIS
 
 // ✅ Export only the configured axios client
 export default apiClient;
