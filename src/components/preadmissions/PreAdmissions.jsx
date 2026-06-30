@@ -25,6 +25,16 @@ const toYYYYMMDD = (dateString) => {
   return date.toISOString().split('T')[0];
 };
 
+// Resolve a stored photo value into something an <img src> can render.
+// Photos are saved as base64 data URLs, so they're already complete —
+// only genuine relative server paths get the host prefixed. Prevents the
+// broken "host + data:..." URL that left the edit modal preview blank.
+const resolvePhoto = (p) => {
+  if (!p) return '/default-avatar.png';
+  if (/^(data:|https?:|blob:)/i.test(p)) return p;
+  return `${API_BASE_URL.replace('/api', '')}${p}`;
+};
+
 // Case-insensitive trimmed equality used by the client-side filters
 const eq = (a, b) => String(a ?? '').trim().toLowerCase() === String(b ?? '').trim().toLowerCase();
 
@@ -82,17 +92,22 @@ export default function PreAdmissionsScreen() {
   // --- Fetch Data ---
   // Scoped to the selected calendar year via YEAR(submission_date) on the
   // backend; 'all' sends no year filter.
+  // NOTE: the URL is built as a STRING (via URLSearchParams) and passed to
+  // fetch as a string — the auth interceptor only attaches the Bearer token
+  // to string requests, so passing a URL object here would 401.
   const fetchData = useCallback(async () => {
     if (!user?.institutionId || (!canRead && !isAdmin)) return;
 
     setLoading(true);
     try {
-      const url = new URL(`${API_BASE_URL}/admin/preadmissions/${user.institutionId}`);
-      url.searchParams.append('userId', user.id);
-      if (searchText) url.searchParams.append('search', searchText);
-      if (filterYear && filterYear !== 'all') url.searchParams.append('year', filterYear);
+      const params = new URLSearchParams();
+      params.append('userId', user.id);
+      if (searchText) params.append('search', searchText);
+      if (filterYear && filterYear !== 'all') params.append('year', filterYear);
 
-      const res = await fetch(url);
+      const res = await fetch(
+        `${API_BASE_URL}/admin/preadmissions/${user.institutionId}?${params.toString()}`
+      );
       const records = await res.json();
       setData(Array.isArray(records) ? records : []);
     } catch (error) {
@@ -381,7 +396,7 @@ export default function PreAdmissionsScreen() {
               ) : (
                 filteredData.map(item => (
                   <div key={item.id} onClick={() => setSelectedItem(item)} className={`p-4 flex items-center cursor-pointer transition-colors ${selectedItem?.id === item.id ? 'bg-primary/5' : 'hover:bg-zinc-50/80'}`}>
-                    <img src={item.photo_url || '/default-avatar.png'} alt="" className="size-10 rounded-md object-cover bg-zinc-100 mr-3 ring-1 ring-black/5 shadow-sm" />
+                    <img src={resolvePhoto(item.photo_url)} alt="" className="size-10 rounded-md object-cover bg-zinc-100 mr-3 ring-1 ring-black/5 shadow-sm" />
                     <div className="flex-1 min-w-0 pr-2">
                       <h4 className={`font-semibold text-sm truncate ${selectedItem?.id === item.id ? 'text-primary' : 'text-zinc-900'}`}>{item.student_name}</h4>
                       <p className="text-xs text-zinc-500 font-medium mt-0.5">Grade: {item.joining_grade} • ID: {item.admission_no}</p>
@@ -408,7 +423,7 @@ export default function PreAdmissionsScreen() {
                 <button onClick={() => setSelectedItem(null)} className="lg:hidden p-1.5 bg-white rounded-md shadow-sm ring-1 ring-black/5 text-zinc-500 hover:text-zinc-900 transition-colors mt-1 sm:mt-0">
                   <X className="size-4" />
                 </button>
-                <img src={selectedItem.photo_url || '/default-avatar.png'} alt="" className="size-16 rounded-lg object-cover bg-zinc-100 ring-1 ring-black/5 shadow-sm shrink-0" />
+                <img src={resolvePhoto(selectedItem.photo_url)} alt="" className="size-16 rounded-lg object-cover bg-zinc-100 ring-1 ring-black/5 shadow-sm shrink-0" />
                 <div className="flex-1 min-w-0 mt-1 sm:mt-0">
                   <h3 className="text-lg font-semibold text-zinc-900 truncate">{selectedItem.student_name}</h3>
                   <p className="text-xs font-medium text-zinc-500 mt-1 truncate">Grade: {selectedItem.joining_grade} - ID: {selectedItem.admission_no}</p>
@@ -471,7 +486,7 @@ export default function PreAdmissionsScreen() {
             <div className="p-5 sm:p-6 overflow-y-auto custom-scrollbar">
               <div className="flex flex-col items-center mb-6">
                 <div className="relative">
-                  <img src={selectedImage?.uri || (formData.photo_url ? `${API_BASE_URL.replace('/api','')}${formData.photo_url}` : '/default-avatar.png')}
+                  <img src={selectedImage?.uri || resolvePhoto(formData.photo_url)}
                     alt="" className="size-24 rounded-full object-cover ring-2 ring-white shadow-md bg-zinc-50" />
                   <label className="absolute bottom-0 right-0 bg-primary hover:bg-primary/90 text-white p-2 rounded-full cursor-pointer shadow-sm ring-2 ring-white transition-colors">
                     <Camera className="size-3.5" />
