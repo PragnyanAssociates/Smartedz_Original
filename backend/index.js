@@ -914,7 +914,7 @@ async function checkUserUniqueness(conn, instId, body, excludeId, current) {
         }
     }
 
-    // --- PEN number — school-wide ------------------------------------
+    // --- PEN number — school-wide ----------------------------------
     if (body.pen_no && (isCreate || !_sameVal(body.pen_no, cur.pen_no))) {
         const taken = await _exists(conn,
             'SELECT id FROM users WHERE institutionId = ? AND pen_no = ? AND id <> ?',
