@@ -5612,7 +5612,7 @@ app.get('/api/admin/homework/student/:studentId', async (req, res) => {
 
         const [rows] = await db.execute(
             `SELECT h.id, h.title, h.description, h.homework_type,
-                    h.class_id, h.subject_id, h.due_date, h.questions, h.attachments,
+                    h.class_id, h.subject_id, h.due_date, h.questions,
                     c.className, c.section, sub.name AS subject_name,
                     s.id AS submission_id, s.written_answer, s.files AS submission_files,
                     s.submitted_at, s.grade, s.remarks
@@ -5628,7 +5628,7 @@ app.get('/api/admin/homework/student/:studentId', async (req, res) => {
         const decorated = rows.map(r => ({
             ...r,
             questions:        parseJsonSafe(r.questions, []),
-            attachments:      parseJsonSafe(r.attachments, []),
+            attachments:      [],
             submission_files: parseJsonSafe(r.submission_files, []),
             class_group: `${r.className || ''}${r.section ? ' - ' + r.section : ''}`,
             status: r.submission_id ? (r.grade ? 'Graded' : 'Submitted') : 'Pending'
