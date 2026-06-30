@@ -11,9 +11,10 @@ import { pageLabel, fileToBase64 } from './SyllabusUtils';
 //    LEFT   - Chapters (auto from the book's index; edit/delete to fix)
 //    MIDDLE - PDF viewer showing ONLY the selected chapter's pages
 //    RIGHT  - Keywords for the selected chapter
+//  (Academic-year logic removed.)
 // =====================================================================
 
-export default function SubjectIndex({ syllabus, canEdit, activeYear, onBack, onOpenPeriods }) {
+export default function SubjectIndex({ syllabus, canEdit, onBack, onOpenPeriods }) {
   const [chapters, setChapters] = useState([]);
   const [book, setBook]         = useState(null);
   const [loading, setLoading]   = useState(true);
@@ -95,11 +96,6 @@ export default function SubjectIndex({ syllabus, canEdit, activeYear, onBack, on
               <BookOpen className="text-primary size-5" />
               Subject Index
             </h1>
-            {activeYear && (
-              <span className="bg-primary/10 text-primary text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded ring-1 ring-inset ring-primary/20">
-                {activeYear.year_name || activeYear.name || ''}
-              </span>
-            )}
           </div>
           <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
             Upload the textbook and the chapters are detected from its index.
@@ -380,9 +376,34 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
 
 
 // =====================================================================
-//  MIDDLE - PDF viewer (iframe points straight at the chapter PDF URL)
+//  MIDDLE - PDF viewer
+//   The chapter PDF is behind the /api auth gate, so a raw <iframe src>
+//   sends no token and renders the JSON "Please sign in" error. We FETCH
+//   it as a blob (interceptor adds the token) and point the iframe at the
+//   resulting object URL.
 // =====================================================================
 function DocumentPanel({ chapter }) {
+  const [url, setUrl]       = useState(null);
+  const [loading, setLoad]  = useState(false);
+  const [err, setErr]       = useState(false);
+
+  useEffect(() => {
+    if (!chapter) { setUrl(null); setErr(false); return; }
+    let revoked = false;
+    let objUrl = null;
+    setLoad(true); setErr(false); setUrl(null);
+    fetch(`${API_BASE_URL}/admin/syllabus/chapter/${chapter.id}/pdf`)
+      .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.blob(); })
+      .then(blob => {
+        if (revoked) return;
+        objUrl = URL.createObjectURL(blob);
+        setUrl(objUrl);
+      })
+      .catch(() => { if (!revoked) setErr(true); })
+      .finally(() => { if (!revoked) setLoad(false); });
+    return () => { revoked = true; if (objUrl) URL.revokeObjectURL(objUrl); };
+  }, [chapter]);
+
   if (!chapter) {
     return (
       <div className="bg-white rounded-lg ring-1 ring-black/5 border-dashed shadow-sm flex items-center justify-center min-h-[500px] xl:min-h-[600px] w-full flex-1">
@@ -391,8 +412,7 @@ function DocumentPanel({ chapter }) {
     );
   }
 
-  const url = `${API_BASE_URL}/admin/syllabus/chapter/${chapter.id}/pdf`;
-  const openFull = () => window.open(url, '_blank');
+  const openFull = () => { if (url) window.open(url, '_blank'); };
 
   return (
     <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm flex flex-col min-h-[500px] xl:min-h-[600px] flex-1 overflow-hidden">
@@ -407,16 +427,26 @@ function DocumentPanel({ chapter }) {
               {pageLabel(chapter.page_from, chapter.page_to)}
             </span>
           )}
-          <button onClick={openFull} title="Open full screen"
-            className="size-8 inline-flex items-center justify-center text-zinc-500 hover:text-primary hover:bg-primary/10 rounded-md transition-colors bg-white ring-1 ring-black/5 shadow-sm">
+          <button onClick={openFull} disabled={!url} title="Open full screen"
+            className="size-8 inline-flex items-center justify-center text-zinc-500 hover:text-primary hover:bg-primary/10 disabled:text-zinc-300 disabled:hover:bg-transparent rounded-md transition-colors bg-white ring-1 ring-black/5 shadow-sm">
             <Maximize2 className="size-4" />
           </button>
         </div>
       </div>
 
       <div className="bg-zinc-100/50 flex-1 flex flex-col w-full">
-        <iframe key={chapter.id} src={url} title={chapter.title}
-          className="w-full h-full border-0 min-h-[500px]" />
+        {loading ? (
+          <div className="flex-1 flex items-center justify-center min-h-[500px]">
+            <Loader2 className="animate-spin size-7 text-primary" />
+          </div>
+        ) : err ? (
+          <div className="flex-1 flex items-center justify-center min-h-[500px] p-8 text-center">
+            <p className="text-sm text-zinc-500 font-medium">Could not load this chapter's PDF.</p>
+          </div>
+        ) : url ? (
+          <iframe key={chapter.id} src={url} title={chapter.title}
+            className="w-full h-full border-0 min-h-[500px]" />
+        ) : null}
       </div>
     </div>
   );
@@ -424,7 +454,7 @@ function DocumentPanel({ chapter }) {
 
 
 // =====================================================================
-//  RIGHT - Keywords  (now: Term + Definition + Example)
+//  RIGHT - Keywords  (Term + Definition + Example)
 // =====================================================================
 function KeywordsPanel({ chapter, canEdit }) {
   const [keywords, setKeywords] = useState([]);

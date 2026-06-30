@@ -6976,15 +6976,17 @@ app.delete('/api/admin/study-materials/:id', async (req, res) => {
 
 
 // =====================================================================
-//  BACKEND — Section 22: SYLLABUS  (v5 — TENANT-SCOPED)
-//   Detection/slicing helpers unchanged. Every route now verifies the
-//   syllabus/chapter/keyword belongs to the caller's institution (by-id
-//   routes resolve institutionId via join). Create/update require the
-//   class to be yours so the fan-out notify can't reach another school.
+//  BACKEND — Section 22: SYLLABUS  (v5 — TENANT-SCOPED, no academic year)
+//   Detection/slicing helpers unchanged except a wider TOC text scan
+//   (20 -> 40 pages). Every route verifies the syllabus/chapter/keyword
+//   belongs to the caller's institution. Create/update require the class
+//   to be yours so the fan-out notify can't reach another school.
+//   Academic-year logic removed: create no longer stamps academic_year_id
+//   (the column is left NULL; no read filters by it).
 //
-//   ⚠ syllabus/chapter/:id/pdf is loaded by the viewer iframe — it's under
-//     the /api gate, so it only works if the frontend FETCHES it (token via
-//     interceptor) and renders a blob URL, not a raw <iframe src>.
+//   ⚠ syllabus/chapter/:id/pdf is loaded by the viewer — it's under the
+//     /api gate, so the frontend FETCHES it (token via interceptor) and
+//     renders a blob URL, not a raw <iframe src>.
 //
 //   Requires: npm install pdfjs-dist@3.11.174 pdf-lib --save
 //   Reuses nowSQL() (Section 16), studentIdsForClass/createNotifications (25).
@@ -7041,6 +7043,9 @@ async function _fromOutline(doc, total) {
         items.push({ title: node.title || '', start: idx == null ? null : idx + 1 });
     }
     if (!items.some(i => i.start != null)) return [];
+    // A single outline entry (often just the file/title) is not a usable
+    // chapter list — fall back to TOC-text detection instead.
+    if (items.length < 2) return [];
     return _assemble(items, total);
 }
 
@@ -7056,7 +7061,7 @@ async function _destToPageIndex(doc, dest) {
 }
 
 async function _fromTocText(doc, total) {
-    const scan = Math.min(total, 20);
+    const scan = Math.min(total, 40);
     const candidates = [];
     for (let p = 1; p <= scan; p++) {
         const page = await doc.getPage(p);
@@ -7245,11 +7250,11 @@ app.get('/api/admin/syllabus/list/:instId', async (req, res) => {
 });
 
 
-// --- 22.2 Create a syllabus -----------------------------------------
+// --- 22.2 Create a syllabus (no academic-year stamp) ----------------
 app.post('/api/admin/syllabus', async (req, res) => {
     const institutionId = req.auth.institutionId;
     const created_by = req.auth.userId;
-    const { academic_year_id, class_id, subject_id, teacher_id } = req.body;
+    const { class_id, subject_id, teacher_id } = req.body;
     if (!class_id || !subject_id) {
         return res.status(400).json({ error: 'class_id and subject_id are required.' });
     }
@@ -7260,10 +7265,9 @@ app.post('/api/admin/syllabus', async (req, res) => {
         }
         const [result] = await db.execute(
             `INSERT INTO syllabus
-               (institutionId, academic_year_id, class_id, subject_id, teacher_id, created_by)
-             VALUES (?, ?, ?, ?, ?, ?)`,
-            [institutionId, academic_year_id || null, class_id, subject_id,
-             teacher_id || null, created_by]
+               (institutionId, class_id, subject_id, teacher_id, created_by)
+             VALUES (?, ?, ?, ?, ?)`,
+            [institutionId, class_id, subject_id, teacher_id || null, created_by]
         );
         res.json({ success: true, id: result.insertId });
     } catch (err) {
@@ -7465,7 +7469,7 @@ app.put('/api/admin/syllabus/:syllabusId/book/offset', async (req, res) => {
 });
 
 
-// --- 22.10 A chapter as a real PDF file (iframe loads this) ---------
+// --- 22.10 A chapter as a real PDF file (viewer loads this) ---------
 app.get('/api/admin/syllabus/chapter/:id/pdf', async (req, res) => {
     try {
         const inst = await _sylInstByChapter(req.params.id);

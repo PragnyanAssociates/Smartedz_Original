@@ -11,6 +11,7 @@ import { fmtDate } from './SyllabusUtils';
 //  A table of syllabuses: SUBJECT / CLASS / LESSONS / TEACHER /
 //  LAST UPDATED / ACTIONS. Filter by class, create / edit / delete.
 //  The green chart action opens the Subject Index for that syllabus.
+//  (Academic-year logic removed — syllabuses are no longer year-stamped.)
 // =====================================================================
 
 export default function SyllabusManagement({
@@ -96,7 +97,6 @@ export default function SyllabusManagement({
           body: JSON.stringify({
             ...payload,
             institutionId: user.institutionId,
-            academic_year_id: activeYear ? activeYear.id : null,
             created_by: user.id
           })
         });
