@@ -181,8 +181,18 @@ export default function DownloadsTab({ data, user }) {
     setStatusLoading(true);
     try {
       const res = await fetch(`${API_BASE_URL}/admin/archive-status/${user.institutionId}/${yearId}`);
-      const json = await res.json();
-      setStatusByYear(prev => ({ ...prev, [yearId]: json.modules || {} }));
+      const json = await res.json().catch(() => ({}));
+      // Only update when we actually got modules back. MERGE (never replace),
+      // so an optimistic tick set by recordArchive isn't wiped by a partial
+      // or failed refresh.
+      if (res.ok && json && json.modules) {
+        setStatusByYear(prev => ({
+          ...prev,
+          [yearId]: { ...(prev[yearId] || {}), ...json.modules }
+        }));
+      } else {
+        console.error('archive-status: no modules in response', json);
+      }
     } catch (e) { console.error('archive-status:', e); }
     finally { setStatusLoading(false); }
   }, [user]);
@@ -209,11 +219,31 @@ export default function DownloadsTab({ data, user }) {
 
   const recordArchive = async (yearId, module) => {
     try {
-      await fetch(`${API_BASE_URL}/admin/archive-record/${user.institutionId}/${yearId}/${module}`, {
+      const res = await fetch(`${API_BASE_URL}/admin/archive-record/${user.institutionId}/${yearId}/${module}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: user.id })
       });
-    } catch (e) { console.error('archive-record:', e); }
+      const json = await res.json().catch(() => ({}));
+      if (res.ok && json && json.downloaded) {
+        // Optimistically reflect the saved state for THIS module straight
+        // away, using the server's authoritative response. This makes the
+        // tick appear immediately, independent of the status recompute.
+        setStatusByYear(prev => ({
+          ...prev,
+          [yearId]: {
+            ...(prev[yearId] || {}),
+            [module]: { downloaded: true, stale: false, downloadedAt: json.downloadedAt }
+          }
+        }));
+      } else {
+        console.error('archive-record failed:', res.status, json);
+        throw new Error(json.error || `Could not record the archive (status ${res.status}).`);
+      }
+    } catch (e) {
+      console.error('archive-record:', e);
+      throw e;   // surface to the caller so the error line shows
+    }
+    // Refresh from server too (keeps stale-detection accurate); merge-only.
     await loadStatus(yearId);
   };
 

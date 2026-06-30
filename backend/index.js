@@ -556,22 +556,18 @@ app.delete('/api/group/:groupId/branch/:id', async (req, res) => {
 // =====================================================================
 // === 15.8 ARCHIVE TRACKING — per-module "final archive" freshness ====
 //
-//   Two endpoints power the per-module Final Archive tick:
-//     GET  /api/admin/archive-status/:instId/:yearId
-//          -> { modules: { users:{downloaded,stale,downloadedAt},
-//                          attendance:{...} } }
-//     POST /api/admin/archive-record/:instId/:yearId/:module
-//          -> records that the module's final archive was just downloaded
-//             (stores a fingerprint of the data at this moment)
+//   HARDENED so a missing timestamp column or a single failing module
+//   can never blank out the whole status (which made the tick stick on
+//   "Not saved yet" even after a successful download).
 //
-//   How "needs re-download" works:
-//     • Each module has a FINGERPRINT — a small signature of its current
-//       data (row count + latest change time). Computed on the fly.
-//     • On download we save that fingerprint. Later, if the live
-//       fingerprint differs (new rows added / edited / deleted), the
-//       archive is STALE and the UI asks to download again.
+//   Changes vs the previous version:
+//     • computeArchiveFingerprint now has a graceful fallback for EVERY
+//       module (not just users), so a missing updated_at/marked_at column
+//       degrades to a count-only signature instead of throwing.
+//     • archive-status wraps each module independently — one module
+//       erroring no longer 500s the entire response.
 //
-//   MIGRATION (run once):
+//   MIGRATION (run once — safe to re-run):
 //     CREATE TABLE IF NOT EXISTS archive_downloads (
 //       id INT AUTO_INCREMENT PRIMARY KEY,
 //       institutionId INT NOT NULL,
@@ -582,24 +578,20 @@ app.delete('/api/group/:groupId/branch/:id', async (req, res) => {
 //       downloaded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 //       UNIQUE KEY uq_archive (institutionId, academic_year_id, module)
 //     );
-//     -- users have no change-timestamp; add one so edits invalidate the
-//     -- archive too (skip this line if the column already exists):
-//     ALTER TABLE users
-//       ADD COLUMN updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;
-//
-//   No other section depends on this. Self-contained.
+//     -- optional, lets user edits invalidate the users archive:
+//     -- ALTER TABLE users ADD COLUMN updated_at TIMESTAMP NULL
+//     --   DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;
 // =====================================================================
 
-const ARCHIVE_MODULES = ['users', 'attendance', 'marks', 'performance'];   // add 'fees' here later
+const ARCHIVE_MODULES = ['users', 'attendance', 'marks', 'performance'];
 
 const _archNorm = (v) => (v == null ? '' : (v instanceof Date ? v.toISOString() : String(v)));
 
 // Signature of a module's CURRENT data for an institution + year.
+// Every branch falls back to a count-only signature if its preferred
+// timestamp columns don't exist, so this never throws on schema drift.
 async function computeArchiveFingerprint(instId, yearId, module) {
     if (module === 'users') {
-        // Users aren't year-scoped; the directory snapshot is the live
-        // roster (alumni excluded, mirroring the export). updated_at may
-        // not exist on older DBs — fall back gracefully.
         let rows;
         try {
             [rows] = await db.execute(
@@ -619,29 +611,59 @@ async function computeArchiveFingerprint(instId, yearId, module) {
         const x = rows[0] || {};
         return `u:${x.c}|${_archNorm(x.t)}|${x.mx}`;
     }
+
     if (module === 'attendance') {
-        const [rows] = await db.execute(
-            `SELECT COUNT(*) c, COALESCE(MAX(marked_at), '') mk, COALESCE(MAX(updated_at), '') up
-               FROM attendance
-              WHERE institutionId = ? AND academic_year_id = ?`,
-            [instId, yearId]
-        );
+        let rows;
+        try {
+            [rows] = await db.execute(
+                `SELECT COUNT(*) c, COALESCE(MAX(marked_at), '') mk, COALESCE(MAX(updated_at), '') up
+                   FROM attendance
+                  WHERE institutionId = ? AND academic_year_id = ?`,
+                [instId, yearId]
+            );
+        } catch (e) {
+            // marked_at / updated_at may not exist — fall back to count + max id.
+            try {
+                [rows] = await db.execute(
+                    `SELECT COUNT(*) c, '' mk, COALESCE(MAX(id), 0) up
+                       FROM attendance
+                      WHERE institutionId = ? AND academic_year_id = ?`,
+                    [instId, yearId]
+                );
+            } catch (e2) {
+                [rows] = [{ c: 0, mk: '', up: '' }];
+            }
+        }
         const x = rows[0] || {};
         return `a:${x.c}|${_archNorm(x.mk)}|${_archNorm(x.up)}`;
     }
+
     if (module === 'marks' || module === 'performance') {
-        // Performance is entirely derived from marks, so it shares the
-        // marks signature (any marks change invalidates both).
-        const [rows] = await db.execute(
-            `SELECT COUNT(*) c, COALESCE(MAX(updated_at), '') up, COALESCE(MAX(id), 0) mx
-               FROM student_marks
-              WHERE institutionId = ? AND academic_year_id = ?`,
-            [instId, yearId]
-        );
-        const x = rows[0] || {};
         const tag = module === 'performance' ? 'p' : 'm';
+        let rows;
+        try {
+            [rows] = await db.execute(
+                `SELECT COUNT(*) c, COALESCE(MAX(updated_at), '') up, COALESCE(MAX(id), 0) mx
+                   FROM student_marks
+                  WHERE institutionId = ? AND academic_year_id = ?`,
+                [instId, yearId]
+            );
+        } catch (e) {
+            try {
+                [rows] = await db.execute(
+                    `SELECT COUNT(*) c, '' up, COALESCE(MAX(id), 0) mx
+                       FROM student_marks
+                      WHERE institutionId = ? AND academic_year_id = ?`,
+                    [instId, yearId]
+                );
+            } catch (e2) {
+                [rows] = [{ c: 0, up: '', mx: 0 }];
+            }
+        }
+        const x = rows[0] || {};
         return `${tag}:${x.c}|${_archNorm(x.up)}|${x.mx}`;
     }
+
     return '';
 }
 
@@ -654,19 +676,26 @@ async function _getArchiveRow(instId, yearId, module) {
 }
 
 // ---- status for every module of one year ----------------------------
+//   Each module is computed independently; if one throws, it degrades to
+//   a safe "not downloaded" entry instead of failing the whole response.
 app.get('/api/admin/archive-status/:instId/:yearId', async (req, res) => {
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     const { yearId } = req.params;
     try {
         const modules = {};
         for (const m of ARCHIVE_MODULES) {
-            const current = await computeArchiveFingerprint(instId, yearId, m);
-            const row = await _getArchiveRow(instId, yearId, m);
-            modules[m] = {
-                downloaded: !!row,
-                stale: row ? row.fingerprint !== current : false,
-                downloadedAt: row ? row.downloaded_at : null
-            };
+            try {
+                const current = await computeArchiveFingerprint(instId, yearId, m);
+                const row = await _getArchiveRow(instId, yearId, m);
+                modules[m] = {
+                    downloaded: !!row,
+                    stale: row ? row.fingerprint !== current : false,
+                    downloadedAt: row ? row.downloaded_at : null
+                };
+            } catch (mErr) {
+                console.error(`[archive-status] module "${m}" failed:`, mErr.message);
+                modules[m] = { downloaded: false, stale: false, downloadedAt: null, error: true };
+            }
         }
         res.json({ modules });
     } catch (err) {
@@ -679,7 +708,7 @@ app.get('/api/admin/archive-status/:instId/:yearId', async (req, res) => {
 app.post('/api/admin/archive-record/:instId/:yearId/:module', async (req, res) => {
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     const { yearId, module } = req.params;
-    const downloadedBy = req.auth.userId || null;          // TENANT: actor from token, not body
+    const downloadedBy = req.auth.userId || null;          // actor from token, not body
     if (!ARCHIVE_MODULES.includes(module)) {
         return res.status(400).json({ error: 'Unknown module.' });
     }
