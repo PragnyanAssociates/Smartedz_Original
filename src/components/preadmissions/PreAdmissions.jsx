@@ -4,7 +4,7 @@ import { API_BASE_URL } from '../../apiConfig';
 import {
   Plus, Camera, Phone, Calendar, IdCard, User, FileText,
   MapPin, Edit, Trash2, GraduationCap, X, Check, School,
-  Search, Loader2, ChevronDown
+  Search, Loader2, ChevronDown, Download
 } from 'lucide-react';
 import { usePermissions } from '../../Screens/PermissionsContext';
 
@@ -76,6 +76,7 @@ export default function PreAdmissionsScreen() {
   const [formData, setFormData] = useState({});
   const [selectedImage, setSelectedImage] = useState(null);
   const [selectedItem, setSelectedItem] = useState(null);
+  const [downloading, setDownloading] = useState(false);
 
   // Filters
   const [searchText, setSearchText] = useState('');
@@ -184,6 +185,33 @@ export default function PreAdmissionsScreen() {
     if (status === 'Rejected') return 'bg-red-500 text-white shadow-sm';
     return 'bg-primary text-white shadow-sm';
   };
+
+  // Download the applications as an Excel file. The export endpoint is behind
+  // the /api gate, so a plain download link would 401 — fetch it as a blob
+  // (token attached by the interceptor) and save that. Scope follows the Year
+  // filter: a specific year, or 'all' (grouped by year in the sheet).
+  const handleDownload = useCallback(async () => {
+    if (!user?.institutionId) return;
+    setDownloading(true);
+    try {
+      const params = new URLSearchParams();
+      params.set('year', filterYear); // a year, or 'all'
+      const res = await fetch(
+        `${API_BASE_URL}/admin/preadmissions/${user.institutionId}/export?${params.toString()}`
+      );
+      if (!res.ok) throw new Error('Could not generate the Excel file.');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filterYear === 'all' ? 'PreAdmissions_AllYears.xlsx' : `PreAdmissions_${filterYear}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) { alert(e.message || 'Download failed.'); }
+    setDownloading(false);
+  }, [user, filterYear]);
 
   // If not admin and no read permission, completely block the screen
   if (!canRead && !isAdmin) {
@@ -314,13 +342,26 @@ export default function PreAdmissionsScreen() {
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
 
       {/* Header */}
-      <header className="flex flex-col mb-2 sm:mb-0">
-        <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
-          <IdCard className="text-primary size-5" />
-          Admissions Directory
-        </h1>
-        <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">Manage applications and full student records.</p>
-      </header>
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-2 sm:mb-0">
+        <header className="flex flex-col">
+          <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
+            <IdCard className="text-primary size-5" />
+            Admissions Directory
+          </h1>
+          <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">Manage applications and full student records.</p>
+        </header>
+
+        <button onClick={handleDownload} disabled={downloading}
+          title={filterYear === 'all'
+            ? 'Download every year, grouped by year'
+            : `Download the ${filterYear} applications`}
+          className="h-9 px-4 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors shrink-0 self-start sm:self-auto">
+          {downloading ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+          {downloading
+            ? 'Preparing...'
+            : (filterYear === 'all' ? 'Download All (Excel)' : `Download ${filterYear} (Excel)`)}
+        </button>
+      </div>
 
       {/* Main Grid View */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 flex-1">

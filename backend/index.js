@@ -11,7 +11,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
-const { Server } = require('socket.io');
+const { Server } = require('socket.io');   
 
 const app = express();
 const server = http.createServer({ maxHeaderSize: 81920 }, app);
@@ -6633,6 +6633,11 @@ app.delete('/api/admin/labs/:id', async (req, res) => {
 // === 23. ADMISSIONS / DIRECTORY — Pre-Admissions  (TENANT-SCOPED) ====
 //   instId/userId/role from req.auth; create takes institutionId from the
 //   token; update/delete verify ownership. Calendar-year filter unchanged.
+//
+//   23.5 (new): export the list to Excel — a single submission year, or ALL
+//   years grouped under year-wise headings. Streamed as .xlsx; the frontend
+//   fetches it as a blob (token via the interceptor) and saves it, since a
+//   raw download link wouldn't carry the token.
 // =====================================================================
 
 // --- 23.0 Distinct submission years (for the year-filter dropdown) ---
@@ -6695,6 +6700,168 @@ app.get('/api/admin/preadmissions/:instId', async (req, res) => {
         res.status(200).json(records);
     } catch (error) {
         res.status(500).json({ message: "Failed to fetch admission records." });
+    }
+});
+
+// --- 23.5 Export the list to Excel ----------------------------------
+//   ?year=YYYY -> only that submission year (one section).
+//   ?year=all  -> every year, grouped under a heading per year.
+//   Two path segments (:instId + export), so it never collides with the
+//   one-segment '/:instId' list route regardless of registration order.
+app.get('/api/admin/preadmissions/:instId/export', async (req, res) => {
+    const ExcelJS = require('exceljs'); // local require avoids any top-level name clash
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    const roleName = req.auth.role;
+    const { year } = req.query;
+    try {
+        // Same read-permission gate as the list route.
+        const isSystemAdmin = (roleName === 'Super Admin' || roleName === 'Developer');
+        const [perms] = await db.execute(`
+            SELECT p.can_read
+              FROM permissions p
+              JOIN roles r ON r.id = p.role_id
+             WHERE r.role_name = ? AND r.institutionId = ? AND p.module_name = 'PreAdmissions'
+        `, [roleName, instId]);
+        const hasAccess = isSystemAdmin || (perms.length > 0 && perms[0].can_read);
+        if (!hasAccess) {
+            return res.status(403).json({ message: "You do not have permission to view admissions." });
+        }
+
+        let whereClauses = ["institutionId = ?"];
+        const queryParams = [instId];
+        const yr = parseInt(year, 10);
+        const singleYear = year && year !== 'all' && !isNaN(yr);
+        if (singleYear) { whereClauses.push("YEAR(submission_date) = ?"); queryParams.push(yr); }
+
+        const sql = `SELECT *, YEAR(submission_date) AS cal_year
+                       FROM pre_admissions
+                      WHERE ${whereClauses.join(' AND ')}
+                      ORDER BY YEAR(submission_date) DESC, student_name`;
+        const [rows] = await db.query(sql, queryParams);
+
+        // Column order for the sheet. photo_url is a base64 image -> omitted.
+        const columns = [
+            { header: 'Student Name',          width: 24 },
+            { header: 'Admission No',          width: 16 },
+            { header: 'Joining Grade',         width: 14 },
+            { header: 'Status',                width: 12 },
+            { header: 'Date of Birth',         width: 14 },
+            { header: 'Student Phone',         width: 16 },
+            { header: 'Pen No',                width: 14 },
+            { header: 'Aadhar No',             width: 16 },
+            { header: 'Parent Name',           width: 20 },
+            { header: 'Parent Phone',          width: 16 },
+            { header: 'Previous Institute',    width: 26 },
+            { header: 'Previous Grade',        width: 14 },
+            { header: 'School Joined Date',    width: 16 },
+            { header: 'School Joined Grade',   width: 16 },
+            { header: 'School Outgoing Date',  width: 18 },
+            { header: 'School Outgoing Grade', width: 18 },
+            { header: 'TC Issued Date',        width: 14 },
+            { header: 'TC Number',             width: 14 },
+            { header: 'Address',               width: 30 },
+            { header: 'Submitted',             width: 14 },
+        ];
+        const NCOLS = columns.length;
+
+        const dmy = (d) => {
+            if (!d) return '';
+            const dt = new Date(d);
+            if (isNaN(dt.getTime())) return '';
+            const p = (n) => String(n).padStart(2, '0');
+            return `${p(dt.getDate())}/${p(dt.getMonth() + 1)}/${dt.getFullYear()}`;
+        };
+        const rowValues = (r) => ([
+            r.student_name || '', r.admission_no || '', r.joining_grade || '', r.status || '',
+            dmy(r.dob), r.phone_no || '', r.pen_no || '', r.aadhar_no || '',
+            r.parent_name || '', r.parent_phone || '', r.previous_institute || '',
+            r.previous_grade || '', dmy(r.school_joined_date), r.school_joined_grade || '',
+            dmy(r.school_outgoing_date), r.school_outgoing_grade || '', dmy(r.tc_issued_date),
+            r.tc_number || '', r.address || '', dmy(r.submission_date)
+        ]);
+
+        const wb = new ExcelJS.Workbook();
+        wb.creator = 'SmartEdz';
+        wb.created = new Date();
+        const ws = wb.addWorksheet('Pre-Admissions');
+        ws.columns = columns.map(c => ({ width: c.width })); // widths only, no auto header row
+
+        const PRIMARY = 'FF3284C7';
+        const ACCENT  = 'FFF29132';
+
+        const addTitleRow = (text) => {
+            const row = ws.addRow([text]);
+            ws.mergeCells(row.number, 1, row.number, NCOLS);
+            const cell = row.getCell(1);
+            cell.font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ACCENT } };
+            cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+            row.height = 24;
+        };
+        const addYearHeading = (text) => {
+            const row = ws.addRow([text]);
+            ws.mergeCells(row.number, 1, row.number, NCOLS);
+            const cell = row.getCell(1);
+            cell.font = { bold: true, size: 12, color: { argb: 'FF1F2937' } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F1FA' } };
+            cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+            row.height = 20;
+        };
+        const addColumnHeader = () => {
+            const row = ws.addRow(columns.map(c => c.header));
+            row.eachCell((cell) => {
+                cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: PRIMARY } };
+                cell.alignment = { vertical: 'middle' };
+                cell.border = { bottom: { style: 'thin', color: { argb: 'FFB8CCE0' } } };
+            });
+            row.height = 18;
+        };
+        const addDataRow = (r) => {
+            const row = ws.addRow(rowValues(r));
+            row.eachCell((cell) => {
+                cell.alignment = { vertical: 'top', wrapText: false };
+                cell.font = { size: 10, color: { argb: 'FF27272A' } };
+            });
+        };
+
+        const scopeLabel = singleYear ? `Year ${yr}` : 'All Years';
+        addTitleRow(`Pre-Admissions — ${scopeLabel}`);
+        ws.addRow([]); // spacer
+
+        if (rows.length === 0) {
+            const r = ws.addRow(['No applications found for this selection.']);
+            ws.mergeCells(r.number, 1, r.number, NCOLS);
+            r.getCell(1).font = { italic: true, color: { argb: 'FF71717A' } };
+        } else if (singleYear) {
+            addColumnHeader();
+            rows.forEach(addDataRow);
+        } else {
+            let currentYear = null;
+            let first = true;
+            for (const r of rows) {
+                if (r.cal_year !== currentYear) {
+                    currentYear = r.cal_year;
+                    if (!first) ws.addRow([]);
+                    first = false;
+                    const groupRows = rows.filter(x => x.cal_year === currentYear).length;
+                    addYearHeading(`Year ${currentYear || '—'}  (${groupRows} applications)`);
+                    addColumnHeader();
+                }
+                addDataRow(r);
+            }
+        }
+
+        const safeScope = singleYear ? String(yr) : 'AllYears';
+        const filename = `PreAdmissions_${safeScope}.xlsx`;
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        await wb.xlsx.write(res);
+        res.end();
+    } catch (error) {
+        console.error('Pre-admissions export failed:', error);
+        if (!res.headersSent) res.status(500).json({ message: "Failed to export records." });
+        else res.end();
     }
 });
 
