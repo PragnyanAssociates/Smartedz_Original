@@ -167,6 +167,7 @@ export default function Gallery() {
   const [search, setSearch] = useState('');
   const [monthFilter, setMonthFilter] = useState('all');
   const [yearFilter, setYearFilter] = useState('all');
+  const [downloading, setDownloading] = useState(false);
 
   const canCreate = can('Gallery', 'edit');
 
@@ -207,6 +208,34 @@ export default function Gallery() {
   };
 
   const filtersDirty = monthFilter !== 'all' || yearFilter !== 'all';
+
+  // Download the gallery as a ZIP of album folders. The export endpoint is
+  // behind the /api gate, so a plain link would 401 — fetch it as a blob
+  // (token attached by the interceptor) and save that. Scope follows the Year
+  // filter: a specific year (folders = Album/file), or 'all' (folders nested
+  // Year/Album/file). Photos + videos can't go in a spreadsheet, so ZIP is
+  // the format that preserves the album folder structure.
+  const handleDownload = useCallback(async () => {
+    if (!user?.institutionId) return;
+    setDownloading(true);
+    try {
+      const params = new URLSearchParams();
+      params.set('year', yearFilter); // a year, or 'all'
+      const res = await fetch(
+        `${API_BASE_URL}/admin/gallery/${user.institutionId}/export?${params.toString()}`);
+      if (!res.ok) throw new Error('Could not generate the ZIP file.');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = yearFilter === 'all' ? 'Gallery_AllYears.zip' : `Gallery_${yearFilter}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) { alert(e.message || 'Download failed.'); }
+    setDownloading(false);
+  }, [user, yearFilter]);
 
   if (viewingAlbum) {
     return (
@@ -265,6 +294,21 @@ export default function Gallery() {
             </button>
           )}
         </div>
+
+        {/* Download the gallery as a ZIP of album folders, driven by the Year
+            filter: a year -> that year (Album/file); All Years -> Year/Album/file. */}
+        <button
+          onClick={handleDownload}
+          disabled={downloading}
+          title={yearFilter === 'all'
+            ? 'Download every album, foldered by year'
+            : `Download the ${yearFilter} albums`}
+          className="w-full sm:w-auto sm:ml-auto h-9 px-4 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors shrink-0">
+          {downloading ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+          {downloading
+            ? 'Zipping...'
+            : (yearFilter === 'all' ? 'Download All (ZIP)' : `Download ${yearFilter} (ZIP)`)}
+        </button>
       </div>
 
       {loading ? (
@@ -312,6 +356,7 @@ function AlbumDetail({ albumTitle, onBack }) {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all');
   const [selectedMedia, setSelectedMedia] = useState(null);
+  const [downloading, setDownloading] = useState(false);
 
   const canEdit = can('Gallery', 'edit');
   const canDelete = can('Gallery', 'delete');
@@ -356,6 +401,32 @@ function AlbumDetail({ albumTitle, onBack }) {
     } catch (err) { alert('Network error'); }
   };
 
+  // Download just THIS album as a ZIP. The album's event year scopes the
+  // export; the backend returns a Year/Album tree, but a single album only
+  // produces that one album's folder — same blob-fetch pattern.
+  const handleDownloadAlbum = async () => {
+    if (!user?.institutionId) return;
+    setDownloading(true);
+    try {
+      const yr = items[0]?.event_date ? new Date(items[0].event_date).getFullYear() : null;
+      const params = new URLSearchParams();
+      params.set('year', yr ? String(yr) : 'all');
+      const res = await fetch(
+        `${API_BASE_URL}/admin/gallery/${user.institutionId}/export?${params.toString()}`);
+      if (!res.ok) throw new Error('Could not generate the ZIP file.');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Gallery_${yr || 'AllYears'}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) { alert(e.message || 'Download failed.'); }
+    setDownloading(false);
+  };
+
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-6 animate-in slide-in-from-bottom-2 duration-300">
       <button onClick={onBack} className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
@@ -377,6 +448,14 @@ function AlbumDetail({ albumTitle, onBack }) {
               </button>
             ))}
           </div>
+          <button
+            onClick={handleDownloadAlbum}
+            disabled={downloading}
+            title="Download this album as a ZIP"
+            className="h-9 w-full sm:w-auto bg-white border border-zinc-200 text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 px-4 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors shrink-0">
+            {downloading ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
+            {downloading ? 'Zipping...' : 'Download (ZIP)'}
+          </button>
           {canEdit && (
             <label className="h-9 w-full sm:w-auto bg-primary hover:bg-primary/90 text-white px-4 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer shadow-sm transition-colors shrink-0">
               <Plus className="size-4" /> Add Media

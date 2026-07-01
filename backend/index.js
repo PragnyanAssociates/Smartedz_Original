@@ -5392,6 +5392,13 @@ app.get('/api/admin/performance-export/:instId', async (req, res) => {
 //     frontend FETCHES it (interceptor adds the token) and renders a blob.
 //     A raw <img src>/<video src> sends no token and 401s. If media renders
 //     today you're already fetching blobs and this is fine.
+//
+//   19.7 (new): export the gallery as a ZIP of real folders — one folder per
+//   album; for "all years" the albums are nested under a per-year folder.
+//   Streamed via archiver; the frontend fetches it as a blob so the token
+//   rides along (a plain download link wouldn't). Photos AND videos can't go
+//   in a spreadsheet, so ZIP is the natural "download the whole gallery"
+//   format. Requires:  npm install archiver
 // =====================================================================
 
 const galleryUpload = multer({
@@ -5444,6 +5451,101 @@ app.get('/api/admin/gallery/album/:instId/:title', async (req, res) => {
         );
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 19.7 Export the gallery as a ZIP of album folders ---------------
+//   ?year=YYYY -> that year only, zip layout:  <Album>/<file>
+//   ?year=all  -> every year,     zip layout:  <Year>/<Album>/<file>
+//   Two path segments (:instId + export) — never collides with the
+//   one-segment '/:instId' album-list route. Files are pulled one at a
+//   time (metadata first, then each blob) so memory stays flat.
+app.get('/api/admin/gallery/:instId/export', async (req, res) => {
+    const archiver = require('archiver'); // local require; add via: npm install archiver
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    const { year } = req.query;
+    const yr = parseInt(year, 10);
+    const singleYear = year && year !== 'all' && !isNaN(yr);
+
+    // Make a string safe to use as a folder / file name inside the zip.
+    const safe = (s, fallback) => {
+        let v = String(s == null ? '' : s).trim()
+            .replace(/[\/\\:*?"<>|]+/g, '_')   // illegal path chars
+            .replace(/\s+/g, ' ')
+            .replace(/\.+$/, '')               // no trailing dots (Windows)
+            .trim();
+        return v || fallback;
+    };
+    const extFromMime = (mime, fileType) => {
+        const map = {
+            'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png',
+            'image/gif': 'gif', 'image/webp': 'webp', 'image/bmp': 'bmp',
+            'image/heic': 'heic', 'video/mp4': 'mp4', 'video/quicktime': 'mov',
+            'video/webm': 'webm', 'video/x-matroska': 'mkv', 'video/3gpp': '3gp'
+        };
+        if (mime && map[mime]) return map[mime];
+        if (mime && mime.includes('/')) {
+            const part = mime.split('/')[1].split(';')[0].trim();
+            if (part) return part;
+        }
+        return fileType === 'video' ? 'mp4' : 'jpg';
+    };
+
+    try {
+        // Metadata only (no blobs yet) so we know the folder structure.
+        let where = 'institutionId = ?';
+        const params = [instId];
+        if (singleYear) { where += ' AND YEAR(event_date) = ?'; params.push(yr); }
+        const [rows] = await db.execute(
+            `SELECT id, title, file_type, mime_type, event_date,
+                    YEAR(event_date) AS yr
+               FROM gallery
+              WHERE ${where}
+              ORDER BY YEAR(event_date) DESC, event_date DESC, title, created_at`,
+            params
+        );
+
+        const zipName = singleYear ? `Gallery_${yr}.zip` : 'Gallery_AllYears.zip';
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename="${zipName}"`);
+
+        const archive = archiver('zip', { zlib: { level: 1 } }); // media is already compressed
+        archive.on('warning', (err) => { if (err.code !== 'ENOENT') console.warn('archive warning:', err.message); });
+        archive.on('error', (err) => {
+            console.error('Gallery zip error:', err);
+            try { res.destroy(err); } catch (_) {}
+        });
+        archive.pipe(res);
+
+        if (rows.length === 0) {
+            archive.append(
+                'No media found for this selection.\n',
+                { name: 'README.txt' }
+            );
+        } else {
+            // Per-file counter so names never collide inside one folder.
+            for (const r of rows) {
+                const [mrows] = await db.execute(
+                    'SELECT file_data, mime_type FROM gallery WHERE id = ?', [r.id]);
+                if (!mrows.length || !mrows[0].file_data) continue;
+
+                const album = safe(r.title, 'Untitled Album');
+                const ext = extFromMime(mrows[0].mime_type || r.mime_type, r.file_type);
+                const fileName = `${r.file_type === 'video' ? 'video' : 'photo'}-${r.id}.${ext}`;
+
+                const folder = singleYear
+                    ? album
+                    : `${safe(r.yr, 'Unknown Year')}/${album}`;
+
+                archive.append(mrows[0].file_data, { name: `${folder}/${fileName}` });
+            }
+        }
+
+        await archive.finalize();
+    } catch (err) {
+        console.error('Gallery export failed:', err);
+        if (!res.headersSent) res.status(500).json({ error: err.message });
+        else { try { res.end(); } catch (_) {} }
+    }
 });
 
 // --- 19.3 Upload media -> store bytes in the DB ----------------------
