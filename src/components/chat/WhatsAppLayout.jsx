@@ -54,7 +54,9 @@ const WhatsAppLayout = () => {
     useEffect(() => {
         if (!hasReadAccess) return;
 
-        socketRef.current = io(SERVER_URL, { transports: ["websocket"] });
+        // Allow the polling -> websocket upgrade (more robust behind Railway's
+        // proxy than forcing websocket-only).
+        socketRef.current = io(SERVER_URL, { transports: ["polling", "websocket"] });
 
         socketRef.current.on('updateGroupList', () => {
             fetchGroups();
@@ -87,7 +89,7 @@ const WhatsAppLayout = () => {
                     <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Module Locked</h1>
                     <p className="text-sm text-zinc-500 mt-2 leading-relaxed">You do not have permission to view group chats.</p>
                     <button onClick={() => navigate('/')} 
-                        className="mt-6 h-9 px-6 bg-primary hover:bg-primary/90 text-white rounded-md text-sm font-semibold shadow-sm transition-colors w-full">
+                        className="mt-6 h-9 px-6 bg-primary hover:bg-primary/90 text-white rounded-md text-sm font-semibold shadow-sm transition-colors">
                         Return Home
                     </button>
                 </div>

@@ -8544,6 +8544,10 @@ io.on('connection', (socket) => {
 //   ⚠ alumni/pic/:id streams the photo — it's under the /api gate, so a
 //     raw <img src> won't carry the token. Fetch it as a blob if needed.
 //
+//   23.9 (new): update an alumni photo. The picture is snapshotted from the
+//   student's user profile at passout and stays until an admin uploads a
+//   new one here.
+//
 //   Reuses nowSQL() (Section 16).
 // =====================================================================
 
@@ -8777,6 +8781,22 @@ app.get('/api/admin/alumni/candidates/:instId/:classId', async (req, res) => {
             [instId, classId]
         );
         res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 23.9 Update an alumni photo (ownership) ------------------------
+//   Replaces the snapshotted picture with an uploaded one (base64 data
+//   URL). Until this is called, the photo taken from the student's user
+//   profile at passout remains.
+app.put('/api/admin/alumni/:id/pic', async (req, res) => {
+    const { profile_pic } = req.body;
+    if (!profile_pic) return res.status(400).json({ error: 'profile_pic is required.' });
+    try {
+        const [own] = await db.execute('SELECT institutionId FROM alumni WHERE id = ?', [req.params.id]);
+        if (own.length === 0) return res.status(404).json({ error: 'Alumni not found' });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This record belongs to another institution.' });
+        await db.execute('UPDATE alumni SET profile_pic = ? WHERE id = ?', [profile_pic, req.params.id]);
+        res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

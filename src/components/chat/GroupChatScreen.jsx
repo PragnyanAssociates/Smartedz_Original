@@ -198,22 +198,40 @@ useEffect(() => {
       setIsFetchingMore(false);
     }
   }, [group.id, markAsSeen, onBack, user?.id]);
+
+  // Keep the latest fetchHistory / onBack in refs so the socket effect below
+  // can stay tied to [group.id] ONLY. Without this, the socket effect's deps
+  // (fetchHistory + onBack) change identity on every parent re-render — and
+  // the parent re-renders on every 'updateGroupList' event — so the socket
+  // kept disconnecting/reconnecting mid-handshake ("WebSocket is closed
+  // before the connection is established"). Refs break that churn.
+  const fetchHistoryRef = useRef(fetchHistory);
+  const onBackRef = useRef(onBack);
+  useEffect(() => { fetchHistoryRef.current = fetchHistory; }, [fetchHistory]);
+  useEffect(() => { onBackRef.current = onBack; }, [onBack]);
+
 useEffect(() => {
-    if (group?.id) { fetchHistory(1); }
-    
-    socketRef.current = io(SERVER_URL, { transports: ["websocket"] });
-    
-    socketRef.current.on("connect", () => { 
-        socketRef.current?.emit("joinGroup", { groupId: group.id }); 
+    if (!group?.id) return;
+
+    fetchHistoryRef.current(1);
+
+    // Allow the polling -> websocket upgrade instead of forcing websocket-only.
+    // Websocket-only skips the handshake transport and races the connection
+    // open/close behind Railway's proxy, which is what produced the warning.
+    const socket = io(SERVER_URL, { transports: ["polling", "websocket"] });
+    socketRef.current = socket;
+
+    socket.on("connect", () => { 
+        socket.emit("joinGroup", { groupId: group.id }); 
     });
     
-    socketRef.current.on("groupDeleted", (deletedGroupId) => { 
+    socket.on("groupDeleted", (deletedGroupId) => { 
         if (deletedGroupId === group.id || parseInt(deletedGroupId) === parseInt(group.id)) { 
-            if (onBack) onBack(); 
+            if (onBackRef.current) onBackRef.current(); 
         } 
     });
 
-    socketRef.current.on("newMessage", (msg) => {
+    socket.on("newMessage", (msg) => {
         if (String(msg.group_id) === String(group.id)) {
             setMessages(prev => {
                 const idx = prev.findIndex(m => m.clientMessageId === msg.clientMessageId);
@@ -224,19 +242,18 @@ useEffect(() => {
         }
     });
 
-    socketRef.current.on("messageDeleted", ({ messageId, deletedBy }) => {
+    socket.on("messageDeleted", ({ messageId, deletedBy }) => {
         setMessages((prev) => prev.map((msg) => msg.id === messageId ? { 
             ...msg, is_deleted: true, deleted_by: deletedBy, 
             message_text: null, file_url: null, file_name: null, file_size: null 
         } : msg));
     });
     
-    socketRef.current.on("messageEdited", (msg) => { 
+    socket.on("messageEdited", (msg) => { 
         if (msg.group_id === group.id) setMessages((prev) => prev.map((m) => (m.id === msg.id ? msg : m))); 
     });
 
-    // 👇 Add this right here, before the return cleanup
-    socketRef.current.on("messageError", ({ message, clientMessageId }) => {
+    socket.on("messageError", ({ message, clientMessageId }) => {
         if (clientMessageId) {
             setMessages(prev => prev.filter(m => m.clientMessageId !== clientMessageId));
         }
@@ -244,10 +261,10 @@ useEffect(() => {
     });
 
    return () => { 
-    socketRef.current?.off('messageError');
-    socketRef.current?.disconnect(); 
+    socket.off('messageError');
+    socket.disconnect(); 
 };
-}, [group.id, fetchHistory, onBack]);
+}, [group.id]);
   const handleScroll = (e) => {
     const { scrollTop } = e.currentTarget;
     if (scrollTop === 0 && hasMore && !loading && !isFetchingMore) {

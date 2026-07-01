@@ -16,13 +16,16 @@ import {
   Link,
   CalendarDays, 
   User, 
-  FileText
+  FileText,
+  Camera
 } from 'lucide-react';
 import { fmtDate, initials, statusStyle } from './AlumniUtils';
 
 // =====================================================================
 //  AlumniDetail - full record for one alumni.
-//   • Top: snapshot identity (photo, name, passout class/year) - frozen.
+//   • Top: snapshot identity (photo, name, passout class/year). The photo
+//     is snapshotted from the student's user profile at passout and STAYS
+//     until an admin uploads a new one (camera button, edit access only).
 //   • Below: contact + the editable "extra" fields (current status,
 //     occupation, organization, higher education, location, linkedin,
 //     notes). Edit access unlocks the edit modal + delete.
@@ -34,6 +37,7 @@ export default function AlumniDetail({ alumniId, canEdit, onBack }) {
   const [editing, setEditing] = useState(false);
   const [form, setForm]       = useState({});
   const [saving, setSaving]   = useState(false);
+  const [savingPic, setSavingPic] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -76,6 +80,42 @@ export default function AlumniDetail({ alumniId, canEdit, onBack }) {
       load();
     } catch (e) { alert(e.message); }
     setSaving(false);
+  };
+
+  // Change the alumni photo. Converts to base64 and PUTs it; on success the
+  // record reloads so the new picture shows immediately (and the card list
+  // will pick it up too via the /pic/:id endpoint).
+  const handlePickImage = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      alert('Please select a valid image file.');
+      e.target.value = '';
+      return;
+    }
+    const MAX_SIZE = 3 * 1024 * 1024; // 3MB
+    if (file.size > MAX_SIZE) {
+      alert('Image is too large! Please select a file under 3MB.');
+      e.target.value = '';
+      return;
+    }
+    setSavingPic(true);
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/admin/alumni/${alumniId}/pic`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ profile_pic: reader.result })
+        });
+        if (!res.ok) throw new Error('Upload failed');
+        await load();
+      } catch (err) { alert(err.message); }
+      setSavingPic(false);
+      e.target.value = '';
+    };
+    reader.onerror = () => { alert('Could not read the image.'); setSavingPic(false); e.target.value = ''; };
+    reader.readAsDataURL(file);
   };
 
   const handleDelete = async () => {
@@ -130,17 +170,30 @@ export default function AlumniDetail({ alumniId, canEdit, onBack }) {
         )}
       </div>
 
-      {/* Identity header (snapshot - frozen) */}
+      {/* Identity header (snapshot) */}
       <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm p-5 sm:p-6">
         <div className="flex flex-col sm:flex-row sm:items-center gap-5">
-          {data.profile_pic ? (
-            <img src={data.profile_pic} alt={data.name}
-              className="size-20 sm:size-24 rounded-lg object-cover shrink-0 ring-1 ring-black/5 shadow-sm" />
-          ) : (
-            <div className="size-20 sm:size-24 rounded-lg bg-primary/10 text-primary flex items-center justify-center font-semibold text-3xl shrink-0 ring-1 ring-primary/20">
-              {initials(data.name)}
-            </div>
-          )}
+          <div className="relative shrink-0 w-20 sm:w-24">
+            {data.profile_pic ? (
+              <img src={data.profile_pic} alt={data.name}
+                className="size-20 sm:size-24 rounded-lg object-cover ring-1 ring-black/5 shadow-sm" />
+            ) : (
+              <div className="size-20 sm:size-24 rounded-lg bg-primary/10 text-primary flex items-center justify-center font-semibold text-3xl ring-1 ring-primary/20">
+                {initials(data.name)}
+              </div>
+            )}
+            {canEdit && (
+              <>
+                <input type="file" accept="image/*" id="alumni-pic-upload" className="hidden"
+                  onChange={handlePickImage} disabled={savingPic} />
+                <label htmlFor="alumni-pic-upload"
+                  title="Change photo"
+                  className="absolute -bottom-1.5 -right-1.5 size-8 bg-primary hover:bg-primary/90 text-white rounded-full flex items-center justify-center cursor-pointer shadow-md ring-2 ring-white transition-colors">
+                  {savingPic ? <Loader2 className="size-4 animate-spin" /> : <Camera className="size-4" />}
+                </label>
+              </>
+            )}
+          </div>
           <div className="min-w-0">
             <h2 className="text-xl sm:text-2xl font-semibold text-zinc-900 tracking-tight">{data.name}</h2>
             <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-2 text-[11px] sm:text-xs font-medium text-zinc-500">

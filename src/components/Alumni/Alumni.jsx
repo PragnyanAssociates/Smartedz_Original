@@ -153,16 +153,45 @@ export default function Alumni() {
 }
 
 
+// --- Fetch a token-protected image as a blob object URL -------------
+//   The /admin/alumni/pic/:id endpoint sits behind the /api auth gate,
+//   so a raw <img src> gets no token and 401s. Fetching it (the app's
+//   fetch interceptor attaches the token) and using the resulting blob
+//   URL is what makes the card photos appear.
+function useAuthedImage(url) {
+  const [src, setSrc] = useState(null);
+  const [err, setErr] = useState(false);
+
+  useEffect(() => {
+    if (!url) { setSrc(null); setErr(false); return; }
+    let revoked = false;
+    let obj = null;
+    setSrc(null); setErr(false);
+    fetch(url)
+      .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.blob(); })
+      .then(blob => {
+        if (revoked) return;
+        obj = URL.createObjectURL(blob);
+        setSrc(obj);
+      })
+      .catch(() => { if (!revoked) setErr(true); });
+    return () => { revoked = true; if (obj) URL.revokeObjectURL(obj); };
+  }, [url]);
+
+  return { src, err };
+}
+
+
 // --- Avatar: shows the stored photo, falls back to initials ---------
 function AlumniAvatar({ a }) {
-  const [err, setErr] = useState(false);
   // a.has_pic comes back as 1/0 from MySQL
-  if (a.has_pic && !err) {
+  const { src, err } = useAuthedImage(a.has_pic ? `${API_BASE_URL}/admin/alumni/pic/${a.id}` : null);
+
+  if (a.has_pic && src && !err) {
     return (
       <img
-        src={`${API_BASE_URL}/admin/alumni/pic/${a.id}`}
+        src={src}
         alt={a.name}
-        onError={() => setErr(true)}
         className="size-12 rounded-md object-cover shrink-0 ring-1 ring-black/5"
       />
     );
