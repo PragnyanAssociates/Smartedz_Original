@@ -8544,9 +8544,12 @@ io.on('connection', (socket) => {
 //   ⚠ alumni/pic/:id streams the photo — it's under the /api gate, so a
 //     raw <img src> won't carry the token. Fetch it as a blob if needed.
 //
-//   23.9 (new): update an alumni photo. The picture is snapshotted from the
-//   student's user profile at passout and stays until an admin uploads a
-//   new one here.
+//   23.9  : update an alumni photo (snapshot from the user profile stays
+//           until an admin uploads a new one here).
+//   23.10 : export the alumni list to Excel — a single year, or ALL years
+//           grouped under year-wise headings. Streamed as .xlsx; the
+//           frontend fetches it as a blob (token via the interceptor) and
+//           saves it, since a raw download link wouldn't carry the token.
 //
 //   Reuses nowSQL() (Section 16).
 // =====================================================================
@@ -8626,6 +8629,160 @@ app.get('/api/admin/alumni/pic/:id', async (req, res) => {
         }
         return res.redirect(pic);
     } catch (err) { res.status(500).send(err.message); }
+});
+
+// --- 23.10 Export the alumni list to Excel --------------------------
+//   ?year=YYYY  -> only that calendar year (one section).
+//   ?year=all   -> every year, grouped under a heading per year.
+//   NOTE: keep this ABOVE the generic '/:instId' list route is not needed
+//   because the path segment 'export' can't collide with an id, but the
+//   more specific static segment is matched fine by Express regardless.
+app.get('/api/admin/alumni/export/:instId', async (req, res) => {
+    const ExcelJS = require('exceljs'); // local require avoids any top-level name clash
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    const { year } = req.query;
+    try {
+        let sql = `
+            SELECT name, email, phone, gender, dob, passout_year, final_class,
+                   roll_no, admission_no, current_status, occupation, organization,
+                   higher_education, location, linkedin, address, notes,
+                   YEAR(created_at) AS cal_year
+              FROM alumni
+             WHERE institutionId = ?`;
+        const params = [instId];
+        const yr = parseInt(year, 10);
+        const singleYear = year && year !== 'all' && !isNaN(yr);
+        if (singleYear) { sql += ' AND YEAR(created_at) = ?'; params.push(yr); }
+        sql += ' ORDER BY YEAR(created_at) DESC, name';
+        const [rows] = await db.execute(sql, params);
+
+        // Column definitions (order = sheet order). profile_pic is a base64
+        // image, so it's intentionally left out of the spreadsheet.
+        const columns = [
+            { header: 'Name',             width: 24 },
+            { header: 'Email',            width: 28 },
+            { header: 'Phone',            width: 16 },
+            { header: 'Gender',           width: 10 },
+            { header: 'Date of Birth',    width: 14 },
+            { header: 'Passout Year',     width: 14 },
+            { header: 'Final Class',      width: 14 },
+            { header: 'Roll No',          width: 10 },
+            { header: 'Admission No',     width: 14 },
+            { header: 'Current Status',   width: 16 },
+            { header: 'Occupation',       width: 18 },
+            { header: 'Organization',     width: 18 },
+            { header: 'Higher Education', width: 18 },
+            { header: 'Location',         width: 16 },
+            { header: 'LinkedIn',         width: 30 },
+            { header: 'Address',          width: 30 },
+            { header: 'Notes',            width: 34 },
+        ];
+        const NCOLS = columns.length;
+
+        const dmy = (d) => {
+            if (!d) return '';
+            const dt = new Date(d);
+            if (isNaN(dt.getTime())) return '';
+            const p = (n) => String(n).padStart(2, '0');
+            return `${p(dt.getDate())}/${p(dt.getMonth() + 1)}/${dt.getFullYear()}`;
+        };
+        const rowValues = (r) => ([
+            r.name || '', r.email || '', r.phone || '', r.gender || '', dmy(r.dob),
+            r.passout_year || '', r.final_class || '', r.roll_no || '', r.admission_no || '',
+            r.current_status || '', r.occupation || '', r.organization || '',
+            r.higher_education || '', r.location || '', r.linkedin || '',
+            r.address || '', r.notes || ''
+        ]);
+
+        const wb = new ExcelJS.Workbook();
+        wb.creator = 'SmartEdz';
+        wb.created = new Date();
+        const ws = wb.addWorksheet('Alumni');
+        // Widths only — no header property, so exceljs doesn't auto-insert a row.
+        ws.columns = columns.map(c => ({ width: c.width }));
+
+        const PRIMARY = 'FF3284C7';
+        const ACCENT  = 'FFF29132';
+
+        const addTitleRow = (text) => {
+            const row = ws.addRow([text]);
+            ws.mergeCells(row.number, 1, row.number, NCOLS);
+            const cell = row.getCell(1);
+            cell.font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ACCENT } };
+            cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+            row.height = 24;
+        };
+
+        const addYearHeading = (text) => {
+            const row = ws.addRow([text]);
+            ws.mergeCells(row.number, 1, row.number, NCOLS);
+            const cell = row.getCell(1);
+            cell.font = { bold: true, size: 12, color: { argb: 'FF1F2937' } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F1FA' } };
+            cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+            row.height = 20;
+        };
+
+        const addColumnHeader = () => {
+            const row = ws.addRow(columns.map(c => c.header));
+            row.eachCell((cell) => {
+                cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: PRIMARY } };
+                cell.alignment = { vertical: 'middle' };
+                cell.border = { bottom: { style: 'thin', color: { argb: 'FFB8CCE0' } } };
+            });
+            row.height = 18;
+        };
+
+        const addDataRow = (r) => {
+            const row = ws.addRow(rowValues(r));
+            row.eachCell((cell) => {
+                cell.alignment = { vertical: 'top', wrapText: false };
+                cell.font = { size: 10, color: { argb: 'FF27272A' } };
+            });
+        };
+
+        const scopeLabel = singleYear ? `Year ${yr}` : 'All Years';
+        addTitleRow(`Alumni — ${scopeLabel}`);
+        ws.addRow([]); // spacer
+
+        if (rows.length === 0) {
+            const r = ws.addRow(['No alumni found for this selection.']);
+            ws.mergeCells(r.number, 1, r.number, NCOLS);
+            r.getCell(1).font = { italic: true, color: { argb: 'FF71717A' } };
+        } else if (singleYear) {
+            addColumnHeader();
+            rows.forEach(addDataRow);
+        } else {
+            // ALL years: one heading + column header per calendar-year group.
+            let currentYear = null;
+            let first = true;
+            for (const r of rows) {
+                if (r.cal_year !== currentYear) {
+                    currentYear = r.cal_year;
+                    if (!first) ws.addRow([]); // blank line between groups
+                    first = false;
+                    const groupRows = rows.filter(x => x.cal_year === currentYear).length;
+                    addYearHeading(`Year ${currentYear || '—'}  (${groupRows} alumni)`);
+                    addColumnHeader();
+                }
+                addDataRow(r);
+            }
+        }
+
+        const safeScope = singleYear ? String(yr) : 'AllYears';
+        const filename = `Alumni_${safeScope}.xlsx`;
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        await wb.xlsx.write(res);
+        res.end();
+    } catch (err) {
+        console.error('Alumni export failed:', err);
+        // If headers already went out we can't send JSON; guard for that.
+        if (!res.headersSent) res.status(500).json({ error: err.message });
+        else res.end();
+    }
 });
 
 // --- 23.4 Manually add an alumni ------------------------------------

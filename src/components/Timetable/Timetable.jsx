@@ -630,6 +630,13 @@ function GridTab({ data, fetchData, user, canEdit }) {
   return (
     <div className="space-y-6">
 
+      <div className="bg-blue-50/50 border border-blue-100 rounded-md p-4 flex gap-3 text-[11px] text-blue-700 leading-relaxed">
+        <AlertCircle className="size-4 shrink-0 text-blue-500 mt-0.5" />
+        <p>
+          <strong className="font-semibold text-blue-900">Tip:</strong> Pick a subject first — the teacher dropdown then shows only teachers assigned to that subject. If a teacher is already teaching another class at the same time, a red note appears so you can resolve the clash. Manage subjects in <em>Manage Logins → Subjects</em>.
+        </p>
+      </div>
+
       {/* Top action bar */}
       <div className="flex flex-col sm:flex-row gap-4 justify-between sm:items-end">
         <div className="flex flex-col gap-1.5 w-full sm:w-auto">
@@ -752,13 +759,6 @@ function GridTab({ data, fetchData, user, canEdit }) {
             ))}
           </tbody>
         </table>
-      </div>
-
-      <div className="bg-blue-50/50 border border-blue-100 rounded-md p-4 flex gap-3 text-[11px] text-blue-700 leading-relaxed">
-        <AlertCircle className="size-4 shrink-0 text-blue-500 mt-0.5" />
-        <p>
-          <strong className="font-semibold text-blue-900">Tip:</strong> Pick a subject first — the teacher dropdown then shows only teachers assigned to that subject. If a teacher is already teaching another class at the same time, a red note appears so you can resolve the clash. Manage subjects in <em>Manage Logins → Subjects</em>.
-        </p>
       </div>
     </div>
   );

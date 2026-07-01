@@ -4,7 +4,7 @@ import { usePermissions } from '../../Screens/PermissionsContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   GraduationCap, Search, Loader2, Mail, Phone, CalendarDays,
-  Briefcase, Plus, ChevronDown
+  Briefcase, Plus, ChevronDown, Download
 } from 'lucide-react';
 import { initials, statusStyle } from './AlumniUtils';
 import AlumniDetail from './AlumniDetail';
@@ -17,6 +17,8 @@ import AlumniDetail from './AlumniDetail';
 //    current year. + search bar.
 //  • Each card: photo/initials, name, phone, email, current status,
 //    occupation, passout year. Click -> full detail (AlumniDetail).
+//  • Download to Excel follows the Year filter: a specific year exports
+//    that year; "All Years" exports everyone grouped under year headings.
 // =====================================================================
 
 export default function Alumni() {
@@ -28,6 +30,7 @@ export default function Alumni() {
   const [loading, setLoading] = useState(true);
   const [query, setQuery]     = useState('');
   const [openId, setOpenId]   = useState(null);    // alumni id in detail view
+  const [downloading, setDownloading] = useState(false);
 
   // Calendar-year filter. Selectable years come from the data (plus the
   // current year); 'all' means every year. Defaults to the current year.
@@ -80,6 +83,32 @@ export default function Alumni() {
   // Whether any filter is narrowing the list (controls the empty-state copy).
   const hasFilter = query.trim() || filterYear !== 'all';
 
+  // Download the alumni list as an Excel file. The export endpoint is behind
+  // the /api gate, so a plain download link would 401 — fetch it as a blob
+  // (token attached by the interceptor) and save that. Scope follows the Year
+  // filter: a specific year, or 'all' (grouped by year in the sheet).
+  const handleDownload = useCallback(async () => {
+    if (!user?.institutionId) return;
+    setDownloading(true);
+    try {
+      const params = new URLSearchParams();
+      params.set('year', filterYear); // a year, or 'all'
+      const res = await fetch(
+        `${API_BASE_URL}/admin/alumni/export/${user.institutionId}?${params.toString()}`);
+      if (!res.ok) throw new Error('Could not generate the Excel file.');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filterYear === 'all' ? 'Alumni_AllYears.xlsx' : `Alumni_${filterYear}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) { alert(e.message || 'Download failed.'); }
+    setDownloading(false);
+  }, [user, filterYear]);
+
   // detail view takes over the whole module
   if (openId) {
     return (
@@ -92,15 +121,28 @@ export default function Alumni() {
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300">
 
-      <header className="flex flex-col mb-4 sm:mb-0">
-        <h2 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
-          <GraduationCap className="text-primary size-5" />
-          Alumni
-        </h2>
-        <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
-          Past students of the institution and where they are now.
-        </p>
-      </header>
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+        <header className="flex flex-col">
+          <h2 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
+            <GraduationCap className="text-primary size-5" />
+            Alumni
+          </h2>
+          <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
+            Past students of the institution and where they are now.
+          </p>
+        </header>
+
+        <button onClick={handleDownload} disabled={downloading}
+          title={filterYear === 'all'
+            ? 'Download every year, grouped by year'
+            : `Download the ${filterYear} alumni list`}
+          className="h-9 px-4 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors shrink-0 self-start sm:self-auto">
+          {downloading ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+          {downloading
+            ? 'Preparing...'
+            : (filterYear === 'all' ? 'Download All (Excel)' : `Download ${filterYear} (Excel)`)}
+        </button>
+      </div>
 
       {/* Filter + search bar */}
       <div className="flex flex-col sm:flex-row gap-3 sm:items-center justify-between">

@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useAuth } from '../context/AuthContext';
 import { API_BASE_URL } from '../apiConfig';
 import {
@@ -328,9 +329,38 @@ function EditView({ form, setForm, onSave, onCancel, onPicChange, onPicRemove, s
 // Custom UI Components (Rule Compliant)
 // =====================================================================
 
+// Avatar. When a picture is present it becomes tap-to-enlarge (WhatsApp
+// style): clicking opens a full-screen viewer via a portal. The initials
+// fallback is not clickable (nothing to enlarge).
 function AvatarBlock({ src, name, size = 'lg' }) {
   const dims = size === 'lg' ? 'size-28 text-3xl' : 'size-10 text-sm';
-  if (src) return <img src={src} alt={name} className={`${dims} rounded-full object-cover ring-1 ring-black/10`} />;
+  const [viewerOpen, setViewerOpen] = useState(false);
+
+  if (src) {
+    return (
+      <>
+        <button type="button" onClick={() => setViewerOpen(true)} title="View photo" className="block">
+          <img src={src} alt={name}
+            className={`${dims} rounded-full object-cover ring-1 ring-black/10 cursor-pointer hover:opacity-95 transition-opacity`} />
+        </button>
+
+        {viewerOpen && createPortal(
+          <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/90 backdrop-blur-sm animate-in fade-in duration-200"
+            onClick={() => setViewerOpen(false)}>
+            <button onClick={(e) => { e.stopPropagation(); setViewerOpen(false); }}
+              className="absolute top-6 right-6 p-2 text-white/70 hover:text-white transition-colors bg-white/10 rounded-full">
+              <X className="size-6" />
+            </button>
+            <img src={src} alt={name}
+              className="max-w-full max-h-full object-contain p-4 rounded-lg"
+              onClick={(e) => e.stopPropagation()} />
+          </div>,
+          document.body
+        )}
+      </>
+    );
+  }
+
   return (
     <div className={`${dims} rounded-full bg-primary text-white font-semibold flex items-center justify-center ring-1 ring-black/10`}>
       {(name || '?').charAt(0).toUpperCase()}

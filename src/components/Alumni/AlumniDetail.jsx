@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   ArrowLeft, 
@@ -38,6 +39,7 @@ export default function AlumniDetail({ alumniId, canEdit, onBack }) {
   const [form, setForm]       = useState({});
   const [saving, setSaving]   = useState(false);
   const [savingPic, setSavingPic] = useState(false);
+  const [viewerOpen, setViewerOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -150,7 +152,22 @@ export default function AlumniDetail({ alumniId, canEdit, onBack }) {
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300">
-      
+
+      {/* Full-screen photo viewer (tap the header photo to enlarge) */}
+      {viewerOpen && data.profile_pic && createPortal(
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/90 backdrop-blur-sm animate-in fade-in duration-200"
+          onClick={() => setViewerOpen(false)}>
+          <button onClick={(e) => { e.stopPropagation(); setViewerOpen(false); }}
+            className="absolute top-6 right-6 p-2 text-white/70 hover:text-white transition-colors bg-white/10 rounded-full">
+            <X className="size-6" />
+          </button>
+          <img src={data.profile_pic} alt={data.name}
+            className="max-w-full max-h-full object-contain p-4 rounded-lg"
+            onClick={(e) => e.stopPropagation()} />
+        </div>,
+        document.body
+      )}
+
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <button onClick={onBack}
           className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
@@ -175,8 +192,11 @@ export default function AlumniDetail({ alumniId, canEdit, onBack }) {
         <div className="flex flex-col sm:flex-row sm:items-center gap-5">
           <div className="relative shrink-0 w-20 sm:w-24">
             {data.profile_pic ? (
-              <img src={data.profile_pic} alt={data.name}
-                className="size-20 sm:size-24 rounded-lg object-cover ring-1 ring-black/5 shadow-sm" />
+              <button type="button" onClick={() => setViewerOpen(true)}
+                title="View photo" className="block">
+                <img src={data.profile_pic} alt={data.name}
+                  className="size-20 sm:size-24 rounded-lg object-cover ring-1 ring-black/5 shadow-sm cursor-pointer hover:opacity-95 transition-opacity" />
+              </button>
             ) : (
               <div className="size-20 sm:size-24 rounded-lg bg-primary/10 text-primary flex items-center justify-center font-semibold text-3xl ring-1 ring-primary/20">
                 {initials(data.name)}
