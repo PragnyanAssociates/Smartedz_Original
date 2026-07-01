@@ -615,7 +615,6 @@ export default function UserTab({ data, fetchData, user }) {
                       options={[{ value: '', label: 'Select class...' }, ...data.classes.map(c => ({
                         value: c.id, label: `${c.className}${c.section ? ' - ' + c.section : ''}`
                       }))]} />
-                    <Field label="Section (Optional)" value={form.section} onChange={v => setForm({ ...form, section: v })} placeholder="e.g. A" />
                     {/* Roll No must be unique — backend enforces it per school */}
                     <Field label="Roll Number" value={form.roll_no} onChange={v => setForm({ ...form, roll_no: v })} hint="Unique within the class" />
                     <Field label="Admission Number" value={form.admission_no} onChange={v => setForm({ ...form, admission_no: v })} />

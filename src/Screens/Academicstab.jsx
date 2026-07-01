@@ -118,7 +118,7 @@ export default function AcademicsTab({ data, fetchData, user }) {
         <div>
           <h3 className="text-lg font-semibold text-zinc-900 tracking-tight">Academic Years</h3>
           <p className="text-[11px] text-zinc-500 max-w-2xl mt-1">
-            One year is always <strong>active</strong>; modules like Attendance, Fees and Reports anchor to whichever is currently flagged.
+            One year is always <strong>active</strong>; modules like Attendance and Marks / Reports anchor to whichever is currently flagged.
           </p>
         </div>
         <button onClick={openAdd}
@@ -128,15 +128,16 @@ export default function AcademicsTab({ data, fetchData, user }) {
       </div>
 
       {/* ---- How the active year affects your data (always shown) -----
-           Explains that data (timetable, attendance, fees…) is anchored
-           to the active year, that switching is non-destructive, and that
-           deleting a year wipes its data permanently. */}
+           Explains that data (attendance, marks…) is anchored to the active
+           year, that switching is non-destructive, and that deleting a year
+           wipes its data permanently. */}
       <div className="rounded-lg ring-1 ring-inset ring-blue-500/15 bg-blue-50/60 px-4 py-3 flex items-start gap-3">
         <Info className="size-4 text-blue-600 shrink-0 mt-0.5" />
         <div className="text-[11px] text-blue-800 leading-relaxed">
-          <span className="font-semibold">Note — how academic years work:</span> Every module (the <strong>Timetable</strong>, Attendance, Fees, Reports, etc.) always runs on the <strong>active</strong> academic year.
+          <span className="font-semibold">Note — how academic years work:</span> The year-linked modules (<strong>Attendance,Timetable, Performance</strong> and <strong>Marks / Reports</strong>) always run on the <strong>active</strong> academic year.
           When you switch the active year, those screens start <strong>empty</strong> for the new year. If you switch back to a previous year, its earlier data reappears exactly as you left it — nothing is lost by simply changing the active year.
-          <span className="block mt-1 font-semibold text-red-700">However, if you DELETE an academic year, every record linked to it (attendance, marks and more) is gone forever and cannot be recovered.</span>
+          <span className="block mt-1 font-semibold text-red-700">However, if you DELETE an academic year, every record linked to it (Attendance,Timetable,Reports and Performance) is gone forever and cannot be recovered.</span>
+          <span className="block mt-1">So if you want to delete a whole academic year, first download the files linked to that year to keep your data safe as copy, for that use <strong>Downloads</strong> tab. Once downloaded, that data stays safe in the downloaded file or in your local file even after the academic year is deleted.</span>
         </div>
       </div>
 

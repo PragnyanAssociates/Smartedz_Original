@@ -178,6 +178,14 @@ const handlePromote = async () => {
           class and section, then execute. Students who failed simply stay unchecked &mdash; they remain in their current class.
           To graduate a final-year class, pick <strong className="text-zinc-700 font-semibold">Alumni (Passout)</strong> as the destination.
         </p>
+        {/* Ordering note: switch/activate the new academic year FIRST, then
+            promote — so the promotion lands in the new year and the previous
+            year keeps its own classes instead of overlapping. */}
+        <div className="mt-3 rounded-md ring-1 ring-inset ring-blue-500/15 bg-blue-50/60 px-3 py-2 max-w-3xl">
+          <p className="text-[11px] text-blue-800 leading-relaxed">
+            <span className="font-semibold">Important:</span> Change and set the next <strong>Academic Year</strong> active <strong>first</strong>, then promote the students — only then does it work correctly. If you promote before switching the year, the previous year and the new year can end up showing the same classes.
+          </p>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
