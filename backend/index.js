@@ -5752,12 +5752,15 @@ app.get('/api/admin/homework/student/:studentId', async (req, res) => {
         const [rows] = await db.execute(
             `SELECT h.id, h.title, h.description, h.homework_type,
                     h.class_id, h.subject_id, h.due_date, h.questions, h.attachments,
+                    h.created_at, h.created_by,
                     c.className, c.section, sub.name AS subject_name,
+                    cu.name AS created_by_name,
                     s.id AS submission_id, s.written_answer, s.files AS submission_files,
                     s.submitted_at, s.grade, s.remarks
                FROM homework h
                LEFT JOIN classes  c   ON c.id = h.class_id
                LEFT JOIN subjects sub ON sub.id = h.subject_id
+               LEFT JOIN users    cu  ON cu.id = h.created_by
                LEFT JOIN homework_submissions s
                       ON s.homework_id = h.id AND s.student_id = ?
               WHERE h.class_id = ? AND h.institutionId = ?`,

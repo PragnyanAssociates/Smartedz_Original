@@ -3,10 +3,30 @@ import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   Loader2, Upload, FileText, Eye, Trash2, Edit, Paperclip,
-  CheckCircle2, Clock, XCircle, BookOpen, X, ClipboardList, Send
+  CheckCircle2, Clock, XCircle, BookOpen, X, ClipboardList, Send, User
 } from 'lucide-react';
 import { fmtDate, fileToBase64, statusStyle } from './HwUtils';
 import FileViewer from './FileViewer';
+
+// Compact date + time for when a homework was created, e.g. "15 Jul 2026,
+// 9:30 am", always shown in IST. The backend (Railway) stores created_at in
+// UTC and MySQL usually returns it as a plain string with no timezone marker,
+// which new Date() would treat as local. So: if there's no zone marker, append
+// 'Z' to force UTC parsing, then render in Asia/Kolkata so it's correct for
+// every viewer.
+const fmtCreatedAt = (val) => {
+  if (!val) return '';
+  let s = String(val).trim();
+  const hasZone = /[zZ]|[+-]\d{2}:?\d{2}$/.test(s);
+  if (!hasZone) s = s.replace(' ', 'T') + 'Z';
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-IN', {
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true,
+    timeZone: 'Asia/Kolkata'
+  });
+};
 
 // =====================================================================
 //  StudentHomework - list of assigned homework + detail panel.
@@ -170,6 +190,13 @@ export default function StudentHomework() {
                       <p className={`text-[11px] font-medium mt-1 ${overdue ? 'text-red-500' : 'text-zinc-500'}`}>
                         Due {fmtDate(it.due_date)}
                       </p>
+                      {(it.created_by_name || it.created_at) && (
+                        <p className="text-[10px] font-medium text-zinc-400 mt-1 truncate">
+                          {it.created_by_name ? `By ${it.created_by_name}` : ''}
+                          {it.created_by_name && it.created_at ? ' · ' : ''}
+                          {it.created_at ? fmtCreatedAt(it.created_at) : ''}
+                        </p>
+                      )}
                     </div>
                     <span className={`shrink-0 size-2 rounded-full mt-1.5 ${s.dot}`} />
                   </div>
@@ -242,6 +269,16 @@ function AssignmentDetail({ hw, busy, onSubmitFiles, onWrite, onDelete }) {
           <span className={`flex items-center gap-1.5 ${overdue ? 'text-red-500 font-semibold' : ''}`}>
             <Clock className="size-3.5 text-zinc-400" /> Due {fmtDate(hw.due_date)}
           </span>
+          {hw.created_by_name && (
+            <span className="flex items-center gap-1.5">
+              <User className="size-3.5 text-zinc-400" /> By {hw.created_by_name}
+            </span>
+          )}
+          {hw.created_at && (
+            <span className="flex items-center gap-1.5">
+              <Clock className="size-3.5 text-zinc-400" /> Created {fmtCreatedAt(hw.created_at)}
+            </span>
+          )}
         </div>
       </div>
 
