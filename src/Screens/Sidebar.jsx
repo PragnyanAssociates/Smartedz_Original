@@ -34,9 +34,9 @@ export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMo
       } catch (e) { /* silent — badge just stays as-is */ }
     };
     loadCount();
-    const t = setInterval(loadCount, 20000);
+    const t = setInterval(loadCount, 30000);
     return () => { active = false; clearInterval(t); };
-  }, [user, activeTab]);
+}, [user?.id]);
 
   // Intercept tab clicks to close the mobile menu automatically
   const handleTabClick = (id) => {
