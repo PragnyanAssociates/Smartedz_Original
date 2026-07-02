@@ -49,6 +49,10 @@ export default function TeacherLabs({ canManage = true }) {
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
 
+  // List filters (client-side, over the already-loaded labs). '' = All.
+  const [classFilter, setClassFilter]     = useState('');
+  const [subjectFilter, setSubjectFilter] = useState('');
+
   // Data for Selects
   const [classes, setClasses] = useState([]);
   const [subjects, setSubjects] = useState([]);
@@ -101,15 +105,46 @@ export default function TeacherLabs({ canManage = true }) {
     });
   }, [subjects, subjectClasses, form.class_id]);
 
+  // Subject options for the Subject filter — narrowed to the selected class
+  // filter (a subject with no class links counts as "all classes"), matching
+  // the create/edit form's behaviour.
+  const subjectFilterOptions = useMemo(() => {
+    if (!classFilter) return subjects;
+    const cid = parseInt(classFilter, 10);
+    return subjects.filter(s => {
+      const links = subjectClasses[s.id];
+      return !links || links.length === 0 || links.includes(cid);
+    });
+  }, [subjects, subjectClasses, classFilter]);
+
+  // Changing the class clears the subject filter only if that subject isn't
+  // offered for the newly-chosen class.
+  const onClassFilterChange = (v) => {
+    setClassFilter(v);
+    if (v && subjectFilter) {
+      const cid = parseInt(v, 10);
+      const links = subjectClasses[parseInt(subjectFilter, 10)];
+      const stillValid = !links || links.length === 0 || links.includes(cid);
+      if (!stillValid) setSubjectFilter('');
+    }
+  };
+
   const filtered = useMemo(() => {
+    let list = labs;
+    if (classFilter)   list = list.filter(l => String(l.class_id) === String(classFilter));
+    if (subjectFilter) list = list.filter(l => String(l.subject_id) === String(subjectFilter));
     const q = query.toLowerCase().trim();
-    if (!q) return labs;
-    return labs.filter(l =>
-      (l.title || '').toLowerCase().includes(q) ||
-      (l.class_group || '').toLowerCase().includes(q) ||
-      (l.subject_name || '').toLowerCase().includes(q)
-    );
-  }, [labs, query]);
+    if (q) {
+      list = list.filter(l =>
+        (l.title || '').toLowerCase().includes(q) ||
+        (l.class_group || '').toLowerCase().includes(q) ||
+        (l.subject_name || '').toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [labs, query, classFilter, subjectFilter]);
+
+  const hasActiveFilter = Boolean(query.trim() || classFilter || subjectFilter);
 
   const classLabel = (c) => `${c.className}${c.section ? ' - ' + c.section : ''}`;
 
@@ -238,6 +273,26 @@ export default function TeacherLabs({ canManage = true }) {
         </div>
 
         <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+          {/* Class + Subject filters */}
+          <div className="grid grid-cols-2 sm:flex sm:flex-row gap-3 w-full sm:w-auto">
+            <div className="relative w-full sm:w-40">
+              <select value={classFilter} onChange={e => onClassFilterChange(e.target.value)}
+                className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm font-medium text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
+                <option value="">All Classes</option>
+                {classes.map(c => <option key={c.id} value={String(c.id)}>{classLabel(c)}</option>)}
+              </select>
+              <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
+            <div className="relative w-full sm:w-40">
+              <select value={subjectFilter} onChange={e => setSubjectFilter(e.target.value)}
+                className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm font-medium text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
+                <option value="">All Subjects</option>
+                {subjectFilterOptions.map(s => <option key={s.id} value={String(s.id)}>{s.name}</option>)}
+              </select>
+              <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
+          </div>
+
           <div className="relative w-full sm:w-72 shrink-0">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
             <input value={query} onChange={e => setQuery(e.target.value)}
@@ -262,8 +317,8 @@ export default function TeacherLabs({ canManage = true }) {
         ) : filtered.length === 0 ? (
           <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
             <FlaskConical className="size-10 text-zinc-300 mb-3" />
-            <p className="text-zinc-500 text-sm font-medium">No digital labs yet.</p>
-            {canManage && <p className="text-zinc-400 text-xs mt-1.5">Click "Create Lab" to begin.</p>}
+            <p className="text-zinc-500 text-sm font-medium">{hasActiveFilter ? 'No labs match your filters.' : 'No digital labs yet.'}</p>
+            {canManage && !hasActiveFilter && <p className="text-zinc-400 text-xs mt-1.5">Click "Create Lab" to begin.</p>}
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">

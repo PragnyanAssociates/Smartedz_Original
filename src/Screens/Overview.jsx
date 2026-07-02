@@ -438,13 +438,13 @@ function PerformanceAnalytics({ perf, className = '' }) {
       <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-4 mb-5">
         <div className="min-w-0">
           <h2 className="text-base font-semibold text-zinc-900 tracking-tight">Performance Analytics</h2>
-          <p className="text-sm text-zinc-500 mt-0.5">Visual breakdown of top achievers and overall class performance</p>
+          <p className="text-sm text-zinc-500 mt-0.5">Visual breakdown of top achievers and overall Exam based class performance</p>
           {examsLine && <p className="text-xs font-semibold text-zinc-700 mt-2">{examsLine} Completed</p>}
           <p className="text-[11px] italic text-primary mt-1">For more details view the “Performance Reports” screen.</p>
         </div>
         <div className="flex flex-wrap items-center gap-3 shrink-0">
           <div className="inline-flex items-center bg-zinc-100/80 p-1 rounded-md">
-            {[{ id: 'performers', label: 'Top Performers' }, { id: 'classes', label: 'Top Classes' }].map(t => (
+            {[{ id: 'performers', label: 'Top Performers' }, { id: 'classes', label: 'Class wise' }].map(t => (
               <button key={t.id} onClick={() => setView(t.id)}
                 className={`px-3 h-7 rounded text-[11px] font-semibold transition-colors whitespace-nowrap ${view === t.id ? 'bg-white text-primary shadow-sm ring-1 ring-black/5' : 'text-zinc-500 hover:text-zinc-700'}`}>{t.label}</button>
             ))}

@@ -60,6 +60,11 @@ function AssignmentList({ user, canManage, onOpenSubmissions }) {
   const [loading, setLoading] = useState(true);
   const [query, setQuery]     = useState('');
 
+  // List filters (client-side, over the already-loaded homework).
+  // '' = All. Subject options narrow to the chosen class.
+  const [classFilter, setClassFilter]     = useState('');
+  const [subjectFilter, setSubjectFilter] = useState('');
+
   // form data for the create/edit modal
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing]     = useState(null);
@@ -116,14 +121,46 @@ function AssignmentList({ user, canManage, onOpenSubmissions }) {
     });
   }, [subjects, subjectClasses, form.class_id]);
 
+  // Subject options for the Subject filter — narrowed to the selected class
+  // filter (a subject with no class links counts as "all classes"), matching
+  // the create/edit modal's behaviour.
+  const subjectFilterOptions = useMemo(() => {
+    if (!classFilter) return subjects;
+    const cid = parseInt(classFilter, 10);
+    return subjects.filter(s => {
+      const links = subjectClasses[s.id];
+      if (!links || links.length === 0) return true;
+      return links.includes(cid);
+    });
+  }, [subjects, subjectClasses, classFilter]);
+
+  // Changing the class clears the subject filter only if that subject isn't
+  // offered for the newly-chosen class.
+  const onClassFilterChange = (v) => {
+    setClassFilter(v);
+    if (v && subjectFilter) {
+      const cid = parseInt(v, 10);
+      const links = subjectClasses[parseInt(subjectFilter, 10)];
+      const stillValid = !links || links.length === 0 || links.includes(cid);
+      if (!stillValid) setSubjectFilter('');
+    }
+  };
+
   const filtered = useMemo(() => {
-    if (!query.trim()) return items;
-    const q = query.toLowerCase();
-    return items.filter(it =>
-      (it.title || '').toLowerCase().includes(q) ||
-      (it.class_group || '').toLowerCase().includes(q) ||
-      (it.subject_name || '').toLowerCase().includes(q));
-  }, [items, query]);
+    let list = items;
+    if (classFilter)   list = list.filter(it => String(it.class_id) === String(classFilter));
+    if (subjectFilter) list = list.filter(it => String(it.subject_id) === String(subjectFilter));
+    if (query.trim()) {
+      const q = query.toLowerCase();
+      list = list.filter(it =>
+        (it.title || '').toLowerCase().includes(q) ||
+        (it.class_group || '').toLowerCase().includes(q) ||
+        (it.subject_name || '').toLowerCase().includes(q));
+    }
+    return list;
+  }, [items, query, classFilter, subjectFilter]);
+
+  const hasActiveFilter = Boolean(query.trim() || classFilter || subjectFilter);
 
   const classLabel = (c) => `${c.className}${c.section ? ' - ' + c.section : ''}`;
 
@@ -225,16 +262,37 @@ function AssignmentList({ user, canManage, onOpenSubmissions }) {
 
   return (
     <div className="space-y-4 flex flex-col flex-1">
-      <div className="flex flex-col sm:flex-row justify-between gap-4 sm:items-center">
-        <div className="relative w-full sm:w-72 shrink-0">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="relative w-full sm:w-64 shrink-0">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
           <input value={query} onChange={e => setQuery(e.target.value)}
             placeholder="Search homework..."
             className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-4 text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors placeholder:text-zinc-400" />
         </div>
+
+        {/* Class + Subject filters */}
+        <div className="grid grid-cols-2 sm:flex sm:flex-row gap-3 w-full sm:w-auto">
+          <div className="relative w-full sm:w-44">
+            <select value={classFilter} onChange={e => onClassFilterChange(e.target.value)}
+              className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm font-medium text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
+              <option value="">All Classes</option>
+              {classes.map(c => <option key={c.id} value={String(c.id)}>{classLabel(c)}</option>)}
+            </select>
+            <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+          <div className="relative w-full sm:w-44">
+            <select value={subjectFilter} onChange={e => setSubjectFilter(e.target.value)}
+              className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm font-medium text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
+              <option value="">All Subjects</option>
+              {subjectFilterOptions.map(s => <option key={s.id} value={String(s.id)}>{s.name}</option>)}
+            </select>
+            <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+        </div>
+
         {canManage && (
           <button onClick={openCreate}
-            className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full sm:w-auto shrink-0">
+            className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full sm:w-auto shrink-0 sm:ml-auto">
             <Plus className="size-3.5" /> Create Homework
           </button>
         )}
@@ -244,8 +302,8 @@ function AssignmentList({ user, canManage, onOpenSubmissions }) {
         {filtered.length === 0 ? (
           <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
             <ClipboardList className="size-10 text-zinc-300 mb-3" />
-            <p className="text-zinc-500 text-sm font-medium">No homework yet.</p>
-            {canManage && <p className="text-zinc-400 text-xs mt-1.5">Click "Create Homework" to begin.</p>}
+            <p className="text-zinc-500 text-sm font-medium">{hasActiveFilter ? 'No homework matches your filters.' : 'No homework yet.'}</p>
+            {canManage && !hasActiveFilter && <p className="text-zinc-400 text-xs mt-1.5">Click "Create Homework" to begin.</p>}
           </div>
         ) : (
           <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-x-auto custom-scrollbar">

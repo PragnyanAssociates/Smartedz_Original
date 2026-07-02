@@ -32,6 +32,10 @@ export default function TeacherAdminMaterialsScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [editingMaterial, setEditingMaterial] = useState(null);
+
+  // List filters (client-side, over the already-loaded materials). '' = All.
+  const [classFilter, setClassFilter] = useState("");
+  const [subjectFilter, setSubjectFilter] = useState("");
   
   const [dbClasses, setDbClasses] = useState([]);
   const [dbSubjects, setDbSubjects] = useState([]);
@@ -70,15 +74,24 @@ export default function TeacherAdminMaterialsScreen() {
     } catch (error) { alert("Failed to delete."); }
   };
 
+  const classLabel = (c) => `${c.className}${c.section ? ' - ' + c.section : ''}`;
+
   const filteredMaterials = useMemo(() => {
-    if (!query.trim()) return materials;
-    const q = query.toLowerCase();
-    return materials.filter(m => 
-      (m.title && m.title.toLowerCase().includes(q)) ||
-      (m.subject_name && m.subject_name.toLowerCase().includes(q)) ||
-      (m.className && m.className.toLowerCase().includes(q))
-    );
-  }, [materials, query]);
+    let list = materials;
+    if (classFilter)   list = list.filter(m => String(m.class_id) === String(classFilter));
+    if (subjectFilter) list = list.filter(m => String(m.subject_id) === String(subjectFilter));
+    const q = query.toLowerCase().trim();
+    if (q) {
+      list = list.filter(m =>
+        (m.title && m.title.toLowerCase().includes(q)) ||
+        (m.subject_name && m.subject_name.toLowerCase().includes(q)) ||
+        (m.className && m.className.toLowerCase().includes(q))
+      );
+    }
+    return list;
+  }, [materials, query, classFilter, subjectFilter]);
+
+  const hasActiveFilter = Boolean(query.trim() || classFilter || subjectFilter);
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
@@ -91,15 +104,35 @@ export default function TeacherAdminMaterialsScreen() {
         <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">Manage and share educational resources.</p>
       </header>
 
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div className="relative w-full sm:w-72 shrink-0">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="relative w-full sm:w-64 shrink-0">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
           <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search materials..."
             className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-4 text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors placeholder:text-zinc-400" />
         </div>
+
+        {/* Class + Subject filters */}
+        <div className="grid grid-cols-2 sm:flex sm:flex-row gap-3 w-full sm:w-auto">
+          <div className="relative w-full sm:w-44">
+            <select value={classFilter} onChange={e => setClassFilter(e.target.value)}
+              className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm font-medium text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
+              <option value="">All Classes</option>
+              {dbClasses.map(c => <option key={c.id} value={String(c.id)}>{classLabel(c)}</option>)}
+            </select>
+            <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+          <div className="relative w-full sm:w-44">
+            <select value={subjectFilter} onChange={e => setSubjectFilter(e.target.value)}
+              className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm font-medium text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
+              <option value="">All Subjects</option>
+              {dbSubjects.map(s => <option key={s.id} value={String(s.id)}>{s.name}</option>)}
+            </select>
+            <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+        </div>
         
         {(canEdit || isAdmin) && (
-          <button onClick={() => openModal()} className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full sm:w-auto shrink-0">
+          <button onClick={() => openModal()} className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full sm:w-auto shrink-0 sm:ml-auto">
             <Plus className="size-3.5" /> Add Material
           </button>
         )}
@@ -113,7 +146,7 @@ export default function TeacherAdminMaterialsScreen() {
         ) : filteredMaterials.length === 0 ? (
           <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
             <Folder className="size-10 text-zinc-300 mb-3" />
-            <p className="text-zinc-500 text-sm font-medium">No materials uploaded yet.</p>
+            <p className="text-zinc-500 text-sm font-medium">{hasActiveFilter ? 'No materials match your filters.' : 'No materials uploaded yet.'}</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">

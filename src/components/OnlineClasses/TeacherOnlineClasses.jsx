@@ -38,6 +38,10 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
   const [query, setQuery] = useState('');
   const [view, setView] = useState('live'); 
 
+  // List filters (client-side, over the already-loaded classes). '' = All.
+  const [classFilter, setClassFilter]     = useState('');
+  const [subjectFilter, setSubjectFilter] = useState('');
+
   const [dbClasses, setDbClasses] = useState([]);
   const [dbSubjects, setDbSubjects] = useState([]);
   const [teachers, setTeachers] = useState([]);
@@ -76,6 +80,8 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
 
   const filtered = useMemo(() => {
     let list = classesList.filter(c => c.class_type === view);
+    if (classFilter)   list = list.filter(c => String(c.class_id) === String(classFilter));
+    if (subjectFilter) list = list.filter(c => String(c.subject_id) === String(subjectFilter));
     if (query.trim()) {
       const q = query.toLowerCase();
       list = list.filter(c => 
@@ -85,7 +91,9 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
       );
     }
     return list;
-  }, [classesList, view, query]);
+  }, [classesList, view, query, classFilter, subjectFilter]);
+
+  const hasActiveFilter = Boolean(query.trim() || classFilter || subjectFilter);
 
   const classLabel = (c) => `${c.className}${c.section ? ` - ${c.section}` : ''}`;
 
@@ -185,6 +193,25 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
           ))}
         </div>
         <div className="flex flex-col sm:flex-row gap-3 w-full xl:w-auto">
+          {/* Class + Subject filters (apply to the current tab) */}
+          <div className="grid grid-cols-2 sm:flex sm:flex-row gap-3 w-full sm:w-auto">
+            <div className="relative w-full sm:w-40">
+              <select value={classFilter} onChange={e => setClassFilter(e.target.value)}
+                className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm font-medium text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
+                <option value="">All Classes</option>
+                {dbClasses.map(c => <option key={c.id} value={String(c.id)}>{classLabel(c)}</option>)}
+              </select>
+              <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
+            <div className="relative w-full sm:w-40">
+              <select value={subjectFilter} onChange={e => setSubjectFilter(e.target.value)}
+                className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm font-medium text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
+                <option value="">All Subjects</option>
+                {dbSubjects.map(s => <option key={s.id} value={String(s.id)}>{s.name}</option>)}
+              </select>
+              <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
+          </div>
           <div className="relative w-full sm:w-72 shrink-0">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
             <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search classes..." className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-4 text-sm outline-none focus:ring-2 focus:ring-primary/20 shadow-sm" />
@@ -201,7 +228,7 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
         {loading ? ( <div className="h-64 flex items-center justify-center"><Loader2 className="animate-spin size-8 text-primary" /></div>
         ) : filtered.length === 0 ? (
           <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
-            <Video className="size-10 text-zinc-300 mb-3" /><p className="text-zinc-500 text-sm font-medium">No {view} classes found.</p>
+            <Video className="size-10 text-zinc-300 mb-3" /><p className="text-zinc-500 text-sm font-medium">{hasActiveFilter ? `No ${view} classes match your filters.` : `No ${view} classes found.`}</p>
           </div>
         ) : (
           <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-x-auto custom-scrollbar">

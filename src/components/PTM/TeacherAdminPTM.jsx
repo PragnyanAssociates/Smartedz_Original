@@ -41,6 +41,10 @@ export default function TeacherAdminPTM({ canEdit = false, canDelete = false }) 
   const [meetings, setMeetings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
+
+  // List filters (client-side, over the already-loaded meetings). '' = All.
+  const [classFilter, setClassFilter]     = useState('');
+  const [teacherFilter, setTeacherFilter] = useState('');
   
   const [classes, setClasses] = useState([]);
   const [teachers, setTeachers] = useState([]);
@@ -83,6 +87,8 @@ export default function TeacherAdminPTM({ canEdit = false, canDelete = false }) 
 
   const filtered = useMemo(() => {
     let list = [...meetings];
+    if (classFilter)   list = list.filter(m => String(m.class_id) === String(classFilter));
+    if (teacherFilter) list = list.filter(m => String(m.teacher_id) === String(teacherFilter));
     if (query.trim()) {
       const q = query.toLowerCase();
       list = list.filter(m => 
@@ -92,7 +98,9 @@ export default function TeacherAdminPTM({ canEdit = false, canDelete = false }) 
       );
     }
     return list;
-  }, [query, meetings]);
+  }, [query, meetings, classFilter, teacherFilter]);
+
+  const hasActiveFilter = Boolean(query.trim() || classFilter || teacherFilter);
 
   const classLabel = (c) => `${c.className}${c.section ? ` - ${c.section}` : ''}`;
 
@@ -200,17 +208,37 @@ export default function TeacherAdminPTM({ canEdit = false, canDelete = false }) 
         </p>
       </header>
 
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div className="relative w-full sm:w-72 shrink-0">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="relative w-full sm:w-64 shrink-0">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
           <input value={query} onChange={e => setQuery(e.target.value)}
             placeholder="Search meetings..."
             className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-4 text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors placeholder:text-zinc-400" />
         </div>
+
+        {/* Class + Teacher filters */}
+        <div className="grid grid-cols-2 sm:flex sm:flex-row gap-3 w-full sm:w-auto">
+          <div className="relative w-full sm:w-44">
+            <select value={classFilter} onChange={e => setClassFilter(e.target.value)}
+              className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm font-medium text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
+              <option value="">All Classes</option>
+              {classes.map(c => <option key={c.id} value={String(c.id)}>{classLabel(c)}</option>)}
+            </select>
+            <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+          <div className="relative w-full sm:w-44">
+            <select value={teacherFilter} onChange={e => setTeacherFilter(e.target.value)}
+              className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm font-medium text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
+              <option value="">All Teachers</option>
+              {teachers.map(t => <option key={t.id} value={String(t.id)}>{t.name}</option>)}
+            </select>
+            <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+        </div>
         
         {canEdit && (
           <button onClick={openCreate}
-            className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full sm:w-auto shrink-0">
+            className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full sm:w-auto shrink-0 sm:ml-auto">
             <Plus className="size-3.5" /> Schedule Meeting
           </button>
         )}
@@ -224,7 +252,7 @@ export default function TeacherAdminPTM({ canEdit = false, canDelete = false }) 
         ) : filtered.length === 0 ? (
           <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
             <Users className="size-10 text-zinc-300 mb-3" />
-            <p className="text-zinc-500 text-sm font-medium">No meetings found.</p>
+            <p className="text-zinc-500 text-sm font-medium">{hasActiveFilter ? 'No meetings match your filters.' : 'No meetings found.'}</p>
           </div>
         ) : (
           <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-x-auto custom-scrollbar">
