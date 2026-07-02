@@ -5713,14 +5713,12 @@ app.get('/api/admin/homework/teacher/:userId', async (req, res) => {
         if (isAdmin) {
             [rows] = await db.execute(
                 `${baseSelect}
-                  WHERE h.institutionId = ?
-                  ORDER BY h.created_at DESC`,
+                  WHERE h.institutionId = ?`,
                 [me.institutionId]);
         } else {
             [rows] = await db.execute(
                 `${baseSelect}
-                  WHERE h.created_by = ?
-                  ORDER BY h.created_at DESC`,
+                  WHERE h.created_by = ?`,
                 [userId]);
         }
         const decorated = rows.map(r => ({
@@ -5728,6 +5726,14 @@ app.get('/api/admin/homework/teacher/:userId', async (req, res) => {
             questions: parseJsonSafe(r.questions, []),
             class_group: `${r.className || ''}${r.section ? ' - ' + r.section : ''}`
         }));
+        // Sort newest-created first in JS. Sorting in SQL here would make MySQL
+        // filesort over the (potentially large) JSON columns and could overflow
+        // the sort buffer ("Out of sort memory"). No sort buffer is used now.
+        decorated.sort((a, b) => {
+            const ta = new Date(a.created_at).getTime();
+            const tb = new Date(b.created_at).getTime();
+            return (isNaN(tb) ? 0 : tb) - (isNaN(ta) ? 0 : ta);
+        });
         res.json(decorated);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -5754,8 +5760,7 @@ app.get('/api/admin/homework/student/:studentId', async (req, res) => {
                LEFT JOIN subjects sub ON sub.id = h.subject_id
                LEFT JOIN homework_submissions s
                       ON s.homework_id = h.id AND s.student_id = ?
-              WHERE h.class_id = ? AND h.institutionId = ?
-              ORDER BY h.due_date DESC`,
+              WHERE h.class_id = ? AND h.institutionId = ?`,
             [studentId, u[0].class_id, u[0].institutionId]
         );
         const decorated = rows.map(r => ({
@@ -5766,6 +5771,16 @@ app.get('/api/admin/homework/student/:studentId', async (req, res) => {
             class_group: `${r.className || ''}${r.section ? ' - ' + r.section : ''}`,
             status: r.submission_id ? (r.grade ? 'Graded' : 'Submitted') : 'Pending'
         }));
+        // Newest-due first, sorted in JS. This query returns big base64 columns
+        // (homework attachments + submission files); doing ORDER BY in SQL made
+        // MySQL filesort carry those huge values in the sort buffer and fail
+        // with "Out of sort memory". Sorting here uses no sort buffer, so it
+        // can't recur no matter how large the files get.
+        decorated.sort((a, b) => {
+            const ta = new Date(a.due_date).getTime();
+            const tb = new Date(b.due_date).getTime();
+            return (isNaN(tb) ? -Infinity : tb) - (isNaN(ta) ? -Infinity : ta);
+        });
         res.json(decorated);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -5896,17 +5911,24 @@ app.get('/api/admin/homework/:id/submissions', async (req, res) => {
                LEFT JOIN homework_submissions s
                       ON s.student_id = u.id AND s.homework_id = ?
               WHERE u.class_id = ? AND LOWER(TRIM(u.role)) = 'student'
-                AND (u.status IS NULL OR LOWER(TRIM(u.status)) = 'active')
-              ORDER BY
-                CASE WHEN u.roll_no REGEXP '^[0-9]+$' THEN CAST(u.roll_no AS UNSIGNED)
-                     ELSE 999999 END,
-                u.name`,
+                AND (u.status IS NULL OR LOWER(TRIM(u.status)) = 'active')`,
             [req.params.id, hw[0].class_id]
         );
-        const decorated = rows.map(r => ({
-            ...r,
-            files: parseJsonSafe(r.files, [])
-        }));
+        // Roll-number order (numeric first, missing/non-numeric last), then
+        // name — done in JS. This query returns each submission's base64 files;
+        // sorting in SQL made MySQL filesort over them and could overflow the
+        // sort buffer ("Out of sort memory"). No sort buffer is used now.
+        const rollVal = (v) => {
+            const n = parseInt(v, 10);
+            return isNaN(n) ? Number.POSITIVE_INFINITY : n;
+        };
+        const decorated = rows
+            .map(r => ({ ...r, files: parseJsonSafe(r.files, []) }))
+            .sort((a, b) => {
+                const ra = rollVal(a.roll_no), rb = rollVal(b.roll_no);
+                if (ra !== rb) return ra - rb;
+                return String(a.student_name || '').localeCompare(String(b.student_name || ''));
+            });
         res.json(decorated);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });

@@ -14,6 +14,29 @@ const rollNum = (s) => {
   return isNaN(n) ? Number.POSITIVE_INFINITY : n;
 };
 
+// Compact date + time for when a homework was created, e.g. "15 Jul 2026,
+// 9:30 am", always shown in IST.
+//
+// The backend (Railway) stores created_at in UTC. MySQL usually hands it back
+// as a plain string with NO timezone marker ("2026-07-02 10:04:00"), which
+// `new Date()` would wrongly treat as local time. So we normalise: if there's
+// no zone marker, append 'Z' to force UTC parsing, then render in IST via
+// timeZone: 'Asia/Kolkata' so it's correct for every viewer regardless of
+// their own timezone.
+const fmtCreatedAt = (val) => {
+  if (!val) return '';
+  let s = String(val).trim();
+  const hasZone = /[zZ]|[+-]\d{2}:?\d{2}$/.test(s);
+  if (!hasZone) s = s.replace(' ', 'T') + 'Z'; // treat bare timestamp as UTC
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-IN', {
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true,
+    timeZone: 'Asia/Kolkata'
+  });
+};
+
 // =====================================================================
 //  TeacherHomework - two views:
 //    'list'        -> all homework (create / edit / delete)
@@ -357,7 +380,10 @@ function AssignmentList({ user, canManage, onOpenSubmissions }) {
                       {it.teacher_name && <div className="text-[11px] text-zinc-400 mt-0.5">{it.teacher_name}</div>}
                     </td>
                     <td className="px-5 py-4 text-sm font-medium text-zinc-500 whitespace-nowrap">{fmtDate(it.due_date)}</td>
-                    <td className="px-5 py-4 text-sm font-medium text-zinc-600 whitespace-nowrap">{it.created_by_name || '—'}</td>
+                    <td className="px-5 py-4 text-sm font-medium text-zinc-600 whitespace-nowrap">
+                      <div>{it.created_by_name || '—'}</div>
+                      {it.created_at && <div className="text-[11px] text-zinc-400 mt-0.5">{fmtCreatedAt(it.created_at)}</div>}
+                    </td>
                     <td className="px-5 py-4 font-semibold text-primary tabular-nums">{it.submission_count}</td>
                     <td className="px-5 py-4 text-right whitespace-nowrap">
                       <div className="flex items-center justify-end gap-2">
