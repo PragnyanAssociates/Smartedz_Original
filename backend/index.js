@@ -5696,16 +5696,18 @@ app.get('/api/admin/homework/teacher/:userId', async (req, res) => {
 
         const baseSelect = `
             SELECT h.id, h.title, h.description, h.homework_type,
-                   h.class_id, h.subject_id, h.due_date, h.questions,
+                   h.class_id, h.subject_id, h.teacher_id, h.due_date, h.questions,
                    h.created_by, h.created_at,
                    c.className, c.section,
                    sub.name AS subject_name,
-                   u.name AS created_by_name,
+                   u.name  AS created_by_name,
+                   tu.name AS teacher_name,
                    (SELECT COUNT(*) FROM homework_submissions s WHERE s.homework_id = h.id) AS submission_count
               FROM homework h
               LEFT JOIN classes  c   ON c.id = h.class_id
               LEFT JOIN subjects sub ON sub.id = h.subject_id
-              LEFT JOIN users    u   ON u.id = h.created_by`;
+              LEFT JOIN users    u   ON u.id = h.created_by
+              LEFT JOIN users    tu  ON tu.id = h.teacher_id`;
 
         let rows;
         if (isAdmin) {
@@ -5743,7 +5745,7 @@ app.get('/api/admin/homework/student/:studentId', async (req, res) => {
 
         const [rows] = await db.execute(
             `SELECT h.id, h.title, h.description, h.homework_type,
-                    h.class_id, h.subject_id, h.due_date, h.questions,
+                    h.class_id, h.subject_id, h.due_date, h.questions, h.attachments,
                     c.className, c.section, sub.name AS subject_name,
                     s.id AS submission_id, s.written_answer, s.files AS submission_files,
                     s.submitted_at, s.grade, s.remarks
@@ -5759,7 +5761,7 @@ app.get('/api/admin/homework/student/:studentId', async (req, res) => {
         const decorated = rows.map(r => ({
             ...r,
             questions:        parseJsonSafe(r.questions, []),
-            attachments:      [],
+            attachments:      parseJsonSafe(r.attachments, []),
             submission_files: parseJsonSafe(r.submission_files, []),
             class_group: `${r.className || ''}${r.section ? ' - ' + r.section : ''}`,
             status: r.submission_id ? (r.grade ? 'Graded' : 'Submitted') : 'Pending'
@@ -5773,10 +5775,12 @@ app.get('/api/admin/homework/student/:studentId', async (req, res) => {
 app.get('/api/admin/homework/:id', async (req, res) => {
     try {
         const [rows] = await db.execute(
-            `SELECT h.*, c.className, c.section, sub.name AS subject_name
+            `SELECT h.*, c.className, c.section, sub.name AS subject_name,
+                    tu.name AS teacher_name
                FROM homework h
                LEFT JOIN classes  c   ON c.id = h.class_id
                LEFT JOIN subjects sub ON sub.id = h.subject_id
+               LEFT JOIN users    tu  ON tu.id = h.teacher_id
               WHERE h.id = ?`,
             [req.params.id]
         );
@@ -5799,7 +5803,7 @@ app.post('/api/admin/homework', async (req, res) => {
     const created_by = req.auth.userId;
     const {
         title, description, homework_type,
-        class_id, subject_id, due_date, questions, attachments
+        class_id, subject_id, teacher_id, due_date, questions, attachments
     } = req.body;
     if (!title || !class_id || !due_date) {
         return res.status(400).json({ error: 'title, class_id and due_date are required.' });
@@ -5813,10 +5817,10 @@ app.post('/api/admin/homework', async (req, res) => {
         const [result] = await db.execute(
             `INSERT INTO homework
                (institutionId, title, description, homework_type,
-                class_id, subject_id, due_date, questions, attachments, created_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                class_id, subject_id, teacher_id, due_date, questions, attachments, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [institutionId, title, description || null, homework_type || 'PDF',
-             class_id, subject_id || null, due_date,
+             class_id, subject_id || null, teacher_id || null, due_date,
              JSON.stringify(questions || []), JSON.stringify(attachments || []),
              created_by]
         );
@@ -5837,7 +5841,7 @@ app.post('/api/admin/homework', async (req, res) => {
 app.put('/api/admin/homework/:id', async (req, res) => {
     const {
         title, description, homework_type,
-        class_id, subject_id, due_date, questions, attachments
+        class_id, subject_id, teacher_id, due_date, questions, attachments
     } = req.body;
     try {
         const [own] = await db.execute('SELECT institutionId FROM homework WHERE id = ?', [req.params.id]);
@@ -5852,10 +5856,10 @@ app.put('/api/admin/homework/:id', async (req, res) => {
         await db.execute(
             `UPDATE homework
                 SET title = ?, description = ?, homework_type = ?, class_id = ?,
-                    subject_id = ?, due_date = ?, questions = ?, attachments = ?
+                    subject_id = ?, teacher_id = ?, due_date = ?, questions = ?, attachments = ?
               WHERE id = ?`,
             [title, description || null, homework_type || 'PDF', class_id,
-             subject_id || null, due_date,
+             subject_id || null, teacher_id || null, due_date,
              JSON.stringify(questions || []), JSON.stringify(attachments || []),
              req.params.id]
         );

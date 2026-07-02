@@ -71,11 +71,13 @@ function AssignmentList({ user, canManage, onOpenSubmissions }) {
   const [classes, setClasses]     = useState([]);
   const [subjects, setSubjects]   = useState([]);
   const [subjectClasses, setSC]   = useState({});
+  const [teachers, setTeachers]   = useState([]);          // teacher users
+  const [teacherSubjects, setTS]  = useState({});          // teacherId -> [subjectId]
   const [saving, setSaving]       = useState(false);
 
   const emptyForm = {
     title: '', description: '', homework_type: 'PDF',
-    class_id: '', subject_id: '', due_date: ''
+    class_id: '', subject_id: '', teacher_id: '', due_date: ''
   };
   const [form, setForm]             = useState(emptyForm);
   const [questions, setQuestions]   = useState(['']);
@@ -104,6 +106,8 @@ function AssignmentList({ user, canManage, onOpenSubmissions }) {
       setClasses(d.classes || []);
       setSubjects(d.subjects || []);
       setSC(d.subjectClasses || {});
+      setTeachers((d.users || []).filter(u => (u.role || '').toLowerCase().includes('teacher')));
+      setTS(d.teacherSubjects || {});
     } catch (e) { console.error(e); }
   }, [user]);
 
@@ -120,6 +124,22 @@ function AssignmentList({ user, canManage, onOpenSubmissions }) {
       return links.includes(cid);
     });
   }, [subjects, subjectClasses, form.class_id]);
+
+  // The teacher assigned to a subject — the first teacher whose subject list
+  // (teacherSubjects) includes it. Used to auto-fill the Teacher field when a
+  // subject is picked. Returns '' when no teacher teaches that subject.
+  const teacherForSubject = useCallback((subjectId) => {
+    if (!subjectId) return '';
+    const sid = parseInt(subjectId, 10);
+    const hit = teachers.find(t => (teacherSubjects[t.id] || []).includes(sid));
+    return hit ? String(hit.id) : '';
+  }, [teachers, teacherSubjects]);
+
+  // When the subject changes, auto-select its teacher. The Teacher dropdown
+  // stays editable, so the admin can still override the pick.
+  const onSubjectChange = (subjectId) => {
+    setForm(f => ({ ...f, subject_id: subjectId, teacher_id: teacherForSubject(subjectId) }));
+  };
 
   // Subject options for the Subject filter — narrowed to the selected class
   // filter (a subject with no class links counts as "all classes"), matching
@@ -181,6 +201,7 @@ function AssignmentList({ user, canManage, onOpenSubmissions }) {
       homework_type: hw.homework_type || 'PDF',
       class_id: hw.class_id ? String(hw.class_id) : '',
       subject_id: hw.subject_id ? String(hw.subject_id) : '',
+      teacher_id: hw.teacher_id ? String(hw.teacher_id) : '',
       due_date: isoDate(hw.due_date)
     });
     setQuestions(hw.questions && hw.questions.length ? hw.questions : ['']);
@@ -226,6 +247,7 @@ function AssignmentList({ user, canManage, onOpenSubmissions }) {
         homework_type: form.homework_type,
         class_id: parseInt(form.class_id, 10),
         subject_id: form.subject_id ? parseInt(form.subject_id, 10) : null,
+        teacher_id: form.teacher_id ? parseInt(form.teacher_id, 10) : null,
         due_date: form.due_date,
         questions: questions.filter(q => q.trim() !== ''),
         attachments,
@@ -314,6 +336,7 @@ function AssignmentList({ user, canManage, onOpenSubmissions }) {
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Type</th>
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Class / Subject</th>
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Due</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Created By</th>
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Submissions</th>
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 text-right">Actions</th>
                 </tr>
@@ -330,9 +353,11 @@ function AssignmentList({ user, canManage, onOpenSubmissions }) {
                       }`}>{it.homework_type}</span>
                     </td>
                     <td className="px-5 py-4 text-sm font-medium text-zinc-600">
-                      {it.class_group}{it.subject_name ? ` - ${it.subject_name}` : ''}
+                      <div>{it.class_group}{it.subject_name ? ` - ${it.subject_name}` : ''}</div>
+                      {it.teacher_name && <div className="text-[11px] text-zinc-400 mt-0.5">{it.teacher_name}</div>}
                     </td>
                     <td className="px-5 py-4 text-sm font-medium text-zinc-500 whitespace-nowrap">{fmtDate(it.due_date)}</td>
+                    <td className="px-5 py-4 text-sm font-medium text-zinc-600 whitespace-nowrap">{it.created_by_name || '—'}</td>
                     <td className="px-5 py-4 font-semibold text-primary tabular-nums">{it.submission_count}</td>
                     <td className="px-5 py-4 text-right whitespace-nowrap">
                       <div className="flex items-center justify-end gap-2">
@@ -399,7 +424,7 @@ function AssignmentList({ user, canManage, onOpenSubmissions }) {
                     </label>
                     <div className="relative">
                       <select required value={form.class_id}
-                        onChange={v => setForm({ ...form, class_id: v.target.value, subject_id: '' })}
+                        onChange={v => setForm({ ...form, class_id: v.target.value, subject_id: '', teacher_id: '' })}
                         className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
                         <option value="" disabled>Select a class</option>
                         {classes.map(c => <option key={c.id} value={String(c.id)}>{classLabel(c)}</option>)}
@@ -414,13 +439,30 @@ function AssignmentList({ user, canManage, onOpenSubmissions }) {
                     </label>
                     <div className="relative">
                       <select value={form.subject_id}
-                        onChange={v => setForm({ ...form, subject_id: v.target.value })}
+                        onChange={v => onSubjectChange(v.target.value)}
                         className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
                         <option value="">{form.class_id ? 'Select a subject' : 'Select a class first'}</option>
                         {subjectsForClass.map(s => <option key={s.id} value={String(s.id)}>{s.name}</option>)}
                       </select>
                       <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                     </div>
+                  </div>
+
+                  {/* Teacher — auto-fills from the selected subject; still editable. */}
+                  <div className="space-y-1.5 md:col-span-2">
+                    <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
+                      Teacher
+                    </label>
+                    <div className="relative">
+                      <select value={form.teacher_id}
+                        onChange={v => setForm({ ...form, teacher_id: v.target.value })}
+                        className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
+                        <option value="">Unassigned</option>
+                        {teachers.map(t => <option key={t.id} value={String(t.id)}>{t.name}</option>)}
+                      </select>
+                      <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    </div>
+                    <p className="text-[10px] text-zinc-400">Picked automatically from the subject — change it if needed.</p>
                   </div>
                 </div>
 
