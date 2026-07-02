@@ -1,4 +1,4 @@
 User-agent: *
 Disallow:
 
-Sitemap: https://www.vpsngoerp.com/sitemap.xml
+Sitemap: https://www.smartedz.com/sitemap.xml
