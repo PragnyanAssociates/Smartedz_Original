@@ -6436,6 +6436,12 @@ app.delete('/api/admin/ptm/:id', async (req, res) => {
 //   actor from token and require the class (when given) to be yours;
 //   update/delete verify ownership; video stream verifies tenant.
 //
+//   List queries also join the creator so the UI can show
+//   "Created by <name>" + creation time (created_at, IST rendered
+//   client-side). No migration needed — created_by / created_at already
+//   exist on online_classes. (created_by is the scheduler for a live class
+//   and the uploader for a recorded one.)
+//
 //   ⚠ online-classes/video/:id is under the /api auth gate — only works if
 //     the frontend FETCHES it (token via interceptor) and renders a blob.
 // =====================================================================
@@ -6467,23 +6473,27 @@ app.get('/api/admin/online-classes/:instId', async (req, res) => {
 
         const query = isSystemAdmin
             ? `SELECT o.id, o.title, o.class_type, o.class_id, o.subject_id, o.teacher_id,
-                       o.class_datetime, o.meet_link, o.topic, o.description, o.created_by,
+                       o.class_datetime, o.meet_link, o.topic, o.description, o.created_by, o.created_at,
                        IF(o.video_data IS NOT NULL, 1, 0) as has_video_data,
-                       c.className, c.section, s.name AS subject_name, t.name AS teacher_name
+                       c.className, c.section, s.name AS subject_name, t.name AS teacher_name,
+                       cb.name AS created_by_name
                   FROM online_classes o
                   LEFT JOIN classes c ON c.id = o.class_id
                   LEFT JOIN subjects s ON s.id = o.subject_id
                   LEFT JOIN users t ON t.id = o.teacher_id
+                  LEFT JOIN users cb ON cb.id = o.created_by
                  WHERE o.institutionId = ?
                  ORDER BY o.class_datetime DESC`
             : `SELECT o.id, o.title, o.class_type, o.class_id, o.subject_id, o.teacher_id,
-                       o.class_datetime, o.meet_link, o.topic, o.description, o.created_by,
+                       o.class_datetime, o.meet_link, o.topic, o.description, o.created_by, o.created_at,
                        IF(o.video_data IS NOT NULL, 1, 0) as has_video_data,
-                       c.className, c.section, s.name AS subject_name, t.name AS teacher_name
+                       c.className, c.section, s.name AS subject_name, t.name AS teacher_name,
+                       cb.name AS created_by_name
                   FROM online_classes o
                   LEFT JOIN classes c ON c.id = o.class_id
                   LEFT JOIN subjects s ON s.id = o.subject_id
                   LEFT JOIN users t ON t.id = o.teacher_id
+                  LEFT JOIN users cb ON cb.id = o.created_by
                  WHERE o.institutionId = ? AND o.created_by = ?
                  ORDER BY o.class_datetime DESC`;
 
@@ -6502,13 +6512,15 @@ app.get('/api/admin/online-classes/student/:studentId', async (req, res) => {
 
         const [rows] = await db.execute(
             `SELECT o.id, o.title, o.class_type, o.class_id, o.subject_id, o.teacher_id,
-                    o.class_datetime, o.meet_link, o.topic, o.description,
+                    o.class_datetime, o.meet_link, o.topic, o.description, o.created_by, o.created_at,
                     IF(o.video_data IS NOT NULL, 1, 0) as has_video_data,
-                    c.className, c.section, s.name AS subject_name, t.name AS teacher_name
+                    c.className, c.section, s.name AS subject_name, t.name AS teacher_name,
+                    cb.name AS created_by_name
                FROM online_classes o
                LEFT JOIN classes c ON c.id = o.class_id
                LEFT JOIN subjects s ON s.id = o.subject_id
                LEFT JOIN users t ON t.id = o.teacher_id
+               LEFT JOIN users cb ON cb.id = o.created_by
               WHERE o.institutionId = ? AND (o.class_id IS NULL OR o.class_id = ?)
               ORDER BY o.class_datetime DESC`,
             [u[0].institutionId, u[0].class_id || 0]

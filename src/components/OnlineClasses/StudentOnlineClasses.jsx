@@ -3,6 +3,24 @@ import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import { Video, PlayCircle, Search, X, Loader2, RefreshCw, Clock } from 'lucide-react';
 
+// Render a UTC datetime (Railway stores UTC) as IST for display. Handles
+// both bare "YYYY-MM-DD HH:MM:SS" strings and ISO strings / Date objects.
+const fmtIST = (val) => {
+  if (!val) return '';
+  let d;
+  if (typeof val === 'string' && !val.includes('T') && !val.endsWith('Z')) {
+    d = new Date(val.replace(' ', 'T') + 'Z');
+  } else {
+    d = new Date(val);
+  }
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true
+  });
+};
+
 export default function StudentOnlineClasses() {
   const { user } = useAuth();
   
@@ -31,7 +49,8 @@ export default function StudentOnlineClasses() {
       list = list.filter(c => 
         (c.title || '').toLowerCase().includes(q) ||
         (c.subject_name || '').toLowerCase().includes(q) ||
-        (c.teacher_name || '').toLowerCase().includes(q)
+        (c.teacher_name || '').toLowerCase().includes(q) ||
+        (c.created_by_name || '').toLowerCase().includes(q)
       );
     }
     return list;
@@ -111,13 +130,14 @@ export default function StudentOnlineClasses() {
           </div>
         ) : (
           <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-x-auto custom-scrollbar">
-            <table className="w-full text-left border-collapse min-w-[800px]">
+            <table className="w-full text-left border-collapse min-w-[950px]">
               <thead className="bg-zinc-50/80">
                 <tr>
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Date & Time</th>
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Class Details</th>
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Subject</th>
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Teacher</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Created By</th>
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 text-right">Action</th>
                 </tr>
               </thead>
@@ -157,6 +177,14 @@ export default function StudentOnlineClasses() {
                       </td>
                       <td className="px-5 py-4 text-sm font-medium text-zinc-700">
                         {c.teacher_name}
+                      </td>
+                      <td className="px-5 py-4 whitespace-nowrap">
+                        <div className="font-medium text-zinc-800 text-sm">{c.created_by_name || '—'}</div>
+                        {c.created_at && (
+                          <div className="text-[11px] text-zinc-400 mt-0.5 flex items-center gap-1">
+                            <Clock className="size-3" /> {fmtIST(c.created_at)}
+                          </div>
+                        )}
                       </td>
                       <td className="px-5 py-4 text-right whitespace-nowrap">
                         <button 
