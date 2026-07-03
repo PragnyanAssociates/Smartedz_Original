@@ -3241,6 +3241,12 @@ app.get('/api/admin/attendance-export/:instId', async (req, res) => {
 //   exam_schedules have no subject/teacher, so they only surface the
 //   creator (created_by_name) — no teacher_id there.
 //
+//   TENANT SCOPING (same rules as the Homework backend): institutionId
+//   and the actor (created_by / actor_id) always come from req.auth —
+//   never trusted from the body. Every ownership check uses sameTenant().
+//   Create/update additionally verify the targeted class belongs to your
+//   institution before writing.
+//
 //   Both list/detail queries surface created_by (name), teacher (name)
 //   and created_at so the UI can show the assigned teacher, "by <creator>"
 //   and creation time (IST rendered client-side).
@@ -3347,12 +3353,20 @@ app.get('/api/admin/exam-schedules/single/:id', async (req, res) => {
 //   section  = null means "all sections in the class"
 app.post('/api/admin/exam-schedules', async (req, res) => {
     const institutionId = req.auth.institutionId;
+    const created_by = req.auth.userId;                 // actor from token, not body
     const {
         title, subtitle, exam_type,
-        class_id, section, schedule_data, created_by
+        class_id, section, schedule_data
     } = req.body;
     if (!title) return res.status(400).json({ error: 'title required.' });
     try {
+        // If a class is targeted, it must belong to your institution.
+        if (class_id) {
+            const [c] = await db.execute('SELECT institutionId FROM classes WHERE id = ?', [class_id]);
+            if (c.length === 0 || !sameTenant(req, c[0].institutionId)) {
+                return res.status(403).json({ error: 'That class belongs to another institution.' });
+            }
+        }
 
         const [result] = await db.execute(
             `INSERT INTO exam_schedules
@@ -3384,6 +3398,13 @@ app.put('/api/admin/exam-schedules/:id', async (req, res) => {
         const [own] = await db.execute('SELECT institutionId FROM exam_schedules WHERE id = ?', [req.params.id]);
         if (own.length === 0) return res.status(404).json({ error: 'Schedule not found' });
         if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This schedule belongs to another institution.' });
+
+        if (class_id) {
+            const [c] = await db.execute('SELECT institutionId FROM classes WHERE id = ?', [class_id]);
+            if (c.length === 0 || !sameTenant(req, c[0].institutionId)) {
+                return res.status(403).json({ error: 'That class belongs to another institution.' });
+            }
+        }
 
         await db.execute(
             `UPDATE exam_schedules
@@ -3530,15 +3551,21 @@ app.get('/api/admin/exams/:examId', async (req, res) => {
 // --- 16.B.4 Create exam (+ notify students if published) ----------
 app.post('/api/admin/exams', async (req, res) => {
     const institutionId = req.auth.institutionId;
+    const created_by = req.auth.userId;                 // actor from token, not body
     const {
         title, description, class_id, section, subject_id, teacher_id,
-        time_limit_mins, status, created_by, questions = []
+        time_limit_mins, status, questions = []
     } = req.body;
-    if (!title || !class_id || !created_by) {
-        return res.status(400).json({ error: 'institutionId, title, class_id and created_by are required.' });
+    if (!title || !class_id) {
+        return res.status(400).json({ error: 'title and class_id are required.' });
     }
     const conn = await db.getConnection();
     try {
+        // The class must belong to your institution.
+        const [c] = await conn.execute('SELECT institutionId FROM classes WHERE id = ?', [class_id]);
+        if (c.length === 0 || !sameTenant(req, c[0].institutionId)) {
+            return res.status(403).json({ error: 'That class belongs to another institution.' });
+        }
         await conn.beginTransaction();
         const totalMarks = questions.reduce((sum, q) => sum + (parseInt(q.marks, 10) || 0), 0);
         const [result] = await conn.execute(
@@ -3588,13 +3615,20 @@ app.post('/api/admin/exams', async (req, res) => {
 app.put('/api/admin/exams/:examId', async (req, res) => {
     const {
         title, description, class_id, section, subject_id, teacher_id,
-        time_limit_mins, status, questions = [], actor_id
+        time_limit_mins, status, questions = []
     } = req.body;
+    const actor_id = req.auth.userId;                   // actor from token, not body
     const conn = await db.getConnection();
     try {
          const [exOwn] = await conn.execute('SELECT institutionId FROM online_exams WHERE id = ?', [req.params.examId]);
          if (exOwn.length === 0) return res.status(404).json({ error: 'Exam not found' });
          if (!sameTenant(req, exOwn[0].institutionId)) return res.status(403).json({ error: 'This exam belongs to another institution.' });
+         if (class_id) {
+             const [c] = await conn.execute('SELECT institutionId FROM classes WHERE id = ?', [class_id]);
+             if (c.length === 0 || !sameTenant(req, c[0].institutionId)) {
+                 return res.status(403).json({ error: 'That class belongs to another institution.' });
+             }
+         }
         await conn.beginTransaction();
         const totalMarks = questions.reduce((sum, q) => sum + (parseInt(q.marks, 10) || 0), 0);
 
