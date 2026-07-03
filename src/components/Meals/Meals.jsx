@@ -4,7 +4,7 @@ import { usePermissions } from '../../Screens/PermissionsContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   UtensilsCrossed, Clock, CalendarDays, Plus, Trash2, Save,
-  Loader2, AlertCircle, Coffee, Sun, Moon, Cookie, ChevronDown
+  Loader2, AlertCircle, Coffee, Sun, Moon, Cookie, ChevronDown, User
 } from 'lucide-react';
 
 // =====================================================================
@@ -14,6 +14,24 @@ import {
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const DAYS_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+// Render a UTC datetime (Railway stores UTC) as IST for display. Handles
+// both bare "YYYY-MM-DD HH:MM:SS" strings and ISO strings / Date objects.
+const fmtIST = (val) => {
+  if (!val) return '';
+  let d;
+  if (typeof val === 'string' && !val.includes('T') && !val.endsWith('Z')) {
+    d = new Date(val.replace(' ', 'T') + 'Z');
+  } else {
+    d = new Date(val);
+  }
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true
+  });
+};
 
 // Pick an icon for a slot based on its name
 function slotIcon(name) {
@@ -59,7 +77,7 @@ export default function Meals() {
   const { can } = usePermissions();
   const canEdit = can('Meals', 'edit');
 
-  const [data, setData]       = useState({ slots: [], menu: [] });
+  const [data, setData]       = useState({ slots: [], menu: [], menuMeta: null });
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('menu');
 
@@ -69,7 +87,7 @@ export default function Meals() {
     try {
       const res = await fetch(`${API_BASE_URL}/admin/meals/${user.institutionId}`);
       const d = await res.json();
-      setData({ slots: d.slots || [], menu: d.menu || [] });
+      setData({ slots: d.slots || [], menu: d.menu || [], menuMeta: d.menuMeta || null });
     } catch (e) { console.error('Meals fetch error:', e); }
     setLoading(false);
   }, [user]);
@@ -124,6 +142,39 @@ export default function Meals() {
           ? <SlotsTab {...tabProps} />
           : <MenuTab {...tabProps} />}
       </div>
+    </div>
+  );
+}
+
+// =====================================================================
+//  Menu audit line - "Last updated ... by ..." shown to EVERY user
+// =====================================================================
+function MenuMeta({ meta }) {
+  const lu = meta?.lastUpdated;
+  const fc = meta?.firstCreated;
+  if (!lu?.at && !fc?.by) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 px-1 text-[11px] text-zinc-500">
+      {lu?.at && (
+        <span className="inline-flex items-center gap-1.5">
+          <Clock className="size-3.5 text-zinc-400 shrink-0" />
+          Last updated
+          <span className="font-semibold text-zinc-700">{fmtIST(lu.at)}</span>
+          {lu.by && (
+            <>
+              by <span className="font-semibold text-zinc-700 inline-flex items-center gap-1">
+                <User className="size-3 text-zinc-400" />{lu.by}
+              </span>
+            </>
+          )}
+        </span>
+      )}
+      {fc?.by && (
+        <span className="inline-flex items-center gap-1.5 text-zinc-400">
+          <span className="text-zinc-300">•</span>
+          Created by <span className="font-medium text-zinc-600">{fc.by}</span>
+        </span>
+      )}
     </div>
   );
 }
@@ -334,6 +385,7 @@ function MenuTab({ data, fetchData, user, canEdit }) {
   if (!canEdit) {
     return (
       <div className="space-y-4">
+        <MenuMeta meta={data.menuMeta} />
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {DAYS.map((day, dayIndex) => (
             <div key={day} className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col">
@@ -389,6 +441,8 @@ function MenuTab({ data, fetchData, user, canEdit }) {
         <AlertCircle className="size-4 shrink-0 text-blue-500" />
         <p>Type the food items for each meal, separated by commas. Leave a cell empty if there's no meal scheduled for that slot on that day.</p>
       </div>
+
+      <MenuMeta meta={data.menuMeta} />
 
       <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-x-auto custom-scrollbar">
         <table className="w-full text-left border-collapse min-w-[800px]">

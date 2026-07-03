@@ -6099,6 +6099,12 @@ app.put('/api/admin/homework/grade/:submissionId', async (req, res) => {
 //   institutionId/actor from req.auth. Slots are scoped by institutionId;
 //   the weekly menu only writes to this institution's own slot ids
 //   (slot_id is global and the menu's unique key is slot-based).
+//
+//   AUDIT: the weekly menu now records created_by + updated_by (and a
+//   created_at) so EVERY user can see when the food menu was last updated
+//   and by whom. Run meal_menu_add_audit.sql once. 20.1 returns a
+//   `menuMeta` block with the latest update + first creation; 20.3 stamps
+//   the acting user on every upsert.
 // =====================================================================
 
 // --- 20.1 Full meals data for a school ------------------------------
@@ -6110,12 +6116,32 @@ app.get('/api/admin/meals/:instId', async (req, res) => {
             [instId]
         );
         const [menu] = await db.execute(
-            `SELECT m.id, m.slot_id, m.day_index, m.items
+            `SELECT m.id, m.slot_id, m.day_index, m.items,
+                    m.created_at, m.updated_at,
+                    cu.name AS created_by_name,
+                    uu.name AS updated_by_name
                FROM meal_menu m
+               LEFT JOIN users cu ON cu.id = m.created_by
+               LEFT JOIN users uu ON uu.id = m.updated_by
               WHERE m.institutionId = ?`,
             [instId]
         );
-        res.json({ slots, menu });
+
+        // Roll the per-cell audit up into one "last updated" + "first created"
+        // for the whole menu (the UI shows a single line to every user).
+        let lastUpdated = null, firstCreated = null;
+        for (const r of menu) {
+            if (r.updated_at &&
+                (!lastUpdated || new Date(r.updated_at) > new Date(lastUpdated.at))) {
+                lastUpdated = { at: r.updated_at, by: r.updated_by_name || null };
+            }
+            if (r.created_at &&
+                (!firstCreated || new Date(r.created_at) < new Date(firstCreated.at))) {
+                firstCreated = { at: r.created_at, by: r.created_by_name || null };
+            }
+        }
+
+        res.json({ slots, menu, menuMeta: { lastUpdated, firstCreated } });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -6170,6 +6196,9 @@ app.post('/api/admin/meals/slots', async (req, res) => {
 
 
 // --- 20.3 Save the weekly menu (+ notify all active users) ----------
+//   Every upserted cell is stamped with the acting user:
+//     • new cell  -> created_by = updated_by = actor
+//     • edited    -> updated_by = actor (created_by/created_at untouched)
 app.post('/api/admin/meals/menu', async (req, res) => {
     const { entries } = req.body;
     const institutionId = req.auth.institutionId;
@@ -6195,10 +6224,11 @@ app.post('/api/admin/meals/menu', async (req, res) => {
                 );
             } else {
                 await conn.execute(
-                    `INSERT INTO meal_menu (institutionId, slot_id, day_index, items)
-                     VALUES (?, ?, ?, ?)
-                     ON DUPLICATE KEY UPDATE items = VALUES(items)`,
-                    [institutionId, e.slot_id, e.day_index, items]
+                    `INSERT INTO meal_menu (institutionId, slot_id, day_index, items, created_by, updated_by)
+                     VALUES (?, ?, ?, ?, ?, ?)
+                     ON DUPLICATE KEY UPDATE items = VALUES(items),
+                                             updated_by = VALUES(updated_by)`,
+                    [institutionId, e.slot_id, e.day_index, items, actor_id, actor_id]
                 );
             }
         }
