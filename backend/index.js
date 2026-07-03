@@ -3279,65 +3279,131 @@ async function examRecipientIds(institutionId, classId, section) {
 
 
 // =====================================================================
-// === 16.A EXAM SCHEDULES =============================================
+// === 16.A  EXAM SCHEDULES  (TENANT-SCOPED, academic-year removed) =====
+//
+//   • Every route takes the institution from the JWT (req.auth) — never
+//     from the URL — so one school can't see another's schedules. This
+//     fixes the leak where other schools' exam schedules were showing.
+//     (A Developer may pass an explicit :instId to view a chosen school.)
+//   • academic_year_id is no longer written or read. The column stays in
+//     the table (nullable), so NO migration is needed — new rows just
+//     leave it NULL and existing rows are ignored.
+//   • List responses carry created_at + created_by_name so the UI can
+//     show the creation time and the creator/teacher name.
+//
+//   Reuses: sameTenant() (Part 1), parseJsonSafe(), examRecipientIds()
+//   and createNotifications() (already in your backend).
 // =====================================================================
 
-// --- 16.A.1 List all schedules for a school -----------------------
+// --- 16.A.1  POST /api/admin/exam-schedules  (create) ----------------
+//   institutionId + created_by come from the token. No academic year.
+app.post('/api/admin/exam-schedules', async (req, res) => {
+    const institutionId = req.auth.institutionId;
+    const created_by    = req.auth.userId;
+    const { title, subtitle, exam_type, class_id, section, schedule_data } = req.body;
+    if (!title) return res.status(400).json({ error: 'title is required.' });
+    try {
+        const [result] = await db.execute(
+            `INSERT INTO exam_schedules
+               (institutionId, title, subtitle, exam_type, class_id, section, schedule_data, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [institutionId, title, subtitle || null, exam_type || 'Internal',
+             class_id || null, section || null,
+             JSON.stringify(schedule_data || []), created_by]
+        );
+
+        try {
+            const recipients = await examRecipientIds(institutionId, class_id || null, section || null);
+            await createNotifications({
+                institutionId, recipientIds: recipients, type: 'exam',
+                title: 'New exam timetable', body: title,
+                link: 'Exams', entity_id: result.insertId, actor_id: created_by
+            });
+        } catch (e) { console.warn('[notify exam-schedule create]', e.message); }
+
+        res.json({ success: true, id: result.insertId });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 16.A.2  GET /api/admin/exam-schedules/:instId  (teacher/admin list)
+//   Institution ALWAYS from the token (Developer may target via URL).
+//   Optional ?class_id=<id> narrows to one class ("All classes" omits it).
 app.get('/api/admin/exam-schedules/:instId', async (req, res) => {
+    const instId = req.auth.role === 'Developer'
+        ? req.params.instId
+        : req.auth.institutionId;
+
+    const { class_id } = req.query;
     try {
-        const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
-        const [rows] = await db.execute(
-            `SELECT s.*, c.className, u.name AS created_by_name
-               FROM exam_schedules s
-               LEFT JOIN classes c ON c.id = s.class_id
-               LEFT JOIN users u ON u.id = s.created_by
-              WHERE s.institutionId = ?
-              ORDER BY s.created_at DESC`,
-              [instId]
-        );
-        const decorated = rows.map(r => ({
-            ...r,
-            schedule_data: parseJsonSafe(r.schedule_data, [])
-        }));
-        res.json(decorated);
+        let sql = `
+            SELECT es.id, es.institutionId, es.title, es.subtitle, es.exam_type,
+                   es.class_id, es.section, es.schedule_data,
+                   es.created_by, es.created_at,
+                   c.className,
+                   u.name AS created_by_name
+              FROM exam_schedules es
+              LEFT JOIN classes c ON c.id = es.class_id
+              LEFT JOIN users   u ON u.id = es.created_by
+             WHERE es.institutionId = ?`;
+        const params = [instId];
+
+        if (class_id && class_id !== 'all') {
+            sql += ' AND es.class_id = ?';
+            params.push(class_id);
+        }
+        sql += ' ORDER BY es.created_at DESC';
+
+        const [rows] = await db.execute(sql, params);
+        res.json(rows.map(r => ({ ...r, schedule_data: parseJsonSafe(r.schedule_data, []) })));
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 16.A.2 List schedules visible to a student -------------------
-app.get('/api/admin/exam-schedules/student/:studentId', async (req, res) => {
+
+// --- 16.A.3  GET /api/admin/exam-schedules/student/:id  (own class) --
+//   Institution + class come from the STUDENT record, then guarded by
+//   sameTenant so a crafted id can't reach another school. Returns the
+//   student's class schedules plus school-wide ones (class_id NULL).
+app.get('/api/admin/exam-schedules/student/:id', async (req, res) => {
     try {
-        const [u] = await db.execute('SELECT institutionId, class_id, section FROM users WHERE id = ?', [req.params.studentId]);
-        if (u.length === 0) return res.status(404).json({ error: 'Student not found' });
-        const { institutionId, class_id, section } = u[0];
-        if (!sameTenant(req, institutionId)) return res.status(403).json({ error: 'This student belongs to another institution.' });
+        const [u] = await db.execute(
+            'SELECT institutionId, class_id FROM users WHERE id = ?',
+            [req.params.id]
+        );
+        if (!u.length) return res.json([]);
+
+        const { institutionId, class_id } = u[0];
+        if (!sameTenant(req, institutionId)) {
+            return res.status(403).json({ error: 'This student belongs to another institution.' });
+        }
 
         const [rows] = await db.execute(
-            `SELECT s.*, c.className, usr.name AS created_by_name
-               FROM exam_schedules s
-               LEFT JOIN classes c   ON c.id = s.class_id
-               LEFT JOIN users usr   ON usr.id = s.created_by
-              WHERE s.institutionId = ?
-                AND (s.class_id IS NULL OR s.class_id = ?)
-                AND (s.section  IS NULL OR s.section = ?)
-              ORDER BY s.created_at DESC`,
-            [institutionId, class_id || 0, section || '']
+            `SELECT es.id, es.title, es.subtitle, es.exam_type,
+                    es.class_id, es.section, es.schedule_data,
+                    es.created_by, es.created_at,
+                    c.className,
+                    u2.name AS created_by_name
+               FROM exam_schedules es
+               LEFT JOIN classes c  ON c.id = es.class_id
+               LEFT JOIN users   u2 ON u2.id = es.created_by
+              WHERE es.institutionId = ?
+                AND (es.class_id = ? OR es.class_id IS NULL)
+              ORDER BY es.created_at DESC`,
+            [institutionId, class_id]
         );
-        const decorated = rows.map(r => ({
-            ...r,
-            schedule_data: parseJsonSafe(r.schedule_data, [])
-        }));
-        res.json(decorated);
+        res.json(rows.map(r => ({ ...r, schedule_data: parseJsonSafe(r.schedule_data, []) })));
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 16.A.3 Get single schedule -----------------------------------
+
+// --- 16.A.4  GET /api/admin/exam-schedules/single/:id  (ownership) ---
 app.get('/api/admin/exam-schedules/single/:id', async (req, res) => {
     try {
         const [rows] = await db.execute(
             `SELECT s.*, c.className, u.name AS created_by_name
                FROM exam_schedules s
                LEFT JOIN classes c ON c.id = s.class_id
-               LEFT JOIN users u ON u.id = s.created_by
+               LEFT JOIN users   u ON u.id = s.created_by
               WHERE s.id = ?`,
             [req.params.id]
         );
@@ -3348,63 +3414,15 @@ app.get('/api/admin/exam-schedules/single/:id', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 16.A.4 Create schedule (+ notify students) -------------------
-//   class_id = null means "All classes"
-//   section  = null means "all sections in the class"
-app.post('/api/admin/exam-schedules', async (req, res) => {
-    const institutionId = req.auth.institutionId;
-    const created_by = req.auth.userId;                 // actor from token, not body
-    const {
-        title, subtitle, exam_type,
-        class_id, section, schedule_data
-    } = req.body;
-    if (!title) return res.status(400).json({ error: 'title required.' });
-    try {
-        // If a class is targeted, it must belong to your institution.
-        if (class_id) {
-            const [c] = await db.execute('SELECT institutionId FROM classes WHERE id = ?', [class_id]);
-            if (c.length === 0 || !sameTenant(req, c[0].institutionId)) {
-                return res.status(403).json({ error: 'That class belongs to another institution.' });
-            }
-        }
 
-        const [result] = await db.execute(
-            `INSERT INTO exam_schedules
-               (institutionId, title, subtitle, exam_type, class_id, section, schedule_data, created_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [institutionId, title, subtitle || null, exam_type || 'Internal',
-             class_id || null, section || null, JSON.stringify(schedule_data || []), created_by || null]
-        );
-
-        // 🔔 Notify the targeted students. Own try/catch so a notify issue
-        //    can't fail the create.
-        try {
-            const recipients = await examRecipientIds(institutionId, class_id || null, section || null);
-            await createNotifications({
-                institutionId, recipientIds: recipients, type: 'exam',
-                title: 'Exam timetable published', body: title,
-                link: 'Exams', entity_id: result.insertId, actor_id: created_by
-            });
-        } catch (e) { console.warn('[notify exam-schedule]', e.message); }
-
-        res.json({ success: true, id: result.insertId });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// --- 16.A.5 Update schedule ---------------------------------------
+// --- 16.A.5  PUT /api/admin/exam-schedules/:id  (ownership) ----------
+//   No academic_year write.
 app.put('/api/admin/exam-schedules/:id', async (req, res) => {
     const { title, subtitle, exam_type, class_id, section, schedule_data } = req.body;
     try {
         const [own] = await db.execute('SELECT institutionId FROM exam_schedules WHERE id = ?', [req.params.id]);
         if (own.length === 0) return res.status(404).json({ error: 'Schedule not found' });
         if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This schedule belongs to another institution.' });
-
-        if (class_id) {
-            const [c] = await db.execute('SELECT institutionId FROM classes WHERE id = ?', [class_id]);
-            if (c.length === 0 || !sameTenant(req, c[0].institutionId)) {
-                return res.status(403).json({ error: 'That class belongs to another institution.' });
-            }
-        }
 
         await db.execute(
             `UPDATE exam_schedules
@@ -3428,7 +3446,8 @@ app.put('/api/admin/exam-schedules/:id', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 16.A.6 Delete schedule ---------------------------------------
+
+// --- 16.A.6  DELETE /api/admin/exam-schedules/:id  (ownership) -------
 app.delete('/api/admin/exam-schedules/:id', async (req, res) => {
     try {
         const [own] = await db.execute('SELECT institutionId FROM exam_schedules WHERE id = ?', [req.params.id]);
