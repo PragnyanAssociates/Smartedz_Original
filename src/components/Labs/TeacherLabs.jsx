@@ -4,7 +4,7 @@ import { API_BASE_URL } from '../../apiConfig';
 import {
   Plus, Edit, Trash2, X, Search, Loader2, FlaskConical,
   Video, LinkIcon, Radio, ChevronDown, Save, FileText, 
-  UploadCloud, ExternalLink, ArrowLeft, BookOpen, User, Clock
+  UploadCloud, ExternalLink, ArrowLeft, BookOpen, User, Clock, PencilLine
 } from 'lucide-react';
 
 // =====================================================================
@@ -29,6 +29,28 @@ const fmtDateTime = (dt) => {
     hour: '2-digit', minute: '2-digit'
   });
 };
+
+// Render a UTC audit timestamp (Railway stores UTC) as IST for display.
+const fmtIST = (val) => {
+  if (!val) return '';
+  let d;
+  if (typeof val === 'string' && !val.includes('T') && !val.endsWith('Z')) {
+    d = new Date(val.replace(' ', 'T') + 'Z');
+  } else {
+    d = new Date(val);
+  }
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true
+  });
+};
+
+// Show the "updated" line only when it's meaningfully after creation.
+const wasUpdated = (lab) =>
+  lab.updated_at && lab.updated_by_name &&
+  (!lab.created_at || new Date(lab.updated_at) - new Date(lab.created_at) > 1000);
 
 const isoLocal = (dt) => {
   if (!dt) return '';
@@ -138,7 +160,8 @@ export default function TeacherLabs({ canManage = true }) {
       list = list.filter(l =>
         (l.title || '').toLowerCase().includes(q) ||
         (l.class_group || '').toLowerCase().includes(q) ||
-        (l.subject_name || '').toLowerCase().includes(q)
+        (l.subject_name || '').toLowerCase().includes(q) ||
+        (l.created_by_name || '').toLowerCase().includes(q)
       );
     }
     return list;
@@ -354,6 +377,24 @@ export default function TeacherLabs({ canManage = true }) {
                   {lab.class_group} {lab.subject_name ? `• ${lab.subject_name}` : ''}
                 </p>
 
+                {/* Created / Updated audit line */}
+                <div className="mt-2 space-y-0.5">
+                  {lab.created_by_name && (
+                    <div className="text-[10px] text-zinc-400 flex items-center gap-1 line-clamp-1">
+                      <User className="size-3 shrink-0" /> {lab.created_by_name}
+                      {lab.created_at && (
+                        <><span className="text-zinc-300">·</span> {fmtIST(lab.created_at)}</>
+                      )}
+                    </div>
+                  )}
+                  {wasUpdated(lab) && (
+                    <div className="text-[10px] text-zinc-400 flex items-center gap-1 line-clamp-1">
+                      <PencilLine className="size-3 shrink-0" /> {lab.updated_by_name}
+                      <span className="text-zinc-300">·</span> {fmtIST(lab.updated_at)}
+                    </div>
+                  )}
+                </div>
+
                 {lab.description && (
                   <p className="text-xs text-zinc-500 mt-3 line-clamp-3 leading-relaxed font-medium">
                     {lab.description}
@@ -550,6 +591,7 @@ export default function TeacherLabs({ canManage = true }) {
 function LabDetailView({ lab, onBack, canManage, onEdit, onDelete }) {
   const [resources, setResources] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [meta, setMeta] = useState(lab);
 
   useEffect(() => {
     (async () => {
@@ -557,6 +599,7 @@ function LabDetailView({ lab, onBack, canManage, onEdit, onDelete }) {
         const res = await fetch(`${API_BASE_URL}/admin/labs/${lab.id}`);
         const data = await res.json();
         setResources(data.resources || []);
+        setMeta(m => ({ ...m, ...data }));
       } catch { setResources([]); }
       setLoading(false);
     })();
@@ -590,24 +633,31 @@ function LabDetailView({ lab, onBack, canManage, onEdit, onDelete }) {
             <FlaskConical className="size-6" />
           </div>
           <div className="min-w-0 flex-1">
-            <h1 className="text-lg sm:text-xl font-semibold text-zinc-900 tracking-tight leading-tight">{lab.title}</h1>
+            <h1 className="text-lg sm:text-xl font-semibold text-zinc-900 tracking-tight leading-tight">{meta.title}</h1>
             <div className="flex flex-wrap items-center gap-2 mt-2 text-[11px] font-medium text-zinc-500 uppercase tracking-wider">
               <span className="flex items-center gap-1.5 bg-zinc-100 px-2 py-1 rounded-md text-zinc-600">
-                <BookOpen className="size-3.5" /> {lab.subject_name || 'General'}
+                <BookOpen className="size-3.5" /> {meta.subject_name || 'General'}
               </span>
               <span className="flex items-center gap-1.5 bg-zinc-100 px-2 py-1 rounded-md text-zinc-600">
-                <User className="size-3.5" /> {lab.created_by_name || 'Teacher'}
+                <User className="size-3.5" /> {meta.created_by_name || 'Teacher'}
+                {meta.created_at && <span className="normal-case font-normal text-zinc-400">· {fmtIST(meta.created_at)}</span>}
               </span>
+              {wasUpdated(meta) && (
+                <span className="flex items-center gap-1.5 bg-zinc-100 px-2 py-1 rounded-md text-zinc-600">
+                  <PencilLine className="size-3.5" /> {meta.updated_by_name}
+                  <span className="normal-case font-normal text-zinc-400">· {fmtIST(meta.updated_at)}</span>
+                </span>
+              )}
               <span className="bg-primary/10 text-primary px-2 py-1 rounded-md ring-1 ring-inset ring-primary/20 font-semibold">
-                {lab.class_group}
+                {meta.class_group}
               </span>
             </div>
           </div>
         </div>
         
-        {lab.description && (
+        {meta.description && (
           <div className="mt-5 bg-zinc-50/50 p-4 rounded-md border border-zinc-100">
-            <p className="text-sm text-zinc-700 leading-relaxed whitespace-pre-wrap font-medium">{lab.description}</p>
+            <p className="text-sm text-zinc-700 leading-relaxed whitespace-pre-wrap font-medium">{meta.description}</p>
           </div>
         )}
       </div>

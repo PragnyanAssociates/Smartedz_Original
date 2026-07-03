@@ -3,7 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   Loader2, FlaskConical, Video, LinkIcon, Radio, ExternalLink,
-  Search, BookOpen, Clock, ArrowLeft, User, FileText
+  Search, BookOpen, Clock, ArrowLeft, User, FileText, PencilLine
 } from 'lucide-react';
 
 // =====================================================================
@@ -21,6 +21,28 @@ const fmtDateTime = (dt) => {
     hour: '2-digit', minute: '2-digit'
   });
 };
+
+// Render a UTC audit timestamp (Railway stores UTC) as IST for display.
+const fmtIST = (val) => {
+  if (!val) return '';
+  let d;
+  if (typeof val === 'string' && !val.includes('T') && !val.endsWith('Z')) {
+    d = new Date(val.replace(' ', 'T') + 'Z');
+  } else {
+    d = new Date(val);
+  }
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true
+  });
+};
+
+// Show the "updated" line only when it's meaningfully after creation.
+const wasUpdated = (lab) =>
+  lab.updated_at && lab.updated_by_name &&
+  (!lab.created_at || new Date(lab.updated_at) - new Date(lab.created_at) > 1000);
 
 // STRICT ENTERPRISE PALETTE: Replaced all rose, orange, and emerald with zinc/primary
 function resMeta(type) {
@@ -58,7 +80,8 @@ export default function StudentLabs() {
     const q = query.toLowerCase();
     return labs.filter(l =>
       (l.title || '').toLowerCase().includes(q) ||
-      (l.subject_name || '').toLowerCase().includes(q));
+      (l.subject_name || '').toLowerCase().includes(q) ||
+      (l.created_by_name || '').toLowerCase().includes(q));
   }, [labs, query]);
 
   if (openLab) {
@@ -113,8 +136,26 @@ export default function StudentLabs() {
                   <h3 className="font-semibold text-zinc-900 text-base leading-tight line-clamp-2 min-h-[2.5rem] mt-3 group-hover:text-primary transition-colors">{lab.title}</h3>
                   <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mt-1.5 line-clamp-1">
                     {lab.subject_name || 'General'}
-                    {lab.created_by_name ? ` - ${lab.created_by_name}` : ''}
                   </p>
+
+                  {/* Created / Updated audit line */}
+                  <div className="mt-2 space-y-0.5">
+                    {lab.created_by_name && (
+                      <div className="text-[10px] text-zinc-400 flex items-center gap-1 line-clamp-1">
+                        <User className="size-3 shrink-0" /> {lab.created_by_name}
+                        {lab.created_at && (
+                          <><span className="text-zinc-300">·</span> {fmtIST(lab.created_at)}</>
+                        )}
+                      </div>
+                    )}
+                    {wasUpdated(lab) && (
+                      <div className="text-[10px] text-zinc-400 flex items-center gap-1 line-clamp-1">
+                        <PencilLine className="size-3 shrink-0" /> {lab.updated_by_name}
+                        <span className="text-zinc-300">·</span> {fmtIST(lab.updated_at)}
+                      </div>
+                    )}
+                  </div>
+
                   {lab.description && (
                     <p className="text-xs text-zinc-500 mt-3 line-clamp-2 leading-relaxed font-medium">{lab.description}</p>
                   )}
@@ -173,6 +214,13 @@ function LabDetail({ lab, onBack }) {
               {lab.created_by_name && (
                 <span className="flex items-center gap-1.5 bg-zinc-100 px-2 py-1 rounded-md text-zinc-600">
                   <User className="size-3.5" /> {lab.created_by_name}
+                  {lab.created_at && <span className="text-zinc-400">· {fmtIST(lab.created_at)}</span>}
+                </span>
+              )}
+              {wasUpdated(lab) && (
+                <span className="flex items-center gap-1.5 bg-zinc-100 px-2 py-1 rounded-md text-zinc-600">
+                  <PencilLine className="size-3.5" /> {lab.updated_by_name}
+                  <span className="text-zinc-400">· {fmtIST(lab.updated_at)}</span>
                 </span>
               )}
             </div>

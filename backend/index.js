@@ -6655,6 +6655,12 @@ app.delete('/api/admin/online-classes/:id', async (req, res) => {
 //   filtered; resource stream verifies tenant via the parent lab; delete
 //   verifies ownership. (lab_resources.url-nullable migration unchanged.)
 //
+//   AUDIT: labs now track created_by + updated_by (with created_at /
+//   updated_at) so the UI can show "Created by ..." and "Updated by ..."
+//   with times. Run digital_labs_add_updated.sql once. Every read query
+//   returns both names + timestamps; the create/update endpoint stamps
+//   the acting user on the lab row.
+//
 //   ⚠ labs/resource/:id is under the /api auth gate — only works if the
 //     frontend FETCHES it (token via interceptor) and renders a blob.
 // =====================================================================
@@ -6676,13 +6682,17 @@ app.get('/api/admin/labs/teacher/:userId', async (req, res) => {
 
         const baseSelect = `
             SELECT l.id, l.title, l.description, l.class_id, l.subject_id,
-                   l.created_by, l.created_at, c.className, c.section,
-                   sub.name AS subject_name, u.name AS created_by_name,
+                   l.created_by, l.created_at, l.updated_by, l.updated_at,
+                   c.className, c.section,
+                   sub.name AS subject_name,
+                   u.name  AS created_by_name,
+                   uu.name AS updated_by_name,
                    (SELECT COUNT(*) FROM lab_resources r WHERE r.lab_id = l.id) AS resource_count
               FROM digital_labs l
               LEFT JOIN classes  c  ON c.id = l.class_id
               LEFT JOIN subjects sub ON sub.id = l.subject_id
-              LEFT JOIN users    u  ON u.id = l.created_by`;
+              LEFT JOIN users    u  ON u.id = l.created_by
+              LEFT JOIN users    uu ON uu.id = l.updated_by`;
 
         let rows;
         if (isAdmin) {
@@ -6702,10 +6712,12 @@ app.get('/api/admin/labs/student/:studentId', async (req, res) => {
         if (!sameTenant(req, u[0].institutionId)) return res.status(403).json({ error: 'This student belongs to another institution.' });
 
         const [labs] = await db.execute(
-            `SELECT l.*, sub.name AS subject_name, usr.name AS created_by_name
+            `SELECT l.*, sub.name AS subject_name,
+                    usr.name AS created_by_name, uu.name AS updated_by_name
                FROM digital_labs l
                LEFT JOIN subjects sub ON sub.id = l.subject_id
                LEFT JOIN users usr ON usr.id = l.created_by
+               LEFT JOIN users uu  ON uu.id = l.updated_by
               WHERE l.class_id = ? AND l.institutionId = ? ORDER BY l.created_at DESC`,
             [u[0].class_id, u[0].institutionId]);
 
@@ -6742,7 +6754,7 @@ app.get('/api/admin/labs/resource/:id', async (req, res) => {
 // --- 21.4 Create/Update Lab (Multipart via Multer) ---
 app.post('/api/admin/labs', labUpload.any(), async (req, res) => {
     const institutionId = req.auth.institutionId;
-    const created_by = req.auth.userId;
+    const actor_id = req.auth.userId;                 // creator / last-updater from token
     const { id, title, description, class_id, subject_id, resources: resourcesRaw } = req.body;
 
     // Ownership + class guards run on the pool BEFORE we take a transaction
@@ -6771,8 +6783,11 @@ app.post('/api/admin/labs', labUpload.any(), async (req, res) => {
 
         if (id) {
             await conn.execute(
-                `UPDATE digital_labs SET title=?, description=?, class_id=?, subject_id=? WHERE id=?`,
-                [title, description, class_id, subject_id || null, id]
+                `UPDATE digital_labs
+                    SET title=?, description=?, class_id=?, subject_id=?,
+                        updated_by=?, updated_at=CURRENT_TIMESTAMP
+                  WHERE id=?`,
+                [title, description, class_id, subject_id || null, actor_id, id]
             );
 
             const [oldRes] = await conn.execute(
@@ -6784,8 +6799,9 @@ app.post('/api/admin/labs', labUpload.any(), async (req, res) => {
             await conn.execute('DELETE FROM lab_resources WHERE lab_id=?', [id]);
         } else {
             const [resData] = await conn.execute(
-                `INSERT INTO digital_labs (institutionId, title, description, class_id, subject_id, created_by) VALUES (?,?,?,?,?,?)`,
-                [institutionId, title, description, class_id, subject_id || null, created_by]
+                `INSERT INTO digital_labs (institutionId, title, description, class_id, subject_id, created_by, updated_by)
+                 VALUES (?,?,?,?,?,?,?)`,
+                [institutionId, title, description, class_id, subject_id || null, actor_id, actor_id]
             );
             labId = resData.insertId;
         }
@@ -6818,7 +6834,7 @@ app.post('/api/admin/labs', labUpload.any(), async (req, res) => {
                 institutionId, recipientIds: recipients, type: 'lab',
                 title: id ? 'Digital lab updated' : 'New digital lab posted',
                 body: title,
-                link: 'DigitalLabs', entity_id: labId, actor_id: created_by
+                link: 'DigitalLabs', entity_id: labId, actor_id
             }, conn);
         }
 
@@ -6838,11 +6854,13 @@ app.get('/api/admin/labs/:id', async (req, res) => {
         const labId = req.params.id;
 
         const [labs] = await db.execute(
-            `SELECT l.*, sub.name AS subject_name, usr.name AS created_by_name,
+            `SELECT l.*, sub.name AS subject_name,
+                    usr.name AS created_by_name, uu.name AS updated_by_name,
                     c.className, c.section
              FROM digital_labs l
              LEFT JOIN subjects sub ON sub.id = l.subject_id
              LEFT JOIN users usr ON usr.id = l.created_by
+             LEFT JOIN users uu  ON uu.id = l.updated_by
              LEFT JOIN classes c ON c.id = l.class_id
              WHERE l.id = ?`,
             [labId]
