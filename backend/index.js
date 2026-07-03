@@ -3216,6 +3216,12 @@ app.get('/api/admin/attendance-export/:instId', async (req, res) => {
 //     • 16.C.6 grade an attempt      -> notify that ONE student (result)
 //   Everything else (listing, attempts, auto-grade) is unchanged.
 //
+//   NO ACADEMIC-YEAR SCOPING. Exams & schedules are plain per-institution
+//   records — they are NOT tied to the active academic year and there is
+//   no resolveYearId() call anywhere here. The academic_year_id columns
+//   in exam_schedules / online_exams are left nullable and unused; you can
+//   keep or drop them, they no longer affect any query.
+//
 //   Uses createNotifications from Section 25. 'Exams' is the module id
 //   from Screens/Modules.js — adjust the link string if your Exams tab
 //   uses a different id. The 'result' type already exists in your
@@ -3224,6 +3230,20 @@ app.get('/api/admin/attendance-export/:instId', async (req, res) => {
 //   Two related features:
 //     • exam_schedules: printable exam timetables (date/subject/time/room)
 //     • online_exams:   actual assessments students attempt in-browser
+//
+//   ASSIGNED TEACHER: online_exams now carries a teacher_id (assigned
+//   teacher, distinct from created_by). Run exams_add_teacher.sql once:
+//     ALTER TABLE online_exams
+//       ADD COLUMN teacher_id INT DEFAULT NULL AFTER subject_id,
+//       ADD KEY idx_exam_teacher (teacher_id),
+//       ADD CONSTRAINT fk_exam_teacher FOREIGN KEY (teacher_id)
+//           REFERENCES users(id) ON DELETE SET NULL;
+//   exam_schedules have no subject/teacher, so they only surface the
+//   creator (created_by_name) — no teacher_id there.
+//
+//   Both list/detail queries surface created_by (name), teacher (name)
+//   and created_at so the UI can show the assigned teacher, "by <creator>"
+//   and creation time (IST rendered client-side).
 // =====================================================================
 
 // Helper — does a JSON column have content? schedule_data comes back as
@@ -3333,7 +3353,7 @@ app.post('/api/admin/exam-schedules', async (req, res) => {
     } = req.body;
     if (!title) return res.status(400).json({ error: 'title required.' });
     try {
-        
+
         const [result] = await db.execute(
             `INSERT INTO exam_schedules
                (institutionId, title, subtitle, exam_type, class_id, section, schedule_data, created_by)
@@ -3364,7 +3384,7 @@ app.put('/api/admin/exam-schedules/:id', async (req, res) => {
         const [own] = await db.execute('SELECT institutionId FROM exam_schedules WHERE id = ?', [req.params.id]);
         if (own.length === 0) return res.status(404).json({ error: 'Schedule not found' });
         if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This schedule belongs to another institution.' });
- 
+
         await db.execute(
             `UPDATE exam_schedules
                 SET title = ?, subtitle = ?, exam_type = ?, class_id = ?, section = ?, schedule_data = ?
@@ -3372,7 +3392,7 @@ app.put('/api/admin/exam-schedules/:id', async (req, res) => {
             [title, subtitle || null, exam_type || 'Internal',
              class_id || null, section || null, JSON.stringify(schedule_data || []), req.params.id]
         );
- 
+
         try {
             const instId = own[0].institutionId;
             const recipients = await examRecipientIds(instId, class_id || null, section || null);
@@ -3382,7 +3402,7 @@ app.put('/api/admin/exam-schedules/:id', async (req, res) => {
                 link: 'Exams', entity_id: req.params.id, actor_id: req.auth.userId
             });
         } catch (e) { console.warn('[notify exam-schedule update]', e.message); }
- 
+
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -3415,24 +3435,28 @@ app.get('/api/admin/exams/teacher/:teacherId', async (req, res) => {
 
         let sql, params;
         if (isAdmin) {
-            sql = `SELECT e.*, c.className, sub.name AS subject_name, u.name AS created_by_name,
+            sql = `SELECT e.*, c.className, sub.name AS subject_name,
+                          u.name AS created_by_name, t.name AS teacher_name,
                           (SELECT COUNT(*) FROM online_exam_attempts a WHERE a.exam_id = e.id) AS submission_count,
                           (SELECT COUNT(*) FROM online_exam_questions q WHERE q.exam_id = e.id) AS question_count
                      FROM online_exams e
                      LEFT JOIN classes c   ON c.id = e.class_id
                      LEFT JOIN subjects sub ON sub.id = e.subject_id
                      LEFT JOIN users u     ON u.id = e.created_by
+                     LEFT JOIN users t     ON t.id = e.teacher_id
                     WHERE e.institutionId = ?
                     ORDER BY e.created_at DESC`;
             params = [me.institutionId];
         } else {
-            sql = `SELECT e.*, c.className, sub.name AS subject_name, u.name AS created_by_name,
+            sql = `SELECT e.*, c.className, sub.name AS subject_name,
+                          u.name AS created_by_name, t.name AS teacher_name,
                           (SELECT COUNT(*) FROM online_exam_attempts a WHERE a.exam_id = e.id) AS submission_count,
                           (SELECT COUNT(*) FROM online_exam_questions q WHERE q.exam_id = e.id) AS question_count
                      FROM online_exams e
                      LEFT JOIN classes c   ON c.id = e.class_id
                      LEFT JOIN subjects sub ON sub.id = e.subject_id
                      LEFT JOIN users u     ON u.id = e.created_by
+                     LEFT JOIN users t     ON t.id = e.teacher_id
                     WHERE e.created_by = ?
                     ORDER BY e.created_at DESC`;
             params = [teacherId];
@@ -3443,6 +3467,8 @@ app.get('/api/admin/exams/teacher/:teacherId', async (req, res) => {
 });
 
 // --- 16.B.2 List exams for a student to take ----------------------
+//   Now also returns the creator/teacher name and created_at so the
+//   student list can show "by <teacher>" + creation time.
 app.get('/api/admin/exams/student/:studentId', async (req, res) => {
     const { studentId } = req.params;
     try {
@@ -3453,13 +3479,16 @@ app.get('/api/admin/exams/student/:studentId', async (req, res) => {
 
         const [rows] = await db.execute(
             `SELECT e.id AS exam_id, e.title, e.description, e.time_limit_mins, e.total_marks,
-                    e.class_id, e.section, e.status AS exam_status,
+                    e.class_id, e.section, e.status AS exam_status, e.created_at,
                     c.className, sub.name AS subject_name,
+                    cu.name AS created_by_name, t.name AS teacher_name,
                     (SELECT COUNT(*) FROM online_exam_questions q WHERE q.exam_id = e.id) AS question_count,
                     a.id AS attempt_id, a.status AS attempt_status, a.final_score, a.submitted_at
                FROM online_exams e
                LEFT JOIN classes c    ON c.id = e.class_id
                LEFT JOIN subjects sub ON sub.id = e.subject_id
+               LEFT JOIN users cu     ON cu.id = e.created_by
+               LEFT JOIN users t      ON t.id = e.teacher_id
                LEFT JOIN online_exam_attempts a ON a.exam_id = e.id AND a.student_id = ?
               WHERE e.institutionId = ?
                 AND e.class_id = ?
@@ -3476,17 +3505,19 @@ app.get('/api/admin/exams/student/:studentId', async (req, res) => {
 app.get('/api/admin/exams/:examId', async (req, res) => {
     try {
         const [exam] = await db.execute(
-            `SELECT e.*, c.className, sub.name AS subject_name, u.name AS created_by_name
+            `SELECT e.*, c.className, sub.name AS subject_name,
+                    u.name AS created_by_name, t.name AS teacher_name
                FROM online_exams e
                LEFT JOIN classes c   ON c.id = e.class_id
                LEFT JOIN subjects sub ON sub.id = e.subject_id
                LEFT JOIN users u     ON u.id = e.created_by
+               LEFT JOIN users t     ON t.id = e.teacher_id
               WHERE e.id = ?`,
             [req.params.examId]
         );
         if (exam.length === 0) return res.status(404).json({ error: 'Exam not found' });
         if (!sameTenant(req, exam[0].institutionId)) return res.status(403).json({ error: 'This exam belongs to another institution.' });
- 
+
         const [questions] = await db.execute(
             'SELECT * FROM online_exam_questions WHERE exam_id = ? ORDER BY question_order, id',
             [req.params.examId]
@@ -3500,7 +3531,7 @@ app.get('/api/admin/exams/:examId', async (req, res) => {
 app.post('/api/admin/exams', async (req, res) => {
     const institutionId = req.auth.institutionId;
     const {
-        title, description, class_id, section, subject_id,
+        title, description, class_id, section, subject_id, teacher_id,
         time_limit_mins, status, created_by, questions = []
     } = req.body;
     if (!title || !class_id || !created_by) {
@@ -3512,11 +3543,11 @@ app.post('/api/admin/exams', async (req, res) => {
         const totalMarks = questions.reduce((sum, q) => sum + (parseInt(q.marks, 10) || 0), 0);
         const [result] = await conn.execute(
             `INSERT INTO online_exams
-              (institutionId, title, description, class_id, section, subject_id,
+              (institutionId, title, description, class_id, section, subject_id, teacher_id,
                time_limit_mins, total_marks, created_by, status)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [institutionId, title, description || null, class_id, section || null,
-             subject_id || null, parseInt(time_limit_mins, 10) || 0, totalMarks,
+             subject_id || null, teacher_id || null, parseInt(time_limit_mins, 10) || 0, totalMarks,
              created_by, status || 'published']
         );
         const examId = result.insertId;
@@ -3556,7 +3587,7 @@ app.post('/api/admin/exams', async (req, res) => {
 
 app.put('/api/admin/exams/:examId', async (req, res) => {
     const {
-        title, description, class_id, section, subject_id,
+        title, description, class_id, section, subject_id, teacher_id,
         time_limit_mins, status, questions = [], actor_id
     } = req.body;
     const conn = await db.getConnection();
@@ -3569,10 +3600,10 @@ app.put('/api/admin/exams/:examId', async (req, res) => {
 
         await conn.execute(
             `UPDATE online_exams
-                SET title = ?, description = ?, class_id = ?, section = ?, subject_id = ?,
+                SET title = ?, description = ?, class_id = ?, section = ?, subject_id = ?, teacher_id = ?,
                     time_limit_mins = ?, total_marks = ?, status = ?
               WHERE id = ?`,
-            [title, description || null, class_id, section || null, subject_id || null,
+            [title, description || null, class_id, section || null, subject_id || null, teacher_id || null,
              parseInt(time_limit_mins, 10) || 0, totalMarks, status || 'published',
              req.params.examId]
         );
@@ -3660,7 +3691,7 @@ app.post('/api/admin/exams/:examId/start', async (req, res) => {
         const [own] = await db.execute('SELECT institutionId FROM online_exams WHERE id = ?', [examId]);
         if (own.length === 0) return res.status(404).json({ error: 'Exam not found' });
         if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This exam belongs to another institution.' });
- 
+
         const [existing] = await db.execute(
             'SELECT id, status FROM online_exam_attempts WHERE exam_id = ? AND student_id = ?',
             [examId, student_id]
@@ -3779,7 +3810,7 @@ app.get('/api/admin/attempts/:attemptId', async (req, res) => {
         );
         if (att.length === 0) return res.status(404).json({ error: 'Attempt not found' });
         if (!sameTenant(req, att[0].institutionId)) return res.status(403).json({ error: 'This attempt belongs to another institution.' });
- 
+
         const [rows] = await db.execute(
             `SELECT q.id AS question_id, q.question_text, q.question_type, q.options,
                     q.correct_answer, q.marks, q.question_order,
@@ -3801,7 +3832,7 @@ app.post('/api/admin/attempts/:attemptId/grade', async (req, res) => {
     const { attemptId } = req.params;
     const { graded_answers = [], teacher_feedback } = req.body;
     const graded_by = req.auth.userId;     // grader = the logged-in user
-    
+
     const conn = await db.getConnection();
     try {
         const [atOwn] = await conn.execute(
@@ -3810,12 +3841,12 @@ app.post('/api/admin/attempts/:attemptId/grade', async (req, res) => {
          if (atOwn.length === 0) return res.status(404).json({ error: 'Attempt not found' });
         if (!sameTenant(req, atOwn[0].institutionId)) return res.status(403).json({ error: 'This attempt belongs to another institution.' });
         await conn.beginTransaction();
-        
+
         // 1. Save the new manual grades provided by the teacher FIRST
         for (const g of graded_answers) {
             const marks = parseFloat(g.marks_awarded);
             const safe = isNaN(marks) ? 0 : marks;
-            
+
             await conn.execute(
                 `INSERT INTO online_exam_answers (attempt_id, question_id, marks_awarded)
                  VALUES (?, ?, ?)
@@ -3838,7 +3869,7 @@ app.post('/api/admin/attempts/:attemptId/grade', async (req, res) => {
               WHERE id = ?`,
             [finalTotal, nowSQL(), graded_by, teacher_feedback || null, attemptId]
         );
-        
+
         await conn.commit();
 
         // 4. Notify the student using the secure total

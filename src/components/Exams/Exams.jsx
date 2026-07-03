@@ -1,8 +1,7 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { CalendarDays, PenLine, CalendarRange } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { CalendarDays, PenLine } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
-import { API_BASE_URL } from '../../apiConfig';
 import SchedulesManager from './SchedulesManager';
 import ExamsManager from './ExamsManager';
 import StudentExamsView from './StudentExamsView';
@@ -19,10 +18,9 @@ import StudentSchedulesView from './StudentSchedulesView';
 //   • Students see read-only views (their class's schedules + exams to take)
 //   • Teachers/Super Admin/permitted custom roles get full CRUD
 //
-//  Academic year: exams & schedules are tied to the school's ACTIVE
-//  academic year (the backend scopes every query by it). There's no year
-//  picker — switching the active year under Academics switches the data.
-//  We fetch the active year only to show its name as context.
+//  No academic-year scoping: exams & schedules are plain per-institution
+//  records. The old "Academic Year" badge and active-year fetch were
+//  removed — schedules carry a free-text subtitle instead.
 // =====================================================================
 
 export default function Exams() {
@@ -35,33 +33,11 @@ export default function Exams() {
   const canManage = isAllAccess || isTeacher || can('Exams', 'edit');
 
   const [tab, setTab] = useState('schedules');
-  const [activeYearName, setActiveYearName] = useState('');
-
-  useEffect(() => {
-    if (!user?.institutionId) return;
-    (async () => {
-      try {
-        const res = await fetch(`${API_BASE_URL}/admin/data/${user.institutionId}`);
-        const data = await res.json();
-        const list = data.academicYears || [];
-        const active = list.find(y => y.isActive) || list[0];
-        if (active) setActiveYearName(active.name || '');
-      } catch (e) { console.error('academic year load:', e); }
-    })();
-  }, [user]);
 
   const tabs = useMemo(() => ([
     { id: 'schedules', label: 'Exam Schedules', icon: CalendarDays },
     { id: 'exams',     label: 'Online Exams',   icon: PenLine }
   ]), []);
-
-  const YearBadge = () => (
-    activeYearName ? (
-      <div className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-primary/5 ring-1 ring-primary/15 text-primary text-xs font-semibold whitespace-nowrap self-start sm:self-auto">
-        <CalendarRange className="size-3.5" /> Academic Year: {activeYearName}
-      </div>
-    ) : null
-  );
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-6 animate-in fade-in duration-500">
@@ -76,7 +52,6 @@ export default function Exams() {
               : 'Publish schedules and create online assessments.'}
           </p>
         </div>
-        <YearBadge />
       </header>
 
       {/* Navigation Controls Wrapper */}
@@ -104,7 +79,7 @@ export default function Exams() {
       {/* Body */}
       <div className="mt-6">
         {tab === 'schedules' ? (
-          isStudent ? <StudentSchedulesView /> : <SchedulesManager canManage={canManage} activeYearName={activeYearName} />
+          isStudent ? <StudentSchedulesView /> : <SchedulesManager canManage={canManage} />
         ) : (
           isStudent ? <StudentExamsView /> : <ExamsManager canManage={canManage} />
         )}

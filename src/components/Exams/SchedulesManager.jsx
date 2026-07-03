@@ -3,12 +3,32 @@ import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   Plus, Edit, Trash2, X, Eye, Loader2, ArrowLeft, CalendarDays,
-  Clock, MapPin, AlertTriangle, Star, ChevronDown
+  Clock, MapPin, AlertTriangle, Star, ChevronDown, User
 } from 'lucide-react';
 
 // =====================================================================
 //  SchedulesManager - full CRUD for Exam Schedules
+//
+//  No academic-year scoping. "Subtitle" is a plain free-text field
+//  (e.g. "k6 Test", "2026-2027", "FA-1") the creator types themselves.
 // =====================================================================
+
+// Render a UTC datetime (Railway stores UTC) as IST for display.
+const fmtIST = (val) => {
+  if (!val) return '';
+  let d;
+  if (typeof val === 'string' && !val.includes('T') && !val.endsWith('Z')) {
+    d = new Date(val.replace(' ', 'T') + 'Z');
+  } else {
+    d = new Date(val);
+  }
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true
+  });
+};
 
 // Manual time entry helpers
 const parse24to12 = (t24) => {
@@ -45,7 +65,7 @@ const fmtDDMMYYYY = (iso) => {
   return d && m && y ? `${d}/${m}/${y}` : iso;
 };
 
-export default function SchedulesManager({ canManage, activeYearName = '' }) {
+export default function SchedulesManager({ canManage }) {
   const { user } = useAuth();
 
   // ------------ data state ----------------
@@ -101,7 +121,7 @@ export default function SchedulesManager({ canManage, activeYearName = '' }) {
     setEditing(null);
     setForm({
       title: '',
-      subtitle: activeYearName || '',
+      subtitle: '',
       exam_type: 'Internal',
       class_id: '', section: '',
       rows: [emptyInternalRow()]
@@ -132,7 +152,7 @@ export default function SchedulesManager({ canManage, activeYearName = '' }) {
     });
     setForm({
       title: s.title || '',
-      subtitle: activeYearName || s.subtitle || '',
+      subtitle: s.subtitle || '',
       exam_type: s.exam_type || 'Internal',
       class_id: s.class_id ? String(s.class_id) : '',
       section: s.section || '',
@@ -315,7 +335,14 @@ export default function SchedulesManager({ canManage, activeYearName = '' }) {
                   <td className="px-5 py-4 text-sm text-zinc-700 whitespace-nowrap">
                     {s.className ? `${s.className}${s.section ? ` - ${s.section}` : ''}` : <span className="italic text-zinc-400">-</span>}
                   </td>
-                  <td className="px-5 py-4 text-sm text-zinc-500 whitespace-nowrap">{s.created_by_name || '-'}</td>
+                  <td className="px-5 py-4 whitespace-nowrap">
+                    <div className="font-medium text-zinc-800 text-sm truncate">{s.created_by_name || '-'}</div>
+                    {s.created_at && (
+                      <div className="text-[11px] text-zinc-400 mt-0.5 flex items-center gap-1">
+                        <Clock className="size-3" /> {fmtIST(s.created_at)}
+                      </div>
+                    )}
+                  </td>
                   <td className="px-5 py-4 text-right">
                     <div className="flex justify-end gap-1.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
                       <button onClick={() => { setSelected(s); setView('detail'); }}
@@ -362,10 +389,9 @@ export default function SchedulesManager({ canManage, activeYearName = '' }) {
                   <input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })}
                     placeholder="e.g. Final Term Exam" className={inputCls} />
                 </FormField>
-                <FormField label="Academic Year">
-                  <input value={form.subtitle} readOnly tabIndex={-1}
-                    placeholder="Set an active academic year under Academics"
-                    className={`${inputCls} bg-zinc-50 text-zinc-600 cursor-not-allowed`} />
+                <FormField label="Subtitle">
+                  <input value={form.subtitle} onChange={e => setForm({ ...form, subtitle: e.target.value })}
+                    placeholder="Optional — e.g. Term I / 2026-2027" className={inputCls} />
                 </FormField>
                 <FormField label="Schedule Type">
                   <div className="relative">
@@ -561,6 +587,21 @@ export function ScheduleDetailView({ schedule }) {
             </span>
           )}
         </div>
+
+        {(schedule.created_by_name || schedule.created_at) && (
+          <div className="mt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 text-[11px] text-zinc-400">
+            {schedule.created_by_name && (
+              <span className="inline-flex items-center gap-1">
+                <User className="size-3" /> {schedule.created_by_name}
+              </span>
+            )}
+            {schedule.created_at && (
+              <span className="inline-flex items-center gap-1">
+                <Clock className="size-3" /> {fmtIST(schedule.created_at)}
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="overflow-x-auto custom-scrollbar">

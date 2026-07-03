@@ -3,7 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   Plus, Edit, Trash2, X, Eye, Loader2, ArrowLeft, FileText,
-  Save, BookOpen, HelpCircle, CheckCircle2, Clock, Search
+  Save, BookOpen, HelpCircle, CheckCircle2, Clock, Search, User
 } from 'lucide-react';
 import ExamEditor from './ExamEditor';
 import GradingView from './GradingView';
@@ -13,6 +13,24 @@ import GradingView from './GradingView';
 //
 //  Views: list -> create | edit | submissions | grade
 // =====================================================================
+
+// Render a UTC datetime (Railway stores UTC) as IST for display.
+// Handles both plain "YYYY-MM-DD HH:MM:SS" and ISO strings/Date objects.
+const fmtIST = (val) => {
+  if (!val) return '';
+  let d;
+  if (typeof val === 'string' && !val.includes('T') && !val.endsWith('Z')) {
+    d = new Date(val.replace(' ', 'T') + 'Z');
+  } else {
+    d = new Date(val);
+  }
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true
+  });
+};
 
 export default function ExamsManager({ canManage }) {
   const { user } = useAuth();
@@ -104,12 +122,13 @@ export default function ExamsManager({ canManage }) {
         </div>
       ) : (
         <div className="bg-white rounded-lg ring-1 ring-black/5 overflow-x-auto custom-scrollbar">
-          <table className="w-full text-left border-collapse min-w-[800px]">
+          <table className="w-full text-left border-collapse min-w-[860px]">
             <thead className="bg-zinc-50/50">
               <tr>
                 <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 whitespace-nowrap">Exam</th>
                 <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 whitespace-nowrap">Class - Subject</th>
                 <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 whitespace-nowrap">Details</th>
+                <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 whitespace-nowrap">Created By</th>
                 <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 whitespace-nowrap">Submissions</th>
                 <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 text-right whitespace-nowrap">Actions</th>
               </tr>
@@ -117,15 +136,19 @@ export default function ExamsManager({ canManage }) {
             <tbody className="divide-y divide-zinc-100">
               {exams.map(e => (
                 <tr key={e.id} className="hover:bg-zinc-50/60 transition-colors group">
-                  <td className="px-5 py-4 min-w-[200px]">
+                  <td className="px-5 py-4 min-w-[180px]">
                     <div className="font-medium text-zinc-900 text-sm truncate">{e.title}</div>
-                    <div className="text-[11px] text-zinc-500 mt-0.5 truncate">by {e.created_by_name || '-'}</div>
                   </td>
                   <td className="px-5 py-4 text-sm text-zinc-700 whitespace-nowrap">
                     <div className="font-medium">{e.className}{e.section ? ` - ${e.section}` : ''}</div>
                     {e.subject_name && (
                       <div className="text-[11px] flex items-center gap-1.5 text-zinc-500 mt-1">
                         <BookOpen className="size-3.5" /> {e.subject_name}
+                      </div>
+                    )}
+                    {e.teacher_name && (
+                      <div className="text-[11px] flex items-center gap-1.5 text-zinc-400 mt-0.5">
+                        <User className="size-3.5" /> {e.teacher_name}
                       </div>
                     )}
                   </td>
@@ -135,6 +158,14 @@ export default function ExamsManager({ canManage }) {
                       <Pill icon={CheckCircle2} color="emerald" label={`${e.total_marks} Marks`} />
                       <Pill icon={Clock} color="amber" label={e.time_limit_mins > 0 ? `${e.time_limit_mins} min` : 'No limit'} />
                     </div>
+                  </td>
+                  <td className="px-5 py-4 whitespace-nowrap">
+                    <div className="font-medium text-zinc-800 text-sm truncate">{e.created_by_name || '-'}</div>
+                    {e.created_at && (
+                      <div className="text-[11px] text-zinc-400 mt-0.5 flex items-center gap-1">
+                        <Clock className="size-3" /> {fmtIST(e.created_at)}
+                      </div>
+                    )}
                   </td>
                   <td className="px-5 py-4 whitespace-nowrap">
                     <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-[10px] font-semibold ring-1 ${

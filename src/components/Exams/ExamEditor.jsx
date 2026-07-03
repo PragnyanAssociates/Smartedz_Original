@@ -10,7 +10,12 @@ import {
 //  ExamEditor - create or edit an online exam
 //
 //  Top-level exam fields: title, description, class, section, subject,
-//  time_limit_mins. Then a question editor underneath.
+//  teacher, time_limit_mins. Then a question editor underneath.
+//
+//  Teacher field mirrors the Homework pattern: picking a subject
+//  auto-selects the teacher who teaches it (from the teacherSubjects map
+//  /admin/data provides). It stays editable so you can override, and
+//  changing the class clears the subject + teacher.
 // =====================================================================
 
 const newQuestion = () => ({
@@ -31,19 +36,22 @@ export default function ExamEditor({ examToEdit, onFinish }) {
 
   const [details, setDetails] = useState({
     title: '', description: '',
-    class_id: '', section: '', subject_id: '',
+    class_id: '', section: '', subject_id: '', teacher_id: '',
     time_limit_mins: 0, status: 'published'
   });
   const [questions, setQuestions] = useState([newQuestion()]);
 
   const [classes, setClasses]   = useState([]);
   const [subjects, setSubjects] = useState([]);
-  const [allTeacherSubjects, setAllTeacherSubjects] = useState([]);  // teacher's own subjects
+  const [teachers, setTeachers] = useState([]);                     // all teacher users
+  const [teacherSubjects, setTeacherSubjects] = useState({});       // { teacherId: [subjectId,...] }
+  const [allTeacherSubjects, setAllTeacherSubjects] = useState([]); // teacher's own subjects
   const [loading, setLoading]   = useState(true);
   const [saving, setSaving]     = useState(false);
 
   // -----------------------------------------------------------------
-  // Bootstrap: classes (scoped if teacher), subjects, and (if edit) the exam itself
+  // Bootstrap: classes (scoped if teacher), subjects, teachers, and
+  // (if edit) the exam itself
   // -----------------------------------------------------------------
   useEffect(() => {
     let cancel = false;
@@ -59,6 +67,11 @@ export default function ExamEditor({ examToEdit, onFinish }) {
         const agg = await aggRes.json();
         if (cancel) return;
         setSubjects(agg.subjects || []);
+        setTeacherSubjects(agg.teacherSubjects || {});
+
+        // All teacher users (for the Teacher dropdown)
+        const allUsers = agg.users || [];
+        setTeachers(allUsers.filter(u => (u.role || '').toLowerCase().includes('teacher')));
 
         // Teacher's own subjects (so subject dropdown is scoped to what they teach)
         if (isTeacher && !isAllAccess) {
@@ -84,6 +97,7 @@ export default function ExamEditor({ examToEdit, onFinish }) {
             class_id: examData.class_id ? String(examData.class_id) : '',
             section: examData.section || '',
             subject_id: examData.subject_id ? String(examData.subject_id) : '',
+            teacher_id: examData.teacher_id ? String(examData.teacher_id) : '',
             time_limit_mins: examData.time_limit_mins || 0,
             status: examData.status || 'published'
           });
@@ -109,6 +123,26 @@ export default function ExamEditor({ examToEdit, onFinish }) {
     if (allTeacherSubjects.length === 0) return subjects;
     return subjects.filter(s => allTeacherSubjects.includes(s.id));
   }, [subjects, isAllAccess, isTeacher, allTeacherSubjects]);
+
+  // Reverse lookup: which teacher teaches this subject (first match wins)
+  const teacherForSubject = (subjectId) => {
+    if (!subjectId) return '';
+    const sid = parseInt(subjectId, 10);
+    for (const [tid, subs] of Object.entries(teacherSubjects)) {
+      if ((subs || []).map(Number).includes(sid)) return String(tid);
+    }
+    return '';
+  };
+
+  // Subject change -> auto-select teacher (still editable afterwards)
+  const handleSubjectChange = (val) => {
+    setDetails(d => ({ ...d, subject_id: val, teacher_id: teacherForSubject(val) || d.teacher_id }));
+  };
+
+  // Class change -> clear subject + teacher (Homework behaviour)
+  const handleClassChange = (val) => {
+    setDetails(d => ({ ...d, class_id: val, subject_id: '', teacher_id: '' }));
+  };
 
   // -----------------------------------------------------------------
   // Question manipulation
@@ -172,9 +206,11 @@ export default function ExamEditor({ examToEdit, onFinish }) {
         class_id: parseInt(details.class_id, 10),
         section: details.section.trim() || null,
         subject_id: details.subject_id ? parseInt(details.subject_id, 10) : null,
+        teacher_id: details.teacher_id ? parseInt(details.teacher_id, 10) : null,
         time_limit_mins: parseInt(details.time_limit_mins, 10) || 0,
         status: details.status,
         created_by: user.id,
+        actor_id: user.id,
         questions: sanitized
       };
 
@@ -257,7 +293,7 @@ export default function ExamEditor({ examToEdit, onFinish }) {
 
           <FormField label="Class" required>
             <div className="relative">
-              <select value={details.class_id} onChange={e => setDetails({ ...details, class_id: e.target.value })}
+              <select value={details.class_id} onChange={e => handleClassChange(e.target.value)}
                 className={`${inputCls} appearance-none pr-8 cursor-pointer`}>
                 <option value="">Select class...</option>
                 {classes.map(c => (
@@ -280,7 +316,7 @@ export default function ExamEditor({ examToEdit, onFinish }) {
 
           <FormField label="Subject">
             <div className="relative">
-              <select value={details.subject_id} onChange={e => setDetails({ ...details, subject_id: e.target.value })}
+              <select value={details.subject_id} onChange={e => handleSubjectChange(e.target.value)}
                 className={`${inputCls} appearance-none pr-8 cursor-pointer`}>
                 <option value="">- Optional -</option>
                 {availableSubjects.map(s => (
@@ -289,6 +325,20 @@ export default function ExamEditor({ examToEdit, onFinish }) {
               </select>
               <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
+          </FormField>
+
+          <FormField label="Teacher">
+            <div className="relative">
+              <select value={details.teacher_id} onChange={e => setDetails({ ...details, teacher_id: e.target.value })}
+                className={`${inputCls} appearance-none pr-8 cursor-pointer`}>
+                <option value="">- Optional -</option>
+                {teachers.map(t => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+              <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
+            <p className="text-[11px] text-zinc-400 mt-1">Auto-fills from the subject; you can override.</p>
           </FormField>
 
           <FormField label="Status">

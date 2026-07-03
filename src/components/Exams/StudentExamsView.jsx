@@ -3,13 +3,30 @@ import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   Loader2, Play, ArrowLeft, ArrowRight, HelpCircle, CheckCircle2,
-  Clock, ChevronRight, Send, BookOpen
+  Clock, ChevronRight, Send, BookOpen, User
 } from 'lucide-react';
 
 // =====================================================================
 //  StudentExamsView - list of exams a student can attempt
 //  Views: list | taking | result
 // =====================================================================
+
+// Render a UTC datetime (Railway stores UTC) as IST for display.
+const fmtIST = (val) => {
+  if (!val) return '';
+  let d;
+  if (typeof val === 'string' && !val.includes('T') && !val.endsWith('Z')) {
+    d = new Date(val.replace(' ', 'T') + 'Z');
+  } else {
+    d = new Date(val);
+  }
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true
+  });
+};
 
 export default function StudentExamsView() {
   const [view, setView] = useState('list');
@@ -62,7 +79,7 @@ function ExamList({ onTake, onResult }) {
 
   return (
     <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-x-auto custom-scrollbar animate-in fade-in duration-500">
-      <table className="w-full text-left border-collapse min-w-[700px]">
+      <table className="w-full text-left border-collapse min-w-[760px]">
         <thead className="bg-zinc-50/50">
           <tr>
             <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 whitespace-nowrap">Exam</th>
@@ -73,12 +90,26 @@ function ExamList({ onTake, onResult }) {
         <tbody className="divide-y divide-zinc-100">
           {exams.map(e => (
             <tr key={e.exam_id} className="hover:bg-zinc-50/60 transition-colors">
-              <td className="px-5 py-4 min-w-[200px]">
+              <td className="px-5 py-4 min-w-[220px]">
                 <div className="font-medium text-zinc-900 text-sm truncate">{e.title}</div>
                 <div className="text-[11px] text-zinc-500 mt-0.5 truncate">
                   {e.className}{e.section ? ` - ${e.section}` : ''}
                   {e.subject_name && ` | ${e.subject_name}`}
                 </div>
+                {(e.teacher_name || e.created_by_name || e.created_at) && (
+                  <div className="text-[11px] text-zinc-400 mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                    {(e.teacher_name || e.created_by_name) && (
+                      <span className="inline-flex items-center gap-1">
+                        <User className="size-3" /> {e.teacher_name || e.created_by_name}
+                      </span>
+                    )}
+                    {e.created_at && (
+                      <span className="inline-flex items-center gap-1">
+                        <Clock className="size-3" /> {fmtIST(e.created_at)}
+                      </span>
+                    )}
+                  </div>
+                )}
               </td>
               <td className="px-5 py-4">
                 <div className="flex flex-wrap gap-2 text-[10px] font-semibold">
