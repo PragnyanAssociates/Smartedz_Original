@@ -6,6 +6,24 @@ import {
   Link as LinkIcon, Loader2, RefreshCw 
 } from 'lucide-react';
 
+// Render a UTC datetime (Railway stores UTC) as IST for display. Handles
+// both bare "YYYY-MM-DD HH:MM:SS" strings and ISO strings / Date objects.
+const fmtIST = (val) => {
+  if (!val) return '';
+  let d;
+  if (typeof val === 'string' && !val.includes('T') && !val.endsWith('Z')) {
+    d = new Date(val.replace(' ', 'T') + 'Z');
+  } else {
+    d = new Date(val);
+  }
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true
+  });
+};
+
 export default function StudentPTM() {
   const { user } = useAuth();
   
@@ -33,7 +51,8 @@ export default function StudentPTM() {
       list = list.filter(m => 
         (m.teacher_name || '').toLowerCase().includes(q) ||
         (m.className || '').toLowerCase().includes(q) ||
-        (m.subject_focus || '').toLowerCase().includes(q)
+        (m.subject_focus || '').toLowerCase().includes(q) ||
+        (m.created_by_name || '').toLowerCase().includes(q)
       );
     }
     return list;
@@ -88,13 +107,14 @@ export default function StudentPTM() {
           </div>
         ) : (
           <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-x-auto custom-scrollbar">
-            <table className="w-full text-left border-collapse min-w-[800px]">
+            <table className="w-full text-left border-collapse min-w-[950px]">
               <thead className="bg-zinc-50/80">
                 <tr>
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Date & Time</th>
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Teacher & Class</th>
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Meeting Focus</th>
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Status</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Created By</th>
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 text-right">Actions</th>
                 </tr>
               </thead>
@@ -149,6 +169,14 @@ export default function StudentPTM() {
                             </button>
                           ) : null}
                         </div>
+                      </td>
+                      <td className="px-5 py-4 whitespace-nowrap">
+                        <div className="font-medium text-zinc-800 text-sm">{item.created_by_name || '—'}</div>
+                        {item.created_at && (
+                          <div className="text-[11px] text-zinc-400 mt-0.5 flex items-center gap-1">
+                            <Clock className="size-3" /> {fmtIST(item.created_at)}
+                          </div>
+                        )}
                       </td>
                       <td className="px-5 py-4 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end">

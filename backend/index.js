@@ -6259,6 +6259,11 @@ app.post('/api/admin/meals/menu', async (req, res) => {
 //   + actor from the token; update/delete verify ownership. The recipient
 //   helper is institution-filtered, so a stray class_id can't reach
 //   another school.
+//
+//   List queries now also join the creator so the UI can show
+//   "Created by <name>" + creation time (created_at, IST rendered
+//   client-side). No migration needed — created_by / created_at already
+//   exist on ptm_meetings.
 // =====================================================================
 
 async function ptmRecipientIds(institutionId, classId, section) {
@@ -6283,18 +6288,20 @@ app.get('/api/admin/ptm/:instId', async (req, res) => {
 
         let sql, params;
         if (isSystemAdmin) {
-            sql = `SELECT p.*, c.className, t.name AS teacher_name
+            sql = `SELECT p.*, c.className, t.name AS teacher_name, cb.name AS created_by_name
                      FROM ptm_meetings p
                      LEFT JOIN classes c ON c.id = p.class_id
                      LEFT JOIN users t ON t.id = p.teacher_id
+                     LEFT JOIN users cb ON cb.id = p.created_by
                     WHERE p.institutionId = ?
                     ORDER BY p.meeting_datetime DESC`;
             params = [instId];
         } else {
-            sql = `SELECT p.*, c.className, t.name AS teacher_name
+            sql = `SELECT p.*, c.className, t.name AS teacher_name, cb.name AS created_by_name
                      FROM ptm_meetings p
                      LEFT JOIN classes c ON c.id = p.class_id
                      LEFT JOIN users t ON t.id = p.teacher_id
+                     LEFT JOIN users cb ON cb.id = p.created_by
                     WHERE p.institutionId = ? AND p.teacher_id = ?
                     ORDER BY p.meeting_datetime DESC`;
             params = [instId, userId];
@@ -6316,10 +6323,11 @@ app.get('/api/admin/ptm/student/:studentId', async (req, res) => {
         if (!sameTenant(req, institutionId)) return res.status(403).json({ error: 'This student belongs to another institution.' });
 
         const [rows] = await db.execute(
-            `SELECT p.*, c.className, t.name AS teacher_name
+            `SELECT p.*, c.className, t.name AS teacher_name, cb.name AS created_by_name
                FROM ptm_meetings p
                LEFT JOIN classes c ON c.id = p.class_id
                LEFT JOIN users t ON t.id = p.teacher_id
+               LEFT JOIN users cb ON cb.id = p.created_by
               WHERE p.institutionId = ?
                 AND (p.class_id IS NULL OR p.class_id = ?)
                 AND (p.section IS NULL OR p.section = ?)
