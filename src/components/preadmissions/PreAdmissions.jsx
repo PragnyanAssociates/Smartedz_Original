@@ -84,6 +84,7 @@ export default function PreAdmissionsScreen() {
   const [selectedImage, setSelectedImage] = useState(null);
   const [selectedItem, setSelectedItem] = useState(null);
   const [downloading, setDownloading] = useState(false);
+  const [photoPreview, setPhotoPreview] = useState(null); // enlarged photo lightbox
   // Filters
   const [searchText, setSearchText] = useState('');
   // Plain calendar-year filter. The list of selectable years is built from
@@ -163,6 +164,15 @@ export default function PreAdmissionsScreen() {
     () => [{ value: '', label: 'Select grade...' }, ...classOptions.map(n => ({ value: n, label: n }))],
     [classOptions]
   );
+  // Ensure the currently-saved grade always appears as an option, even if it
+  // isn't in the school's current class list (older records, renamed classes,
+  // or a previous-school grade). Without this the edit dropdown renders blank.
+  const gradeOptionsWith = (val) => {
+    if (!val) return gradeSelectOptions;
+    return gradeSelectOptions.some(o => o.value === val)
+      ? gradeSelectOptions
+      : [...gradeSelectOptions, { value: val, label: val }];
+  };
   // --- FRONTEND FILTERING ---
   // Status + the Joining-class filter are applied here; the year is applied
   // server-side. Joining class uses normGrade so it matches whether a record
@@ -408,7 +418,7 @@ export default function PreAdmissionsScreen() {
                     <img src={resolvePhoto(item.photo_url)} alt="" className="size-10 rounded-md object-cover bg-zinc-100 mr-3 ring-1 ring-black/5 shadow-sm" />
                     <div className="flex-1 min-w-0 pr-2">
                       <h4 className={`font-semibold text-sm truncate ${selectedItem?.id === item.id ? 'text-primary' : 'text-zinc-900'}`}>{item.student_name}</h4>
-                      <p className="text-xs text-zinc-500 font-medium mt-0.5">Grade: {item.joining_grade} • ID: {item.admission_no}</p>
+                      <p className="text-xs text-zinc-500 font-medium mt-0.5">Joining Grade: {item.joining_grade} • ID: {item.admission_no}</p>
                     </div>
                     <StatusPill status={item.status} />
                   </div>
@@ -431,10 +441,12 @@ export default function PreAdmissionsScreen() {
                 <button onClick={() => setSelectedItem(null)} className="lg:hidden p-1.5 bg-white rounded-md shadow-sm ring-1 ring-black/5 text-zinc-500 hover:text-zinc-900 transition-colors mt-1 sm:mt-0">
                   <X className="size-4" />
                 </button>
-                <img src={resolvePhoto(selectedItem.photo_url)} alt="" className="size-16 rounded-lg object-cover bg-zinc-100 ring-1 ring-black/5 shadow-sm shrink-0" />
+                <img src={resolvePhoto(selectedItem.photo_url)} alt=""
+                  onClick={() => selectedItem.photo_url && setPhotoPreview(resolvePhoto(selectedItem.photo_url))}
+                  className="size-16 rounded-lg object-cover bg-zinc-100 ring-1 ring-black/5 shadow-sm shrink-0 cursor-zoom-in hover:ring-primary/40 transition-all" />
                 <div className="flex-1 min-w-0 mt-1 sm:mt-0">
                   <h3 className="text-lg font-semibold text-zinc-900 truncate">{selectedItem.student_name}</h3>
-                  <p className="text-xs font-medium text-zinc-500 mt-1 truncate">Grade: {selectedItem.joining_grade} - ID: {selectedItem.admission_no}</p>
+                  <p className="text-xs font-medium text-zinc-500 mt-1 truncate">Joining Grade: {selectedItem.joining_grade} - ID: {selectedItem.admission_no}</p>
                 </div>
                 <div className="flex gap-2 shrink-0 self-start sm:self-center">
                   {(canEdit || isAdmin) && (
@@ -469,6 +481,14 @@ export default function PreAdmissionsScreen() {
                   ) : (
                     <AuditRow icon={Calendar} label="Status" name="Awaiting decision" time="" tone="amber" />
                   )}
+                  {selectedItem.updated_by_name && (
+                    <AuditRow
+                      icon={Edit}
+                      label="Last Updated By"
+                      name={selectedItem.updated_by_name}
+                      time={fmtIST(selectedItem.updated_at)}
+                    />
+                  )}
                 </div>
                 {/* Basic Info */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -495,6 +515,19 @@ export default function PreAdmissionsScreen() {
           )}
         </div>
       </div>
+      {/* --- PHOTO LIGHTBOX --- */}
+      {photoPreview && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200"
+          onClick={() => setPhotoPreview(null)}>
+          <button onClick={() => setPhotoPreview(null)}
+            className="absolute top-4 right-4 text-white/80 hover:text-white p-2 rounded-md hover:bg-white/10 transition-colors">
+            <X className="size-6" />
+          </button>
+          <img src={photoPreview} alt="Student"
+            onClick={e => e.stopPropagation()}
+            className="max-w-full max-h-[90vh] rounded-lg object-contain shadow-2xl ring-1 ring-white/10" />
+        </div>
+      )}
       {/* --- MODAL FOR CREATE/EDIT --- */}
       {modalVisible && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
@@ -520,7 +553,7 @@ export default function PreAdmissionsScreen() {
                 {/* Form Fields using standard unified inputs */}
                 <Field label="Admission No" required value={formData.admission_no} onChange={v => setForm('admission_no', v)} />
                 {/* Joining Grade is now a class dropdown */}
-                <Field label="Joining Grade" required type="select" options={gradeSelectOptions}
+                <Field label="Joining Grade" required type="select" options={gradeOptionsWith(formData.joining_grade)}
                   value={formData.joining_grade} onChange={v => setForm('joining_grade', v)} />
                 <div className="md:col-span-2"><Field label="Student Name" required value={formData.student_name} onChange={v => setForm('student_name', v.replace(/[^a-zA-Z\s]/g, ''))} /></div>
                 <Field label="Date of Birth" type="date" value={formData.dob} onChange={v => setForm('dob', v)} />
@@ -539,7 +572,7 @@ export default function PreAdmissionsScreen() {
                 <div className="md:col-span-2"><Field label="Previous Institute" value={formData.previous_institute} onChange={v => setForm('previous_institute', v)} /></div>
                 {/* Previous Grade is a class dropdown. (Joined Grade, School Outgoing
                     Date and TC Issued Date removed — not relevant for pre-admission.) */}
-                <Field label="Previous Grade" type="select" options={gradeSelectOptions}
+                <Field label="Previous Grade" type="select" options={gradeOptionsWith(formData.previous_grade)}
                   value={formData.previous_grade} onChange={v => setForm('previous_grade', v)} />
                 <Field label="School Joined Date" type="date" value={formData.school_joined_date} onChange={v => setForm('school_joined_date', v)} />
                 <Field label="TC Number" value={formData.tc_number} onChange={v => setForm('tc_number', v.replace(/[^a-zA-Z0-9]/g, ''))} />

@@ -6918,15 +6918,15 @@ app.delete('/api/admin/labs/:id', async (req, res) => {
 //   creator from the token; update/delete verify ownership. Calendar-year
 //   filter unchanged.
 //
-//   AUDIT (needs preadmissions_add_audit.sql once):
-//     • created_by  — stamped on create (the user who entered the form)
+//   AUDIT (needs preadmissions_add_audit.sql once — created_by, verified_by,
+//   verified_at):
+//     • created_by  — stamped on create (the user who entered the form) and
+//       BACKFILLED on the first edit of a legacy row (so old rows stop
+//       showing a blank name).
 //     • verified_by / verified_at — stamped by the PUT when status moves to
 //       Approved or Rejected; cleared if it moves back to Pending.
-//   List + export join users twice to surface created_by_name /
-//   verified_by_name. submission_date remains the "created at" time.
-//
-//   23.5: export the list to Excel — a single submission year, or ALL
-//   years grouped under year-wise headings.
+//   submission_date remains the "created at" time. List + export surface
+//   created_by_name / verified_by_name.
 // =====================================================================
 
 // --- 23.0 Distinct submission years (for the year-filter dropdown) ---
@@ -7171,8 +7171,8 @@ app.post('/api/admin/preadmissions', async (req, res) => {
         return res.status(400).json({ message: "Admission No, Name, and Grade are required." });
     }
 
-    // If the record is created already decided (Approved/Rejected), the
-    // creator is also the verifier at creation time.
+    // If created already decided (Approved/Rejected), the creator is also the
+    // verifier at creation time.
     const startStatus = fields.status || 'Pending';
     const decided = (startStatus === 'Approved' || startStatus === 'Rejected');
     const verified_by = decided ? created_by : null;
@@ -7224,7 +7224,7 @@ app.post('/api/admin/preadmissions', async (req, res) => {
     }
 });
 
-// --- 23.3 PUT update record (ownership; stamps verifier on decision) --
+// --- 23.3 PUT update record (ownership; backfill creator; stamp verifier) --
 app.put('/api/admin/preadmissions/:id', async (req, res) => {
     const { id } = req.params;
     const fields = req.body;
@@ -7243,26 +7243,35 @@ app.put('/api/admin/preadmissions/:id', async (req, res) => {
             params.push(fields[field] === '' || fields[field] === 'null' ? null : fields[field]);
         }
     });
-    if (setClauses.length === 0) return res.status(400).json({ message: "No fields to update." });
     try {
-        const [own] = await db.execute('SELECT institutionId, status FROM pre_admissions WHERE id = ?', [id]);
+        const [own] = await db.execute('SELECT institutionId, status, created_by FROM pre_admissions WHERE id = ?', [id]);
         if (own.length === 0) return res.status(404).json({ message: "Record not found." });
         if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ message: "This record belongs to another institution." });
 
-        // Verifier stamping: only act when the status is actually part of this
-        // update. Moving to Approved/Rejected records who decided + when;
-        // moving back to Pending clears the verification.
+        // Backfill the creator on the first edit of a legacy row (one created
+        // before created_by existed) so the name shows instead of "—".
+        // Only sets it when currently NULL — never overwrites a real creator.
+        if (own[0].created_by === null || own[0].created_by === undefined) {
+            setClauses.push('created_by = ?');
+            params.push(req.auth.userId);
+        }
+
+        // Verifier stamping: only when the status is part of this update.
+        // Moving to Approved/Rejected records who decided + when; moving back
+        // to Pending clears the verification.
         if (fields.status !== undefined) {
             const newStatus = fields.status;
             const prevStatus = own[0].status;
             if ((newStatus === 'Approved' || newStatus === 'Rejected') && newStatus !== prevStatus) {
-                setClauses.push('verified_by = ?', 'verified_at = ?');
-                params.push(req.auth.userId, new Date());
+                setClauses.push('verified_by = ?'); params.push(req.auth.userId);
+                setClauses.push('verified_at = ?'); params.push(new Date());
             } else if (newStatus === 'Pending') {
-                setClauses.push('verified_by = ?', 'verified_at = ?');
-                params.push(null, null);
+                setClauses.push('verified_by = ?'); params.push(null);
+                setClauses.push('verified_at = ?'); params.push(null);
             }
         }
+
+        if (setClauses.length === 0) return res.status(400).json({ message: "No fields to update." });
 
         const query = `UPDATE pre_admissions SET ${setClauses.join(', ')} WHERE id = ?`;
         params.push(id);
