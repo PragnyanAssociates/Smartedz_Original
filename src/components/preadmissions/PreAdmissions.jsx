@@ -450,14 +450,14 @@ export default function PreAdmissionsScreen() {
                 </div>
                 <div className="flex gap-2 shrink-0 self-start sm:self-center">
                   {(canEdit || isAdmin) && (
-                    <button onClick={() => handleOpenModal(selectedItem)} className="h-8 w-8 bg-amber-50 text-amber-600 hover:bg-amber-100 rounded-md flex items-center justify-center transition-colors">
-                      <Edit className="size-4" />
-                    </button>
+                    <button onClick={() => handleOpenModal(selectedItem)} className="h-8 w-8 bg-white hover:bg-zinc-50 text-zinc-600 hover:text-primary rounded-md flex items-center justify-center shadow-sm ring-1 ring-black/5 transition-colors">
+  <Edit className="size-4" />
+</button>
                   )}
                   {(canDelete || isAdmin) && (
-                    <button onClick={() => handleDelete(selectedItem.id)} className="h-8 w-8 bg-red-50 text-red-600 hover:bg-red-100 rounded-md flex items-center justify-center transition-colors">
-                      <Trash2 className="size-4" />
-                    </button>
+                  <button onClick={() => handleDelete(selectedItem.id)} className="h-8 w-8 bg-white hover:bg-zinc-50 text-zinc-600 hover:text-red-600 rounded-md flex items-center justify-center shadow-sm ring-1 ring-black/5 transition-colors">
+  <Trash2 className="size-4" />
+</button>
                   )}
                 </div>
               </div>

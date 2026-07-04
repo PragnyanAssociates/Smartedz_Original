@@ -1,12 +1,28 @@
 "use client"
-
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { API_BASE_URL, SERVER_URL } from '../../apiConfig';
 import { useAuth } from '../../context/AuthContext';
 import { 
   FolderOpen, Download, ExternalLink, FlaskConical, Calculator, 
-  BookOpen, Languages, Activity, Book, Search, Loader2, Eye
+  BookOpen, Languages, Activity, Book, Search, Loader2, Eye, User, Clock
 } from 'lucide-react';
+
+// Render a UTC timestamp (Railway stores UTC) as IST for display.
+const fmtIST = (val) => {
+  if (!val) return '';
+  let d;
+  if (typeof val === 'string' && !val.includes('T') && !val.endsWith('Z')) {
+    d = new Date(val.replace(' ', 'T') + 'Z');
+  } else {
+    d = new Date(val);
+  }
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true
+  });
+};
 
 const getSubjectIcon = (subject) => {
   const lower = (subject || '').toLowerCase();
@@ -17,7 +33,6 @@ const getSubjectIcon = (subject) => {
   if (lower.includes('physical')) return Activity;
   return Book;
 };
-
 // Clean, subtle pastel aesthetics matching the Teacher layout
 const getSubjectAesthetics = (subject) => {
   const lower = (subject || '').toLowerCase();
@@ -27,13 +42,11 @@ const getSubjectAesthetics = (subject) => {
   if (lower.includes("english")) return { bg: "bg-rose-50 text-rose-600 ring-rose-600/20" };
   return { bg: "bg-indigo-50 text-indigo-600 ring-indigo-600/20" };
 };
-
 export default function StudentMaterialsScreen() {
   const { user } = useAuth();
   const [materials, setMaterials] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [query, setQuery] = useState("");
-
   const fetchMaterials = useCallback(async () => {
     if (!user?.id) return;
     
@@ -48,18 +61,16 @@ export default function StudentMaterialsScreen() {
       setIsLoading(false); 
     }
   }, [user]);
-
   useEffect(() => { fetchMaterials(); }, [fetchMaterials]);
-
   const filteredMaterials = useMemo(() => {
     if (!query) return materials;
     const q = query.toLowerCase();
     return materials.filter(m =>
       (m.title && m.title.toLowerCase().includes(q)) ||
-      (m.subject_name && m.subject_name.toLowerCase().includes(q))
+      (m.subject_name && m.subject_name.toLowerCase().includes(q)) ||
+      (m.uploaded_by_name && m.uploaded_by_name.toLowerCase().includes(q))
     );
   }, [materials, query]);
-
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
       
@@ -70,7 +81,6 @@ export default function StudentMaterialsScreen() {
         </h1>
         <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">View and access your class resources.</p>
       </header>
-
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div className="relative w-full sm:w-72 shrink-0">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
@@ -78,7 +88,6 @@ export default function StudentMaterialsScreen() {
             className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-4 text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors placeholder:text-zinc-400" />
         </div>
       </div>
-
       <div className="flex-1">
         {isLoading ? (
           <div className="h-64 flex items-center justify-center">
@@ -98,14 +107,13 @@ export default function StudentMaterialsScreen() {
               // Base64 Safe Handlers
               const isBase64 = item.file_path && String(item.file_path).startsWith('data:');
               const fileUrl = isBase64 ? item.file_path : `${SERVER_URL.replace('/api','')}${item.file_path}`;
-
               return (
                 <div key={item.id} className="group bg-white rounded-lg ring-1 ring-black/5 shadow-sm flex flex-col hover:ring-primary/30 hover:shadow-md transition-all overflow-hidden relative">
                   
                   {/* Main Content Area */}
                   <div className="p-4 sm:p-5 flex flex-col flex-grow">
                     {/* Header: Icon + Title inline */}
-                    <div className="flex items-start gap-3 mb-4">
+                    <div className="flex items-start gap-3 mb-3">
                       <div className={`size-10 rounded-lg flex items-center justify-center shrink-0 ring-1 ring-inset ${aesthetics.bg}`}>
                         <Icon className="size-5" />
                       </div>
@@ -116,6 +124,22 @@ export default function StudentMaterialsScreen() {
                         </span>
                       </div>
                     </div>
+
+                    {/* Uploaded-by + date/time (IST) */}
+                    {(item.uploaded_by_name || item.created_at) && (
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-zinc-400 mb-3">
+                        {item.uploaded_by_name && (
+                          <span className="inline-flex items-center gap-1">
+                            <User className="size-3 shrink-0" /> {item.uploaded_by_name}
+                          </span>
+                        )}
+                        {item.created_at && (
+                          <span className="inline-flex items-center gap-1">
+                            <Clock className="size-3 shrink-0" /> {fmtIST(item.created_at)}
+                          </span>
+                        )}
+                      </div>
+                    )}
 
                     {item.subject_name && (
                       <div className="flex flex-wrap gap-1.5 mb-3">
