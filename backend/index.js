@@ -7475,6 +7475,13 @@ app.delete('/api/admin/study-materials/:id', async (req, res) => {
 //   Academic-year logic removed: create no longer stamps academic_year_id
 //   (the column is left NULL; no read filters by it).
 //
+//   AUDIT (needs syllabus_add_updated_by.sql once):
+//     • syllabus.updated_by         — stamped on syllabus edit, textbook
+//       upload, offset change, and chapter-add (all bump the syllabus row).
+//     • syllabus_chapters.updated_by — stamped on chapter edit + periods save.
+//   The list (22.1) and chapters (22.6) queries return updated_by_name so
+//   the UI can show "Updated by <name>" + updated_at (date + IST time).
+//
 //   ⚠ syllabus/chapter/:id/pdf is loaded by the viewer — it's under the
 //     /api gate, so the frontend FETCHES it (token via interceptor) and
 //     renders a blob URL, not a raw <iframe src>.
@@ -7482,10 +7489,8 @@ app.delete('/api/admin/study-materials/:id', async (req, res) => {
 //   Requires: npm install pdfjs-dist@3.11.174 pdf-lib --save
 //   Reuses nowSQL() (Section 16), studentIdsForClass/createNotifications (25).
 // =====================================================================
-
 const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
 const { PDFDocument } = require('pdf-lib');
-
 // ---- tenant helpers: resolve a syllabus' institution from any id ----
 async function _sylInstBySyllabus(id) {
     const [r] = await db.execute('SELECT institutionId FROM syllabus WHERE id = ?', [id]);
@@ -7504,7 +7509,6 @@ async function _sylInstByKeyword(id) {
            JOIN syllabus s ON s.id = c.syllabus_id WHERE k.id = ?`, [id]);
     return r.length ? r[0].institutionId : null;
 }
-
 // ---------------------------------------------------------------------
 //  Detection helpers
 // ---------------------------------------------------------------------
@@ -7513,7 +7517,6 @@ async function detectChapters(buffer) {
     const doc = await pdfjsLib.getDocument({
         data, useSystemFonts: true, isEvalSupported: false,
     }).promise;
-
     const total = doc.numPages;
     let chapters = [];
     try { chapters = await _fromOutline(doc, total); } catch (_) { chapters = []; }
@@ -7524,7 +7527,6 @@ async function detectChapters(buffer) {
     try { await doc.cleanup(); await doc.destroy(); } catch (_) {}
     return { total, chapters };
 }
-
 async function _fromOutline(doc, total) {
     const outline = await doc.getOutline();
     if (!outline || !outline.length) return [];
@@ -7539,7 +7541,6 @@ async function _fromOutline(doc, total) {
     if (items.length < 2) return [];
     return _assemble(items, total);
 }
-
 async function _destToPageIndex(doc, dest) {
     try {
         let d = dest;
@@ -7550,7 +7551,6 @@ async function _destToPageIndex(doc, dest) {
         return await doc.getPageIndex(ref);
     } catch (_) { return null; }
 }
-
 async function _fromTocText(doc, total) {
     const scan = Math.min(total, 40);
     const candidates = [];
@@ -7572,7 +7572,6 @@ async function _fromTocText(doc, total) {
     }
     return _assemble(items, total);
 }
-
 async function _pageToLines(page) {
     const tc = await page.getTextContent();
     const buckets = [];
@@ -7590,7 +7589,6 @@ async function _pageToLines(page) {
         b.parts.sort((p, q) => p.x - q.x).map((p) => p.s).join(' ').replace(/\s+/g, ' ').trim()
     );
 }
-
 function _parseTocLine(line, total) {
     if (!line || line.length < 4) return null;
     const m = line.match(/^(.*?[A-Za-z].*?)[\s.·•\-_]{1,}(\d{1,4})$/);
@@ -7602,7 +7600,6 @@ function _parseTocLine(line, total) {
     if (!(pageNum >= 1 && pageNum <= total)) return null;
     return { title, start: pageNum };
 }
-
 function _assemble(items, total) {
     if (!items.length) return [];
     const n = items.length;
@@ -7644,7 +7641,6 @@ function _assemble(items, total) {
     }
     return result;
 }
-
 function _cleanTitle(t) {
     return (t || '').replace(/\.pdf\s*$/i, '').replace(/\s+/g, ' ').trim();
 }
@@ -7657,7 +7653,6 @@ function _formatChapterTitle(clean, seq) {
     if (m) return `${m[1]}. Chapter ${m[1]}`;
     return `${seq}. ${_titleCase(clean)}`;
 }
-
 // ---------------------------------------------------------------------
 //  Slicing helpers
 // ---------------------------------------------------------------------
@@ -7679,12 +7674,10 @@ async function sliceAll(buffer, ranges) {
     }
     return { total, slices };
 }
-
 async function slicePdf(buffer, from, to) {
     const { slices } = await sliceAll(buffer, [[from, to]]);
     return slices[0];
 }
-
 async function resliceChapter(chapterId) {
     const [rows] = await db.execute(
         `SELECT c.page_from, c.page_to, s.doc_data, s.page_offset
@@ -7705,32 +7698,30 @@ async function resliceChapter(chapterId) {
     await db.execute('UPDATE syllabus_chapters SET doc_data = ?, doc_pages = ? WHERE id = ?',
         ['data:application/pdf;base64,' + b64, Math.max(1, (r.page_to - r.page_from + 1)), chapterId]);
 }
-
-
 // ---------------------------------------------------------------------
 //  ROUTES
 // ---------------------------------------------------------------------
-
 // --- 22.1 Syllabus Management list ----------------------------------
 app.get('/api/admin/syllabus/list/:instId', async (req, res) => {
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     const { classId } = req.query;
     try {
         let sql = `
-            SELECT s.id, s.class_id, s.subject_id, s.teacher_id, s.updated_at,
+            SELECT s.id, s.class_id, s.subject_id, s.teacher_id, s.updated_at, s.updated_by,
                    c.className, c.section,
                    sub.name AS subject_name,
                    t.name AS teacher_name,
+                   uu.name AS updated_by_name,
                    (SELECT COUNT(*) FROM syllabus_chapters ch WHERE ch.syllabus_id = s.id) AS lesson_count
               FROM syllabus s
               LEFT JOIN classes  c   ON c.id = s.class_id
               LEFT JOIN subjects sub ON sub.id = s.subject_id
               LEFT JOIN users    t   ON t.id = s.teacher_id
+              LEFT JOIN users    uu  ON uu.id = s.updated_by
              WHERE s.institutionId = ?`;
         const params = [instId];
         if (classId) { sql += ' AND s.class_id = ?'; params.push(classId); }
         sql += ' ORDER BY sub.name';
-
         const [rows] = await db.execute(sql, params);
         const decorated = rows.map(r => ({
             ...r,
@@ -7739,8 +7730,6 @@ app.get('/api/admin/syllabus/list/:instId', async (req, res) => {
         res.json(decorated);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-
-
 // --- 22.2 Create a syllabus (no academic-year stamp) ----------------
 app.post('/api/admin/syllabus', async (req, res) => {
     const institutionId = req.auth.institutionId;
@@ -7756,9 +7745,9 @@ app.post('/api/admin/syllabus', async (req, res) => {
         }
         const [result] = await db.execute(
             `INSERT INTO syllabus
-               (institutionId, class_id, subject_id, teacher_id, created_by)
-             VALUES (?, ?, ?, ?, ?)`,
-            [institutionId, class_id, subject_id, teacher_id || null, created_by]
+               (institutionId, class_id, subject_id, teacher_id, created_by, updated_by)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [institutionId, class_id, subject_id, teacher_id || null, created_by, created_by]
         );
         res.json({ success: true, id: result.insertId });
     } catch (err) {
@@ -7768,11 +7757,10 @@ app.post('/api/admin/syllabus', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
-
-
 // --- 22.3 Update a syllabus -----------------------------------------
 app.put('/api/admin/syllabus/:id', async (req, res) => {
     const { class_id, subject_id, teacher_id } = req.body;
+    const actor_id = req.auth.userId;
     try {
         const inst = await _sylInstBySyllabus(req.params.id);
         if (inst === null) return res.status(404).json({ error: 'Syllabus not found.' });
@@ -7784,14 +7772,12 @@ app.put('/api/admin/syllabus/:id', async (req, res) => {
             }
         }
         await db.execute(
-            `UPDATE syllabus SET class_id = ?, subject_id = ?, teacher_id = ? WHERE id = ?`,
-            [class_id, subject_id, teacher_id || null, req.params.id]
+            `UPDATE syllabus SET class_id = ?, subject_id = ?, teacher_id = ?, updated_by = ? WHERE id = ?`,
+            [class_id, subject_id, teacher_id || null, actor_id, req.params.id]
         );
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-
-
 // --- 22.4 Delete a syllabus -----------------------------------------
 app.delete('/api/admin/syllabus/:id', async (req, res) => {
     try {
@@ -7802,8 +7788,6 @@ app.delete('/api/admin/syllabus/:id', async (req, res) => {
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-
-
 // --- 22.5 Resolve a syllabus by class + subject ---------------------
 app.get('/api/admin/syllabus/resolve/:instId/:classId/:subjectId', async (req, res) => {
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
@@ -7818,8 +7802,6 @@ app.get('/api/admin/syllabus/resolve/:instId/:classId/:subjectId', async (req, r
         res.json(rows.length > 0 ? rows[0] : { id: null });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-
-
 // --- 22.6 Chapters of a syllabus ------------------------------------
 app.get('/api/admin/syllabus/:syllabusId/chapters', async (req, res) => {
     try {
@@ -7830,9 +7812,12 @@ app.get('/api/admin/syllabus/:syllabusId/chapters', async (req, res) => {
             `SELECT c.id, c.syllabus_id, c.chapter_order, c.title,
                     c.page_from, c.page_to, c.doc_pages,
                     c.periods, c.start_date, c.end_date,
+                    c.updated_at, c.updated_by,
+                    uu.name AS updated_by_name,
                     (c.doc_data IS NOT NULL) AS has_doc,
                     (SELECT COUNT(*) FROM syllabus_keywords k WHERE k.chapter_id = c.id) AS keyword_count
                FROM syllabus_chapters c
+               LEFT JOIN users uu ON uu.id = c.updated_by
               WHERE c.syllabus_id = ?
               ORDER BY c.chapter_order, c.id`,
             [req.params.syllabusId]
@@ -7840,8 +7825,6 @@ app.get('/api/admin/syllabus/:syllabusId/chapters', async (req, res) => {
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-
-
 // --- 22.7 Textbook meta (light — no doc_data) -----------------------
 app.get('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
     try {
@@ -7856,38 +7839,29 @@ app.get('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
         res.json({ doc_name, doc_pages, page_offset, has_book });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-
-
 // --- 22.8 Upload textbook -> detect chapters -> pre-slice each ------
 app.put('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
     const { doc_name, doc_data, page_offset } = req.body;
     const actor_id = req.auth.userId;
     const syllabusId = req.params.syllabusId;
     if (!doc_data) return res.status(400).json({ error: 'doc_data is required.' });
-
     try {
         const inst = await _sylInstBySyllabus(syllabusId);
         if (inst === null) return res.status(404).json({ error: 'Syllabus not found.' });
         if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This syllabus belongs to another institution.' });
-
         const base64 = String(doc_data).replace(/^data:[^;]+;base64,/, '');
         const buffer = Buffer.from(base64, 'base64');
         const offset = parseInt(page_offset, 10) || 0;
-
         const { total, chapters } = await detectChapters(buffer);
-
         await db.execute(
             `UPDATE syllabus
-                SET doc_name = ?, doc_data = ?, doc_pages = ?, page_offset = ?, updated_at = ?
+                SET doc_name = ?, doc_data = ?, doc_pages = ?, page_offset = ?, updated_at = ?, updated_by = ?
               WHERE id = ?`,
-            [doc_name || null, doc_data, total, offset, nowSQL(), syllabusId]
+            [doc_name || null, doc_data, total, offset, nowSQL(), actor_id, syllabusId]
         );
-
         await db.execute('DELETE FROM syllabus_chapters WHERE syllabus_id = ?', [syllabusId]);
-
         const ranges = chapters.map(c => [c.page_from + offset, c.page_to + offset]);
         const { slices } = await sliceAll(buffer, ranges);
-
         let order = 0;
         for (let i = 0; i < chapters.length; i++) {
             const ch = chapters[i];
@@ -7900,7 +7874,6 @@ app.put('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
                 [syllabusId, order++, ch.title, ch.page_from, ch.page_to, doc_name || null, dataUri, pages]
             );
         }
-
         try {
             const [info] = await db.execute(
                 `SELECT s.institutionId, s.class_id, sub.name AS subject_name
@@ -7921,26 +7894,22 @@ app.put('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
                 });
             }
         } catch (e) { console.warn('[notify syllabus]', e.message); }
-
         res.json({ success: true, total_pages: total, chapters: chapters.length });
     } catch (err) {
         console.error('Textbook detection failed:', err);
         res.status(500).json({ error: 'Could not read this PDF: ' + err.message });
     }
 });
-
-
 // --- 22.9 Change page offset -> re-slice all chapters ---------------
 app.put('/api/admin/syllabus/:syllabusId/book/offset', async (req, res) => {
     try {
         const sid = req.params.syllabusId;
+        const actor_id = req.auth.userId;
         const inst = await _sylInstBySyllabus(sid);
         if (inst === null) return res.status(404).json({ error: 'Syllabus not found.' });
         if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This syllabus belongs to another institution.' });
-
         const offset = parseInt(req.body.page_offset, 10) || 0;
-        await db.execute('UPDATE syllabus SET page_offset = ? WHERE id = ?', [offset, sid]);
-
+        await db.execute('UPDATE syllabus SET page_offset = ?, updated_by = ? WHERE id = ?', [offset, actor_id, sid]);
         const [bookRows] = await db.execute('SELECT doc_data FROM syllabus WHERE id = ?', [sid]);
         if (bookRows.length && bookRows[0].doc_data) {
             const base64 = String(bookRows[0].doc_data).replace(/^data:[^;]+;base64,/, '');
@@ -7958,8 +7927,6 @@ app.put('/api/admin/syllabus/:syllabusId/book/offset', async (req, res) => {
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-
-
 // --- 22.10 A chapter as a real PDF file (viewer loads this) ---------
 app.get('/api/admin/syllabus/chapter/:id/pdf', async (req, res) => {
     try {
@@ -7976,8 +7943,6 @@ app.get('/api/admin/syllabus/chapter/:id/pdf', async (req, res) => {
         res.send(bytes);
     } catch (err) { res.status(500).send(err.message); }
 });
-
-
 // --- 22.10b A chapter's stored slice as JSON (kept for compatibility)
 app.get('/api/admin/syllabus/chapter/:id/doc', async (req, res) => {
     try {
@@ -7990,8 +7955,6 @@ app.get('/api/admin/syllabus/chapter/:id/doc', async (req, res) => {
         res.json(rows[0]);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-
-
 // --- 22.11 Create a chapter (manual) -> slice it --------------------
 app.post('/api/admin/syllabus/chapters', async (req, res) => {
     const { syllabus_id, title, page_from, page_to } = req.body;
@@ -8003,17 +7966,15 @@ app.post('/api/admin/syllabus/chapters', async (req, res) => {
         const inst = await _sylInstBySyllabus(syllabus_id);
         if (inst === null) return res.status(404).json({ error: 'Syllabus not found.' });
         if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This syllabus belongs to another institution.' });
-
         const [[{ maxOrder }]] = await db.execute(
             `SELECT COALESCE(MAX(chapter_order), -1) + 1 AS maxOrder
                FROM syllabus_chapters WHERE syllabus_id = ?`, [syllabus_id]);
         const [result] = await db.execute(
-            `INSERT INTO syllabus_chapters (syllabus_id, chapter_order, title, page_from, page_to)
-             VALUES (?, ?, ?, ?, ?)`,
-            [syllabus_id, maxOrder, title, page_from || null, page_to || null]);
+            `INSERT INTO syllabus_chapters (syllabus_id, chapter_order, title, page_from, page_to, updated_by)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [syllabus_id, maxOrder, title, page_from || null, page_to || null, actor_id]);
         await resliceChapter(result.insertId);
-        await db.execute('UPDATE syllabus SET updated_at = ? WHERE id = ?', [nowSQL(), syllabus_id]);
-
+        await db.execute('UPDATE syllabus SET updated_at = ?, updated_by = ? WHERE id = ?', [nowSQL(), actor_id, syllabus_id]);
         try {
             const [info] = await db.execute(
                 `SELECT s.institutionId, s.class_id, sub.name AS subject_name
@@ -8032,28 +7993,24 @@ app.post('/api/admin/syllabus/chapters', async (req, res) => {
                 });
             }
         } catch (e) { console.warn('[notify syllabus chapter]', e.message); }
-
         res.json({ success: true, id: result.insertId });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-
-
 // --- 22.12 Update a chapter -> re-slice it --------------------------
 app.put('/api/admin/syllabus/chapters/:id', async (req, res) => {
     const { title, page_from, page_to } = req.body;
+    const actor_id = req.auth.userId;
     try {
         const inst = await _sylInstByChapter(req.params.id);
         if (inst === null) return res.status(404).json({ error: 'Chapter not found.' });
         if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This chapter belongs to another institution.' });
         await db.execute(
-            `UPDATE syllabus_chapters SET title = ?, page_from = ?, page_to = ? WHERE id = ?`,
-            [title, page_from || null, page_to || null, req.params.id]);
+            `UPDATE syllabus_chapters SET title = ?, page_from = ?, page_to = ?, updated_by = ? WHERE id = ?`,
+            [title, page_from || null, page_to || null, actor_id, req.params.id]);
         await resliceChapter(req.params.id);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-
-
 // --- 22.13 Delete a chapter -----------------------------------------
 app.delete('/api/admin/syllabus/chapters/:id', async (req, res) => {
     try {
@@ -8064,23 +8021,20 @@ app.delete('/api/admin/syllabus/chapters/:id', async (req, res) => {
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-
-
 // --- 22.14 Update lesson-period schedule ----------------------------
 app.put('/api/admin/syllabus/chapter/:id/periods', async (req, res) => {
     const { periods, start_date, end_date } = req.body;
+    const actor_id = req.auth.userId;
     try {
         const inst = await _sylInstByChapter(req.params.id);
         if (inst === null) return res.status(404).json({ error: 'Chapter not found.' });
         if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This chapter belongs to another institution.' });
         await db.execute(
-            `UPDATE syllabus_chapters SET periods = ?, start_date = ?, end_date = ? WHERE id = ?`,
-            [periods || 0, start_date || null, end_date || null, req.params.id]);
+            `UPDATE syllabus_chapters SET periods = ?, start_date = ?, end_date = ?, updated_by = ? WHERE id = ?`,
+            [periods || 0, start_date || null, end_date || null, actor_id, req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-
-
 // --- 22.15 Keywords for a chapter -----------------------------------
 app.get('/api/admin/syllabus/chapter/:id/keywords', async (req, res) => {
     try {
@@ -8092,8 +8046,6 @@ app.get('/api/admin/syllabus/chapter/:id/keywords', async (req, res) => {
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-
-
 // --- 22.16 Add a keyword (term + definition + example) --------------
 app.post('/api/admin/syllabus/chapter/:id/keywords', async (req, res) => {
     const { term, definition, example } = req.body;
@@ -8108,8 +8060,6 @@ app.post('/api/admin/syllabus/chapter/:id/keywords', async (req, res) => {
         res.json({ success: true, id: result.insertId });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-
-
 // --- 22.17 Delete a keyword -----------------------------------------
 app.delete('/api/admin/syllabus/keywords/:keywordId', async (req, res) => {
     try {

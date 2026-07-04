@@ -159,7 +159,7 @@ export default function StudentPTM() {
                             {isExpired && item.status !== 'Completed' ? 'Expired' : item.status}
                           </span>
                           {isExpired && !isCompleted ? (
-                             <span className="text-[10px] font-bold text-red-500 uppercase tracking-tight">Date is Expired</span>
+                             <span className="text-[10px] font-semibold text-red-500 uppercase tracking-tight">Date is Expired</span>
                           ) : item.meeting_link && !isCompleted ? (
                             <button 
                               disabled={!isJoinable}

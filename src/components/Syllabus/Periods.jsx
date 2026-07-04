@@ -2,22 +2,47 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { API_BASE_URL } from '../../apiConfig';
 import { Clock, Loader2, ArrowLeft, Save, Check, BookOpen } from 'lucide-react';
 
+// Date + time rendered in IST (Railway stores UTC), so each lesson row can
+// show "updated by" name / date / time.
+const _toDate = (val) => {
+  if (!val) return null;
+  let d;
+  if (typeof val === 'string' && !val.includes('T') && !val.endsWith('Z')) {
+    d = new Date(val.replace(' ', 'T') + 'Z');
+  } else {
+    d = new Date(val);
+  }
+  return isNaN(d.getTime()) ? null : d;
+};
+const fmtDateIST = (val) => {
+  const d = _toDate(val);
+  if (!d) return '';
+  return d.toLocaleDateString('en-GB', {
+    timeZone: 'Asia/Kolkata', day: '2-digit', month: '2-digit', year: 'numeric'
+  });
+};
+const fmtTimeIST = (val) => {
+  const d = _toDate(val);
+  if (!d) return '';
+  return d.toLocaleTimeString('en-IN', {
+    timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true
+  });
+};
 // =====================================================================
 //  Lesson Periods
 //  A table of the syllabus's chapters/lessons:
-//    S.NO | LESSONS | PERIODS | START DATE - END DATE
-//  Each row: a period-count input + a start-date / end-date pair.
+//    S.NO | LESSONS | PERIODS | LAST UPDATED | START DATE - END DATE
+//  Each row: a period-count input + a start-date / end-date pair, plus a
+//  "last updated" stamp (who saved it, date, IST time).
 //  Rows auto-save on change (debounced via an explicit Save per row).
 //
 //  Top-left: "Back to Subject Index".
 // =====================================================================
-
 export default function Periods({ syllabus, canEdit, activeYear, onBackToIndex }) {
   const [rows, setRows]       = useState([]);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState(null);
   const [savedId, setSavedId]   = useState(null);
-
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -32,13 +57,10 @@ export default function Periods({ syllabus, canEdit, activeYear, onBackToIndex }
     } catch (e) { console.error(e); }
     setLoading(false);
   }, [syllabus]);
-
   useEffect(() => { load(); }, [load]);
-
   const setField = (id, key, value) => {
     setRows(rs => rs.map(r => r.id === id ? { ...r, [key]: value } : r));
   };
-
   const saveRow = async (row) => {
     setSavingId(row.id);
     try {
@@ -54,12 +76,11 @@ export default function Periods({ syllabus, canEdit, activeYear, onBackToIndex }
       if (!res.ok) throw new Error('Save failed');
       setSavedId(row.id);
       setTimeout(() => setSavedId(s => (s === row.id ? null : s)), 1500);
+      load(); // refresh the "last updated" stamp for this row
     } catch (e) { alert(e.message); }
     setSavingId(null);
   };
-
   const totalPeriods = rows.reduce((s, r) => s + (parseInt(r.periods, 10) || 0), 0);
-
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
       
@@ -70,7 +91,6 @@ export default function Periods({ syllabus, canEdit, activeYear, onBackToIndex }
           <ArrowLeft className="size-4" /> Back to Subject Index
         </button>
       </div>
-
       {/* Header */}
       <header className="flex flex-col mb-2 sm:mb-0">
         <div className="flex flex-wrap items-center gap-3">
@@ -91,7 +111,6 @@ export default function Periods({ syllabus, canEdit, activeYear, onBackToIndex }
           {syllabus.class_group} - {syllabus.subject_name}
         </p>
       </header>
-
       <div className="flex-1">
         {loading ? (
           <div className="h-64 flex items-center justify-center">
@@ -105,12 +124,13 @@ export default function Periods({ syllabus, canEdit, activeYear, onBackToIndex }
           </div>
         ) : (
           <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-x-auto custom-scrollbar">
-            <table className="w-full text-left border-collapse min-w-[700px]">
+            <table className="w-full text-left border-collapse min-w-[950px]">
               <thead className="bg-zinc-50/80">
                 <tr>
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 w-16 text-center">S.No</th>
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Lessons</th>
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 text-center w-32">Periods</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 w-44">Last Updated</th>
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 text-center">Start Date - End Date</th>
                   {canEdit && <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 text-right w-28">Save</th>}
                 </tr>
@@ -128,6 +148,11 @@ export default function Periods({ syllabus, canEdit, activeYear, onBackToIndex }
                       ) : (
                         <span className="font-semibold text-zinc-900 tabular-nums">{r.periods}</span>
                       )}
+                    </td>
+                    <td className="px-5 py-3 whitespace-nowrap">
+                      <div className="text-xs font-semibold text-zinc-700">{r.updated_by_name || '—'}</div>
+                      {r.updated_at && <div className="text-[13px] font-medium text-zinc-500 mt-0.5">{fmtDateIST(r.updated_at)}</div>}
+                      {r.updated_at && <div className="text-[11px] text-zinc-400 mt-0.5">{fmtTimeIST(r.updated_at)}</div>}
                     </td>
                     <td className="px-5 py-3">
                       <div className="flex items-center justify-center gap-2">
@@ -170,7 +195,7 @@ export default function Periods({ syllabus, canEdit, activeYear, onBackToIndex }
                 <tr className="bg-zinc-50/80 border-t border-zinc-200/60">
                   <td className="px-5 py-4 font-semibold text-sm text-zinc-700" colSpan={2}>Total Allocated Periods</td>
                   <td className="px-5 py-4 text-center font-semibold text-primary text-sm tabular-nums">{totalPeriods}</td>
-                  <td className="px-5 py-4" colSpan={canEdit ? 2 : 1}></td>
+                  <td className="px-5 py-4" colSpan={canEdit ? 3 : 2}></td>
                 </tr>
               </tfoot>
             </table>

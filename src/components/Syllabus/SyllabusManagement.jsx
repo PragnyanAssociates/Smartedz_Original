@@ -5,6 +5,21 @@ import {
 } from 'lucide-react';
 import { fmtDate } from './SyllabusUtils';
 
+// Time-only, rendered in IST (Railway stores UTC). Pairs with fmtDate for
+// the date line so "Last Updated" can show name / date / time.
+const fmtTimeIST = (val) => {
+  if (!val) return '';
+  let d;
+  if (typeof val === 'string' && !val.includes('T') && !val.endsWith('Z')) {
+    d = new Date(val.replace(' ', 'T') + 'Z');
+  } else {
+    d = new Date(val);
+  }
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString('en-IN', {
+    timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true
+  });
+};
 // =====================================================================
 //  Syllabus Management - the landing screen.
 //
@@ -13,7 +28,6 @@ import { fmtDate } from './SyllabusUtils';
 //  The green chart action opens the Subject Index for that syllabus.
 //  (Academic-year logic removed — syllabuses are no longer year-stamped.)
 // =====================================================================
-
 export default function SyllabusManagement({
   user, canEdit, classes, subjects, subjectClasses, teachers, activeYear,
   onOpenSyllabus
@@ -21,13 +35,11 @@ export default function SyllabusManagement({
   const [rows, setRows]       = useState([]);
   const [loading, setLoading] = useState(true);
   const [filterClass, setFilterClass] = useState('');
-
   // create / edit modal
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing]     = useState(null);
   const [form, setForm] = useState({ class_id: '', subject_id: '', teacher_id: '' });
   const [saving, setSaving] = useState(false);
-
   const load = useCallback(async () => {
     if (!user?.institutionId) return;
     setLoading(true);
@@ -40,11 +52,8 @@ export default function SyllabusManagement({
     } catch (e) { console.error(e); }
     setLoading(false);
   }, [user, filterClass]);
-
   useEffect(() => { load(); }, [load]);
-
   const classLabel = (c) => `${c.className}${c.section ? ' - ' + c.section : ''}`;
-
   // subjects available for the class chosen in the modal
   const subjectsForClass = useMemo(() => {
     if (!form.class_id) return subjects;
@@ -55,7 +64,6 @@ export default function SyllabusManagement({
       return links.includes(cid);
     });
   }, [subjects, subjectClasses, form.class_id]);
-
   const openCreate = () => {
     setEditing(null);
     setForm({ class_id: '', subject_id: '', teacher_id: '' });
@@ -70,7 +78,6 @@ export default function SyllabusManagement({
     });
     setModalOpen(true);
   };
-
   const handleSave = async (e) => {
     e.preventDefault();
     if (!form.class_id || !form.subject_id) {
@@ -108,7 +115,6 @@ export default function SyllabusManagement({
     } catch (e) { alert(e.message); }
     setSaving(false);
   };
-
   const handleDelete = async (row) => {
     if (!window.confirm(
       `Delete the ${row.subject_name} syllabus for ${row.class_group}? All its lessons and keywords will be removed.`
@@ -119,7 +125,6 @@ export default function SyllabusManagement({
       load();
     } catch (e) { alert(e.message); }
   };
-
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
       
@@ -133,7 +138,6 @@ export default function SyllabusManagement({
           Create and manage syllabuses for different classes and subjects.
         </p>
       </header>
-
       {/* Action bar & Filters */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full md:w-auto">
@@ -157,7 +161,6 @@ export default function SyllabusManagement({
             Refresh
           </button>
         </div>
-
         {canEdit && (
           <button onClick={openCreate}
             className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full md:w-auto shrink-0">
@@ -165,7 +168,6 @@ export default function SyllabusManagement({
           </button>
         )}
       </div>
-
       {/* Table */}
       <div className="flex-1">
         {loading ? (
@@ -180,7 +182,7 @@ export default function SyllabusManagement({
           </div>
         ) : (
           <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-x-auto custom-scrollbar flex-1">
-            <table className="w-full text-left border-collapse min-w-[800px]">
+            <table className="w-full text-left border-collapse min-w-[860px]">
               <thead className="bg-zinc-50/80">
                 <tr>
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Subject</th>
@@ -204,7 +206,11 @@ export default function SyllabusManagement({
                     <td className="px-5 py-4 text-sm font-medium text-zinc-700">
                       {row.teacher_name || <span className="text-zinc-400 italic">Unassigned</span>}
                     </td>
-                    <td className="px-5 py-4 text-sm font-medium text-zinc-500 whitespace-nowrap">{fmtDate(row.updated_at)}</td>
+                    <td className="px-5 py-4 whitespace-nowrap">
+                      <div className="text-xs font-semibold text-zinc-700">{row.updated_by_name || '—'}</div>
+                      <div className="text-sm font-medium text-zinc-500 mt-0.5">{fmtDate(row.updated_at)}</div>
+                      {row.updated_at && <div className="text-[11px] text-zinc-400 mt-0.5">{fmtTimeIST(row.updated_at)}</div>}
+                    </td>
                     <td className="px-5 py-4 text-right whitespace-nowrap">
                       <div className="flex items-center justify-end gap-2">
                         <button onClick={() => onOpenSyllabus(row)} title="Manage Syllabus"
@@ -233,7 +239,6 @@ export default function SyllabusManagement({
           </div>
         )}
       </div>
-
       {/* ---- CREATE / EDIT MODAL ---- */}
       {modalOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
@@ -247,7 +252,6 @@ export default function SyllabusManagement({
                 <X className="size-4" />
               </button>
             </div>
-
             <form onSubmit={handleSave} className="flex flex-col flex-1 overflow-hidden">
               <div className="p-5 sm:p-6 overflow-y-auto custom-scrollbar space-y-4">
                 
@@ -273,7 +277,6 @@ export default function SyllabusManagement({
                   ]} />
                   
               </div>
-
               <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
                 <button type="button" onClick={() => setModalOpen(false)} disabled={saving}
                   className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 rounded-md font-semibold text-xs hover:bg-zinc-50 transition-colors w-full sm:w-auto">
@@ -292,7 +295,6 @@ export default function SyllabusManagement({
     </div>
   );
 }
-
 // --- Shared Field Component ---
 function Field({ label, value, onChange, type = 'text', options, required, placeholder }) {
   const base = "h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm";

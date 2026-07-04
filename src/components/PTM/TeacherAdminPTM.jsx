@@ -327,7 +327,7 @@ export default function TeacherAdminPTM({ canEdit = false, canDelete = false }) 
                             {isExpired && item.status !== 'Completed' ? 'Expired' : item.status}
                           </span>
                           {isExpired && !isCompleted ? (
-                            <span className="text-[10px] font-bold text-red-500 uppercase tracking-tight">Date is Expired</span>
+                            <span className="text-[10px] font-semibold text-red-500 uppercase tracking-tight">Date is Expired</span>
                           ) : isJoinable ? (
                             <button onClick={() => handleJoinMeeting(item.meeting_link)} 
                               className="text-xs font-semibold text-primary hover:text-primary/80 flex items-center gap-1 transition-colors">
@@ -416,7 +416,7 @@ export default function TeacherAdminPTM({ canEdit = false, canDelete = false }) 
                           className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-center tabular-nums outline-none focus:ring-2 focus:ring-primary/20 shadow-sm" />
                         <div className="relative shrink-0">
                           <select value={form.period} onChange={e => setForm({ ...form, period: e.target.value })}
-                            className="h-9 w-20 pl-3 pr-8 bg-white border border-zinc-200 rounded-md text-xs font-bold appearance-none outline-none focus:ring-2 focus:ring-primary/20 shadow-sm cursor-pointer">
+                            className="h-9 w-20 pl-3 pr-8 bg-white border border-zinc-200 rounded-md text-xs font-semibold appearance-none outline-none focus:ring-2 focus:ring-primary/20 shadow-sm cursor-pointer">
                             <option value="AM">AM</option>
                             <option value="PM">PM</option>
                           </select>
