@@ -7,7 +7,6 @@ import {
   Search, Loader2, ChevronDown, Download
 } from 'lucide-react';
 import { usePermissions } from '../../Screens/PermissionsContext';
-
 // --- Formatters ---
 const formatDate = (dateString, includeTime = false) => {
   if (!dateString) return 'N/A';
@@ -17,14 +16,28 @@ const formatDate = (dateString, includeTime = false) => {
   if (includeTime) { options.hour = '2-digit'; options.minute = '2-digit'; }
   return date.toLocaleDateString('en-GB', options);
 };
-
+// Render a UTC audit timestamp (Railway stores UTC) as IST for display.
+const fmtIST = (val) => {
+  if (!val) return '';
+  let d;
+  if (typeof val === 'string' && !val.includes('T') && !val.endsWith('Z')) {
+    d = new Date(val.replace(' ', 'T') + 'Z');
+  } else {
+    d = new Date(val);
+  }
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true
+  });
+};
 const toYYYYMMDD = (dateString) => {
   if (!dateString) return '';
   const date = new Date(dateString);
   if (isNaN(date.getTime())) return '';
   return date.toISOString().split('T')[0];
 };
-
 // Resolve a stored photo value into something an <img src> can render.
 // Photos are saved as base64 data URLs, so they're already complete —
 // only genuine relative server paths get the host prefixed. Prevents the
@@ -34,15 +47,12 @@ const resolvePhoto = (p) => {
   if (/^(data:|https?:|blob:)/i.test(p)) return p;
   return `${API_BASE_URL.replace('/api', '')}${p}`;
 };
-
 // Case-insensitive trimmed equality used by the client-side filters
 const eq = (a, b) => String(a ?? '').trim().toLowerCase() === String(b ?? '').trim().toLowerCase();
-
 // Normalise a grade/class so comparison works regardless of how it was stored:
 // "Class 9", "class9" and "9" all reduce to the same value. Lets the Joining
 // Class filter match records whether they hold "Class 9" or a bare "9".
 const normGrade = (s) => String(s ?? '').trim().toLowerCase().replace(/^class\s*/, '').trim();
-
 const StatusPill = ({ status }) => {
   const styles = {
     Pending: 'bg-amber-50 text-amber-700 ring-amber-600/20',
@@ -55,17 +65,14 @@ const StatusPill = ({ status }) => {
     </div>
   );
 };
-
 export default function PreAdmissionsScreen() {
   const { user } = useAuth();
-
   // Admin Check
   const { can, isAllAccess } = usePermissions();
   const canRead = can('PreAdmissions', 'read');
   const canEdit = can('PreAdmissions', 'edit');
   const canDelete = can('PreAdmissions', 'delete');
   const isAdmin = isAllAccess;
-
   const [data, setData] = useState([]);
   const [classes, setClasses] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -77,7 +84,6 @@ export default function PreAdmissionsScreen() {
   const [selectedImage, setSelectedImage] = useState(null);
   const [selectedItem, setSelectedItem] = useState(null);
   const [downloading, setDownloading] = useState(false);
-
   // Filters
   const [searchText, setSearchText] = useState('');
   // Plain calendar-year filter. The list of selectable years is built from
@@ -89,7 +95,6 @@ export default function PreAdmissionsScreen() {
   const [filterStatus, setFilterStatus] = useState('Pending');
   // Single class filter — Joining class. '' means "All Classes" (default).
   const [filterJoiningClass, setFilterJoiningClass] = useState('');
-
   // --- Fetch Data ---
   // Scoped to the selected calendar year via YEAR(submission_date) on the
   // backend; 'all' sends no year filter.
@@ -98,14 +103,12 @@ export default function PreAdmissionsScreen() {
   // to string requests, so passing a URL object here would 401.
   const fetchData = useCallback(async () => {
     if (!user?.institutionId || (!canRead && !isAdmin)) return;
-
     setLoading(true);
     try {
       const params = new URLSearchParams();
       params.append('userId', user.id);
       if (searchText) params.append('search', searchText);
       if (filterYear && filterYear !== 'all') params.append('year', filterYear);
-
       const res = await fetch(
         `${API_BASE_URL}/admin/preadmissions/${user.institutionId}?${params.toString()}`
       );
@@ -117,7 +120,6 @@ export default function PreAdmissionsScreen() {
       setLoading(false);
     }
   }, [user, isAdmin, canRead, searchText, filterYear]);
-
   // --- Fetch master list of classes + the submission years present --------
   const loadFormData = useCallback(async () => {
     if (!user?.institutionId) return;
@@ -136,14 +138,11 @@ export default function PreAdmissionsScreen() {
       console.error('Load years error:', e);
     }
   }, [user]);
-
   // Load classes + years once per user. (fetchData no longer depends on these,
   // so there's no refetch loop.)
   useEffect(() => { loadFormData(); }, [loadFormData]);
-
   // Fetch applications whenever the query inputs (year/search) change.
   useEffect(() => { fetchData(); }, [fetchData]);
-
   // Year dropdown options: every year present in the data, plus the current
   // year (so you can always filter the year you're adding to), newest first.
   const yearOptions = useMemo(() => {
@@ -151,7 +150,6 @@ export default function PreAdmissionsScreen() {
     set.add(currentYear);
     return Array.from(set).sort((a, b) => b - a);
   }, [availableYears, currentYear]);
-
   // Distinct class names (grades). Sections are not relevant to a grade,
   // so we collapse to unique className values.
   const classOptions = useMemo(
@@ -165,7 +163,6 @@ export default function PreAdmissionsScreen() {
     () => [{ value: '', label: 'Select grade...' }, ...classOptions.map(n => ({ value: n, label: n }))],
     [classOptions]
   );
-
   // --- FRONTEND FILTERING ---
   // Status + the Joining-class filter are applied here; the year is applied
   // server-side. Joining class uses normGrade so it matches whether a record
@@ -177,7 +174,6 @@ export default function PreAdmissionsScreen() {
       return matchStatus && matchJoining;
     });
   }, [data, filterStatus, filterJoiningClass]);
-
   const getFilterTabClass = (status, isActive) => {
     if (!isActive) return 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200';
     if (status === 'Pending') return 'bg-amber-500 text-white shadow-sm';
@@ -185,7 +181,6 @@ export default function PreAdmissionsScreen() {
     if (status === 'Rejected') return 'bg-red-500 text-white shadow-sm';
     return 'bg-primary text-white shadow-sm';
   };
-
   // Download the applications as an Excel file. The export endpoint is behind
   // the /api gate, so a plain download link would 401 — fetch it as a blob
   // (token attached by the interceptor) and save that. Scope follows the Year
@@ -212,7 +207,6 @@ export default function PreAdmissionsScreen() {
     } catch (e) { alert(e.message || 'Download failed.'); }
     setDownloading(false);
   }, [user, filterYear]);
-
   // If not admin and no read permission, completely block the screen
   if (!canRead && !isAdmin) {
     return (
@@ -225,7 +219,6 @@ export default function PreAdmissionsScreen() {
       </div>
     );
   }
-
   const handleOpenModal = (item = null) => {
     setSelectedImage(null);
     if (item) {
@@ -243,13 +236,10 @@ export default function PreAdmissionsScreen() {
     }
     setModalVisible(true);
   };
-
   const handleChoosePhoto = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-
     if (file.size > 3 * 1024 * 1024) return alert('Picture must be under 3 MB.');
-
     const reader = new FileReader();
     reader.onloadend = () => {
       setFormData(prev => ({ ...prev, photo_url: reader.result }));
@@ -257,7 +247,6 @@ export default function PreAdmissionsScreen() {
     };
     reader.readAsDataURL(file);
   };
-
   const validateForm = () => {
     if (!formData.admission_no || !formData.student_name || !formData.joining_grade) {
       alert('Validation Error: Admission No, Name, and Joining Grade are required.');
@@ -277,16 +266,13 @@ export default function PreAdmissionsScreen() {
     }
     return true;
   };
-
   const handleSave = async () => {
     if (!validateForm()) return;
     setIsSaving(true);
-
     try {
       const payload = {
         institutionId: user.institutionId
       };
-
       // Removed fields (not relevant for pre-admission): school_joined_grade,
       // school_outgoing_date, school_outgoing_grade, tc_issued_date.
       const allowedFields = [
@@ -294,16 +280,13 @@ export default function PreAdmissionsScreen() {
         'previous_grade', 'pen_no', 'aadhar_no', 'parent_name', 'parent_phone', 'address', 'status',
         'school_joined_date', 'tc_number', 'photo_url'
       ];
-
       allowedFields.forEach(key => {
         const val = formData[key];
         if (val !== null && val !== undefined && val !== '') {
           payload[key] = val;
         }
       });
-
       const url = isEditing ? `${API_BASE_URL}/admin/preadmissions/${currentItem.id}` : `${API_BASE_URL}/admin/preadmissions`;
-
       const res = await fetch(url, {
         method: isEditing ? 'PUT' : 'POST',
         headers: {
@@ -311,12 +294,10 @@ export default function PreAdmissionsScreen() {
         },
         body: JSON.stringify(payload)
       });
-
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.message || 'Save failed');
       }
-
       setModalVisible(false);
       setSelectedItem(null);
       fetchData();
@@ -326,7 +307,6 @@ export default function PreAdmissionsScreen() {
       setIsSaving(false);
     }
   };
-
   const handleDelete = async (id) => {
     if (!window.confirm("Delete this application permanently?")) return;
     try {
@@ -337,10 +317,8 @@ export default function PreAdmissionsScreen() {
       fetchData();
     } catch (e) { alert('Failed to delete.'); }
   };
-
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
-
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-2 sm:mb-0">
         <header className="flex flex-col">
@@ -350,7 +328,6 @@ export default function PreAdmissionsScreen() {
           </h1>
           <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">Manage applications and full student records.</p>
         </header>
-
         <button onClick={handleDownload} disabled={downloading}
           title={filterYear === 'all'
             ? 'Download every year, grouped by year'
@@ -362,16 +339,12 @@ export default function PreAdmissionsScreen() {
             : (filterYear === 'all' ? 'Download All (Excel)' : `Download ${filterYear} (Excel)`)}
         </button>
       </div>
-
       {/* Main Grid View */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 flex-1">
-
         {/* LEFT COLUMN: List */}
         <div className={`lg:col-span-4 xl:col-span-5 flex flex-col gap-4 ${selectedItem ? 'hidden lg:flex' : 'flex'}`}>
-
           {/* FILTER SECTION */}
           <div className="bg-white p-2 rounded-lg shadow-sm ring-1 ring-black/5 flex flex-col gap-2">
-
             {/* ROW 1: Search & Year */}
             <div className="flex gap-2">
               <div className="relative flex-1">
@@ -380,7 +353,6 @@ export default function PreAdmissionsScreen() {
                   onKeyDown={e => e.key === 'Enter' && fetchData()} placeholder="Search name or ID..."
                   className="h-9 w-full bg-zinc-50/50 border border-transparent rounded-md pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:bg-white transition-colors placeholder:text-zinc-400" />
               </div>
-
               <div className="relative shrink-0">
                 <select value={filterYear} onChange={e => setFilterYear(e.target.value)}
                   className="h-9 bg-zinc-50/50 border border-transparent rounded-md pl-3 pr-8 text-sm font-semibold text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer appearance-none">
@@ -392,7 +364,6 @@ export default function PreAdmissionsScreen() {
                 <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
             </div>
-
             {/* ROW 2: Status Tabs (toggleable; null = all statuses) */}
             <div className="flex gap-1">
               {['Pending', 'Approved', 'Rejected'].map((status) => (
@@ -402,7 +373,6 @@ export default function PreAdmissionsScreen() {
                 </button>
               ))}
             </div>
-
             {/* ROW 3: Joining-class filter (defaults to "All Classes"). */}
             <div className="pt-2 mt-1 border-t border-zinc-100">
               <div className="flex flex-col gap-1">
@@ -418,7 +388,6 @@ export default function PreAdmissionsScreen() {
               </div>
             </div>
           </div>
-
           <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col h-[70vh]">
             <div className="p-4 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 shrink-0">
               <h2 className="font-semibold text-zinc-800 text-sm">Applications ({filteredData.length})</h2>
@@ -428,7 +397,6 @@ export default function PreAdmissionsScreen() {
                 </button>
               )}
             </div>
-
             <div className="overflow-y-auto custom-scrollbar flex-1 divide-y divide-zinc-100">
               {loading ? (
                 <div className="p-10 flex justify-center"><Loader2 className="animate-spin text-primary size-6" /></div>
@@ -449,7 +417,6 @@ export default function PreAdmissionsScreen() {
             </div>
           </div>
         </div>
-
         {/* RIGHT COLUMN: Details */}
         <div className={`lg:col-span-8 xl:col-span-7 ${!selectedItem ? 'hidden lg:block' : 'block'}`}>
           {!selectedItem ? (
@@ -482,11 +449,29 @@ export default function PreAdmissionsScreen() {
                   )}
                 </div>
               </div>
-
               <div className="p-5 sm:p-6 overflow-y-auto custom-scrollbar space-y-6">
+                {/* Application Audit — who created it, and (once decided) who verified it */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <AuditRow
+                    icon={User}
+                    label="Application Created By"
+                    name={selectedItem.created_by_name}
+                    time={fmtIST(selectedItem.submission_date)}
+                  />
+                  {(selectedItem.status === 'Approved' || selectedItem.status === 'Rejected') ? (
+                    <AuditRow
+                      icon={selectedItem.status === 'Approved' ? Check : X}
+                      label={`${selectedItem.status} By`}
+                      name={selectedItem.verified_by_name}
+                      time={fmtIST(selectedItem.verified_at)}
+                      tone={selectedItem.status === 'Approved' ? 'emerald' : 'red'}
+                    />
+                  ) : (
+                    <AuditRow icon={Calendar} label="Status" name="Awaiting decision" time="" tone="amber" />
+                  )}
+                </div>
                 {/* Basic Info */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <InfoRow icon={Calendar} label="Submitted" value={formatDate(selectedItem.submission_date, true)} />
                   <InfoRow icon={Calendar} label="D.O.B" value={formatDate(selectedItem.dob)} />
                   <InfoRow icon={Phone} label="Student Phone" value={selectedItem.phone_no || '-'} />
                   <InfoRow icon={User} label="Parent" value={selectedItem.parent_name || '-'} />
@@ -495,7 +480,6 @@ export default function PreAdmissionsScreen() {
                   <InfoRow icon={IdCard} label="Aadhar No" value={selectedItem.aadhar_no || '-'} />
                   <div className="sm:col-span-2"><InfoRow icon={MapPin} label="Address" value={selectedItem.address || '-'} /></div>
                 </div>
-
                 {/* Academic History */}
                 <div className="pt-5 border-t border-zinc-100">
                   <h4 className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-4">Academic History</h4>
@@ -511,19 +495,16 @@ export default function PreAdmissionsScreen() {
           )}
         </div>
       </div>
-
       {/* --- MODAL FOR CREATE/EDIT --- */}
       {modalVisible && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
           <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-4xl shadow-xl relative max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
-
             <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 rounded-t-lg shrink-0">
               <h2 className="text-lg font-semibold text-zinc-900">{isEditing ? 'Edit Application' : 'New Application'}</h2>
               <button onClick={() => setModalVisible(false)} className="text-zinc-400 hover:text-zinc-700 transition-colors p-1.5 hover:bg-zinc-100 rounded-md">
                 <X className="size-4" />
               </button>
             </div>
-
             <div className="p-5 sm:p-6 overflow-y-auto custom-scrollbar">
               <div className="flex flex-col items-center mb-6">
                 <div className="relative">
@@ -535,7 +516,6 @@ export default function PreAdmissionsScreen() {
                   </label>
                 </div>
               </div>
-
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
                 {/* Form Fields using standard unified inputs */}
                 <Field label="Admission No" required value={formData.admission_no} onChange={v => setForm('admission_no', v)} />
@@ -543,19 +523,16 @@ export default function PreAdmissionsScreen() {
                 <Field label="Joining Grade" required type="select" options={gradeSelectOptions}
                   value={formData.joining_grade} onChange={v => setForm('joining_grade', v)} />
                 <div className="md:col-span-2"><Field label="Student Name" required value={formData.student_name} onChange={v => setForm('student_name', v.replace(/[^a-zA-Z\s]/g, ''))} /></div>
-
                 <Field label="Date of Birth" type="date" value={formData.dob} onChange={v => setForm('dob', v)} />
                 <Field label="Student Phone" type="tel" placeholder="10 Digits" value={formData.phone_no} onChange={v => setForm('phone_no', v.replace(/[^0-9]/g, '').slice(0,10))} />
                 <Field label="Pen No" placeholder="Alphanumeric" value={formData.pen_no} onChange={v => setForm('pen_no', v.replace(/[^a-zA-Z0-9]/g, ''))} />
                 <Field label="Aadhar No" placeholder="12 Digits" value={formData.aadhar_no} onChange={v => setForm('aadhar_no', v.replace(/[^0-9]/g, '').slice(0,12))} />
-
                 <div className="md:col-span-2 mt-2">
                   <h3 className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 pb-2">Parent Information</h3>
                 </div>
                 <Field label="Parent Name" value={formData.parent_name} onChange={v => setForm('parent_name', v.replace(/[^a-zA-Z\s]/g, ''))} />
                 <Field label="Parent Phone" type="tel" placeholder="10 Digits" value={formData.parent_phone} onChange={v => setForm('parent_phone', v.replace(/[^0-9]/g, '').slice(0,10))} />
                 <div className="md:col-span-2"><Field label="Address" type="textarea" value={formData.address} onChange={v => setForm('address', v)} /></div>
-
                 <div className="md:col-span-2 mt-2">
                   <h3 className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 pb-2">Academic History</h3>
                 </div>
@@ -566,7 +543,6 @@ export default function PreAdmissionsScreen() {
                   value={formData.previous_grade} onChange={v => setForm('previous_grade', v)} />
                 <Field label="School Joined Date" type="date" value={formData.school_joined_date} onChange={v => setForm('school_joined_date', v)} />
                 <Field label="TC Number" value={formData.tc_number} onChange={v => setForm('tc_number', v.replace(/[^a-zA-Z0-9]/g, ''))} />
-
                 <div className="md:col-span-2 mt-2">
                   <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-2 block">Status</label>
                   <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
@@ -593,7 +569,6 @@ export default function PreAdmissionsScreen() {
                 </div>
               </div>
             </div>
-
             <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
               <button type="button" onClick={() => setModalVisible(false)} disabled={isSaving}
                 className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 rounded-md font-semibold text-xs hover:bg-zinc-50 transition-colors w-full sm:w-auto">
@@ -610,10 +585,8 @@ export default function PreAdmissionsScreen() {
       )}
     </div>
   );
-
   function setForm(key, value) { setFormData(prev => ({ ...prev, [key]: value })); }
 }
-
 const InfoRow = ({ icon: Icon, label, value }) => (
   <div className="flex items-center gap-3 bg-white p-3 rounded-md ring-1 ring-black/5 shadow-sm">
     <div className="size-8 rounded-md bg-zinc-50 flex items-center justify-center ring-1 ring-black/5 shrink-0">
@@ -625,7 +598,28 @@ const InfoRow = ({ icon: Icon, label, value }) => (
     </div>
   </div>
 );
-
+// Audit row — shows who + when on two lines (no truncation), with an
+// optional colour tone for the verifier state.
+const AuditRow = ({ icon: Icon, label, name, time, tone }) => {
+  const toneMap = {
+    emerald: 'bg-emerald-50 text-emerald-600 ring-emerald-600/20',
+    red:     'bg-red-50 text-red-600 ring-red-600/20',
+    amber:   'bg-amber-50 text-amber-600 ring-amber-600/20',
+  };
+  const iconCls = toneMap[tone] || 'bg-zinc-50 text-primary ring-black/5';
+  return (
+    <div className="flex items-start gap-3 bg-white p-3 rounded-md ring-1 ring-black/5 shadow-sm">
+      <div className={`size-8 rounded-md flex items-center justify-center ring-1 shrink-0 ${iconCls}`}>
+        <Icon className="size-4" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">{label}</p>
+        <p className="text-sm font-medium text-zinc-900 mt-0.5 break-words">{name || '—'}</p>
+        {time && <p className="text-[11px] text-zinc-400 mt-0.5">{time}</p>}
+      </div>
+    </div>
+  );
+};
 // Shared input field standard — now supports type="select" (with options)
 function Field({ label, value, onChange, type = 'text', required, placeholder, options }) {
   const base = "h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm";

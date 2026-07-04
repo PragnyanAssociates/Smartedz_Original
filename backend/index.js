@@ -6913,14 +6913,20 @@ app.delete('/api/admin/labs/:id', async (req, res) => {
 
 
 // =====================================================================
-// === 23. ADMISSIONS / DIRECTORY — Pre-Admissions  (TENANT-SCOPED) ====
-//   instId/userId/role from req.auth; create takes institutionId from the
-//   token; update/delete verify ownership. Calendar-year filter unchanged.
+// === 23. ADMISSIONS — Pre-Admissions  (TENANT-SCOPED) ====
+//   instId/userId/role from req.auth; create takes institutionId + the
+//   creator from the token; update/delete verify ownership. Calendar-year
+//   filter unchanged.
 //
-//   23.5 (new): export the list to Excel — a single submission year, or ALL
-//   years grouped under year-wise headings. Streamed as .xlsx; the frontend
-//   fetches it as a blob (token via the interceptor) and saves it, since a
-//   raw download link wouldn't carry the token.
+//   AUDIT (needs preadmissions_add_audit.sql once):
+//     • created_by  — stamped on create (the user who entered the form)
+//     • verified_by / verified_at — stamped by the PUT when status moves to
+//       Approved or Rejected; cleared if it moves back to Pending.
+//   List + export join users twice to surface created_by_name /
+//   verified_by_name. submission_date remains the "created at" time.
+//
+//   23.5: export the list to Excel — a single submission year, or ALL
+//   years grouped under year-wise headings.
 // =====================================================================
 
 // --- 23.0 Distinct submission years (for the year-filter dropdown) ---
@@ -6945,41 +6951,41 @@ app.get('/api/admin/preadmissions/:instId', async (req, res) => {
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     const { search, year } = req.query;
     const roleName = req.auth.role;
-
     try {
         const isSystemAdmin = (roleName === 'Super Admin' || roleName === 'Developer');
-
         const [perms] = await db.execute(`
             SELECT p.can_read
               FROM permissions p
               JOIN roles r ON r.id = p.role_id
              WHERE r.role_name = ? AND r.institutionId = ? AND p.module_name = 'PreAdmissions'
         `, [roleName, instId]);
-
         const hasAccess = isSystemAdmin || (perms.length > 0 && perms[0].can_read);
-
         if (!hasAccess) {
             return res.status(403).json({ message: "You do not have permission to view admissions." });
         }
-
-        let whereClauses = ["institutionId = ?"];
+        let whereClauses = ["pa.institutionId = ?"];
         const queryParams = [instId];
-
         const yr = parseInt(year, 10);
         if (year && year !== 'all' && !isNaN(yr)) {
-            whereClauses.push("YEAR(submission_date) = ?");
+            whereClauses.push("YEAR(pa.submission_date) = ?");
             queryParams.push(yr);
         }
-
         if (search) {
-            whereClauses.push("(student_name LIKE ? OR admission_no LIKE ? OR previous_institute LIKE ?)");
+            whereClauses.push("(pa.student_name LIKE ? OR pa.admission_no LIKE ? OR pa.previous_institute LIKE ?)");
             const searchTerm = `%${search}%`;
             queryParams.push(searchTerm, searchTerm, searchTerm);
         }
-
-        const query = `SELECT * FROM pre_admissions WHERE ${whereClauses.join(' AND ')} ORDER BY submission_date DESC LIMIT 1000`;
+        const query = `
+            SELECT pa.*,
+                   cu.name AS created_by_name,
+                   vu.name AS verified_by_name
+              FROM pre_admissions pa
+              LEFT JOIN users cu ON cu.id = pa.created_by
+              LEFT JOIN users vu ON vu.id = pa.verified_by
+             WHERE ${whereClauses.join(' AND ')}
+             ORDER BY pa.submission_date DESC
+             LIMIT 1000`;
         const [records] = await db.query(query, queryParams);
-
         res.status(200).json(records);
     } catch (error) {
         res.status(500).json({ message: "Failed to fetch admission records." });
@@ -6989,8 +6995,6 @@ app.get('/api/admin/preadmissions/:instId', async (req, res) => {
 // --- 23.5 Export the list to Excel ----------------------------------
 //   ?year=YYYY -> only that submission year (one section).
 //   ?year=all  -> every year, grouped under a heading per year.
-//   Two path segments (:instId + export), so it never collides with the
-//   one-segment '/:instId' list route regardless of registration order.
 app.get('/api/admin/preadmissions/:instId/export', async (req, res) => {
     const ExcelJS = require('exceljs'); // local require avoids any top-level name clash
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
@@ -7009,19 +7013,20 @@ app.get('/api/admin/preadmissions/:instId/export', async (req, res) => {
         if (!hasAccess) {
             return res.status(403).json({ message: "You do not have permission to view admissions." });
         }
-
-        let whereClauses = ["institutionId = ?"];
+        let whereClauses = ["pa.institutionId = ?"];
         const queryParams = [instId];
         const yr = parseInt(year, 10);
         const singleYear = year && year !== 'all' && !isNaN(yr);
-        if (singleYear) { whereClauses.push("YEAR(submission_date) = ?"); queryParams.push(yr); }
-
-        const sql = `SELECT *, YEAR(submission_date) AS cal_year
-                       FROM pre_admissions
+        if (singleYear) { whereClauses.push("YEAR(pa.submission_date) = ?"); queryParams.push(yr); }
+        const sql = `SELECT pa.*, YEAR(pa.submission_date) AS cal_year,
+                            cu.name AS created_by_name,
+                            vu.name AS verified_by_name
+                       FROM pre_admissions pa
+                       LEFT JOIN users cu ON cu.id = pa.created_by
+                       LEFT JOIN users vu ON vu.id = pa.verified_by
                       WHERE ${whereClauses.join(' AND ')}
-                      ORDER BY YEAR(submission_date) DESC, student_name`;
+                      ORDER BY YEAR(pa.submission_date) DESC, pa.student_name`;
         const [rows] = await db.query(sql, queryParams);
-
         // Column order for the sheet. photo_url is a base64 image -> omitted.
         const columns = [
             { header: 'Student Name',          width: 24 },
@@ -7043,10 +7048,12 @@ app.get('/api/admin/preadmissions/:instId/export', async (req, res) => {
             { header: 'TC Issued Date',        width: 14 },
             { header: 'TC Number',             width: 14 },
             { header: 'Address',               width: 30 },
-            { header: 'Submitted',             width: 14 },
+            { header: 'Created At',            width: 18 },
+            { header: 'Created By',            width: 20 },
+            { header: 'Verified By',           width: 20 },
+            { header: 'Verified At',           width: 18 },
         ];
         const NCOLS = columns.length;
-
         const dmy = (d) => {
             if (!d) return '';
             const dt = new Date(d);
@@ -7054,24 +7061,34 @@ app.get('/api/admin/preadmissions/:instId/export', async (req, res) => {
             const p = (n) => String(n).padStart(2, '0');
             return `${p(dt.getDate())}/${p(dt.getMonth() + 1)}/${dt.getFullYear()}`;
         };
+        // IST date-time for audit stamps (Railway stores UTC).
+        const istDT = (d) => {
+            if (!d) return '';
+            const dt = new Date(d);
+            if (isNaN(dt.getTime())) return '';
+            return dt.toLocaleString('en-IN', {
+                timeZone: 'Asia/Kolkata',
+                day: '2-digit', month: 'short', year: 'numeric',
+                hour: '2-digit', minute: '2-digit', hour12: true
+            });
+        };
         const rowValues = (r) => ([
             r.student_name || '', r.admission_no || '', r.joining_grade || '', r.status || '',
             dmy(r.dob), r.phone_no || '', r.pen_no || '', r.aadhar_no || '',
             r.parent_name || '', r.parent_phone || '', r.previous_institute || '',
             r.previous_grade || '', dmy(r.school_joined_date), r.school_joined_grade || '',
             dmy(r.school_outgoing_date), r.school_outgoing_grade || '', dmy(r.tc_issued_date),
-            r.tc_number || '', r.address || '', dmy(r.submission_date)
+            r.tc_number || '', r.address || '',
+            istDT(r.submission_date), r.created_by_name || '',
+            r.verified_by_name || '', istDT(r.verified_at)
         ]);
-
         const wb = new ExcelJS.Workbook();
         wb.creator = 'SmartEdz';
         wb.created = new Date();
         const ws = wb.addWorksheet('Pre-Admissions');
         ws.columns = columns.map(c => ({ width: c.width })); // widths only, no auto header row
-
         const PRIMARY = 'FF3284C7';
         const ACCENT  = 'FFF29132';
-
         const addTitleRow = (text) => {
             const row = ws.addRow([text]);
             ws.mergeCells(row.number, 1, row.number, NCOLS);
@@ -7107,11 +7124,9 @@ app.get('/api/admin/preadmissions/:instId/export', async (req, res) => {
                 cell.font = { size: 10, color: { argb: 'FF27272A' } };
             });
         };
-
         const scopeLabel = singleYear ? `Year ${yr}` : 'All Years';
         addTitleRow(`Pre-Admissions — ${scopeLabel}`);
         ws.addRow([]); // spacer
-
         if (rows.length === 0) {
             const r = ws.addRow(['No applications found for this selection.']);
             ws.mergeCells(r.number, 1, r.number, NCOLS);
@@ -7134,7 +7149,6 @@ app.get('/api/admin/preadmissions/:instId/export', async (req, res) => {
                 addDataRow(r);
             }
         }
-
         const safeScope = singleYear ? String(yr) : 'AllYears';
         const filename = `PreAdmissions_${safeScope}.xlsx`;
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -7148,26 +7162,31 @@ app.get('/api/admin/preadmissions/:instId/export', async (req, res) => {
     }
 });
 
-// --- 23.2 POST new record -------------------------------------------
+// --- 23.2 POST new record (creator from token) ----------------------
 app.post('/api/admin/preadmissions', async (req, res) => {
     const fields = req.body;
     fields.institutionId = req.auth.institutionId; // tenant from token
-
+    const created_by = req.auth.userId;            // creator from token
     if (!fields.admission_no || !fields.student_name || !fields.joining_grade) {
         return res.status(400).json({ message: "Admission No, Name, and Grade are required." });
     }
+
+    // If the record is created already decided (Approved/Rejected), the
+    // creator is also the verifier at creation time.
+    const startStatus = fields.status || 'Pending';
+    const decided = (startStatus === 'Approved' || startStatus === 'Rejected');
+    const verified_by = decided ? created_by : null;
+    const verified_at = decided ? new Date() : null;
 
     const query = `
         INSERT INTO pre_admissions (
             institutionId, admission_no, student_name, photo_url, dob, pen_no, phone_no, aadhar_no,
             parent_name, parent_phone, previous_institute, previous_grade, joining_grade,
             school_joined_date, school_joined_grade, school_outgoing_date, school_outgoing_grade,
-            tc_issued_date, tc_number, address, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            tc_issued_date, tc_number, address, status, created_by, verified_by, verified_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
-
     const v = (val) => (val === '' || val === 'null' || val === undefined ? null : val);
-
     const params = [
         fields.institutionId,
         fields.admission_no,
@@ -7189,9 +7208,11 @@ app.post('/api/admin/preadmissions', async (req, res) => {
         v(fields.tc_issued_date),
         v(fields.tc_number),
         v(fields.address),
-        fields.status || 'Pending'
+        startStatus,
+        created_by,
+        verified_by,
+        verified_at
     ];
-
     try {
         await db.query(query, params);
         res.status(201).json({ message: "Admission record created successfully." });
@@ -7203,13 +7224,12 @@ app.post('/api/admin/preadmissions', async (req, res) => {
     }
 });
 
-// --- 23.3 PUT update record (ownership) -----------------------------
+// --- 23.3 PUT update record (ownership; stamps verifier on decision) --
 app.put('/api/admin/preadmissions/:id', async (req, res) => {
     const { id } = req.params;
     const fields = req.body;
     let setClauses = [];
     let params = [];
-
     const updatableFields = [
         'admission_no', 'student_name', 'photo_url', 'dob', 'pen_no', 'phone_no', 'aadhar_no',
         'parent_name', 'parent_phone', 'previous_institute', 'previous_grade',
@@ -7217,20 +7237,32 @@ app.put('/api/admin/preadmissions/:id', async (req, res) => {
         'school_outgoing_date', 'school_outgoing_grade', 'tc_issued_date', 'tc_number',
         'address', 'status'
     ];
-
     updatableFields.forEach(field => {
         if (fields[field] !== undefined) {
             setClauses.push(`${field} = ?`);
             params.push(fields[field] === '' || fields[field] === 'null' ? null : fields[field]);
         }
     });
-
     if (setClauses.length === 0) return res.status(400).json({ message: "No fields to update." });
-
     try {
-        const [own] = await db.execute('SELECT institutionId FROM pre_admissions WHERE id = ?', [id]);
+        const [own] = await db.execute('SELECT institutionId, status FROM pre_admissions WHERE id = ?', [id]);
         if (own.length === 0) return res.status(404).json({ message: "Record not found." });
         if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ message: "This record belongs to another institution." });
+
+        // Verifier stamping: only act when the status is actually part of this
+        // update. Moving to Approved/Rejected records who decided + when;
+        // moving back to Pending clears the verification.
+        if (fields.status !== undefined) {
+            const newStatus = fields.status;
+            const prevStatus = own[0].status;
+            if ((newStatus === 'Approved' || newStatus === 'Rejected') && newStatus !== prevStatus) {
+                setClauses.push('verified_by = ?', 'verified_at = ?');
+                params.push(req.auth.userId, new Date());
+            } else if (newStatus === 'Pending') {
+                setClauses.push('verified_by = ?', 'verified_at = ?');
+                params.push(null, null);
+            }
+        }
 
         const query = `UPDATE pre_admissions SET ${setClauses.join(', ')} WHERE id = ?`;
         params.push(id);
