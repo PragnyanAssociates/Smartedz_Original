@@ -1,7 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Plus, Edit, Trash2, X, Search, UserCircle2, BookOpen, Camera, AtSign, GraduationCap, ChevronDown } from 'lucide-react';
+import { Plus, Edit, Trash2, X, Search, UserCircle2, BookOpen, Camera, AtSign, GraduationCap, ChevronDown, Info } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
-
 export default function UserTab({ data, fetchData, user }) {
   const [activeRoleTab, setActiveRoleTab] = useState('all');
   const [activeClass, setActiveClass]     = useState('');   // a real class id; the class filter is Student-only and has no "All Classes" option
@@ -9,7 +8,6 @@ export default function UserTab({ data, fetchData, user }) {
   const [editingUser, setEditingUser]     = useState(null);
   const [search, setSearch]               = useState('');
   const [errors, setErrors]               = useState({});   // per-field validation messages
-
   const emptyForm = {
     name: '', email: '', username: '', password: '', role: '',
     phone_no: '', roll_no: '', admission_no: '',
@@ -23,12 +21,12 @@ export default function UserTab({ data, fetchData, user }) {
     school_joined_date: '', school_joined_grade: '', tc_number: ''
   };
   const [form, setForm] = useState(emptyForm);
-
+  // The Users tab lists ACTIVE users only. Inactive users live in the
+  // Inactive tab; alumni in the Alumni screen.
   const activeUsers = useMemo(
-    () => data.users.filter(u => (u.status || '').toLowerCase() !== 'alumni'),
+    () => data.users.filter(u => (u.status || 'active').toLowerCase() === 'active'),
     [data.users]
   );
-
   const roleTabs = useMemo(() => {
     const counts = {};
     activeUsers.forEach(u => { counts[u.role] = (counts[u.role] || 0) + 1; });
@@ -36,7 +34,6 @@ export default function UserTab({ data, fetchData, user }) {
     const merged = Array.from(new Set([...knownRoles, ...Object.keys(counts)]));
     return merged.map(r => ({ name: r, count: counts[r] || 0 }));
   }, [activeUsers, data.roles]);
-
   const classFilters = useMemo(() => {
     const counts = {};
     activeUsers.forEach(u => {
@@ -48,14 +45,12 @@ export default function UserTab({ data, fetchData, user }) {
       count: counts[c.id] || 0
     }));
   }, [activeUsers, data.classes]);
-
   // The class filter is shown ONLY on the Student tab. (Removed the "All"
   // tab case — a class filter there mixed roll numbers across classes.)
   const showClassFilter = useMemo(() => {
     if (classFilters.length === 0) return false;
     return activeRoleTab.toLowerCase().includes('student');
   }, [classFilters, activeRoleTab]);
-
   // Keep a real class selected at all times (no "All Classes" option).
   // Defaults to the first class and re-points if the current one disappears.
   useEffect(() => {
@@ -63,7 +58,6 @@ export default function UserTab({ data, fetchData, user }) {
     const stillValid = classFilters.some(c => String(c.id) === String(activeClass));
     if (!stillValid) setActiveClass(String(classFilters[0].id));
   }, [classFilters, activeClass]);
-
   const filteredUsers = useMemo(() => {
     const onStudentTab = activeRoleTab.toLowerCase().includes('student');
     let list = activeUsers;
@@ -79,7 +73,6 @@ export default function UserTab({ data, fetchData, user }) {
         (u.email || '').toLowerCase().includes(q) ||
         (u.username || '').toLowerCase().includes(q));
     }
-
     // Sorting:
     //  • Students  -> roll-number-wise (1, 2, 3 ...). A missing / non-numeric
     //    roll falls to the end of the student block, then alphabetical by name.
@@ -95,22 +88,18 @@ export default function UserTab({ data, fetchData, user }) {
     };
     return [...list].sort((a, b) => {
       const aStu = isStudentRow(a), bStu = isStudentRow(b);
-
       // Students come before non-students in a mixed list
       if (aStu !== bStu) return aStu ? -1 : 1;
-
       if (aStu && bStu) {
         // Both students -> roll-wise, then alphabetical as a tie-breaker
         const ra = rollVal(a), rb = rollVal(b);
         if (ra !== rb) return ra - rb;
         return (a.name || '').localeCompare(b.name || '');
       }
-
       // Both non-students -> purely alphabetical by name
       return (a.name || '').localeCompare(b.name || '');
     });
   }, [activeUsers, activeRoleTab, activeClass, search]);
-
   // Running serial number (1 → N) for NON-student rows, in their displayed
   // (alphabetical) order. Students are skipped here because they show their
   // roll number instead. Used for the first column of the table.
@@ -126,7 +115,6 @@ export default function UserTab({ data, fetchData, user }) {
     });
     return map;
   }, [filteredUsers]);
-
   // YYYY-MM-DD for <input type="date"> values
   const isoDate = (v) => {
     if (!v) return '';
@@ -134,7 +122,6 @@ export default function UserTab({ data, fetchData, user }) {
     if (isNaN(d.getTime())) return '';
     return d.toISOString().slice(0, 10);
   };
-
   // DD/MM/YYYY for read-only display
   const fmtDMY = (v) => {
     if (!v) return '—';
@@ -144,14 +131,12 @@ export default function UserTab({ data, fetchData, user }) {
     const mm = String(d.getMonth() + 1).padStart(2, '0');
     return `${dd}/${mm}/${d.getFullYear()}`;
   };
-
   const openAdd = () => {
     setEditingUser(null);
     setErrors({});
     setForm({ ...emptyForm, role: data.roles[0]?.role_name || '' });
     setIsModalOpen(true);
   };
-
   const openEdit = (u) => {
     setEditingUser(u);
     setErrors({});
@@ -180,14 +165,12 @@ export default function UserTab({ data, fetchData, user }) {
     });
     setIsModalOpen(true);
   };
-
   const handleDelete = async (u) => {
     if (u.role === 'Super Admin') return alert('The Super Admin account cannot be deleted from here.');
-    if (!window.confirm(`Delete user "${u.name}"?`)) return;
+    if (!window.confirm(`Permanently delete "${u.name}"?\n\nThis removes the record from the school and frees their roll number / PEN / TC for reuse. To keep the record without login access, set them to Inactive instead.`)) return;
     await fetch(`${API_BASE_URL}/admin/users/${u.id}`, { method: 'DELETE' });
     fetchData();
   };
-
   const handlePicChange = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -196,7 +179,6 @@ export default function UserTab({ data, fetchData, user }) {
     reader.onloadend = () => setForm(f => ({ ...f, profile_pic: reader.result }));
     reader.readAsDataURL(file);
   };
-
   const isTeacherRole = form.role && form.role.toLowerCase().includes('teacher');
   const isStudentRole = form.role && form.role.toLowerCase().includes('student');
   // Employment block shows for EVERY non-student role — Super Admin, Teacher,
@@ -204,55 +186,43 @@ export default function UserTab({ data, fetchData, user }) {
   // as a teacher; the only teacher-only extra is the subject assignment
   // (the Teaching Assignments block below, gated by isTeacherRole).
   const isStaffRole   = form.role && !isStudentRole;
-
   // ------- Client-side validation (mirrors the backend rules) ---------
   const todayStr = () => new Date().toISOString().slice(0, 10);
   const validateForm = () => {
     const e = {};
-
     // Phone: 10 digits, no leading 0
     if (form.phone_no && !/^[1-9][0-9]{9}$/.test(form.phone_no))
       e.phone_no = 'Must be 10 digits, numbers only, not starting with 0.';
-
     // Aadhaar: exactly 12 digits
     if (form.aadhar_no && !/^[0-9]{12}$/.test(form.aadhar_no))
       e.aadhar_no = 'Must be exactly 12 digits.';
-
     // Staff joining date: not future (applies to every non-student role)
     if (isStaffRole && form.joining_date && form.joining_date > todayStr())
       e.joining_date = 'Cannot be a future date.';
-
     if (isStudentRole) {
       // PEN: 6-20 alphanumeric
       if (form.pen_no && !/^[A-Za-z0-9]{6,20}$/.test(form.pen_no))
         e.pen_no = '6–20 characters, letters and numbers only.';
-
       // TC No: 5-20 alphanumeric
       if (form.tc_number && !/^[A-Za-z0-9]{5,20}$/.test(form.tc_number))
         e.tc_number = '5–20 characters, letters and numbers only.';
-
       // Joined grade: 1-12
       if (form.school_joined_grade !== '') {
         const g = parseInt(form.school_joined_grade, 10);
         if (isNaN(g) || g < 1 || g > 12) e.school_joined_grade = 'Grade must be 1–12.';
       }
-
       // Joined date: not future
       if (form.school_joined_date && form.school_joined_date > todayStr())
         e.school_joined_date = 'Cannot be a future date.';
     }
-
     return e;
   };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
-
     // Validate first; stop and show messages if anything is wrong.
     const errs = validateForm();
     setErrors(errs);
     if (Object.keys(errs).length > 0) return;
-
     const url = editingUser
       ? `${API_BASE_URL}/admin/users/${editingUser.id}`
       : `${API_BASE_URL}/admin/users`;
@@ -274,7 +244,6 @@ export default function UserTab({ data, fetchData, user }) {
       alert(err.error || 'Failed to save user.');
     }
   };
-
   const toggleSubject = (subjectId) => {
     const id = String(subjectId);
     setForm(prev => ({
@@ -284,21 +253,17 @@ export default function UserTab({ data, fetchData, user }) {
         : [...prev.subject_ids, id]
     }));
   };
-
   const teacherSubjectNames = (uid) => {
     const ids = (data.teacherSubjects && data.teacherSubjects[uid]) || [];
     if (ids.length === 0) return '';
     return ids.map(sid => data.subjects?.find(s => s.id === sid)?.name).filter(Boolean).join(', ');
   };
-
   const handleRoleTab = (roleName) => {
     setActiveRoleTab(roleName);
     // Class filter only applies on the Student tab; the active class is kept
     // valid by the effect above, so no reset is needed when switching tabs.
   };
-
   const useDropdown = classFilters.length > 6;
-
   // First-column header text:
   //  • Student tab          -> "Roll"  (rows show roll numbers)
   //  • Other role tabs       -> "S.No"  (rows show running serial numbers)
@@ -309,7 +274,6 @@ export default function UserTab({ data, fetchData, user }) {
     if (tab.includes('student')) return 'Roll';
     return 'S.No';
   }, [activeRoleTab]);
-
   // Academic year (auto-assigned by the backend on create, preserved on edit).
   // We only DISPLAY it here so the admin can see which year the user belongs to.
   const activeYear = (data.academicYears || []).find(y => y.isActive) || null;
@@ -319,10 +283,20 @@ export default function UserTab({ data, fetchData, user }) {
       : activeYear
   ) || activeYear;
   const academicYearLabel = displayYear ? displayYear.name : 'No active academic year';
-
   return (
     <div className="space-y-6">
+      {/* Note — how delete / inactive / alumni behave */}
+      <div className="bg-blue-50/60 border border-blue-100 rounded-md p-4 flex gap-3 text-[11px] text-blue-800 leading-relaxed">
+        <Info className="size-4 shrink-0 text-blue-500 mt-0.5" />
+        <p>
+          <strong className="font-semibold text-blue-900">Users deleted from this tab are permanently removed and cannot be restored.</strong>{' '}
+          If you want to retain a user's records without allowing them to access the system, change their status from Active to Inactive instead of deleting them. The user will be moved to the Inactive list, and all of their academic and administrative records will remain available throughout the system. However, their login credentials will be disabled, preventing them from signing in.
 
+           For students, an <strong>Inactive/Alumni</strong> student continues to retain their assigned roll number for that academic year. Therefore, the same roll number cannot be assigned to a new student until either:
+           the existing student record is permanently deleted, or a new academic year begins.
+          
+        </p>
+      </div>
       {/* Top action bar — responsive: stacks on mobile, row on >= sm */}
       <div className="flex flex-col sm:flex-row justify-between gap-4 sm:items-center mb-6">
         <div className="relative w-full sm:w-auto flex-1 max-w-sm">
@@ -338,10 +312,8 @@ export default function UserTab({ data, fetchData, user }) {
           <Plus className="size-3.5 shrink-0" /> New User
         </button>
       </div>
-
       {/* Filters Area */}
       <div className="flex flex-col gap-4">
-
         {/* Role tabs */}
         <div className="flex flex-wrap gap-2">
           <button onClick={() => handleRoleTab('all')}
@@ -363,14 +335,12 @@ export default function UserTab({ data, fetchData, user }) {
             </button>
           ))}
         </div>
-
         {/* Class filter — Student tab only, single class selected (no "All Classes") */}
         {showClassFilter && (
           <div className="flex items-center gap-3 flex-wrap bg-zinc-50/50 p-2.5 rounded-md ring-1 ring-black/5">
             <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider pl-1">
               <GraduationCap className="size-3.5 shrink-0" /> Class Filter
             </span>
-
             {useDropdown ? (
               <div className="relative w-full sm:w-auto">
                 <select
@@ -400,7 +370,6 @@ export default function UserTab({ data, fetchData, user }) {
           </div>
         )}
       </div>
-
       {/* Main Table — horizontal scroll on small screens keeps it responsive */}
       <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-x-auto custom-scrollbar">
         <table className="w-full text-left border-collapse min-w-[800px]">
@@ -481,7 +450,6 @@ export default function UserTab({ data, fetchData, user }) {
           </tbody>
         </table>
       </div>
-
       {/* Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
@@ -489,16 +457,13 @@ export default function UserTab({ data, fetchData, user }) {
             <button onClick={() => setIsModalOpen(false)} className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-700 transition-colors">
               <X className="size-5 shrink-0" />
             </button>
-
             <div className="mb-6">
               <h2 className="text-lg font-semibold text-zinc-900">
                 {editingUser ? 'Edit User Record' : 'Create New User'}
               </h2>
               <p className="text-[11px] text-zinc-500 mt-1">Fill in the required information. Users can update personal details later.</p>
             </div>
-
             <form onSubmit={handleSubmit} className="space-y-6">
-
               {/* Photo Upload */}
               <div className="flex items-center gap-4">
                 {form.profile_pic ? (
@@ -523,7 +488,6 @@ export default function UserTab({ data, fetchData, user }) {
                   <p className="text-[10px] text-zinc-400">JPG/PNG · max 3 MB</p>
                 </div>
               </div>
-
               <Section title="Account Credentials">
                 <Grid>
                   <Field label="Full Name" required value={form.name} onChange={v => setForm({ ...form, name: v })} />
@@ -533,13 +497,13 @@ export default function UserTab({ data, fetchData, user }) {
                   <Field label="Username" value={form.username} onChange={v => setForm({ ...form, username: v })} placeholder="e.g. jsmith" />
                   <Field label="Password" required value={form.password} onChange={v => setForm({ ...form, password: v })} />
                   <Field label="Account Status" type="select" value={form.status} onChange={v => setForm({ ...form, status: v })}
-                    options={[{ value: 'active', label: 'Active' }, { value: 'inactive', label: 'Inactive' }, { value: 'alumni', label: 'Alumni' }]} />
+                    options={[{ value: 'active', label: 'Active' }, { value: 'inactive', label: 'Inactive' }, { value: 'alumni', label: 'Alumni' }]}
+                    hint="Inactive / Alumni keep the record but block login" />
                   {/* Academic Year — auto-assigned from the active year, read-only */}
                   <Field label="Academic Year" readOnly value={academicYearLabel}
                     hint="Auto-assigned · current active year" />
                 </Grid>
               </Section>
-
               <Section title="Personal Information">
                 <Grid>
                   <Field label="Date of Birth" type="date" value={form.dob} onChange={v => setForm({ ...form, dob: v })} hint="DD/MM/YYYY" />
@@ -554,7 +518,6 @@ export default function UserTab({ data, fetchData, user }) {
                   <Field label="Full Address" type="textarea" value={form.address} onChange={v => setForm({ ...form, address: v })} />
                 </div>
               </Section>
-
               {/* Employment details — every non-student role
                   (Super Admin, Teacher, and custom roles) */}
               {isStaffRole && (
@@ -576,7 +539,6 @@ export default function UserTab({ data, fetchData, user }) {
                   </Grid>
                 </Section>
               )}
-
               {isTeacherRole && (
                 <Section title="Teaching Assignments">
                   <div className="flex items-center justify-between mb-3">
@@ -607,7 +569,6 @@ export default function UserTab({ data, fetchData, user }) {
                   )}
                 </Section>
               )}
-
               {isStudentRole && (
                 <Section title="Academic Details">
                   <Grid>
@@ -615,8 +576,8 @@ export default function UserTab({ data, fetchData, user }) {
                       options={[{ value: '', label: 'Select class...' }, ...data.classes.map(c => ({
                         value: c.id, label: `${c.className}${c.section ? ' - ' + c.section : ''}`
                       }))]} />
-                    {/* Roll No must be unique — backend enforces it per school */}
-                    <Field label="Roll Number" value={form.roll_no} onChange={v => setForm({ ...form, roll_no: v })} hint="Unique within the class" />
+                    {/* Roll No must be unique — backend enforces it per class + academic year */}
+                    <Field label="Roll Number" value={form.roll_no} onChange={v => setForm({ ...form, roll_no: v })} hint="Unique within the class, for this academic year" />
                     <Field label="Admission Number" value={form.admission_no} onChange={v => setForm({ ...form, admission_no: v })} />
                     <Field label="Admission Date" type="date" value={form.admission_date} onChange={v => setForm({ ...form, admission_date: v })} hint="DD/MM/YYYY" />
                     {/* Parent / Guardian */}
@@ -644,7 +605,6 @@ export default function UserTab({ data, fetchData, user }) {
                   </Grid>
                 </Section>
               )}
-
               <div className="pt-4 border-t border-zinc-100 flex flex-col-reverse sm:flex-row justify-end gap-3">
                 <button type="button" onClick={() => setIsModalOpen(false)} className="text-zinc-700 px-4 py-2 border border-zinc-200 rounded-md text-xs font-medium hover:bg-zinc-50 transition-colors">
                   Cancel
@@ -654,18 +614,15 @@ export default function UserTab({ data, fetchData, user }) {
                 </button>
               </div>
             </form>
-
           </div>
         </div>
       )}
     </div>
   );
 }
-
 // =====================================================================
 // Sub-components
 // =====================================================================
-
 function Section({ title, children }) {
   return (
     <div className="ring-1 ring-black/5 rounded-md p-5 bg-zinc-50/30">
@@ -674,12 +631,10 @@ function Section({ title, children }) {
     </div>
   );
 }
-
 function Grid({ children }) {
   // 1 column on phones, 2 from md up — keeps fields readable on any size
   return <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{children}</div>;
 }
-
 // Field now also supports: error (red message), hint (grey helper text),
 // maxLength and inputMode (better mobile keyboards), and readOnly (a
 // non-editable, greyed-out display — used for the auto Academic Year).
@@ -689,13 +644,11 @@ function Field({ label, value, onChange, type = 'text', options, required, place
   const state = error
     ? "border-red-400 focus:ring-red-500/20 focus:border-red-500"
     : "border-zinc-200 focus:ring-primary/20 focus:border-primary/40";
-
   return (
     <div className="flex flex-col">
       <label className="text-xs font-medium text-zinc-600 mb-1.5 flex items-center gap-1">
         {label} {required && <span className="text-accent">*</span>}
       </label>
-
       {readOnly ? (
         // Non-editable, clearly greyed out (e.g. auto-assigned Academic Year)
         <input type="text" value={value || ''} readOnly disabled
@@ -714,7 +667,6 @@ function Field({ label, value, onChange, type = 'text', options, required, place
           placeholder={placeholder} maxLength={maxLength} inputMode={inputMode}
           className={`${base} ${state} h-9`} />
       )}
-
       {/* Error takes priority over the hint */}
       {error
         ? <p className="text-[10px] text-red-500 mt-1">{error}</p>

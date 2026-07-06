@@ -817,32 +817,28 @@ app.get('/api/admin/data/:instId', async (req, res) => {
 //
 //  In this version:
 //    • Every NEW user is automatically stamped with the institution's
-//      ACTIVE academic year (academic_year_id). The backend decides it,
-//      so it can't be faked from the client. On EDIT the original year
-//      is preserved (never changed).
-//    • Roll number is unique PER CLASS; on edit, uniqueness is only
-//      re-checked for fields that actually changed (so editing other
-//      info never reports a false "roll already used").
+//      ACTIVE academic year (academic_year_id). The backend decides it.
+//      On EDIT the original year is preserved (never changed).
+//    • Roll number is unique per (class + roll + ACADEMIC YEAR), counting
+//      EVERY status (active, inactive, alumni). So an inactive/alumni
+//      student keeps holding their roll for that year — a new student
+//      can only reuse it once that user is DELETED (hard delete) or the
+//      active academic year changes.
+//    • Delete is a permanent hard delete (frees the roll immediately).
+//    • New: PATCH /:id/status flips a user's status (used by the Inactive
+//      tab to reactivate, and anywhere that pushes a user to inactive).
 //
-//  Run the migration first:
-//    ALTER TABLE users
-//      ADD COLUMN academic_year_id int DEFAULT NULL AFTER class_id,
-//      ADD KEY fk_user_academic_year (academic_year_id),
-//      ADD CONSTRAINT fk_user_academic_year FOREIGN KEY (academic_year_id)
-//          REFERENCES academic_years (id) ON DELETE SET NULL;
+//  No new migration — academic_year_id already exists on users.
 // =====================================================================
-
 function _todayISO() {
     return new Date().toISOString().slice(0, 10);
 }
-
 // Is this string a real, parseable date?
 function _isValidDate(s) {
     if (!s) return false;
     const d = new Date(s);
     return !isNaN(d.getTime());
 }
-
 // The institution's currently-active academic year id (or null).
 // Every module now anchors to this — new users get stamped with it.
 async function getActiveAcademicYearId(conn, instId) {
@@ -852,7 +848,6 @@ async function getActiveAcademicYearId(conn, instId) {
     );
     return rows.length ? rows[0].id : null;
 }
-
 // Synchronous format / range validation. Returns an error string, or
 // null when everything is fine.
 function validateUserData(body) {
@@ -861,36 +856,29 @@ function validateUserData(body) {
         joining_date,
         school_joined_date, school_joined_grade
     } = body;
-
     const today = _todayISO();
     const isStaff = role === 'Super Admin' || (role || '').toLowerCase().includes('teacher');
-
     // --- Phone: exactly 10 digits, numbers only, cannot start with 0 ---
     if (phone_no && !/^[1-9][0-9]{9}$/.test(String(phone_no))) {
         return 'Phone number must be exactly 10 digits (numbers only) and cannot start with 0.';
     }
-
     // --- Aadhaar: exactly 12 digits, numbers only ----------------------
     if (aadhar_no && !/^[0-9]{12}$/.test(String(aadhar_no))) {
         return 'Aadhaar number must be exactly 12 digits (numbers only).';
     }
-
     // --- PEN: alphanumeric, 6-20 chars ---------------------------------
     if (pen_no && !/^[A-Za-z0-9]{6,20}$/.test(String(pen_no))) {
         return 'PEN number must be 6-20 characters, letters and numbers only.';
     }
-
     // --- TC number: alphanumeric, 5-20 chars ---------------------------
     if (tc_number && !/^[A-Za-z0-9]{5,20}$/.test(String(tc_number))) {
         return 'TC number must be 5-20 characters, letters and numbers only.';
     }
-
     // --- Staff joining date: valid, not in the future ------------------
     if (isStaff && joining_date) {
         if (!_isValidDate(joining_date)) return 'Joining date is not a valid date.';
         if (joining_date > today)        return 'Joining date cannot be in the future.';
     }
-
     // --- Student school joined grade: whole number 1-12 ----------------
     if (school_joined_grade !== '' && school_joined_grade != null) {
         const g = parseInt(school_joined_grade, 10);
@@ -898,51 +886,52 @@ function validateUserData(body) {
             return 'School joined grade must be a whole number between 1 and 12.';
         }
     }
-
     // --- Student school joined date: valid, not in the future ----------
     if (school_joined_date) {
         if (!_isValidDate(school_joined_date)) return 'School joined date is not a valid date.';
         if (school_joined_date > today)        return 'School joined date cannot be in the future.';
     }
-
     return null;
 }
-
 // Small helper: does any OTHER row match this query?
 async function _exists(conn, sql, params) {
     const [rows] = await conn.execute(sql, params);
     return rows.length > 0;
 }
-
 // Compare two values as strings (handles number vs string, null vs '').
 const _sameVal = (a, b) => String(a ?? '') === String(b ?? '');
-
 // Uniqueness rules, scoped correctly:
-//   • Roll number  -> unique WITHIN A CLASS (institutionId + class_id).
-//   • PEN number   -> unique across the whole school.
+//   • Roll number  -> unique per (class + ACADEMIC YEAR). Counts EVERY
+//     status, so inactive/alumni students keep holding their roll for
+//     that year. `yearId` is the year the row belongs to: the active
+//     year on create, the row's preserved year on update.
+//   • PEN number   -> unique across the whole school (a permanent id).
 //   • TC number    -> unique across the whole school.
 //
 //  `current` is the existing DB row when UPDATING (null when creating).
 //  A field is only checked when it CHANGED vs `current`, so editing a
 //  user without touching these fields never triggers a conflict.
-//  The user being edited is also excluded via id <> excludeId.
-async function checkUserUniqueness(conn, instId, body, excludeId, current) {
+async function checkUserUniqueness(conn, instId, body, excludeId, current, yearId) {
     const exclude = excludeId || 0;
     const cur = current || {};
     const isCreate = !current;
-
-    // --- Roll number — per class -------------------------------------
+    // --- Roll number — per class + academic year ---------------------
     if (body.roll_no && body.class_id) {
         const rollChanged  = isCreate || !_sameVal(body.roll_no, cur.roll_no);
         const classChanged = isCreate || !_sameVal(body.class_id, cur.class_id);
-        if (rollChanged || classChanged) {
+        const yearChanged  = isCreate || !_sameVal(yearId, cur.academic_year_id);
+        if (rollChanged || classChanged || yearChanged) {
+            const params = [instId, body.class_id, body.roll_no];
+            let yearClause;
+            if (yearId != null) { yearClause = ' AND academic_year_id = ?'; params.push(yearId); }
+            else                { yearClause = ' AND academic_year_id IS NULL'; }
+            params.push(exclude);
             const taken = await _exists(conn,
-                'SELECT id FROM users WHERE institutionId = ? AND class_id = ? AND roll_no = ? AND id <> ?',
-                [instId, body.class_id, body.roll_no, exclude]);
-            if (taken) return `Roll number "${body.roll_no}" is already used by another student in this class.`;
+                `SELECT id FROM users WHERE institutionId = ? AND class_id = ? AND roll_no = ?${yearClause} AND id <> ?`,
+                params);
+            if (taken) return `Roll number "${body.roll_no}" is already used by another student in this class for the current academic year. Delete that student to reuse this roll number, or it will free up when the academic year changes.`;
         }
     }
-
     // --- PEN number — school-wide ----------------------------------
     if (body.pen_no && (isCreate || !_sameVal(body.pen_no, cur.pen_no))) {
         const taken = await _exists(conn,
@@ -950,7 +939,6 @@ async function checkUserUniqueness(conn, instId, body, excludeId, current) {
             [instId, body.pen_no, exclude]);
         if (taken) return `PEN number "${body.pen_no}" is already used by another user in this school.`;
     }
-
     // --- TC number — school-wide -------------------------------------
     if (body.tc_number && (isCreate || !_sameVal(body.tc_number, cur.tc_number))) {
         const taken = await _exists(conn,
@@ -958,11 +946,8 @@ async function checkUserUniqueness(conn, instId, body, excludeId, current) {
             [instId, body.tc_number, exclude]);
         if (taken) return `TC number "${body.tc_number}" is already used by another user in this school.`;
     }
-
     return null;
 }
-
-
 // ---------------------------------------------------------------------
 //  4.1  Create user  (auto-stamps the active academic year)
 // ---------------------------------------------------------------------
@@ -977,19 +962,21 @@ app.post('/api/admin/users', async (req, res) => {
         pen_no, parent_name, admission_date,
         school_joined_date, school_joined_grade, tc_number
     } = body;
- 
+
     const vErr = validateUserData(body);
     if (vErr) return res.status(400).json({ error: vErr });
- 
+
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
- 
-        const uErr = await checkUserUniqueness(conn, institutionId, body, 0, null);
-        if (uErr) { await conn.rollback(); return res.status(400).json({ error: uErr }); }
- 
+
+        // Resolve the active year FIRST so the roll-uniqueness check is
+        // scoped to it.
         const academicYearId = await getActiveAcademicYearId(conn, institutionId);
- 
+
+        const uErr = await checkUserUniqueness(conn, institutionId, body, 0, null, academicYearId);
+        if (uErr) { await conn.rollback(); return res.status(400).json({ error: uErr }); }
+
         const [result] = await conn.execute(
             `INSERT INTO users
               (name, email, username, password, role, institutionId, modules,
@@ -1013,7 +1000,7 @@ app.post('/api/admin/users', async (req, res) => {
              tc_number || null,
              academicYearId]
         );
- 
+
         await syncTeacherSubjects(conn, result.insertId, role, subject_ids);
         await conn.commit();
         res.json({ success: true });
@@ -1025,8 +1012,6 @@ app.post('/api/admin/users', async (req, res) => {
         res.status(500).json({ error: err.message });
     } finally { conn.release(); }
 });
-
-
 // ---------------------------------------------------------------------
 //  4.2  Update user  (academic_year_id is preserved, never changed)
 // ---------------------------------------------------------------------
@@ -1041,28 +1026,30 @@ app.put('/api/admin/users/:id', async (req, res) => {
         pen_no, parent_name, admission_date,
         school_joined_date, school_joined_grade, tc_number
     } = body;
- 
+
     const vErr = validateUserData(body);
     if (vErr) return res.status(400).json({ error: vErr });
- 
+
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
- 
+
         const [owner] = await conn.execute(
-            'SELECT institutionId, roll_no, class_id, pen_no, tc_number FROM users WHERE id = ?',
+            'SELECT institutionId, roll_no, class_id, pen_no, tc_number, academic_year_id FROM users WHERE id = ?',
             [id]
         );
         if (owner.length === 0) { await conn.rollback(); return res.status(404).json({ error: 'User not found.' }); }
         const current = owner[0];
         const instId = current.institutionId;
- 
+
         // TENANT: refuse if this user belongs to another institution.
         if (!sameTenant(req, instId)) { await conn.rollback(); return res.status(403).json({ error: 'This user belongs to another institution.' }); }
- 
-        const uErr = await checkUserUniqueness(conn, instId, body, parseInt(id, 10), current);
+
+        // The user's year is preserved on edit, so the roll check is scoped
+        // to the row's existing academic_year_id.
+        const uErr = await checkUserUniqueness(conn, instId, body, parseInt(id, 10), current, current.academic_year_id);
         if (uErr) { await conn.rollback(); return res.status(400).json({ error: uErr }); }
- 
+
         await conn.execute(
             `UPDATE users SET
                 name=?, email=?, username=?, password=?, role=?, modules=?,
@@ -1084,7 +1071,7 @@ app.put('/api/admin/users/:id', async (req, res) => {
              tc_number || null,
              id]
         );
- 
+
         await syncTeacherSubjects(conn, parseInt(id, 10), role, subject_ids);
         await conn.commit();
         res.json({ success: true });
@@ -1096,22 +1083,67 @@ app.put('/api/admin/users/:id', async (req, res) => {
         res.status(500).json({ error: err.message });
     } finally { conn.release(); }
 });
-
-
 // ---------------------------------------------------------------------
-//  4.3  Delete user
+//  4.2b  Change only a user's status  (active / inactive / alumni)
+//        Used by the Inactive tab to reactivate, and to push a user to
+//        inactive without editing the whole record. Reactivating a
+//        student is guarded so it can't collide with an already-active
+//        roll number in the same class + year.
+// ---------------------------------------------------------------------
+app.patch('/api/admin/users/:id/status', async (req, res) => {
+    const { id } = req.params;
+    const status = String(req.body.status || '').toLowerCase();
+    const allowed = ['active', 'inactive', 'alumni'];
+    if (!allowed.includes(status)) return res.status(400).json({ error: 'Invalid status.' });
+
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        const [rows] = await conn.execute(
+            'SELECT institutionId, roll_no, class_id, academic_year_id FROM users WHERE id = ?', [id]);
+        if (rows.length === 0) { await conn.rollback(); return res.status(404).json({ error: 'User not found.' }); }
+        const cur = rows[0];
+        if (!sameTenant(req, cur.institutionId)) { await conn.rollback(); return res.status(403).json({ error: 'This user belongs to another institution.' }); }
+
+        // Guard: reactivating a student whose roll is already held by an
+        // ACTIVE student in the same class + year (shouldn't normally happen,
+        // but protects against edge cases).
+        if (status === 'active' && cur.roll_no && cur.class_id) {
+            const params = [cur.institutionId, cur.class_id, cur.roll_no];
+            let yearClause;
+            if (cur.academic_year_id != null) { yearClause = ' AND academic_year_id = ?'; params.push(cur.academic_year_id); }
+            else                              { yearClause = ' AND academic_year_id IS NULL'; }
+            params.push(id);
+            const [clash] = await conn.execute(
+                `SELECT id FROM users WHERE institutionId = ? AND class_id = ? AND roll_no = ?${yearClause} AND LOWER(status) = 'active' AND id <> ?`,
+                params);
+            if (clash.length) {
+                await conn.rollback();
+                return res.status(400).json({ error: `Roll number "${cur.roll_no}" is already active for another student in this class this year. Change that student's roll first, then reactivate.` });
+            }
+        }
+
+        await conn.execute('UPDATE users SET status = ? WHERE id = ? AND institutionId = ?', [status, id, cur.institutionId]);
+        await conn.commit();
+        res.json({ success: true });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally { conn.release(); }
+});
+// ---------------------------------------------------------------------
+//  4.3  Delete user  (PERMANENT hard delete — frees the roll number)
 // ---------------------------------------------------------------------
 app.delete('/api/admin/users/:id', async (req, res) => {
     try {
         const [rows] = await db.execute('SELECT institutionId FROM users WHERE id = ?', [req.params.id]);
         if (rows.length === 0) return res.json({ success: true });   // already gone
         if (!sameTenant(req, rows[0].institutionId)) return res.status(403).json({ error: 'This user belongs to another institution.' });
- 
+
         await db.execute('DELETE FROM users WHERE id = ? AND institutionId = ?', [req.params.id, rows[0].institutionId]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-
 // === 15.7 USERS EXPORT — full directory, register layout =============
 app.get('/api/admin/users-export/:instId', async (req, res) => {
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
@@ -1126,14 +1158,14 @@ app.get('/api/admin/users-export/:instId', async (req, res) => {
         };
         const rollNum = (r) => { const n = parseInt(r, 10); return isNaN(n) ? Number.MAX_SAFE_INTEGER : n; };
         const money = (v) => (v === null || v === undefined || v === '') ? '' : v;
- 
+
         const scope = (req.query.scope || 'all').toString();
         const isClassScope = scope.startsWith('class:');
         const specificClass = isClassScope ? parseInt(scope.slice(6), 10) : null;
         const includeStudents = scope === 'all' || scope === 'students' || isClassScope;
         const includeTeachers = scope === 'all' || scope === 'teachers';
         const includeOther = scope === 'all' || scope === 'other';
- 
+
         let year = null;
         if (req.query.yearId) {
             const [yr] = await db.execute('SELECT * FROM academic_years WHERE id = ? AND institutionId = ?', [req.query.yearId, instId]);
@@ -1145,27 +1177,27 @@ app.get('/api/admin/users-export/:instId', async (req, res) => {
         }
         const yearId = year ? year.id : null;
         const yLabel = year ? (year.name || '') : 'All years';
- 
+
         const [instRows] = await db.execute('SELECT id, name FROM institutions WHERE id = ?', [instId]);
         const inst = instRows[0] || { name: 'Institution' };
- 
+
         const [classes] = await db.execute('SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section', [instId]);
         const classById = {}; classes.forEach(c => { classById[c.id] = c; });
         const labelOf = (cid) => { const c = classById[cid]; return c ? `${c.className}${c.section ? ' - ' + c.section : ''}` : 'Unassigned'; };
- 
+
         const [users] = await db.execute('SELECT * FROM users WHERE institutionId = ?', [instId]);
         const roleLc = (u) => (u.role || '').toLowerCase().trim();
         const notAlumni = (u) => (u.status || '').toLowerCase() !== 'alumni';
         const isStudent = (u) => roleLc(u) === 'student';
         const isTeacher = (u) => roleLc(u).includes('teacher');
- 
+
         let histClass = {};
         if (yearId) {
             const [hc] = await db.execute('SELECT DISTINCT student_id, class_id FROM student_marks WHERE institutionId = ? AND academic_year_id = ?', [instId, yearId]);
             hc.forEach(r => { if (histClass[r.student_id] == null) histClass[r.student_id] = r.class_id; });
         }
         const classOf = (u) => (histClass[u.id] != null ? histClass[u.id] : u.class_id);
- 
+
         let subjByTeacher = {};
         try {
             const [ts] = await db.execute(
@@ -1175,14 +1207,14 @@ app.get('/api/admin/users-export/:instId', async (req, res) => {
             );
             ts.forEach(r => { (subjByTeacher[r.tid] = subjByTeacher[r.tid] || []).push(r.sname); });
         } catch (e) { /* leave subjects blank if schema differs */ }
- 
+
         const live = users.filter(notAlumni);
         const studentsByClass = {};
         live.filter(isStudent).forEach(u => { const cid = classOf(u); (studentsByClass[cid] = studentsByClass[cid] || []).push(u); });
         Object.values(studentsByClass).forEach(list => list.sort((a, b) => rollNum(a.roll_no) - rollNum(b.roll_no) || (a.name || '').localeCompare(b.name || '')));
         const teacherUsers = live.filter(isTeacher).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
         const otherUsers = live.filter(u => !isStudent(u) && !isTeacher(u)).sort((a, b) => (a.role || '').localeCompare(b.role || '') || (a.name || '').localeCompare(b.name || ''));
- 
+
         const STU_HEAD = ['Roll', 'Name', 'Section', 'Gender', 'DOB', 'Phone', 'Email', 'Username', 'Aadhaar No', 'Admission No', 'Admission Date', 'Parent / Guardian', 'PEN No', 'Joined Date', 'Joined Grade', 'TC No', 'Address', 'Status'];
         const stuRow = (u) => [
             u.roll_no || '', u.name || '', u.section || '', u.gender || '', dmy(u.dob), u.phone_no || '', u.email || '', u.username || '',
@@ -1201,18 +1233,18 @@ app.get('/api/admin/users-export/:instId', async (req, res) => {
             u.aadhar_no || '', dmy(u.joining_date), u.experience || '', money(u.prev_salary), money(u.present_salary), u.address || '', u.status || ''
         ];
         const maxCols = Math.max(STU_HEAD.length, TEA_HEAD.length, OTH_HEAD.length);
- 
+
         const wb = new ExcelJS.Workbook();
         wb.creator = 'SmartEdz'; wb.created = new Date();
         const ws = wb.addWorksheet('Users');
         let r = 1;
- 
+
         ws.mergeCells(r, 1, r, maxCols);
         const tt = ws.getCell(r, 1); tt.value = inst.name || 'Institution'; tt.font = { bold: true, size: 14, color: { argb: 'FF111827' } }; r++;
         ws.mergeCells(r, 1, r, maxCols);
         const sb = ws.getCell(r, 1); sb.value = `Users directory · ${yLabel}`; sb.font = { size: 10, color: { argb: 'FF6B7280' } }; r++;
         r++;
- 
+
         const heading = (text) => {
             ws.mergeCells(r, 1, r, maxCols);
             const c = ws.getCell(r, 1); c.value = text;
@@ -1245,7 +1277,7 @@ app.get('/api/admin/users-export/:instId', async (req, res) => {
             });
             r++;
         };
- 
+
         if (includeStudents) {
             heading('STUDENTS');
             const cids = (specificClass != null ? [specificClass] : Object.keys(studentsByClass).map(Number))
@@ -1259,7 +1291,7 @@ app.get('/api/admin/users-export/:instId', async (req, res) => {
                 r++;
             });
         }
- 
+
         if (includeTeachers) {
             heading('TEACHERS');
             headerRow(TEA_HEAD);
@@ -1267,7 +1299,7 @@ app.get('/api/admin/users-export/:instId', async (req, res) => {
             teacherUsers.forEach((u, i) => dataRow(teaRow(u, i)));
             r++;
         }
- 
+
         if (includeOther) {
             heading('OTHER STAFF');
             headerRow(OTH_HEAD);
@@ -1275,11 +1307,11 @@ app.get('/api/admin/users-export/:instId', async (req, res) => {
             otherUsers.forEach((u, i) => dataRow(othRow(u, i)));
             r++;
         }
- 
+
         const widths = [8, 24, 12, 9, 12, 14, 26, 16, 16, 14, 14, 22, 16, 22, 12, 14, 30, 12];
         for (let i = 1; i <= maxCols; i++) ws.getColumn(i).width = widths[i - 1] || 14;
         ws.views = [{ state: 'frozen', xSplit: 2, ySplit: 0 }];
- 
+
         const scopeTag = isClassScope ? `Class_${labelOf(specificClass)}` : scope.charAt(0).toUpperCase() + scope.slice(1);
         const fileSafe = `${inst.name || 'institution'}_Users_${scopeTag}_${yLabel}`.replace(/[^a-z0-9\-_ ]/gi, '_').replace(/\s+/g, '_');
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

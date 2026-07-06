@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Users, ShieldCheck, Calendar, Layers, CircleArrowUp, CircleCheck, BookOpen, Download } from 'lucide-react';
+import { Users, ShieldCheck, Calendar, Layers, CircleArrowUp, CircleCheck, BookOpen, Download, UserX } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
-
 import UserTab        from './UserTab';
+import InactiveTab    from './InactiveTab';
 import Rolestab       from './Rolestab';
 import Permissionstab from './Permissionstab';
 import Academicstab   from './Academicstab';
@@ -11,7 +11,6 @@ import Classestab     from './Classestab';
 import Promotiontab   from './Promotiontab';
 import SubjectsTab    from './SubjectsTab';
 import DownloadsTab   from './DownloadsTab';
-
 export default function ManageLogin() {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState('users');
@@ -20,7 +19,6 @@ export default function ManageLogin() {
     teacherSubjects: {}, subjectClasses: {}, modules: [], institution: null
   });
   const [loading, setLoading] = useState(true);
-
   const fetchData = useCallback(async () => {
     if (!user?.institutionId) return;
     setLoading(true);
@@ -33,9 +31,7 @@ export default function ManageLogin() {
     }
     setLoading(false);
   }, [user]);
-
   useEffect(() => { fetchData(); }, [fetchData]);
-
   const tabs = [
     { id: 'users',       label: 'Users',          icon: Users },
     { id: 'roles',       label: 'Roles',          icon: ShieldCheck },
@@ -44,14 +40,12 @@ export default function ManageLogin() {
     { id: 'subjects',    label: 'Subjects',       icon: BookOpen },
     { id: 'promotion',   label: 'Promotion',      icon: CircleArrowUp },
     { id: 'academics',   label: 'Academics Year', icon: Calendar },
+    { id: 'inactive',    label: 'Inactive',       icon: UserX },
     { id: 'downloads',   label: 'Downloads',      icon: Download },
   ];
-
   const tabProps = { data, fetchData, user };
-
   return (
     <div className="p-8 max-w-[1440px] w-full mx-auto animate-in fade-in duration-700">
-
       {/* 1. Page Header */}
       <header className="mb-6 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
@@ -61,7 +55,6 @@ export default function ManageLogin() {
           </p>
         </div>
       </header>
-
       {/* Segmented Tabs (Matches Timetable style) */}
       <div className="flex flex-wrap items-center gap-2 mb-8 border-b border-zinc-200 pb-4">
         {tabs.map(t => (
@@ -78,7 +71,6 @@ export default function ManageLogin() {
           </button>
         ))}
       </div>
-
       {/* Content */}
       <div className="min-h-[500px]">
         {loading ? (
@@ -88,6 +80,7 @@ export default function ManageLogin() {
         ) : (
           <>
             {activeTab === 'users'       && <UserTab {...tabProps} />}
+            {activeTab === 'inactive'    && <InactiveTab {...tabProps} />}
             {activeTab === 'roles'       && <Rolestab {...tabProps} />}
             {activeTab === 'permissions' && <Permissionstab {...tabProps} />}
             {activeTab === 'academics'   && <Academicstab {...tabProps} />}
