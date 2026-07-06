@@ -29,6 +29,14 @@ export const MODULES = [
     navigateTo: '/ManageLogins'
   },
   {
+    id: 'FeeManagement',
+    module_name: 'FeeManagement',
+    label: 'Fee Management',
+    title: 'Fee Management',
+    imageSource: 'https://cdn-icons-png.flaticon.com/128/6394/6394798.png',
+    navigateTo: '/FeeManagement'
+  },
+  {
     id: 'timetable',
     module_name: 'Timetable',
     label: 'Timetable',

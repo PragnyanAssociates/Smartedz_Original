@@ -143,6 +143,7 @@ function requireRole(...roles) {
 const DEFAULT_MODULES = [
     'Overview',
     'Manage Logins',
+    'FeeManagement',
     'Timetable',
     'Academic Calendar',
     'Attendance',
@@ -9913,6 +9914,227 @@ app.get('/api/overview/me/:instId/:userId', async (req, res) => {
  
 
 
+// ============================================================
+// Section 26 — Fee Management
+// Tabs served: Fee Assign (class fee structures + student assignment) & Concession.
+// All routes are institution + active-academic-year scoped, matching the
+// existing SmartEdz pattern. Paste this block before `const PORT`.
+//
+// INTEGRATION NOTE: this uses the shared `resolveYearId(institutionId)` helper
+// for the active year. If your helper's signature differs, that single call in
+// the /fees/data route is the only line to adjust.
+// ============================================================
+
+// ---- GET everything the Fee Management module needs --------------
+app.get('/api/fees/data/:institutionId', async (req, res) => {
+  const institutionId = req.params.institutionId;
+  try {
+    const yearId = await resolveYearId(institutionId); // active academic year
+
+    const [classes] = await db.execute(
+      'SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY id',
+      [institutionId]
+    );
+
+    const [students] = await db.execute(
+      `SELECT id, name, roll_no, class_id, section, status
+         FROM users
+        WHERE institutionId = ?
+          AND LOWER(role) LIKE '%student%'
+          AND LOWER(COALESCE(status, 'active')) = 'active'`,
+      [institutionId]
+    );
+
+    const [plans] = await db.execute(
+      'SELECT * FROM fee_class_plans WHERE institutionId = ? AND (academic_year_id <=> ?)',
+      [institutionId, yearId ?? null]
+    );
+
+    let installments = [];
+    if (plans.length) {
+      const ids = plans.map(p => p.id);
+      const ph = ids.map(() => '?').join(',');
+      const [rows] = await db.execute(
+        `SELECT * FROM fee_installments WHERE plan_id IN (${ph}) ORDER BY sort_order, id`,
+        ids
+      );
+      installments = rows;
+    }
+
+    const [assignments] = await db.execute(
+      'SELECT * FROM student_fee_assignments WHERE institutionId = ? AND (academic_year_id <=> ?)',
+      [institutionId, yearId ?? null]
+    );
+
+    res.json({ academic_year_id: yearId ?? null, classes, students, plans, installments, assignments });
+  } catch (err) {
+    console.error('fees/data error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---- Upsert a class fee structure (full fee + installments) ------
+app.post('/api/fees/class-plan', async (req, res) => {
+  const {
+    institutionId, academic_year_id, class_id, full_fee,
+    installments = [], userId, userName
+  } = req.body;
+  if (!institutionId || !class_id) {
+    return res.status(400).json({ error: 'institutionId and class_id are required.' });
+  }
+  try {
+    const [existing] = await db.execute(
+      'SELECT id FROM fee_class_plans WHERE institutionId = ? AND (academic_year_id <=> ?) AND class_id = ?',
+      [institutionId, academic_year_id ?? null, class_id]
+    );
+
+    let planId;
+    if (existing.length) {
+      planId = existing[0].id;
+      await db.execute(
+        'UPDATE fee_class_plans SET full_fee = ?, updated_by = ?, updated_by_name = ? WHERE id = ?',
+        [Number(full_fee) || 0, userId ?? null, userName ?? null, planId]
+      );
+    } else {
+      const [ins] = await db.execute(
+        `INSERT INTO fee_class_plans
+           (institutionId, academic_year_id, class_id, full_fee, created_by, created_by_name)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [institutionId, academic_year_id ?? null, class_id, Number(full_fee) || 0, userId ?? null, userName ?? null]
+      );
+      planId = ins.insertId;
+    }
+
+    // Replace the installment set wholesale.
+    await db.execute('DELETE FROM fee_installments WHERE plan_id = ?', [planId]);
+    let order = 0;
+    for (const it of (installments || [])) {
+      order += 1;
+      await db.execute(
+        `INSERT INTO fee_installments
+           (plan_id, institutionId, academic_year_id, class_id, label, amount, due_date, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          planId, institutionId, academic_year_id ?? null, class_id,
+          it.label || ('Installment ' + order), Number(it.amount) || 0,
+          it.due_date || null, order
+        ]
+      );
+    }
+
+    res.json({ success: true, plan_id: planId });
+  } catch (err) {
+    console.error('fees/class-plan error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---- Assign / update a single student's payment mode -------------
+app.post('/api/fees/assign', async (req, res) => {
+  const {
+    institutionId, academic_year_id, student_id, class_id, plan_id,
+    payment_mode, userId, userName
+  } = req.body;
+  if (!institutionId || !student_id) {
+    return res.status(400).json({ error: 'institutionId and student_id are required.' });
+  }
+  const mode = payment_mode === 'installment' ? 'installment' : 'full';
+  try {
+    const [existing] = await db.execute(
+      'SELECT id FROM student_fee_assignments WHERE institutionId = ? AND (academic_year_id <=> ?) AND student_id = ?',
+      [institutionId, academic_year_id ?? null, student_id]
+    );
+    if (existing.length) {
+      await db.execute(
+        'UPDATE student_fee_assignments SET class_id = ?, plan_id = ?, payment_mode = ?, updated_by = ?, updated_by_name = ? WHERE id = ?',
+        [class_id ?? null, plan_id ?? null, mode, userId ?? null, userName ?? null, existing[0].id]
+      );
+    } else {
+      await db.execute(
+        `INSERT INTO student_fee_assignments
+           (institutionId, academic_year_id, student_id, class_id, plan_id, payment_mode, created_by, created_by_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [institutionId, academic_year_id ?? null, student_id, class_id ?? null, plan_id ?? null, mode, userId ?? null, userName ?? null]
+      );
+    }
+    res.json({ success: true });
+  } catch (err) {
+    console.error('fees/assign error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---- Bulk assign every student in a class to one payment mode ----
+app.post('/api/fees/assign-class', async (req, res) => {
+  const {
+    institutionId, academic_year_id, class_id, plan_id,
+    payment_mode, student_ids = [], userId, userName
+  } = req.body;
+  if (!institutionId || !class_id) {
+    return res.status(400).json({ error: 'institutionId and class_id are required.' });
+  }
+  const mode = payment_mode === 'installment' ? 'installment' : 'full';
+  try {
+    for (const sid of (student_ids || [])) {
+      const [existing] = await db.execute(
+        'SELECT id FROM student_fee_assignments WHERE institutionId = ? AND (academic_year_id <=> ?) AND student_id = ?',
+        [institutionId, academic_year_id ?? null, sid]
+      );
+      if (existing.length) {
+        await db.execute(
+          'UPDATE student_fee_assignments SET class_id = ?, plan_id = ?, payment_mode = ?, updated_by = ?, updated_by_name = ? WHERE id = ?',
+          [class_id, plan_id ?? null, mode, userId ?? null, userName ?? null, existing[0].id]
+        );
+      } else {
+        await db.execute(
+          `INSERT INTO student_fee_assignments
+             (institutionId, academic_year_id, student_id, class_id, plan_id, payment_mode, created_by, created_by_name)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [institutionId, academic_year_id ?? null, sid, class_id, plan_id ?? null, mode, userId ?? null, userName ?? null]
+        );
+      }
+    }
+    res.json({ success: true, count: (student_ids || []).length });
+  } catch (err) {
+    console.error('fees/assign-class error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---- Set / update a student's concession -------------------------
+app.post('/api/fees/concession', async (req, res) => {
+  const {
+    institutionId, academic_year_id, student_id, class_id, plan_id,
+    concession_amount, concession_reason, userId, userName
+  } = req.body;
+  if (!institutionId || !student_id) {
+    return res.status(400).json({ error: 'institutionId and student_id are required.' });
+  }
+  const amt = Number(concession_amount) || 0;
+  try {
+    const [existing] = await db.execute(
+      'SELECT id FROM student_fee_assignments WHERE institutionId = ? AND (academic_year_id <=> ?) AND student_id = ?',
+      [institutionId, academic_year_id ?? null, student_id]
+    );
+    if (existing.length) {
+      await db.execute(
+        'UPDATE student_fee_assignments SET concession_amount = ?, concession_reason = ?, updated_by = ?, updated_by_name = ? WHERE id = ?',
+        [amt, concession_reason || null, userId ?? null, userName ?? null, existing[0].id]
+      );
+    } else {
+      await db.execute(
+        `INSERT INTO student_fee_assignments
+           (institutionId, academic_year_id, student_id, class_id, plan_id, concession_amount, concession_reason, created_by, created_by_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [institutionId, academic_year_id ?? null, student_id, class_id ?? null, plan_id ?? null, amt, concession_reason || null, userId ?? null, userName ?? null]
+      );
+    }
+    res.json({ success: true });
+  } catch (err) {
+    console.error('fees/concession error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // =====================================================================
 const PORT = process.env.PORT || 3001;
