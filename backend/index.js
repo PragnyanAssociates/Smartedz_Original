@@ -2153,6 +2153,13 @@ app.get('/', (req, res) => res.json({ status: 'ok', service: 'SmartEdz ERP', tim
 //   the bulk save is the "timetable updated" moment. Everything else is
 //   unchanged.
 //
+//   AUDIT (needs the timetable_meta table — one row per class grid, per
+//   academic year): the class bulk-save upserts created_by/updated_by
+//   (actor from the token; creator kept on first save, updater moved on
+//   every later save), and the admin timetable load returns a per-class
+//   metaByClass map so the UI can show "Created by <name>" + "Updated by
+//   <name>" with dates/times under the class dropdown.
+//
 //   Uses createNotifications / studentIdsForClass from Section 25.
 //   'Timetable' is the module id from Screens/Modules.js. Each notify is
 //   wrapped so it can never fail the underlying save.
@@ -2162,7 +2169,6 @@ async function resolveYearId(instId, requestedYearId) {
     const [rows] = await db.execute('SELECT id FROM academic_years WHERE institutionId = ? AND isActive = 1 LIMIT 1', [instId]);
     return rows[0]?.id || null;
 }
-
 app.get('/api/admin/timetable/:instId', async (req, res) => {
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     try {
@@ -2170,7 +2176,7 @@ app.get('/api/admin/timetable/:instId', async (req, res) => {
         if (!yearId) {
             return res.json({
                 academic_year_id: null, days: [], periods: [], entries: [],
-                classes: [], teachers: [], subjects: [], teacherSubjects: {},
+                classes: [], teachers: [], subjects: [], teacherSubjects: {}, metaByClass: {},
                 message: 'No active academic year. Create one first under Academics.'
             });
         }
@@ -2188,10 +2194,31 @@ app.get('/api/admin/timetable/:instId', async (req, res) => {
             if (!teacherSubjects[r.teacher_id]) teacherSubjects[r.teacher_id] = [];
             teacherSubjects[r.teacher_id].push(r.subject_id);
         });
-        res.json({ academic_year_id: yearId, days, periods, entries, classes, teachers, subjects, teacherSubjects });
+
+        // Per-class created/updated audit for this year, keyed by class_id.
+        const [metaRows] = await db.execute(
+            `SELECT m.class_id, m.created_at, m.updated_at,
+                    cu.name AS created_by_name,
+                    uu.name AS updated_by_name
+               FROM timetable_meta m
+               LEFT JOIN users cu ON cu.id = m.created_by
+               LEFT JOIN users uu ON uu.id = m.updated_by
+              WHERE m.institutionId = ? AND m.academic_year_id = ?`,
+            [instId, yearId]
+        );
+        const metaByClass = {};
+        metaRows.forEach(m => {
+            metaByClass[m.class_id] = {
+                created_by_name: m.created_by_name || null,
+                created_at: m.created_at || null,
+                updated_by_name: m.updated_by_name || null,
+                updated_at: m.updated_at || null
+            };
+        });
+
+        res.json({ academic_year_id: yearId, days, periods, entries, classes, teachers, subjects, teacherSubjects, metaByClass });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-
 // ---------------------------------------------------------------------
 //  11.b  PERSONAL TIMETABLE  ->  GET /api/timetable/my/:userId
 // ---------------------------------------------------------------------
@@ -2204,21 +2231,16 @@ app.get('/api/timetable/my/:userId', async (req, res) => {
         if (users.length === 0) return res.status(404).json({ error: 'User not found.' });
         const me = users[0];
         if (!sameTenant(req, me.institutionId)) return res.status(403).json({ error: 'This user belongs to another institution.' });
-
         const role = (me.role || '').toLowerCase();
         const mode = role.includes('teacher') ? 'teacher' : 'student';
-
         const yearId = await resolveYearId(me.institutionId, req.query.yearId);
         if (!yearId) {
             return res.json({ mode, academic_year_id: null, days: [], periods: [], entries: [], class_label: null });
         }
-
         const [days]    = await db.execute('SELECT * FROM timetable_days WHERE institutionId = ? AND academic_year_id = ? ORDER BY day_index', [me.institutionId, yearId]);
         const [periods] = await db.execute('SELECT * FROM timetable_periods WHERE institutionId = ? AND academic_year_id = ? ORDER BY period_index', [me.institutionId, yearId]);
-
         let entries = [];
         let class_label = null;
-
         if (mode === 'teacher') {
             const [rows] = await db.execute(
                 `SELECT e.day_id, e.period_id, e.room_no, e.class_id, e.subject_id,
@@ -2250,11 +2272,9 @@ app.get('/api/timetable/my/:userId', async (req, res) => {
                 entries = rows;
             }
         }
-
         res.json({ mode, academic_year_id: yearId, days, periods, entries, class_label });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-
 app.post('/api/admin/timetable/days', async (req, res) => {
     const { days } = req.body;
     const institutionId = req.auth.institutionId;
@@ -2275,7 +2295,6 @@ app.post('/api/admin/timetable/days', async (req, res) => {
         res.status(500).json({ error: err.message });
     } finally { conn.release(); }
 });
-
 app.post('/api/admin/timetable/periods', async (req, res) => {
     const { periods } = req.body;
     const institutionId = req.auth.institutionId;
@@ -2296,7 +2315,6 @@ app.post('/api/admin/timetable/periods', async (req, res) => {
         res.status(500).json({ error: err.message });
     } finally { conn.release(); }
 });
-
 // Single-cell upsert/clear. Intentionally does NOT notify (too granular —
 // students would be pinged on every cell change). The bulk save below is
 // the "timetable updated" notify point.
@@ -2320,9 +2338,9 @@ app.post('/api/admin/timetable/entry', async (req, res) => {
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-
 app.post('/api/admin/timetable/entries/bulk', async (req, res) => {
     const institutionId = req.auth.institutionId;
+    const actor_id = req.auth.userId;
     const { class_id, entries } = req.body;
     const conn = await db.getConnection();
     try {
@@ -2337,13 +2355,21 @@ app.post('/api/admin/timetable/entries/bulk', async (req, res) => {
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
                 [institutionId, yearId, class_id, e.day_id, e.period_id, e.subject_id || null, e.teacher_id || null, e.room_no || null]);
         }
+        // Stamp the per-class audit row. First save sets creator + updater to
+        // the same person; later saves only move updated_by / updated_at.
+        await conn.execute(
+            `INSERT INTO timetable_meta (institutionId, academic_year_id, class_id, created_by, updated_by)
+             VALUES (?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE updated_by = VALUES(updated_by), updated_at = CURRENT_TIMESTAMP`,
+            [institutionId, yearId, class_id, actor_id, actor_id]
+        );
         await conn.commit();
         try {
             const recipients = await studentIdsForClass(class_id);
             await createNotifications({
                 institutionId, recipientIds: recipients, type: 'timetable',
                 title: 'Timetable updated', body: 'Your class timetable has been updated.',
-                link: 'timetable', entity_id: class_id, actor_id: req.auth.userId
+                link: 'timetable', entity_id: class_id, actor_id
             });
         } catch (e) { console.warn('[notify timetable class]', e.message); }
         res.json({ success: true });
@@ -2352,24 +2378,21 @@ app.post('/api/admin/timetable/entries/bulk', async (req, res) => {
         res.status(500).json({ error: err.message });
     } finally { conn.release(); }
 });
-
 // ---------------------------------------------------------------------
 //  11.c  TEACHER TIMETABLE SAVE  ->  POST /api/admin/timetable/teacher-entries/bulk
 // ---------------------------------------------------------------------
 app.post('/api/admin/timetable/teacher-entries/bulk', async (req, res) => {
     const { teacher_id, entries } = req.body;
     const institutionId = req.auth.institutionId;
+    const actor_id = req.auth.userId;
     if (!teacher_id) return res.status(400).json({ error: 'teacher_id is required.' });
-
     const conn = await db.getConnection();
     try {
         const yearId = await resolveYearId(institutionId, req.body.academic_year_id);
         if (!yearId) throw new Error('No academic year. Create one first.');
-
         const list = Array.isArray(entries)
             ? entries.filter(e => e.class_id && e.day_id && e.period_id)
             : [];
-
         // Rule 1 — no double-booking of the teacher within the submitted set.
         const seenSlots = new Set();
         for (const e of list) {
@@ -2381,9 +2404,7 @@ app.post('/api/admin/timetable/teacher-entries/bulk', async (req, res) => {
             }
             seenSlots.add(slot);
         }
-
         await conn.beginTransaction();
-
         await conn.execute(
             'UPDATE timetable_entries SET teacher_id = NULL WHERE institutionId = ? AND academic_year_id = ? AND teacher_id = ?',
             [institutionId, yearId, teacher_id]
@@ -2394,7 +2415,6 @@ app.post('/api/admin/timetable/teacher-entries/bulk', async (req, res) => {
                 AND teacher_id IS NULL AND subject_id IS NULL AND (room_no IS NULL OR room_no = '')`,
             [institutionId, yearId]
         );
-
         // Rule 2 — target class period already taken by another teacher?
         const conflicts = [];
         for (const e of list) {
@@ -2422,7 +2442,6 @@ app.post('/api/admin/timetable/teacher-entries/bulk', async (req, res) => {
                 conflicts
             });
         }
-
         for (const e of list) {
             await conn.execute(
                 `INSERT INTO timetable_entries (institutionId, academic_year_id, class_id, day_id, period_id, subject_id, teacher_id, room_no)
@@ -2431,9 +2450,18 @@ app.post('/api/admin/timetable/teacher-entries/bulk', async (req, res) => {
                 [institutionId, yearId, e.class_id, e.day_id, e.period_id, e.subject_id || null, teacher_id, e.room_no || null]
             );
         }
-
+        // Assigning a teacher into class grids counts as those class grids
+        // being updated — stamp each touched class's audit row.
+        const touchedClasses = [...new Set(list.map(e => e.class_id).filter(Boolean))];
+        for (const cid of touchedClasses) {
+            await conn.execute(
+                `INSERT INTO timetable_meta (institutionId, academic_year_id, class_id, created_by, updated_by)
+                 VALUES (?, ?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE updated_by = VALUES(updated_by), updated_at = CURRENT_TIMESTAMP`,
+                [institutionId, yearId, cid, actor_id, actor_id]
+            );
+        }
         await conn.commit();
-
         // 🔔 Notify the assigned teacher, then the students of every class
         //    this teacher was just assigned to. Each wrapped so a notify
         //    issue can't fail the save.
@@ -2442,10 +2470,9 @@ app.post('/api/admin/timetable/teacher-entries/bulk', async (req, res) => {
                 institutionId, recipientIds: [teacher_id], type: 'timetable',
                 title: 'Timetable updated',
                 body: 'Your teaching timetable has been updated.',
-                link: 'timetable', entity_id: teacher_id, actor_id: req.body.actor_id
+                link: 'timetable', entity_id: teacher_id, actor_id
             });
         } catch (e) { console.warn('[notify timetable teacher]', e.message); }
-
         try {
             const classIds = [...new Set(list.map(e => e.class_id).filter(Boolean))];
             let studentRecipients = [];
@@ -2459,11 +2486,10 @@ app.post('/api/admin/timetable/teacher-entries/bulk', async (req, res) => {
                     institutionId, recipientIds: studentRecipients, type: 'timetable',
                     title: 'Timetable updated',
                     body: 'A teacher has been assigned to your class timetable.',
-                    link: 'timetable', entity_id: null, actor_id: req.body.actor_id
+                    link: 'timetable', entity_id: null, actor_id
                 });
             }
         } catch (e) { console.warn('[notify timetable teacher-class]', e.message); }
-
         res.json({ success: true, saved: list.length });
     } catch (err) {
         await conn.rollback();
