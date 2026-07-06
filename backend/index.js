@@ -2235,12 +2235,13 @@ app.get('/api/timetable/my/:userId', async (req, res) => {
         const mode = role.includes('teacher') ? 'teacher' : 'student';
         const yearId = await resolveYearId(me.institutionId, req.query.yearId);
         if (!yearId) {
-            return res.json({ mode, academic_year_id: null, days: [], periods: [], entries: [], class_label: null });
+            return res.json({ mode, academic_year_id: null, days: [], periods: [], entries: [], class_label: null, meta: null });
         }
         const [days]    = await db.execute('SELECT * FROM timetable_days WHERE institutionId = ? AND academic_year_id = ? ORDER BY day_index', [me.institutionId, yearId]);
         const [periods] = await db.execute('SELECT * FROM timetable_periods WHERE institutionId = ? AND academic_year_id = ? ORDER BY period_index', [me.institutionId, yearId]);
         let entries = [];
         let class_label = null;
+        let meta = null;
         if (mode === 'teacher') {
             const [rows] = await db.execute(
                 `SELECT e.day_id, e.period_id, e.room_no, e.class_id, e.subject_id,
@@ -2253,6 +2254,32 @@ app.get('/api/timetable/my/:userId', async (req, res) => {
                 [me.institutionId, yearId, me.id]
             );
             entries = rows;
+            // Audit: a teacher's schedule spans many classes, so aggregate —
+            // earliest "created" and latest "updated" across the classes they
+            // actually teach this year.
+            const tClassIds = [...new Set(rows.map(r => r.class_id).filter(Boolean))];
+            if (tClassIds.length) {
+                const ph = tClassIds.map(() => '?').join(',');
+                const [mrows] = await db.execute(
+                    `SELECT m.created_at, m.updated_at,
+                            cu.name AS created_by_name, uu.name AS updated_by_name
+                       FROM timetable_meta m
+                       LEFT JOIN users cu ON cu.id = m.created_by
+                       LEFT JOIN users uu ON uu.id = m.updated_by
+                      WHERE m.institutionId = ? AND m.academic_year_id = ? AND m.class_id IN (${ph})`,
+                    [me.institutionId, yearId, ...tClassIds]
+                );
+                if (mrows.length) {
+                    const created = mrows.reduce((a, b) => (new Date(a.created_at) <= new Date(b.created_at) ? a : b));
+                    const updated = mrows.reduce((a, b) => (new Date(a.updated_at) >= new Date(b.updated_at) ? a : b));
+                    meta = {
+                        created_by_name: created.created_by_name || null,
+                        created_at: created.created_at || null,
+                        updated_by_name: updated.updated_by_name || null,
+                        updated_at: updated.updated_at || null
+                    };
+                }
+            }
         } else {
             if (me.class_id) {
                 const [crows] = await db.execute('SELECT className, section FROM classes WHERE id = ? LIMIT 1', [me.class_id]);
@@ -2270,9 +2297,28 @@ app.get('/api/timetable/my/:userId', async (req, res) => {
                     [me.institutionId, yearId, me.class_id]
                 );
                 entries = rows;
+                // Audit for the student's own class timetable.
+                const [mrows] = await db.execute(
+                    `SELECT m.created_at, m.updated_at,
+                            cu.name AS created_by_name, uu.name AS updated_by_name
+                       FROM timetable_meta m
+                       LEFT JOIN users cu ON cu.id = m.created_by
+                       LEFT JOIN users uu ON uu.id = m.updated_by
+                      WHERE m.institutionId = ? AND m.academic_year_id = ? AND m.class_id = ?
+                      LIMIT 1`,
+                    [me.institutionId, yearId, me.class_id]
+                );
+                if (mrows.length) {
+                    meta = {
+                        created_by_name: mrows[0].created_by_name || null,
+                        created_at: mrows[0].created_at || null,
+                        updated_by_name: mrows[0].updated_by_name || null,
+                        updated_at: mrows[0].updated_at || null
+                    };
+                }
             }
         }
-        res.json({ mode, academic_year_id: yearId, days, periods, entries, class_label });
+        res.json({ mode, academic_year_id: yearId, days, periods, entries, class_label, meta });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 app.post('/api/admin/timetable/days', async (req, res) => {

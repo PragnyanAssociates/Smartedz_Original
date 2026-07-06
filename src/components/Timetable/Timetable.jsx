@@ -1081,6 +1081,12 @@ function PersonalTimetable({ user, mode }) {
   const sortedPeriods = [...(data.periods || [])].sort((a, b) => a.period_index - b.period_index);
   const cellMap = {};
   (data.entries || []).forEach(e => { cellMap[`${e.day_id}-${e.period_id}`] = e; });
+  // Created / updated audit for this timetable (student: their class; teacher:
+  // aggregated across their classes). "Updated by" shows only once it's moved
+  // meaningfully past creation.
+  const ptMeta = data.meta || null;
+  const ptMetaWasUpdated = ptMeta && ptMeta.updated_at && ptMeta.updated_by_name &&
+    (!ptMeta.created_at || new Date(ptMeta.updated_at) - new Date(ptMeta.created_at) > 1000);
   if (workingDays.length === 0 || sortedPeriods.length === 0) {
     return (
       <div className="p-4 sm:p-8 max-w-[1440px] w-full mx-auto">
@@ -1106,6 +1112,22 @@ function PersonalTimetable({ user, mode }) {
               ? <>Your class schedule{data.class_label ? <> for <strong className="text-zinc-700">{data.class_label}</strong></> : ''}.</>
               : <>Your weekly teaching schedule across all your classes.</>}
           </p>
+          {ptMeta && (ptMeta.created_by_name || ptMetaWasUpdated) && (
+            <div className="flex flex-col gap-0.5 text-[11px] text-zinc-500">
+              {ptMeta.created_by_name && (
+                <span>
+                  <span className="font-semibold text-zinc-600">Created by</span> {ptMeta.created_by_name}
+                  {ptMeta.created_at && <span className="text-zinc-400"> · {fmtIST(ptMeta.created_at)}</span>}
+                </span>
+              )}
+              {ptMetaWasUpdated && (
+                <span>
+                  <span className="font-semibold text-zinc-600">Updated by</span> {ptMeta.updated_by_name}
+                  {ptMeta.updated_at && <span className="text-zinc-400"> · {fmtIST(ptMeta.updated_at)}</span>}
+                </span>
+              )}
+            </div>
+          )}
         </div>
         <YearBadge name={activeYearName} />
       </header>
