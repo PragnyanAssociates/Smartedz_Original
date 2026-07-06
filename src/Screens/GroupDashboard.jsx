@@ -12,7 +12,7 @@ import {
 const BRANCH_TYPES = ['School', 'College', 'Tuition'];
 
 const STAT_STYLES = {
-  total:   { label: 'Total Branches', icon: Network,       box: 'bg-violet-50 ring-violet-600/20',   chip: 'bg-violet-100 text-violet-700' },
+  total:   { label: 'Total Branches', icon: Network,       box: 'bg-violet-50 ring-violet-600/20',  chip: 'bg-violet-100 text-violet-700' },
   School:  { label: 'Schools',        icon: School,        box: 'bg-emerald-50 ring-emerald-600/20', chip: 'bg-emerald-100 text-emerald-700' },
   College: { label: 'Colleges',       icon: GraduationCap, box: 'bg-amber-50 ring-amber-600/20',     chip: 'bg-amber-100 text-amber-700' },
   Tuition: { label: 'Tuitions',       icon: BookOpen,      box: 'bg-sky-50 ring-sky-600/20',         chip: 'bg-sky-100 text-sky-700' },
@@ -282,27 +282,37 @@ export default function GroupDashboard() {
 
           {view.mode === 'detail' ? renderDetail() : (
           <>
-          {/* Toolbar */}
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-            <div>
-              <h2 className="text-xl font-semibold text-zinc-900 tracking-tight">Branches</h2>
-              <p className="text-sm text-zinc-500 mt-1">Manage every branch under your group.</p>
-            </div>
-            <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
-              <div className={`rounded-md px-3 py-2 flex items-center gap-2.5 ${badge.wrap}`}>
+          {/* UPDATED STRUCTURE: Toolbar (Transparent background) */}
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+            
+            {/* Information Group (Left) */}
+            <div className="flex flex-col sm:flex-row sm:items-center gap-4 w-full md:w-auto">
+              <div>
+                <h2 className="text-xl font-semibold text-zinc-900 tracking-tight">Branches</h2>
+                <p className="text-sm text-zinc-500 mt-0.5">Manage every branch under your group.</p>
+              </div>
+              {/* Divider visible on medium screens and up */}
+              <div className="hidden sm:block h-8 w-px bg-zinc-200"></div>
+              {/* Plan Badge aligned with title */}
+              <div className={`rounded-md px-3 py-1.5 flex items-center gap-2.5 shadow-sm border border-transparent ${badge.wrap}`}>
                 <BadgeIcon className="size-4 shrink-0" />
                 <div className="flex flex-col leading-tight">
                   <span className="text-[9px] font-semibold uppercase tracking-wider opacity-80">{planLabel(group?.usage_plan || 'Full Time')} Plan</span>
                   <span className="text-xs font-semibold">{badge.headline}</span>
                 </div>
               </div>
-              <button onClick={openAddModal} className="h-9 px-4 bg-primary hover:bg-primary/90 text-white shadow-sm rounded-md text-xs font-semibold flex items-center transition-colors justify-center shrink-0">
+            </div>
+
+            {/* Action Buttons Group (Right) */}
+            <div className="flex items-center gap-2 sm:gap-3 w-full md:w-auto pt-4 md:pt-0 border-t border-zinc-200 md:border-none">
+              <button onClick={openAddModal} className="h-9 px-4 bg-primary hover:bg-primary/90 text-white shadow-sm rounded-md text-xs font-semibold flex items-center transition-colors justify-center flex-1 md:flex-none">
                 <Plus className="size-3.5 mr-1.5" /> Add Branch
               </button>
-              <button onClick={() => { if (window.confirm('Are you sure you want to sign out?')) logout(); }} className="h-9 px-4 rounded-md hover:bg-zinc-50 border border-zinc-200 text-zinc-600 hover:text-zinc-900 flex items-center transition-colors text-xs font-semibold shadow-sm shrink-0">
+              <button onClick={() => { if (window.confirm('Are you sure you want to sign out?')) logout(); }} className="h-9 px-4 rounded-md bg-white hover:bg-zinc-50 border border-zinc-200 text-zinc-600 hover:text-zinc-900 flex items-center transition-colors text-xs font-semibold shadow-sm justify-center flex-1 md:flex-none">
                 <LogOut className="size-3.5 mr-2" /> Sign Out
               </button>
             </div>
+
           </div>
 
           {/* Overview tiles */}
@@ -312,12 +322,12 @@ export default function GroupDashboard() {
               const Icon = s.icon;
               const value = key === 'total' ? counts.total : key === 'users' ? totalUsers : counts[key];
               return (
-                <div key={key} className={`rounded-lg ring-1 p-3 sm:p-4 flex items-center gap-3 ${s.box}`}>
+                <div key={key} className={`rounded-lg ring-1 p-3 sm:p-4 flex items-center gap-3 bg-white shadow-sm ring-black/5`}>
                   <div className={`size-9 sm:size-10 rounded-md flex items-center justify-center shrink-0 ${s.chip}`}>
                     <Icon className="size-4 sm:size-5" />
                   </div>
                   <div className="flex flex-col min-w-0">
-                    <span className="text-lg sm:text-2xl font-bold text-zinc-900 leading-none tabular-nums">{value}</span>
+                    <span className="text-lg sm:text-2xl font-semibold text-zinc-900 leading-none tabular-nums">{value}</span>
                     <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider truncate mt-1">{s.label}</span>
                   </div>
                 </div>
@@ -349,7 +359,7 @@ export default function GroupDashboard() {
             </div>
             {filtersDirty && (
               <button onClick={clearFilters}
-                className="h-9 px-3 rounded-md border border-zinc-200 bg-white text-xs font-semibold text-zinc-600 hover:bg-zinc-50 transition-colors shrink-0">
+                className="h-9 px-3 rounded-md border border-zinc-200 bg-white text-xs font-semibold text-zinc-600 hover:bg-zinc-50 transition-colors shrink-0 shadow-sm">
                 Clear
               </button>
             )}
@@ -364,7 +374,7 @@ export default function GroupDashboard() {
                   className="group bg-white rounded-lg ring-1 ring-black/5 shadow-sm hover:ring-primary/30 hover:shadow-md transition-all overflow-hidden flex flex-col cursor-pointer">
                   <div className="flex flex-row justify-between items-center bg-zinc-50/50 p-4 border-b border-zinc-100">
                     <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-[11px] font-bold text-zinc-400 tabular-nums shrink-0">#{idx + 1}</span>
+                      <span className="text-[11px] font-semibold text-zinc-400 tabular-nums shrink-0">#{idx + 1}</span>
                       <span className="bg-zinc-100 text-zinc-700 ring-1 ring-inset ring-black/5 px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider truncate">
                         {b.type}
                       </span>
@@ -437,7 +447,7 @@ export default function GroupDashboard() {
               <div className="col-span-full bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center justify-center">
                 <Search className="size-10 text-zinc-300 mb-3" />
                 <p className="text-zinc-500 font-medium text-sm">No branches match your filters.</p>
-                <button onClick={clearFilters} className="mt-3 h-8 px-3 rounded-md border border-zinc-200 bg-white text-xs font-semibold text-zinc-600 hover:bg-zinc-50 transition-colors">
+                <button onClick={clearFilters} className="mt-3 h-8 px-3 rounded-md border border-zinc-200 bg-white text-xs font-semibold text-zinc-600 hover:bg-zinc-50 transition-colors shadow-sm">
                   Clear filters
                 </button>
               </div>
