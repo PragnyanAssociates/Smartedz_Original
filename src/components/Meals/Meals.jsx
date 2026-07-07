@@ -110,8 +110,8 @@ export default function Meals() {
   const tabProps = { data, fetchData, user, canEdit };
 
   return (
-   <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-6">
-      
+    <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-6">
+
       <header className="flex flex-col mb-4">
         <h2 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
           <UtensilsCrossed className="text-primary size-5" />
@@ -210,7 +210,7 @@ function SlotsTab({ data, fetchData, user, canEdit }) {
       if (!s.name.trim()) return alert('Every meal slot needs a name.');
     }
     if (slots.length === 0) return alert('Add at least one meal slot.');
-    
+
     // Prepare for backend (convert back to 24h)
     const payload = slots.map(s => ({
       id: s.id,
@@ -234,7 +234,7 @@ function SlotsTab({ data, fetchData, user, canEdit }) {
   };
 
   return (
-    <div className="max-w-4xl">
+    <div className="w-full">
       <div className="bg-white rounded-lg ring-1 ring-black/5 p-5 sm:p-6 shadow-sm">
         <div className="flex items-center gap-3 mb-6">
           <div className="size-10 bg-primary/10 rounded-md flex items-center justify-center text-primary ring-1 ring-primary/20">
@@ -246,53 +246,53 @@ function SlotsTab({ data, fetchData, user, canEdit }) {
           </div>
         </div>
 
-        <div className="space-y-4 mb-6">
+        <div className="flex flex-wrap gap-4 mb-6">
           {slots.map((s, i) => {
             const Icon = slotIcon(s.name);
             return (
-              <div key={i} className="flex flex-col lg:flex-row gap-4 items-start lg:items-center p-4 rounded-md bg-zinc-50/50 ring-1 ring-zinc-200">
-                <div className="flex items-center gap-3 w-full lg:w-64">
+              <div key={i} className="flex flex-col sm:flex-row gap-4 items-start sm:items-center p-4 rounded-md bg-zinc-50/50 ring-1 ring-zinc-200 w-full sm:w-[420px]">
+                <div className="flex items-center gap-3 w-full sm:w-44 shrink-0">
                   <div className="size-6 rounded-full bg-white ring-1 ring-black/5 flex items-center justify-center text-zinc-400 shrink-0 shadow-sm">
                     <Icon className="size-3.5" />
                   </div>
-                  <input placeholder="Meal name (e.g. Breakfast)" value={s.name}
+                  <input placeholder="Meal name" value={s.name}
                     onChange={e => updateSlot(i, 'name', e.target.value)}
                     className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
                 </div>
-                
-                <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto">
-                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-tight ml-9 lg:ml-0">From</span>
+
+                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                   <div className="flex items-center gap-1.5">
                     <input type="text" value={s.start_time} placeholder="00:00"
                       onChange={e => updateSlot(i, 'start_time', e.target.value)}
-                      className="h-9 w-20 bg-white border border-zinc-200 rounded-md text-center text-sm tabular-nums text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 shadow-sm" />
+                      className="h-9 w-16 bg-white border border-zinc-200 rounded-md text-center text-sm tabular-nums text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 shadow-sm" />
                     <div className="relative">
                       <select value={s.start_period} onChange={e => updateSlot(i, 'start_period', e.target.value)}
-                        className="h-9 w-20 pl-3 pr-8 bg-white border border-zinc-200 rounded-md text-xs font-bold appearance-none outline-none focus:ring-2 focus:ring-primary/20 shadow-sm cursor-pointer">
+                        className="h-9 w-16 pl-2 pr-6 bg-white border border-zinc-200 rounded-md text-xs font-bold appearance-none outline-none focus:ring-2 focus:ring-primary/20 shadow-sm cursor-pointer">
                         <option value="AM">AM</option>
                         <option value="PM">PM</option>
                       </select>
-                      <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 size-3 text-zinc-400 pointer-events-none" />
+                      <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 size-3 text-zinc-400 pointer-events-none" />
                     </div>
                   </div>
 
-                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-tight">To</span>
+                  <span className="text-[10px] font-bold text-zinc-400 uppercase">to</span>
+
                   <div className="flex items-center gap-1.5">
                     <input type="text" value={s.end_time} placeholder="00:00"
                       onChange={e => updateSlot(i, 'end_time', e.target.value)}
-                      className="h-9 w-20 bg-white border border-zinc-200 rounded-md text-center text-sm tabular-nums text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 shadow-sm" />
+                      className="h-9 w-16 bg-white border border-zinc-200 rounded-md text-center text-sm tabular-nums text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 shadow-sm" />
                     <div className="relative">
                       <select value={s.end_period} onChange={e => updateSlot(i, 'end_period', e.target.value)}
-                        className="h-9 w-20 pl-3 pr-8 bg-white border border-zinc-200 rounded-md text-xs font-bold appearance-none outline-none focus:ring-2 focus:ring-primary/20 shadow-sm cursor-pointer">
+                        className="h-9 w-16 pl-2 pr-6 bg-white border border-zinc-200 rounded-md text-xs font-bold appearance-none outline-none focus:ring-2 focus:ring-primary/20 shadow-sm cursor-pointer">
                         <option value="AM">AM</option>
                         <option value="PM">PM</option>
                       </select>
-                      <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 size-3 text-zinc-400 pointer-events-none" />
+                      <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 size-3 text-zinc-400 pointer-events-none" />
                     </div>
                   </div>
 
                   <button onClick={() => removeSlot(i)}
-                    className="p-2 text-zinc-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors shrink-0 ml-auto lg:ml-0">
+                    className="p-2 text-zinc-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors shrink-0 ml-auto sm:ml-1">
                     <Trash2 className="size-4" />
                   </button>
                 </div>

@@ -11,12 +11,12 @@ import OverviewSettingsModal from './OverviewSettingsModal';
 import { buildStudentTotals } from '../components/Performance/PerfUtils';
 
 // =====================================================================
-//  Overview — one unified dashboard for every role.
-//   • Stat boxes (incl. Live Class + Attendance/Performance gauges) in
-//     the order the Super Admin set per role.
-//   • Performance Analytics + Events | Notifications sections.
-//  Everything shows by default; trimmed/ordered per role in Settings.
-//  Module permissions stay the hard gate. Bands 80 / 50.
+// Overview — one unified dashboard for every role.
+//  • Stat boxes (incl. Live Class + Attendance/Performance gauges) in
+//    the order the Super Admin set per role.
+//  • Performance Analytics + Events | Notifications sections.
+// Everything shows by default; trimmed/ordered per role in Settings.
+// Module permissions stay the hard gate. Bands 80 / 50.
 // =====================================================================
 
 const Spinner = () => (
@@ -218,7 +218,7 @@ export default function Overview() {
   };
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto">
+    <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12">
 
       <header className="mb-6 lg:mb-8 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
         <div className="flex flex-col gap-2">
@@ -277,12 +277,14 @@ function KpiBox({ id, value, sub, isText }) {
   const meta = KPI_META[id] || { Icon: Bell, tint: 'sky' };
   const Icon = meta.Icon, tint = meta.tint;
   return (
-    <div className={`p-4 rounded-md flex flex-col gap-1 ${TINT_CLASS[tint]}`}>
+    <div className={`h-full p-4 rounded-md flex flex-col justify-between ${TINT_CLASS[tint]}`}>
       <span className={`text-[10px] font-semibold uppercase tracking-wider truncate flex items-center gap-1.5 ${LABEL_CLASS[tint]}`}>
         <Icon className="size-3.5 shrink-0" /> {cardById[id]?.label || id}
       </span>
-      <span className={`${isText ? 'text-xl' : 'text-2xl tabular-nums'} font-semibold truncate ${tint === 'hero' ? 'text-white' : 'text-zinc-900'}`} title={String(value)}>{value}</span>
-      <span className={`text-[10px] font-medium uppercase tracking-wide truncate ${tint === 'hero' ? 'text-white/70' : 'text-zinc-400'}`}>{sub}</span>
+      <div className="flex flex-col mt-auto pt-2">
+        <span className={`${isText ? 'text-xl' : 'text-2xl tabular-nums'} font-semibold truncate ${tint === 'hero' ? 'text-white' : 'text-zinc-900'}`} title={String(value)}>{value}</span>
+        <span className={`text-[10px] font-medium uppercase tracking-wide truncate ${tint === 'hero' ? 'text-white/70' : 'text-zinc-400'}`}>{sub}</span>
+      </div>
     </div>
   );
 }
@@ -293,7 +295,7 @@ function GaugeCard({ Icon, label, value, display, sub }) {
   const color = value == null ? '#cbd5e1' : barColor(value);
   const R = 26, C = 2 * Math.PI * R, off = C * (1 - pct / 100);
   return (
-    <div className="col-span-2 sm:col-span-1 p-4 rounded-md bg-white ring-1 ring-black/5 flex items-center justify-between gap-3">
+    <div className="col-span-2 sm:col-span-1 p-4 rounded-md bg-white ring-1 ring-black/5 flex items-center justify-between gap-3 h-full">
       <div className="min-w-0">
         <div className="size-9 rounded-md bg-zinc-50 ring-1 ring-black/5 flex items-center justify-center mb-2" style={{ color }}>
           <Icon className="size-4" />
@@ -304,8 +306,7 @@ function GaugeCard({ Icon, label, value, display, sub }) {
       </div>
       <svg width="64" height="64" viewBox="0 0 64 64" className="shrink-0 -rotate-90">
         <circle cx="32" cy="32" r={R} fill="none" stroke="#f1f5f9" strokeWidth="7" />
-        <circle cx="32" cy="32" r={R} fill="none" stroke={color} strokeWidth="7" strokeLinecap="round"
-          strokeDasharray={C} strokeDashoffset={off} />
+        <circle cx="32" cy="32" r={R} fill="none" stroke={color} strokeWidth="7" strokeLinecap="round" strokeDasharray={C} strokeDashoffset={off} />
       </svg>
     </div>
   );
@@ -341,7 +342,7 @@ function LiveClassCard({ tt, persona, className = '' }) {
   const info = useMemo(() => computeLive(tt, now, persona), [tt, now, persona]);
 
   const Shell = ({ children }) => (
-    <div className={`${className} p-4 rounded-md bg-white ring-1 ring-black/5 flex flex-col justify-between min-h-[150px]`}>{children}</div>
+    <div className={`${className} h-full p-4 rounded-md bg-white ring-1 ring-black/5 flex flex-col justify-between min-h-[150px]`}>{children}</div>
   );
 
   if (info.state === 'live') {
@@ -440,7 +441,7 @@ function PerformanceAnalytics({ perf, className = '' }) {
           <h2 className="text-base font-semibold text-zinc-900 tracking-tight">Performance Analytics</h2>
           <p className="text-sm text-zinc-500 mt-0.5">Visual breakdown of top achievers and overall Exam based class performance</p>
           {examsLine && <p className="text-xs font-semibold text-zinc-700 mt-2">{examsLine} Completed</p>}
-          <p className="text-[11px] italic text-primary mt-1">For more details view the “Performance Reports” screen.</p>
+          <p className="text-[11px] italic text-primary mt-1">For more details view the "Performance Reports" screen.</p>
         </div>
         <div className="flex flex-wrap items-center gap-3 shrink-0">
           <div className="inline-flex items-center bg-zinc-100/80 p-1 rounded-md">
@@ -576,5 +577,5 @@ function NotificationsPanel({ notes }) {
         </div>
       )}
     </div>
-  );
+  );  
 }
