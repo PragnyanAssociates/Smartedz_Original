@@ -2,11 +2,25 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { IndianRupee, Percent } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
+import { usePermissions } from '../../Screens/PermissionsContext';
 import FeeAssign  from './FeeAssign';
 import Concession from './Concession';
+import MyFee      from './MyFee';
+
+// Must match the module_name used in Modules.js / the Permissions matrix.
+const MODULE_NAME = 'FeeManagement';
 
 export default function FeeManagement() {
   const { user } = useAuth();
+  const permissions = usePermissions();
+  const can = permissions?.can;
+
+  // Students only ever see their OWN fee — never the management UI.
+  const isStudent = (user?.role || '').toLowerCase().includes('student');
+  // Non-student users manage fees only if the admin granted them Edit; a
+  // read-only grant shows the tables but disables every mutating control.
+  const canEdit = can ? can(MODULE_NAME, 'edit') : true;
+
   const [activeTab, setActiveTab] = useState('assign');
   const [data, setData] = useState({
     academic_year_id: null, classes: [], students: [], plans: [], installments: [], assignments: []
@@ -14,7 +28,7 @@ export default function FeeManagement() {
   const [loading, setLoading] = useState(true);
 
   const fetchData = useCallback(async () => {
-    if (!user?.institutionId) return;
+    if (!user?.institutionId || isStudent) return; // students don't pull institution-wide data
     setLoading(true);
     try {
       const res = await fetch(`${API_BASE_URL}/fees/data/${user.institutionId}`);
@@ -24,15 +38,19 @@ export default function FeeManagement() {
       console.error('Fee data fetch error:', e);
     }
     setLoading(false);
-  }, [user]);
+  }, [user, isStudent]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // ---- Student self-view ----
+  if (isStudent) return <MyFee user={user} />;
+
+  // ---- Management view (admin / permitted staff) ----
   const tabs = [
     { id: 'assign',     label: 'Fee Assign', icon: IndianRupee },
     { id: 'concession', label: 'Concession', icon: Percent },
   ];
-  const tabProps = { data, fetchData, user };
+  const tabProps = { data, fetchData, user, canEdit };
 
   return (
     <div className="p-8 max-w-[1440px] w-full mx-auto animate-in fade-in duration-700">
@@ -44,6 +62,11 @@ export default function FeeManagement() {
             Set class fee structures, assign payment modes, and manage concessions.
           </p>
         </div>
+        {!canEdit && (
+          <span className="text-[10px] font-semibold text-accent bg-accent/10 px-2.5 py-1 rounded-full uppercase tracking-wider">
+            View only
+          </span>
+        )}
       </header>
 
       {/* Segmented Tabs (same style as System Configuration) */}

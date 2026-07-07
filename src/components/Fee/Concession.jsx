@@ -6,7 +6,7 @@ const inr = (n) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })
     .format(Number(n) || 0);
 
-export default function Concession({ data, fetchData, user }) {
+export default function Concession({ data, fetchData, user, canEdit = true }) {
   const classes = data.classes || [];
   const [activeClass, setActiveClass] = useState('');
   const [edits, setEdits]             = useState({}); // { [studentId]: { amount, reason } }
@@ -47,6 +47,7 @@ export default function Concession({ data, fetchData, user }) {
     setEdits(e => ({ ...e, [sid]: { ...e[sid], [key]: val } }));
 
   const saveConcession = async (s) => {
+    if (!canEdit) return;
     setSavingId(s.id);
     try {
       const res = await fetch(`${API_BASE_URL}/fees/concession`, {
@@ -150,16 +151,16 @@ export default function Concession({ data, fetchData, user }) {
                     <td className="px-5 py-3 text-sm font-medium text-zinc-900">{s.name}</td>
                     <td className="px-5 py-3 text-xs text-zinc-700 tabular-nums">{inr(fullFeeNum)}</td>
                     <td className="px-5 py-3">
-                      <input type="number" min="0" value={valueFor(s, 'amount')}
+                      <input type="number" min="0" value={valueFor(s, 'amount')} disabled={!canEdit}
                         onChange={e => setEdit(s.id, 'amount', e.target.value)}
                         placeholder="0"
-                        className="w-28 rounded-md border border-zinc-200 bg-white px-2 h-8 text-xs text-zinc-900 tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40" />
+                        className="w-28 rounded-md border border-zinc-200 bg-white px-2 h-8 text-xs text-zinc-900 tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:bg-zinc-50 disabled:text-zinc-400" />
                     </td>
                     <td className="px-5 py-3">
-                      <input value={valueFor(s, 'reason')}
+                      <input value={valueFor(s, 'reason')} disabled={!canEdit}
                         onChange={e => setEdit(s.id, 'reason', e.target.value)}
                         placeholder="e.g. Staff ward, Sibling"
-                        className="w-44 rounded-md border border-zinc-200 bg-white px-2 h-8 text-xs text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40" />
+                        className="w-44 rounded-md border border-zinc-200 bg-white px-2 h-8 text-xs text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:bg-zinc-50 disabled:text-zinc-400" />
                     </td>
                     <td className="px-5 py-3 text-xs font-semibold tabular-nums">
                       {amount > 0
@@ -167,10 +168,12 @@ export default function Concession({ data, fetchData, user }) {
                         : <span className="text-zinc-900">{inr(net)}</span>}
                     </td>
                     <td className="px-5 py-3 text-right">
-                      <button onClick={() => saveConcession(s)} disabled={savingId === s.id || !dirty}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-medium transition-colors bg-primary text-white hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed">
-                        <Save className="size-3.5" /> {savingId === s.id ? 'Saving…' : 'Save'}
-                      </button>
+                      {canEdit && (
+                        <button onClick={() => saveConcession(s)} disabled={savingId === s.id || !dirty}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-medium transition-colors bg-primary text-white hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed">
+                          <Save className="size-3.5" /> {savingId === s.id ? 'Saving…' : 'Save'}
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );
