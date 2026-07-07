@@ -7,12 +7,13 @@ const inr = (n) =>
     .format(Number(n) || 0);
 
 const ANNUAL_TITLE = 'Annual Fee';
+const NEW = '__new__';
 
 export default function FeeAssign({ data, fetchData, user, canEdit = true }) {
   const classes = data.classes || [];
   const [activeClass, setActiveClass] = useState('');
   const [sub, setSub]                 = useState('annual');   // 'annual' | 'other'
-  const [otherId, setOtherId]         = useState(null);       // selected other-fee plan id, or 'new'
+  const [otherTitle, setOtherTitle]   = useState(null);       // selected Other-fee title, or NEW, or null
 
   useEffect(() => {
     if (classes.length === 0) return;
@@ -20,13 +21,12 @@ export default function FeeAssign({ data, fetchData, user, canEdit = true }) {
     if (!stillValid) setActiveClass(String(classes[0].id));
   }, [classes, activeClass]);
 
-  useEffect(() => { setOtherId(null); }, [activeClass, sub]);
-
   const selectedClass = useMemo(
     () => classes.find(c => String(c.id) === String(activeClass)) || null,
     [classes, activeClass]
   );
 
+  // Plans for the currently selected class.
   const classPlans = useMemo(
     () => (data.plans || []).filter(p => String(p.class_id) === String(activeClass)),
     [data.plans, activeClass]
@@ -35,14 +35,30 @@ export default function FeeAssign({ data, fetchData, user, canEdit = true }) {
     () => classPlans.find(p => (p.fee_category || 'annual') === 'annual') || null,
     [classPlans]
   );
-  const otherPlans = useMemo(
-    () => classPlans.filter(p => p.fee_category === 'other').sort((a, b) => a.id - b.id),
-    [classPlans]
-  );
 
-  const currentPlan = sub === 'annual'
-    ? annualPlan
-    : (otherId && otherId !== 'new' ? otherPlans.find(p => String(p.id) === String(otherId)) || null : null);
+  // Other-fee TITLES are shared across the whole institution/year — a title
+  // shows for every class, but each class sets its own amount (a class with
+  // no plan row for that title simply isn't charged it).
+  const otherTitles = useMemo(() => {
+    const set = new Set();
+    (data.plans || []).forEach(p => { if (p.fee_category === 'other' && p.title) set.add(p.title); });
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [data.plans]);
+
+  // Default-select one Other fee (keep valid selection across class changes).
+  useEffect(() => {
+    if (sub !== 'other') return;
+    const valid = otherTitle === NEW || otherTitles.includes(otherTitle);
+    if (!valid) setOtherTitle(otherTitles[0] ?? null);
+  }, [sub, otherTitles, otherTitle]);
+
+  // The plan for (selected class + selected other title), if this class has one.
+  const currentOtherPlan = useMemo(() => {
+    if (sub !== 'other' || !otherTitle || otherTitle === NEW) return null;
+    return classPlans.find(p => p.fee_category === 'other' && p.title === otherTitle) || null;
+  }, [sub, otherTitle, classPlans]);
+
+  const currentPlan = sub === 'annual' ? annualPlan : currentOtherPlan;
 
   const students = useMemo(() => {
     const list = (data.students || []).filter(s => String(s.class_id) === String(activeClass));
@@ -53,14 +69,24 @@ export default function FeeAssign({ data, fetchData, user, canEdit = true }) {
   const useDropdown = classes.length > 6;
   const classLabel  = (c) => `${c.className}${c.section ? ` - ${c.section}` : ''}`;
 
+  // amount set for a given other-title in the active class (for chip hints)
+  const amountFor = (title) => {
+    const p = classPlans.find(pl => pl.fee_category === 'other' && pl.title === title);
+    return p ? Number(p.full_fee) || 0 : null;
+  };
+
+  const editorProps = {
+    selectedClass, classLabel, data, user, canEdit, fetchData,
+  };
+
   return (
     <div className="space-y-6">
       <div className="bg-blue-50/60 border border-blue-100 rounded-md p-4 flex gap-3 text-[11px] text-blue-800 leading-relaxed">
         <Info className="size-4 shrink-0 text-blue-500 mt-0.5" />
         <p>
           <strong className="text-blue-900">Annual Fee</strong> is the main yearly fee (one per class).
-          <strong className="text-blue-900"> Other Fee</strong> is for extras like Books, Library, Transport — add as many as you need,
-          each with its own title, amount, due date and installments. Per-student discounts live in the <strong>Concession</strong> tab.
+          <strong className="text-blue-900"> Other Fee</strong> titles (Books, Tour, Transport…) are shared across classes, but you set the
+          amount <em>per class</em> — a class with no amount for a title simply isn't charged it. Per-student discounts live in the <strong>Concession</strong> tab.
         </p>
       </div>
 
@@ -111,76 +137,85 @@ export default function FeeAssign({ data, fetchData, user, canEdit = true }) {
         <div className="h-40 flex items-center justify-center text-sm text-zinc-400">
           No classes found. Add classes in System Configuration first.
         </div>
-      ) : sub === 'other' && !currentPlan ? (
-        <OtherFeePicker otherPlans={otherPlans} activeId={otherId} onSelect={setOtherId} canEdit={canEdit} />
+      ) : sub === 'annual' ? (
+        <>
+          <PlanEditor
+            key={`annual:${annualPlan?.id || 'new'}:${activeClass}`}
+            category="annual" plan={annualPlan} presetTitle={ANNUAL_TITLE} titleEditable={false}
+            planInstallments={(data.installments || []).filter(i => annualPlan && i.plan_id === annualPlan.id)}
+            {...editorProps}
+          />
+          <AssignTable plan={annualPlan} students={students} data={data} user={user} canEdit={canEdit} fetchData={fetchData} selectedClass={selectedClass} />
+        </>
+      ) : otherTitles.length === 0 && otherTitle !== NEW ? (
+        <OtherFeePicker titles={otherTitles} amountFor={amountFor} activeTitle={otherTitle}
+          onSelect={setOtherTitle} onAdd={() => setOtherTitle(NEW)} canEdit={canEdit} />
       ) : (
         <>
-          {sub === 'other' && (
-            <OtherFeePicker otherPlans={otherPlans} activeId={otherId} onSelect={setOtherId} canEdit={canEdit} compact />
-          )}
+          <OtherFeePicker titles={otherTitles} amountFor={amountFor} activeTitle={otherTitle}
+            onSelect={setOtherTitle} onAdd={() => setOtherTitle(NEW)} canEdit={canEdit} compact />
 
           <PlanEditor
-            key={`${sub}-${currentPlan?.id || 'new'}-${activeClass}`}
-            category={sub}
-            plan={currentPlan}
-            planInstallments={(data.installments || []).filter(i => currentPlan && i.plan_id === currentPlan.id)}
-            selectedClass={selectedClass}
-            classLabel={classLabel}
-            data={data}
-            user={user}
-            canEdit={canEdit}
-            fetchData={fetchData}
-            onSaved={(newId) => { if (sub === 'other' && newId) setOtherId(String(newId)); }}
-            onDeleted={() => setOtherId(null)}
+            key={`other:${otherTitle}:${activeClass}`}
+            category="other"
+            plan={currentOtherPlan}
+            presetTitle={otherTitle === NEW ? null : otherTitle}
+            titleEditable={otherTitle === NEW}
+            planInstallments={(data.installments || []).filter(i => currentOtherPlan && i.plan_id === currentOtherPlan.id)}
+            onSaved={(id, savedTitle) => { if (savedTitle) setOtherTitle(savedTitle); }}
+            onDeleted={() => setOtherTitle(null)}
+            {...editorProps}
           />
 
-          <AssignTable
-            plan={currentPlan}
-            students={students}
-            data={data}
-            user={user}
-            canEdit={canEdit}
-            fetchData={fetchData}
-            selectedClass={selectedClass}
-          />
+          <AssignTable plan={currentOtherPlan} students={students} data={data} user={user} canEdit={canEdit} fetchData={fetchData} selectedClass={selectedClass} />
         </>
       )}
     </div>
   );
 }
 
-// ---- Other-fee picker (chips + add) ----
-function OtherFeePicker({ otherPlans, activeId, onSelect, canEdit, compact }) {
+// ---- Other-fee picker (shared titles as chips) ----
+function OtherFeePicker({ titles, amountFor, activeTitle, onSelect, onAdd, canEdit, compact }) {
   return (
     <div className="bg-white ring-1 ring-black/5 rounded-lg p-4">
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mr-1">Other Fees</span>
-        {otherPlans.map(p => (
-          <button key={p.id} onClick={() => onSelect(String(p.id))}
-            className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
-              String(activeId) === String(p.id) ? 'bg-primary text-white' : 'bg-white text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-50'
-            }`}>
-            {p.title} <span className="opacity-70">· {inr(p.full_fee)}</span>
-          </button>
-        ))}
+        {titles.map(t => {
+          const amt = amountFor(t);
+          const active = activeTitle === t;
+          return (
+            <button key={t} onClick={() => onSelect(t)}
+              className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                active ? 'bg-primary text-white' : 'bg-white text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-50'
+              }`}>
+              {t}{' '}
+              <span className={active ? 'opacity-80' : (amt == null ? 'text-zinc-300' : 'text-zinc-400')}>
+                · {amt == null ? 'not set' : inr(amt)}
+              </span>
+            </button>
+          );
+        })}
         {canEdit && (
-          <button onClick={() => onSelect('new')}
+          <button onClick={onAdd}
             className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
-              activeId === 'new' ? 'bg-primary text-white' : 'text-primary ring-1 ring-primary/30 hover:bg-primary/5'
+              activeTitle === NEW ? 'bg-primary text-white' : 'text-primary ring-1 ring-primary/30 hover:bg-primary/5'
             }`}>
             <FolderPlus className="size-3.5" /> Add fee
           </button>
         )}
       </div>
-      {!compact && otherPlans.length === 0 && (
+      {!compact && titles.length === 0 && (
         <p className="text-[11px] text-zinc-400 italic mt-3">No other fees yet. Click “Add fee” to create one (e.g. Books Fee).</p>
+      )}
+      {compact && activeTitle && activeTitle !== NEW && amountFor(activeTitle) == null && (
+        <p className="text-[11px] text-accent mt-3">This fee has no amount for this class yet — set an amount below to apply it here.</p>
       )}
     </div>
   );
 }
 
 // ---- Plan editor (title + full fee + due date + installments) ----
-function PlanEditor({ category, plan, planInstallments, selectedClass, classLabel, data, user, canEdit, fetchData, onSaved, onDeleted }) {
+function PlanEditor({ category, plan, presetTitle, titleEditable, planInstallments, selectedClass, classLabel, data, user, canEdit, fetchData, onSaved, onDeleted }) {
   const isOther = category === 'other';
   const [form, setForm] = useState({ title: '', full_fee: '', full_due_date: '', installments: [] });
   const [saving, setSaving]     = useState(false);
@@ -188,7 +223,7 @@ function PlanEditor({ category, plan, planInstallments, selectedClass, classLabe
 
   useEffect(() => {
     setForm({
-      title: plan ? (plan.title || (isOther ? '' : ANNUAL_TITLE)) : (isOther ? '' : ANNUAL_TITLE),
+      title: plan?.title ?? presetTitle ?? '',
       full_fee: plan ? String(plan.full_fee ?? '') : '',
       full_due_date: plan && plan.due_date ? String(plan.due_date).slice(0, 10) : '',
       installments: (planInstallments || [])
@@ -196,7 +231,7 @@ function PlanEditor({ category, plan, planInstallments, selectedClass, classLabe
         .sort((a, b) => (a.sort_order - b.sort_order) || (a.id - b.id))
         .map(i => ({ label: i.label || '', amount: i.amount ?? '', due_date: i.due_date ? String(i.due_date).slice(0, 10) : '' }))
     });
-  }, [plan, planInstallments, isOther]);
+  }, [plan, presetTitle, planInstallments]);
 
   const installTotal = form.installments.reduce((s, i) => s + (Number(i.amount) || 0), 0);
   const fullFeeNum = Number(form.full_fee) || 0;
@@ -207,7 +242,8 @@ function PlanEditor({ category, plan, planInstallments, selectedClass, classLabe
 
   const save = async () => {
     if (!canEdit || !selectedClass) return;
-    if (isOther && !form.title.trim()) return alert('Please enter a title for this fee (e.g. Books Fee).');
+    const title = isOther ? form.title.trim() : ANNUAL_TITLE;
+    if (isOther && !title) return alert('Please enter a title for this fee (e.g. Books Fee).');
     setSaving(true);
     try {
       const res = await fetch(`${API_BASE_URL}/fees/class-plan`, {
@@ -217,7 +253,7 @@ function PlanEditor({ category, plan, planInstallments, selectedClass, classLabe
           institutionId: user.institutionId,
           academic_year_id: data.academic_year_id ?? null,
           class_id: selectedClass.id,
-          title: isOther ? form.title.trim() : ANNUAL_TITLE,
+          title,
           fee_category: category,
           full_fee: Number(form.full_fee) || 0,
           due_date: form.full_due_date || null,
@@ -229,13 +265,13 @@ function PlanEditor({ category, plan, planInstallments, selectedClass, classLabe
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) { alert(json.error || 'Failed to save fee structure.'); }
-      else { await fetchData(); if (onSaved) onSaved(json.plan_id); }
+      else { await fetchData(); if (onSaved) onSaved(json.plan_id, title); }
     } finally { setSaving(false); }
   };
 
   const remove = async () => {
     if (!canEdit || !plan) return;
-    if (!window.confirm(`Delete “${plan.title}”? This removes its structure and assignments.`)) return;
+    if (!window.confirm(`Remove “${plan.title}” for ${classLabel(selectedClass)}? (Other classes keep theirs.)`)) return;
     setDeleting(true);
     try {
       await fetch(`${API_BASE_URL}/fees/class-plan/${plan.id}`, { method: 'DELETE' });
@@ -244,23 +280,25 @@ function PlanEditor({ category, plan, planInstallments, selectedClass, classLabe
     } finally { setDeleting(false); }
   };
 
+  const titleDisabled = !canEdit || !titleEditable;
+
   return (
     <div className="ring-1 ring-black/5 rounded-lg bg-white p-5 sm:p-6 space-y-5">
-      {/* Title above the fee structure */}
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div className="flex-1 max-w-md">
           <label className="text-xs font-medium text-zinc-600 mb-1.5 flex items-center gap-1.5"><Tag className="size-3.5 text-primary" /> Title</label>
-          <input value={form.title} disabled={!canEdit || !isOther}
+          <input value={form.title} disabled={titleDisabled}
             onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
             placeholder={isOther ? 'e.g. Books Fee, Library Fee' : ANNUAL_TITLE}
             className="w-full rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm font-medium text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:bg-zinc-50 disabled:text-zinc-500" />
           {!isOther && <p className="text-[10px] text-zinc-400 mt-1">The annual fee title is fixed.</p>}
+          {isOther && !titleEditable && <p className="text-[10px] text-zinc-400 mt-1">Shared title — set this class's amount below.</p>}
         </div>
         <div className="flex items-center gap-2">
           {isOther && plan && canEdit && (
             <button onClick={remove} disabled={deleting}
               className="inline-flex items-center gap-1.5 text-red-600 ring-1 ring-red-200 px-3 py-2 rounded-md text-xs font-medium hover:bg-red-50 transition-colors disabled:opacity-50">
-              <Trash2 className="size-3.5" /> {deleting ? 'Deleting…' : 'Delete'}
+              <Trash2 className="size-3.5" /> {deleting ? 'Removing…' : 'Remove'}
             </button>
           )}
           <button onClick={save} disabled={saving || !canEdit}
@@ -277,7 +315,7 @@ function PlanEditor({ category, plan, planInstallments, selectedClass, classLabe
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="flex flex-col">
-            <label className="text-xs font-medium text-zinc-600 mb-1.5">{isOther ? 'Fee Amount' : 'Full Fee (Annual)'}</label>
+            <label className="text-xs font-medium text-zinc-600 mb-1.5">{isOther ? 'Fee Amount (this class)' : 'Full Fee (Annual)'}</label>
             <input type="number" min="0" value={form.full_fee} disabled={!canEdit}
               onChange={e => setForm(f => ({ ...f, full_fee: e.target.value }))} placeholder="e.g. 45000"
               className="w-full rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:bg-zinc-50 disabled:text-zinc-400" />
@@ -439,7 +477,7 @@ function AssignTable({ plan, students, data, user, canEdit, fetchData, selectedC
 
       {!plan && students.length > 0 && (
         <p className="px-5 py-3 text-[11px] text-accent bg-accent/5 border-t border-accent/10">
-          Save the fee structure above before assigning a payment mode.
+          Save the fee structure above (set an amount for this class) before assigning a payment mode.
         </p>
       )}
     </div>
