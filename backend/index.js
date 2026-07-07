@@ -9973,61 +9973,6 @@ app.get('/api/fees/data/:institutionId', async (req, res) => {
   }
 });
 
-// ---- GET a single student's own fee (student self-view) ----------
-app.get('/api/fees/my/:studentId', async (req, res) => {
-  const studentId = req.params.studentId;
-  try {
-    const [urows] = await db.execute(
-      'SELECT id, name, roll_no, class_id, section, institutionId FROM users WHERE id = ? LIMIT 1',
-      [studentId]
-    );
-    if (!urows.length) return res.status(404).json({ error: 'Student not found.' });
-    const stu = urows[0];
-
-    const yearId = await resolveYearId(stu.institutionId); // active academic year
-
-    let className = null;
-    if (stu.class_id) {
-      const [crows] = await db.execute('SELECT className, section FROM classes WHERE id = ? LIMIT 1', [stu.class_id]);
-      if (crows.length) {
-        className = `${crows[0].className}${crows[0].section ? ' - ' + crows[0].section : ''}`;
-      }
-    }
-
-    let plan = null, installments = [];
-    if (stu.class_id) {
-      const [prows] = await db.execute(
-        'SELECT * FROM fee_class_plans WHERE institutionId = ? AND (academic_year_id <=> ?) AND class_id = ? LIMIT 1',
-        [stu.institutionId, yearId ?? null, stu.class_id]
-      );
-      if (prows.length) {
-        plan = prows[0];
-        const [irows] = await db.execute(
-          'SELECT * FROM fee_installments WHERE plan_id = ? ORDER BY sort_order, id',
-          [plan.id]
-        );
-        installments = irows;
-      }
-    }
-
-    const [arows] = await db.execute(
-      'SELECT * FROM student_fee_assignments WHERE institutionId = ? AND (academic_year_id <=> ?) AND student_id = ? LIMIT 1',
-      [stu.institutionId, yearId ?? null, studentId]
-    );
-
-    res.json({
-      academic_year_id: yearId ?? null,
-      student: { id: stu.id, name: stu.name, roll_no: stu.roll_no, class_id: stu.class_id, className },
-      plan: plan ? { id: plan.id, full_fee: plan.full_fee } : null,
-      installments,
-      assignment: arows.length ? arows[0] : null
-    });
-  } catch (err) {
-    console.error('fees/my error:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
 // ---- Upsert a class fee structure (full fee + installments) ------
 app.post('/api/fees/class-plan', async (req, res) => {
   const {
