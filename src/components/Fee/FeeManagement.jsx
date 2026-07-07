@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { IndianRupee, Percent, Landmark, ReceiptText } from 'lucide-react';
+import { IndianRupee, Percent, Landmark, ReceiptText, BellRing } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import FeeAssign  from './FeeAssign';
 import Concession from './Concession';
 import Account    from './Account';
 import Payments   from './Payments';
+import Alerts     from './Alerts';
 import MyFee      from './MyFee';
 
 // Must match the module_name used in Modules.js / the Permissions matrix.
@@ -50,6 +51,7 @@ export default function FeeManagement() {
     { id: 'concession', label: 'Concession', icon: Percent },
     { id: 'account',    label: 'Account',    icon: Landmark },
     { id: 'payments',   label: 'Payments',   icon: ReceiptText },
+    { id: 'alerts',     label: 'Alerts',     icon: BellRing },
   ];
   const tabProps = { data, fetchData, user, canEdit };
 
@@ -91,6 +93,7 @@ export default function FeeManagement() {
             {activeTab === 'concession' && <Concession {...tabProps} />}
             {activeTab === 'account'    && <Account user={user} canEdit={canEdit} />}
             {activeTab === 'payments'   && <Payments {...tabProps} />}
+            {activeTab === 'alerts'     && <Alerts {...tabProps} />}
           </>
         )}
       </div>

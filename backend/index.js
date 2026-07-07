@@ -10459,6 +10459,189 @@ app.post('/api/fees/payments/verify', async (req, res) => {
   }
 });
 
+// Section 27 — Fee Alerts
+function _fa_ymd(d) {
+  const x = new Date(d);
+  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+}
+ 
+// ---- Config: auto rules + recent send log -----------------------
+app.get('/api/fees/alerts/config/:institutionId', async (req, res) => {
+  const institutionId = req.params.institutionId;
+  try {
+    const yearId = await resolveYearId(institutionId);
+    const [rules] = await db.execute(
+      'SELECT * FROM fee_auto_alerts WHERE institutionId = ? AND (academic_year_id <=> ?)',
+      [institutionId, yearId ?? null]
+    );
+    rules.sort((a, b) => a.id - b.id);
+ 
+    const [log] = await db.execute(
+      `SELECT id, alert_type, rule_id, class_id, audience, message, recipient_count, sent_by_name, created_at
+         FROM fee_alert_log WHERE institutionId = ?`,
+      [institutionId]
+    );
+    log.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+ 
+    res.json({ academic_year_id: yearId ?? null, rules, log: log.slice(0, 50) });
+  } catch (err) {
+    console.error('alerts/config error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+ 
+// ---- Create / update an auto rule -------------------------------
+app.post('/api/fees/alerts/auto', async (req, res) => {
+  const {
+    id, institutionId, academic_year_id, class_id,
+    trigger_type, days_offset, message, is_active, userId, userName
+  } = req.body;
+  if (!institutionId) return res.status(400).json({ error: 'institutionId is required.' });
+  const tt = ['before_due', 'on_due', 'after_due'].includes(trigger_type) ? trigger_type : 'before_due';
+  const days = tt === 'on_due' ? 0 : Math.max(0, Number(days_offset) || 0);
+  const active = is_active ? 1 : 0;
+  try {
+    if (id) {
+      await db.execute(
+        'UPDATE fee_auto_alerts SET class_id = ?, trigger_type = ?, days_offset = ?, message = ?, is_active = ? WHERE id = ? AND institutionId = ?',
+        [class_id ?? null, tt, days, message || null, active, id, institutionId]
+      );
+      res.json({ success: true, id });
+    } else {
+      const [ins] = await db.execute(
+        `INSERT INTO fee_auto_alerts
+           (institutionId, academic_year_id, class_id, trigger_type, days_offset, message, is_active, created_by, created_by_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [institutionId, academic_year_id ?? null, class_id ?? null, tt, days, message || null, active, userId ?? null, userName ?? null]
+      );
+      res.json({ success: true, id: ins.insertId });
+    }
+  } catch (err) {
+    console.error('alerts/auto save error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+ 
+// ---- Toggle an auto rule on/off ---------------------------------
+app.post('/api/fees/alerts/auto/toggle', async (req, res) => {
+  const { id, institutionId, is_active } = req.body;
+  if (!id || !institutionId) return res.status(400).json({ error: 'id and institutionId are required.' });
+  try {
+    await db.execute('UPDATE fee_auto_alerts SET is_active = ? WHERE id = ? AND institutionId = ?',
+      [is_active ? 1 : 0, id, institutionId]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('alerts/auto toggle error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+ 
+// ---- Delete an auto rule ----------------------------------------
+app.delete('/api/fees/alerts/auto/:id', async (req, res) => {
+  try {
+    await db.execute('DELETE FROM fee_auto_alerts WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('alerts/auto delete error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+ 
+// ---- Manual send (All classes / one class) ----------------------
+app.post('/api/fees/alerts/manual/send', async (req, res) => {
+  const { institutionId, academic_year_id, class_id, message, userId, userName } = req.body;
+  if (!institutionId) return res.status(400).json({ error: 'institutionId is required.' });
+  try {
+    let sql = `SELECT COUNT(*) AS c FROM users
+                WHERE institutionId = ?
+                  AND LOWER(role) LIKE '%student%'
+                  AND LOWER(COALESCE(status, 'active')) = 'active'`;
+    const params = [institutionId];
+    if (class_id) { sql += ' AND class_id = ?'; params.push(class_id); }
+    const [[cnt]] = await db.execute(sql, params);
+ 
+    await db.execute(
+      `INSERT INTO fee_alert_log
+         (institutionId, academic_year_id, alert_type, class_id, audience, message, recipient_count, sent_by, sent_by_name)
+       VALUES (?, ?, 'manual', ?, ?, ?, ?, ?, ?)`,
+      [institutionId, academic_year_id ?? null, class_id ?? null, class_id ? 'class' : 'all', message || null, cnt.c, userId ?? null, userName ?? null]
+    );
+ 
+    // TODO: Notifications fan-out (Section 25) — one row per student in scope.
+    res.json({ success: true, recipient_count: cnt.c });
+  } catch (err) {
+    console.error('alerts/manual send error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+ 
+// ---- Auto processor: call daily from a scheduler ----------------
+// Body: { institutionId? } — omit to process every institution.
+app.post('/api/fees/alerts/run', async (req, res) => {
+  const { institutionId } = req.body || {};
+  try {
+    let rsql = 'SELECT * FROM fee_auto_alerts WHERE is_active = 1';
+    const rparams = [];
+    if (institutionId) { rsql += ' AND institutionId = ?'; rparams.push(institutionId); }
+    const [rules] = await db.execute(rsql, rparams);
+ 
+    const today = new Date();
+    let processed = 0, logged = 0;
+ 
+    for (const rule of rules) {
+      processed++;
+      const target = new Date(today);
+      if (rule.trigger_type === 'before_due') target.setDate(target.getDate() + (rule.days_offset || 0));
+      else if (rule.trigger_type === 'after_due') target.setDate(target.getDate() - (rule.days_offset || 0));
+      const t = _fa_ymd(target);
+ 
+      // Classes with an installment due that day
+      let isql = 'SELECT DISTINCT class_id FROM fee_installments WHERE institutionId = ? AND due_date = ?';
+      const ip = [rule.institutionId, t];
+      if (rule.class_id) { isql += ' AND class_id = ?'; ip.push(rule.class_id); }
+      const [inst] = await db.execute(isql, ip);
+ 
+      // Classes with a full-payment plan due that day
+      let psql = 'SELECT DISTINCT class_id FROM fee_class_plans WHERE institutionId = ? AND due_date = ?';
+      const pp = [rule.institutionId, t];
+      if (rule.class_id) { psql += ' AND class_id = ?'; pp.push(rule.class_id); }
+      const [plans] = await db.execute(psql, pp);
+ 
+      const classIds = [...new Set([...inst, ...plans].map(r => r.class_id).filter(x => x != null))];
+      if (classIds.length === 0) continue;
+ 
+      const ph = classIds.map(() => '?').join(',');
+      const [[cnt]] = await db.execute(
+        `SELECT COUNT(*) AS c FROM users
+          WHERE institutionId = ? AND class_id IN (${ph})
+            AND LOWER(role) LIKE '%student%'
+            AND LOWER(COALESCE(status, 'active')) = 'active'`,
+        [rule.institutionId, ...classIds]
+      );
+      if (!cnt.c) continue;
+ 
+      const dedupe = `auto_${rule.id}_${t}`;
+      try {
+        await db.execute(
+          `INSERT INTO fee_alert_log
+             (institutionId, academic_year_id, alert_type, rule_id, class_id, audience, message, recipient_count, dedupe_key)
+           VALUES (?, ?, 'auto', ?, ?, ?, ?, ?, ?)`,
+          [rule.institutionId, rule.academic_year_id ?? null, rule.id, rule.class_id ?? null, rule.class_id ? 'class' : 'all', rule.message || null, cnt.c, dedupe]
+        );
+        logged++;
+        // TODO: Notifications fan-out (Section 25) for the matched students.
+      } catch (e) {
+        // Duplicate dedupe_key -> already fired for this rule today; skip.
+      }
+    }
+ 
+    res.json({ success: true, rules_processed: processed, alerts_logged: logged });
+  } catch (err) {
+    console.error('alerts/run error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // =====================================================================
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
