@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { IndianRupee, Percent } from 'lucide-react';
+import { IndianRupee, Percent, Landmark, ReceiptText } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import FeeAssign  from './FeeAssign';
 import Concession from './Concession';
+import Account    from './Account';
+import Payments   from './Payments';
 import MyFee      from './MyFee';
 
 // Must match the module_name used in Modules.js / the Permissions matrix.
@@ -15,10 +17,7 @@ export default function FeeManagement() {
   const permissions = usePermissions();
   const can = permissions?.can;
 
-  // Students only ever see their OWN fee — never the management UI.
   const isStudent = (user?.role || '').toLowerCase().includes('student');
-  // Non-student users manage fees only if the admin granted them Edit; a
-  // read-only grant shows the tables but disables every mutating control.
   const canEdit = can ? can(MODULE_NAME, 'edit') : true;
 
   const [activeTab, setActiveTab] = useState('assign');
@@ -28,7 +27,7 @@ export default function FeeManagement() {
   const [loading, setLoading] = useState(true);
 
   const fetchData = useCallback(async () => {
-    if (!user?.institutionId || isStudent) return; // students don't pull institution-wide data
+    if (!user?.institutionId || isStudent) return;
     setLoading(true);
     try {
       const res = await fetch(`${API_BASE_URL}/fees/data/${user.institutionId}`);
@@ -49,17 +48,18 @@ export default function FeeManagement() {
   const tabs = [
     { id: 'assign',     label: 'Fee Assign', icon: IndianRupee },
     { id: 'concession', label: 'Concession', icon: Percent },
+    { id: 'account',    label: 'Account',    icon: Landmark },
+    { id: 'payments',   label: 'Payments',   icon: ReceiptText },
   ];
   const tabProps = { data, fetchData, user, canEdit };
 
   return (
     <div className="p-8 max-w-[1440px] w-full mx-auto animate-in fade-in duration-700">
-      {/* Page Header */}
       <header className="mb-6 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Fee Management</h1>
           <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
-            Set class fee structures, assign payment modes, and manage concessions.
+            Set fee structures, assign payment modes, manage concessions, and collect payments.
           </p>
         </div>
         {!canEdit && (
@@ -69,24 +69,17 @@ export default function FeeManagement() {
         )}
       </header>
 
-      {/* Segmented Tabs (same style as System Configuration) */}
       <div className="flex flex-wrap items-center gap-2 mb-8 border-b border-zinc-200 pb-4">
         {tabs.map(t => (
-          <button
-            key={t.id}
-            onClick={() => setActiveTab(t.id)}
+          <button key={t.id} onClick={() => setActiveTab(t.id)}
             className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-              activeTab === t.id
-                ? 'bg-primary text-white'
-                : 'text-zinc-600 hover:bg-zinc-50 border border-zinc-200'
-            }`}
-          >
+              activeTab === t.id ? 'bg-primary text-white' : 'text-zinc-600 hover:bg-zinc-50 border border-zinc-200'
+            }`}>
             <t.icon className="size-3.5 shrink-0" /> {t.label}
           </button>
         ))}
       </div>
 
-      {/* Content */}
       <div className="min-h-[500px]">
         {loading ? (
           <div className="h-96 flex items-center justify-center">
@@ -96,6 +89,8 @@ export default function FeeManagement() {
           <>
             {activeTab === 'assign'     && <FeeAssign {...tabProps} />}
             {activeTab === 'concession' && <Concession {...tabProps} />}
+            {activeTab === 'account'    && <Account user={user} canEdit={canEdit} />}
+            {activeTab === 'payments'   && <Payments {...tabProps} />}
           </>
         )}
       </div>

@@ -9916,20 +9916,22 @@ app.get('/api/overview/me/:instId/:userId', async (req, res) => {
 
 // ============================================================
 // Section 26 — Fee Management
-// Tabs served: Fee Assign (class fee structures + student assignment) & Concession.
-// All routes are institution + active-academic-year scoped, matching the
-// existing SmartEdz pattern. Paste this block before `const PORT`.
+// Tabs: Fee Assign, Concession, Account, Payments (+ student MyFee).
+// All routes are institution + active-academic-year scoped.
+// Paste this block before `const PORT`.
 //
-// INTEGRATION NOTE: this uses the shared `resolveYearId(institutionId)` helper
-// for the active year. If your helper's signature differs, that single call in
-// the /fees/data route is the only line to adjust.
+// INTEGRATION NOTES:
+//  • Uses the shared `resolveYearId(institutionId)` helper for the active year.
+//  • Online payments use Razorpay with each school's OWN keys (stored per
+//    institution in fee_accounts). The key_secret NEVER leaves the server.
+//  • Requires Node 18+ (global fetch) and the built-in `crypto` module.
 // ============================================================
 
-// ---- GET everything the Fee Management module needs --------------
+// ---- GET everything the management view needs --------------------
 app.get('/api/fees/data/:institutionId', async (req, res) => {
   const institutionId = req.params.institutionId;
   try {
-    const yearId = await resolveYearId(institutionId); // active academic year
+    const yearId = await resolveYearId(institutionId);
 
     const [classes] = await db.execute(
       'SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY id',
@@ -9984,14 +9986,12 @@ app.get('/api/fees/my/:studentId', async (req, res) => {
     if (!urows.length) return res.status(404).json({ error: 'Student not found.' });
     const stu = urows[0];
 
-    const yearId = await resolveYearId(stu.institutionId); // active academic year
+    const yearId = await resolveYearId(stu.institutionId);
 
     let className = null;
     if (stu.class_id) {
       const [crows] = await db.execute('SELECT className, section FROM classes WHERE id = ? LIMIT 1', [stu.class_id]);
-      if (crows.length) {
-        className = `${crows[0].className}${crows[0].section ? ' - ' + crows[0].section : ''}`;
-      }
+      if (crows.length) className = `${crows[0].className}${crows[0].section ? ' - ' + crows[0].section : ''}`;
     }
 
     let plan = null, installments = [];
@@ -10015,12 +10015,35 @@ app.get('/api/fees/my/:studentId', async (req, res) => {
       [stu.institutionId, yearId ?? null, studentId]
     );
 
+    // Payments (no slip_image in this list to keep it light + avoid sort memory)
+    const [payRows] = await db.execute(
+      `SELECT id, amount, method, status, installment_id, reference_no, note, created_at
+         FROM fee_payments
+        WHERE institutionId = ? AND (academic_year_id <=> ?) AND student_id = ?`,
+      [stu.institutionId, yearId ?? null, studentId]
+    );
+    payRows.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+    const [accRows] = await db.execute(
+      'SELECT account_name, razorpay_key_id, online_enabled, offline_enabled, offline_instructions FROM fee_accounts WHERE institutionId = ? LIMIT 1',
+      [stu.institutionId]
+    );
+    const acc = accRows[0] || null;
+
     res.json({
       academic_year_id: yearId ?? null,
       student: { id: stu.id, name: stu.name, roll_no: stu.roll_no, class_id: stu.class_id, className },
-      plan: plan ? { id: plan.id, full_fee: plan.full_fee } : null,
+      plan: plan ? { id: plan.id, full_fee: plan.full_fee, due_date: plan.due_date } : null,
       installments,
-      assignment: arows.length ? arows[0] : null
+      assignment: arows.length ? arows[0] : null,
+      payments: payRows,
+      pay: {
+        online_enabled:  acc ? !!acc.online_enabled  : false,
+        offline_enabled: acc ? !!acc.offline_enabled : true,
+        key_id:          acc ? acc.razorpay_key_id    : null,
+        account_name:    acc ? acc.account_name       : null,
+        offline_instructions: acc ? acc.offline_instructions : null
+      }
     });
   } catch (err) {
     console.error('fees/my error:', err);
@@ -10028,10 +10051,10 @@ app.get('/api/fees/my/:studentId', async (req, res) => {
   }
 });
 
-// ---- Upsert a class fee structure (full fee + installments) ------
+// ---- Upsert a class fee structure (full fee + due date + installments) ----
 app.post('/api/fees/class-plan', async (req, res) => {
   const {
-    institutionId, academic_year_id, class_id, full_fee,
+    institutionId, academic_year_id, class_id, full_fee, due_date,
     installments = [], userId, userName
   } = req.body;
   if (!institutionId || !class_id) {
@@ -10047,20 +10070,19 @@ app.post('/api/fees/class-plan', async (req, res) => {
     if (existing.length) {
       planId = existing[0].id;
       await db.execute(
-        'UPDATE fee_class_plans SET full_fee = ?, updated_by = ?, updated_by_name = ? WHERE id = ?',
-        [Number(full_fee) || 0, userId ?? null, userName ?? null, planId]
+        'UPDATE fee_class_plans SET full_fee = ?, due_date = ?, updated_by = ?, updated_by_name = ? WHERE id = ?',
+        [Number(full_fee) || 0, due_date || null, userId ?? null, userName ?? null, planId]
       );
     } else {
       const [ins] = await db.execute(
         `INSERT INTO fee_class_plans
-           (institutionId, academic_year_id, class_id, full_fee, created_by, created_by_name)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [institutionId, academic_year_id ?? null, class_id, Number(full_fee) || 0, userId ?? null, userName ?? null]
+           (institutionId, academic_year_id, class_id, full_fee, due_date, created_by, created_by_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [institutionId, academic_year_id ?? null, class_id, Number(full_fee) || 0, due_date || null, userId ?? null, userName ?? null]
       );
       planId = ins.insertId;
     }
 
-    // Replace the installment set wholesale.
     await db.execute('DELETE FROM fee_installments WHERE plan_id = ?', [planId]);
     let order = 0;
     for (const it of (installments || [])) {
@@ -10187,6 +10209,252 @@ app.post('/api/fees/concession', async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error('fees/concession error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =================================================================
+//  ACCOUNT (per-institution gateway + bank/UPI details)
+// =================================================================
+
+// The secret is never sent back — only a boolean saying whether one is set.
+app.get('/api/fees/account/:institutionId', async (req, res) => {
+  try {
+    const [rows] = await db.execute('SELECT * FROM fee_accounts WHERE institutionId = ? LIMIT 1', [req.params.institutionId]);
+    if (!rows.length) return res.json(null);
+    const a = rows[0];
+    const secretSet = !!a.razorpay_key_secret;
+    delete a.razorpay_key_secret;
+    a.razorpay_secret_set = secretSet;
+    res.json(a);
+  } catch (err) {
+    console.error('fees/account get error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/fees/account', async (req, res) => {
+  const {
+    institutionId, account_name, owner_name, owner_phone, owner_email,
+    upi_id, bank_name, bank_account_name, bank_account_no, bank_ifsc,
+    gateway, razorpay_key_id, razorpay_key_secret,
+    online_enabled, offline_enabled, offline_instructions,
+    userId, userName
+  } = req.body;
+  if (!institutionId) return res.status(400).json({ error: 'institutionId is required.' });
+  try {
+    const [existing] = await db.execute('SELECT id FROM fee_accounts WHERE institutionId = ? LIMIT 1', [institutionId]);
+    const cols = {
+      account_name: account_name ?? null,
+      owner_name: owner_name ?? null,
+      owner_phone: owner_phone ?? null,
+      owner_email: owner_email ?? null,
+      upi_id: upi_id ?? null,
+      bank_name: bank_name ?? null,
+      bank_account_name: bank_account_name ?? null,
+      bank_account_no: bank_account_no ?? null,
+      bank_ifsc: bank_ifsc ?? null,
+      gateway: gateway || 'razorpay',
+      razorpay_key_id: razorpay_key_id ?? null,
+      online_enabled: online_enabled ? 1 : 0,
+      offline_enabled: offline_enabled ? 1 : 0,
+      offline_instructions: offline_instructions ?? null,
+      updated_by: userId ?? null,
+      updated_by_name: userName ?? null
+    };
+    if (existing.length) {
+      const keys = Object.keys(cols);
+      let sql = 'UPDATE fee_accounts SET ' + keys.map(k => `${k} = ?`).join(', ');
+      const params = keys.map(k => cols[k]);
+      if (razorpay_key_secret) { sql += ', razorpay_key_secret = ?'; params.push(razorpay_key_secret); }
+      sql += ' WHERE id = ?'; params.push(existing[0].id);
+      await db.execute(sql, params);
+    } else {
+      const insCols = { institutionId, ...cols };
+      if (razorpay_key_secret) insCols.razorpay_key_secret = razorpay_key_secret;
+      const keys = Object.keys(insCols);
+      const sql = `INSERT INTO fee_accounts (${keys.join(', ')}) VALUES (${keys.map(() => '?').join(', ')})`;
+      await db.execute(sql, keys.map(k => insCols[k]));
+    }
+    res.json({ success: true });
+  } catch (err) {
+    console.error('fees/account post error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =================================================================
+//  PAYMENTS (online Razorpay + offline slip verification)
+// =================================================================
+
+// Create a Razorpay order using the school's own keys.
+app.post('/api/fees/pay/order', async (req, res) => {
+  const { institutionId, student_id, class_id, plan_id, installment_id, amount } = req.body;
+  const rupees = Number(amount);
+  if (!institutionId || !student_id || !rupees || rupees <= 0) {
+    return res.status(400).json({ error: 'institutionId, student_id and a positive amount are required.' });
+  }
+  try {
+    const [acc] = await db.execute('SELECT * FROM fee_accounts WHERE institutionId = ? LIMIT 1', [institutionId]);
+    const account = acc[0];
+    if (!account || !account.online_enabled) return res.status(400).json({ error: 'Online payment is not enabled for this school.' });
+    if (!account.razorpay_key_id || !account.razorpay_key_secret) return res.status(400).json({ error: 'Payment gateway is not configured.' });
+
+    const yearId = await resolveYearId(institutionId);
+    const paise = Math.round(rupees * 100);
+    const receipt = ('fee_' + student_id + '_' + Date.now()).slice(0, 40);
+
+    const auth = Buffer.from(`${account.razorpay_key_id}:${account.razorpay_key_secret}`).toString('base64');
+    const rzpRes = await fetch('https://api.razorpay.com/v1/orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Basic ' + auth },
+      body: JSON.stringify({ amount: paise, currency: 'INR', receipt, notes: { student_id: String(student_id) } })
+    });
+    const order = await rzpRes.json();
+    if (!rzpRes.ok || !order.id) {
+      return res.status(502).json({ error: (order && order.error && order.error.description) || 'Failed to create payment order.' });
+    }
+
+    const [ins] = await db.execute(
+      `INSERT INTO fee_payments
+         (institutionId, academic_year_id, student_id, class_id, plan_id, installment_id, amount, method, status, provider, provider_order_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'online', 'pending', 'razorpay', ?)`,
+      [institutionId, yearId ?? null, student_id, class_id ?? null, plan_id ?? null, installment_id ?? null, rupees, order.id]
+    );
+
+    res.json({
+      payment_row_id: ins.insertId,
+      order_id: order.id,
+      key_id: account.razorpay_key_id,
+      amount: paise,
+      currency: 'INR',
+      account_name: account.account_name || 'School Fee'
+    });
+  } catch (err) {
+    console.error('fees/pay/order error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Verify the Razorpay signature and mark the payment paid.
+app.post('/api/fees/pay/verify', async (req, res) => {
+  const { payment_row_id, razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+  if (!payment_row_id || !razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+    return res.status(400).json({ error: 'Missing verification fields.' });
+  }
+  try {
+    const [rows] = await db.execute(
+      `SELECT p.id, a.razorpay_key_secret
+         FROM fee_payments p
+         JOIN fee_accounts a ON a.institutionId = p.institutionId
+        WHERE p.id = ? LIMIT 1`,
+      [payment_row_id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Payment not found.' });
+    const secret = rows[0].razorpay_key_secret;
+    if (!secret) return res.status(400).json({ error: 'Gateway not configured.' });
+
+    const nodeCrypto = require('crypto');
+    const expected = nodeCrypto.createHmac('sha256', secret)
+      .update(razorpay_order_id + '|' + razorpay_payment_id)
+      .digest('hex');
+
+    if (expected !== razorpay_signature) {
+      await db.execute(
+        'UPDATE fee_payments SET status = ?, provider_payment_id = ?, provider_signature = ? WHERE id = ?',
+        ['failed', razorpay_payment_id, razorpay_signature, payment_row_id]
+      );
+      return res.status(400).json({ error: 'Payment signature verification failed.' });
+    }
+
+    await db.execute(
+      'UPDATE fee_payments SET status = ?, provider_payment_id = ?, provider_signature = ?, verified_at = NOW() WHERE id = ?',
+      ['paid', razorpay_payment_id, razorpay_signature, payment_row_id]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('fees/pay/verify error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Student submits an offline payment (slip screenshot) -> pending verification.
+app.post('/api/fees/pay/offline', async (req, res) => {
+  const { institutionId, student_id, class_id, plan_id, installment_id, amount, slip_image, reference_no, note } = req.body;
+  const rupees = Number(amount);
+  if (!institutionId || !student_id || !rupees || rupees <= 0) {
+    return res.status(400).json({ error: 'institutionId, student_id and a positive amount are required.' });
+  }
+  try {
+    const yearId = await resolveYearId(institutionId);
+    await db.execute(
+      `INSERT INTO fee_payments
+         (institutionId, academic_year_id, student_id, class_id, plan_id, installment_id, amount, method, status, provider, slip_image, reference_no, note)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'offline', 'pending', 'manual', ?, ?, ?)`,
+      [institutionId, yearId ?? null, student_id, class_id ?? null, plan_id ?? null, installment_id ?? null, rupees, slip_image || null, reference_no || null, note || null]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('fees/pay/offline error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin list of payments (no slip_image; sorted in Node to avoid sort memory).
+app.get('/api/fees/payments/:institutionId', async (req, res) => {
+  const institutionId = req.params.institutionId;
+  const { status, class_id, from, to, student_id } = req.query;
+  try {
+    let sql = `SELECT p.id, p.student_id, u.name AS student_name, u.roll_no, p.class_id,
+                      p.installment_id, p.amount, p.method, p.status, p.provider,
+                      p.provider_payment_id, p.reference_no, p.note,
+                      (p.slip_image IS NOT NULL) AS has_slip,
+                      p.verified_by_name, p.verified_at, p.created_at
+                 FROM fee_payments p
+                 LEFT JOIN users u ON u.id = p.student_id
+                WHERE p.institutionId = ?`;
+    const params = [institutionId];
+    if (status)     { sql += ' AND p.status = ?';           params.push(status); }
+    if (class_id)   { sql += ' AND p.class_id = ?';         params.push(class_id); }
+    if (student_id) { sql += ' AND p.student_id = ?';       params.push(student_id); }
+    if (from)       { sql += ' AND DATE(p.created_at) >= ?'; params.push(from); }
+    if (to)         { sql += ' AND DATE(p.created_at) <= ?'; params.push(to); }
+    const [rows] = await db.execute(sql, params);
+    rows.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    res.json(rows);
+  } catch (err) {
+    console.error('fees/payments list error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Fetch one payment's slip image on demand.
+app.get('/api/fees/payment-slip/:paymentId', async (req, res) => {
+  try {
+    const [rows] = await db.execute('SELECT slip_image FROM fee_payments WHERE id = ? LIMIT 1', [req.params.paymentId]);
+    if (!rows.length || !rows[0].slip_image) return res.status(404).json({ error: 'No slip found.' });
+    res.json({ slip_image: rows[0].slip_image });
+  } catch (err) {
+    console.error('fees/payment-slip error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin verifies or rejects an offline payment.
+app.post('/api/fees/payments/verify', async (req, res) => {
+  const { payment_id, action, userId, userName } = req.body;
+  if (!payment_id || !['verify', 'reject'].includes(action)) {
+    return res.status(400).json({ error: 'payment_id and a valid action are required.' });
+  }
+  const status = action === 'verify' ? 'paid' : 'rejected';
+  try {
+    await db.execute(
+      'UPDATE fee_payments SET status = ?, verified_by = ?, verified_by_name = ?, verified_at = NOW() WHERE id = ?',
+      [status, userId ?? null, userName ?? null, payment_id]
+    );
+    res.json({ success: true, status });
+  } catch (err) {
+    console.error('fees/payments/verify error:', err);
     res.status(500).json({ error: err.message });
   }
 });

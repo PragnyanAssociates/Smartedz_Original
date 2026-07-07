@@ -9,11 +9,10 @@ const inr = (n) =>
 export default function FeeAssign({ data, fetchData, user, canEdit = true }) {
   const classes = data.classes || [];
   const [activeClass, setActiveClass] = useState('');
-  const [feeForm, setFeeForm]         = useState({ full_fee: '', installments: [] });
+  const [feeForm, setFeeForm]         = useState({ full_fee: '', full_due_date: '', installments: [] });
   const [savingPlan, setSavingPlan]   = useState(false);
   const [savingId, setSavingId]       = useState(null); // student id (or 'all') currently saving
 
-  // Keep a valid class selected (defaults to the first, re-points if it disappears).
   useEffect(() => {
     if (classes.length === 0) return;
     const stillValid = classes.some(c => String(c.id) === String(activeClass));
@@ -37,10 +36,10 @@ export default function FeeAssign({ data, fetchData, user, canEdit = true }) {
     [data.installments, plan]
   );
 
-  // Load the editor whenever the class / plan changes.
   useEffect(() => {
     setFeeForm({
       full_fee: plan ? String(plan.full_fee ?? '') : '',
+      full_due_date: plan && plan.due_date ? String(plan.due_date).slice(0, 10) : '',
       installments: planInstallments.map(i => ({
         label: i.label || '',
         amount: i.amount ?? '',
@@ -61,7 +60,6 @@ export default function FeeAssign({ data, fetchData, user, canEdit = true }) {
   const fullFeeNum   = Number(feeForm.full_fee) || (plan ? Number(plan.full_fee) : 0);
   const installTotal = feeForm.installments.reduce((s, i) => s + (Number(i.amount) || 0), 0);
 
-  // ---------- Fee structure editor ----------
   const addInstallment = () => {
     if (!canEdit) return;
     setFeeForm(f => ({
@@ -69,13 +67,8 @@ export default function FeeAssign({ data, fetchData, user, canEdit = true }) {
       installments: [...f.installments, { label: `Installment ${f.installments.length + 1}`, amount: '', due_date: '' }]
     }));
   };
-
   const updateInstallment = (idx, key, val) =>
-    setFeeForm(f => ({
-      ...f,
-      installments: f.installments.map((it, i) => (i === idx ? { ...it, [key]: val } : it))
-    }));
-
+    setFeeForm(f => ({ ...f, installments: f.installments.map((it, i) => (i === idx ? { ...it, [key]: val } : it)) }));
   const removeInstallment = (idx) =>
     setFeeForm(f => ({ ...f, installments: f.installments.filter((_, i) => i !== idx) }));
 
@@ -91,6 +84,7 @@ export default function FeeAssign({ data, fetchData, user, canEdit = true }) {
           academic_year_id: data.academic_year_id ?? null,
           class_id: selectedClass.id,
           full_fee: Number(feeForm.full_fee) || 0,
+          due_date: feeForm.full_due_date || null,
           installments: feeForm.installments
             .filter(i => i.label || i.amount)
             .map((i, idx) => ({
@@ -165,18 +159,15 @@ export default function FeeAssign({ data, fetchData, user, canEdit = true }) {
 
   return (
     <div className="space-y-6">
-      {/* Info note */}
       <div className="bg-blue-50/60 border border-blue-100 rounded-md p-4 flex gap-3 text-[11px] text-blue-800 leading-relaxed">
         <Info className="size-4 shrink-0 text-blue-500 mt-0.5" />
         <p>
-          Set the <strong className="font-semibold text-blue-900">Full Fee</strong> for each class, then optionally break it
-          into <strong>Installments</strong> if the school collects fees term-wise. Once a class structure is saved, give each
-          student a payment mode — <strong>Full Fee</strong> (single payment) or <strong>Installment</strong> (pay per term).
-          Per-student discounts are applied in the <strong>Concession</strong> tab and shown as <em>Full Fee − Concession</em>.
+          Set the <strong className="font-semibold text-blue-900">Full Fee</strong> and its due date, then optionally break it
+          into <strong>Installments</strong> (each with its own due date). Once saved, give each student a payment mode —
+          <strong> Full Fee</strong> or <strong>Installment</strong>. Per-student discounts live in the <strong>Concession</strong> tab.
         </p>
       </div>
 
-      {/* Class filter (single class, no "All") */}
       {classes.length > 0 && (
         <div className="flex items-center gap-3 flex-wrap bg-zinc-50/50 p-2.5 rounded-md ring-1 ring-black/5">
           <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider pl-1">
@@ -209,7 +200,6 @@ export default function FeeAssign({ data, fetchData, user, canEdit = true }) {
 
       {selectedClass ? (
         <>
-          {/* Fee structure editor */}
           <div className="ring-1 ring-black/5 rounded-lg bg-white p-5 sm:p-6 space-y-5">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <h3 className="text-sm font-semibold text-zinc-900 flex items-center gap-2">
@@ -230,9 +220,15 @@ export default function FeeAssign({ data, fetchData, user, canEdit = true }) {
                   className="w-full rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:bg-zinc-50 disabled:text-zinc-400" />
                 <p className="text-[10px] text-zinc-400 mt-1">The complete yearly fee if paid in a single payment.</p>
               </div>
+              <div className="flex flex-col">
+                <label className="text-xs font-medium text-zinc-600 mb-1.5">Full Payment Due Date</label>
+                <input type="date" value={feeForm.full_due_date} disabled={!canEdit}
+                  onChange={e => setFeeForm(f => ({ ...f, full_due_date: e.target.value }))}
+                  className="w-full rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:bg-zinc-50 disabled:text-zinc-400" />
+                <p className="text-[10px] text-zinc-400 mt-1">Shown to students; turns red once overdue.</p>
+              </div>
             </div>
 
-            {/* Installments */}
             <div>
               <div className="flex items-center justify-between mb-2">
                 <p className="text-xs font-medium text-zinc-600">Installments (optional)</p>
@@ -278,7 +274,6 @@ export default function FeeAssign({ data, fetchData, user, canEdit = true }) {
             </div>
           </div>
 
-          {/* Assign to students */}
           <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden">
             <div className="flex items-center justify-between gap-3 flex-wrap p-4 border-b border-zinc-100">
               <h3 className="text-sm font-semibold text-zinc-900">
