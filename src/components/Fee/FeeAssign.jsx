@@ -6,7 +6,7 @@ const inr = (n) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })
     .format(Number(n) || 0);
 
-export default function FeeAssign({ data, fetchData, user }) {
+export default function FeeAssign({ data, fetchData, user, canEdit = true }) {
   const classes = data.classes || [];
   const [activeClass, setActiveClass] = useState('');
   const [feeForm, setFeeForm]         = useState({ full_fee: '', installments: [] });
@@ -62,11 +62,13 @@ export default function FeeAssign({ data, fetchData, user }) {
   const installTotal = feeForm.installments.reduce((s, i) => s + (Number(i.amount) || 0), 0);
 
   // ---------- Fee structure editor ----------
-  const addInstallment = () =>
+  const addInstallment = () => {
+    if (!canEdit) return;
     setFeeForm(f => ({
       ...f,
       installments: [...f.installments, { label: `Installment ${f.installments.length + 1}`, amount: '', due_date: '' }]
     }));
+  };
 
   const updateInstallment = (idx, key, val) =>
     setFeeForm(f => ({
@@ -78,7 +80,7 @@ export default function FeeAssign({ data, fetchData, user }) {
     setFeeForm(f => ({ ...f, installments: f.installments.filter((_, i) => i !== idx) }));
 
   const savePlan = async () => {
-    if (!selectedClass) return;
+    if (!canEdit || !selectedClass) return;
     setSavingPlan(true);
     try {
       const res = await fetch(`${API_BASE_URL}/fees/class-plan`, {
@@ -108,6 +110,7 @@ export default function FeeAssign({ data, fetchData, user }) {
   };
 
   const setMode = async (student, mode) => {
+    if (!canEdit) return;
     setSavingId(student.id);
     try {
       const res = await fetch(`${API_BASE_URL}/fees/assign`, {
@@ -132,7 +135,7 @@ export default function FeeAssign({ data, fetchData, user }) {
   };
 
   const assignWholeClass = async (mode) => {
-    if (!selectedClass || students.length === 0) return;
+    if (!canEdit || !selectedClass || students.length === 0) return;
     if (!plan) return alert('Save the fee structure for this class first.');
     setSavingId('all');
     try {
@@ -212,8 +215,8 @@ export default function FeeAssign({ data, fetchData, user }) {
               <h3 className="text-sm font-semibold text-zinc-900 flex items-center gap-2">
                 <IndianRupee className="size-4 text-primary" /> Fee Structure — {classLabel(selectedClass)}
               </h3>
-              <button onClick={savePlan} disabled={savingPlan}
-                className="bg-primary text-white px-4 py-2 rounded-md text-xs font-medium hover:bg-primary/90 transition-colors flex items-center gap-1.5 shadow-sm disabled:opacity-60">
+              <button onClick={savePlan} disabled={savingPlan || !canEdit}
+                className="bg-primary text-white px-4 py-2 rounded-md text-xs font-medium hover:bg-primary/90 transition-colors flex items-center gap-1.5 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">
                 <Save className="size-3.5" /> {savingPlan ? 'Saving…' : 'Save Structure'}
               </button>
             </div>
@@ -221,10 +224,10 @@ export default function FeeAssign({ data, fetchData, user }) {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="flex flex-col">
                 <label className="text-xs font-medium text-zinc-600 mb-1.5">Full Fee (Annual)</label>
-                <input type="number" min="0" value={feeForm.full_fee}
+                <input type="number" min="0" value={feeForm.full_fee} disabled={!canEdit}
                   onChange={e => setFeeForm(f => ({ ...f, full_fee: e.target.value }))}
                   placeholder="e.g. 45000"
-                  className="w-full rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40" />
+                  className="w-full rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:bg-zinc-50 disabled:text-zinc-400" />
                 <p className="text-[10px] text-zinc-400 mt-1">The complete yearly fee if paid in a single payment.</p>
               </div>
             </div>
@@ -233,10 +236,12 @@ export default function FeeAssign({ data, fetchData, user }) {
             <div>
               <div className="flex items-center justify-between mb-2">
                 <p className="text-xs font-medium text-zinc-600">Installments (optional)</p>
-                <button onClick={addInstallment}
-                  className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline">
-                  <Plus className="size-3.5" /> Add installment
-                </button>
+                {canEdit && (
+                  <button onClick={addInstallment}
+                    className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline">
+                    <Plus className="size-3.5" /> Add installment
+                  </button>
+                )}
               </div>
 
               {feeForm.installments.length === 0 ? (
@@ -247,18 +252,20 @@ export default function FeeAssign({ data, fetchData, user }) {
                 <div className="space-y-2">
                   {feeForm.installments.map((it, idx) => (
                     <div key={idx} className="flex flex-col sm:flex-row sm:items-center gap-2">
-                      <input value={it.label} onChange={e => updateInstallment(idx, 'label', e.target.value)}
+                      <input value={it.label} disabled={!canEdit} onChange={e => updateInstallment(idx, 'label', e.target.value)}
                         placeholder={`Installment ${idx + 1}`}
-                        className="flex-1 rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40" />
-                      <input type="number" min="0" value={it.amount} onChange={e => updateInstallment(idx, 'amount', e.target.value)}
+                        className="flex-1 rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:bg-zinc-50 disabled:text-zinc-400" />
+                      <input type="number" min="0" value={it.amount} disabled={!canEdit} onChange={e => updateInstallment(idx, 'amount', e.target.value)}
                         placeholder="Amount"
-                        className="w-full sm:w-36 rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40" />
-                      <input type="date" value={it.due_date} onChange={e => updateInstallment(idx, 'due_date', e.target.value)}
-                        className="w-full sm:w-44 rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40" />
-                      <button onClick={() => removeInstallment(idx)}
-                        className="p-1.5 text-zinc-400 hover:text-accent rounded transition-colors self-end sm:self-auto">
-                        <Trash2 className="size-4" />
-                      </button>
+                        className="w-full sm:w-36 rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:bg-zinc-50 disabled:text-zinc-400" />
+                      <input type="date" value={it.due_date} disabled={!canEdit} onChange={e => updateInstallment(idx, 'due_date', e.target.value)}
+                        className="w-full sm:w-44 rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:bg-zinc-50 disabled:text-zinc-400" />
+                      {canEdit && (
+                        <button onClick={() => removeInstallment(idx)}
+                          className="p-1.5 text-zinc-400 hover:text-accent rounded transition-colors self-end sm:self-auto">
+                          <Trash2 className="size-4" />
+                        </button>
+                      )}
                     </div>
                   ))}
                   <div className={`text-[11px] mt-1 ${installTotal === (Number(feeForm.full_fee) || 0) ? 'text-green-600' : 'text-accent'}`}>
@@ -277,13 +284,15 @@ export default function FeeAssign({ data, fetchData, user }) {
               <h3 className="text-sm font-semibold text-zinc-900">
                 Assign to Students <span className="text-zinc-400 font-normal">({students.length})</span>
               </h3>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Assign all as</span>
-                <button onClick={() => assignWholeClass('full')} disabled={savingId === 'all' || !plan}
-                  className="px-2.5 py-1.5 rounded-md text-[10px] font-semibold uppercase tracking-wider bg-white text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-50 disabled:opacity-50">Full</button>
-                <button onClick={() => assignWholeClass('installment')} disabled={savingId === 'all' || !plan}
-                  className="px-2.5 py-1.5 rounded-md text-[10px] font-semibold uppercase tracking-wider bg-white text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-50 disabled:opacity-50">Installment</button>
-              </div>
+              {canEdit && (
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Assign all as</span>
+                  <button onClick={() => assignWholeClass('full')} disabled={savingId === 'all' || !plan}
+                    className="px-2.5 py-1.5 rounded-md text-[10px] font-semibold uppercase tracking-wider bg-white text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-50 disabled:opacity-50">Full</button>
+                  <button onClick={() => assignWholeClass('installment')} disabled={savingId === 'all' || !plan}
+                    className="px-2.5 py-1.5 rounded-md text-[10px] font-semibold uppercase tracking-wider bg-white text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-50 disabled:opacity-50">Installment</button>
+                </div>
+              )}
             </div>
 
             <div className="overflow-x-auto custom-scrollbar">
@@ -310,7 +319,7 @@ export default function FeeAssign({ data, fetchData, user }) {
                         <td className="px-5 py-3 text-sm font-medium text-zinc-900">{s.name}</td>
                         <td className="px-5 py-3">
                           <div className="relative w-36">
-                            <select value={mode} disabled={savingId === s.id || !plan}
+                            <select value={mode} disabled={savingId === s.id || !plan || !canEdit}
                               onChange={e => setMode(s, e.target.value)}
                               className="h-8 w-full appearance-none rounded border border-zinc-200 bg-white pl-2 pr-7 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer disabled:bg-zinc-50 disabled:text-zinc-400">
                               <option value="">— not set —</option>
