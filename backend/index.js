@@ -9994,10 +9994,11 @@ app.get('/api/fees/my/:studentId', async (req, res) => {
       if (crows.length) className = `${crows[0].className}${crows[0].section ? ' - ' + crows[0].section : ''}`;
     }
 
+    // Student self-view currently surfaces the Annual fee.
     let plan = null, installments = [];
     if (stu.class_id) {
       const [prows] = await db.execute(
-        'SELECT * FROM fee_class_plans WHERE institutionId = ? AND (academic_year_id <=> ?) AND class_id = ? LIMIT 1',
+        "SELECT * FROM fee_class_plans WHERE institutionId = ? AND (academic_year_id <=> ?) AND class_id = ? AND fee_category = 'annual' LIMIT 1",
         [stu.institutionId, yearId ?? null, stu.class_id]
       );
       if (prows.length) {
@@ -10010,10 +10011,14 @@ app.get('/api/fees/my/:studentId', async (req, res) => {
       }
     }
 
-    const [arows] = await db.execute(
-      'SELECT * FROM student_fee_assignments WHERE institutionId = ? AND (academic_year_id <=> ?) AND student_id = ? LIMIT 1',
-      [stu.institutionId, yearId ?? null, studentId]
-    );
+    let assignment = null;
+    if (plan) {
+      const [arows] = await db.execute(
+        'SELECT * FROM student_fee_assignments WHERE institutionId = ? AND (academic_year_id <=> ?) AND student_id = ? AND plan_id = ? LIMIT 1',
+        [stu.institutionId, yearId ?? null, studentId, plan.id]
+      );
+      assignment = arows.length ? arows[0] : null;
+    }
 
     // Payments (no slip_image in this list to keep it light + avoid sort memory)
     const [payRows] = await db.execute(
@@ -10035,7 +10040,7 @@ app.get('/api/fees/my/:studentId', async (req, res) => {
       student: { id: stu.id, name: stu.name, roll_no: stu.roll_no, class_id: stu.class_id, className },
       plan: plan ? { id: plan.id, full_fee: plan.full_fee, due_date: plan.due_date } : null,
       installments,
-      assignment: arows.length ? arows[0] : null,
+      assignment,
       payments: payRows,
       pay: {
         online_enabled:  acc ? !!acc.online_enabled  : false,
@@ -10051,34 +10056,45 @@ app.get('/api/fees/my/:studentId', async (req, res) => {
   }
 });
 
-// ---- Upsert a class fee structure (full fee + due date + installments) ----
+// ---- Upsert a fee structure (Annual or an Other fee) ----
+// A class may have one 'annual' plan and any number of 'other' plans
+// (Books, Library, …), each keyed by its title.
 app.post('/api/fees/class-plan', async (req, res) => {
   const {
-    institutionId, academic_year_id, class_id, full_fee, due_date,
+    plan_id, institutionId, academic_year_id, class_id,
+    title, fee_category, full_fee, due_date,
     installments = [], userId, userName
   } = req.body;
   if (!institutionId || !class_id) {
     return res.status(400).json({ error: 'institutionId and class_id are required.' });
   }
+  const category = fee_category === 'other' ? 'other' : 'annual';
+  const planTitle = (title && String(title).trim()) || (category === 'annual' ? 'Annual Fee' : '');
+  if (category === 'other' && !planTitle) {
+    return res.status(400).json({ error: 'A title is required for an Other fee.' });
+  }
   try {
-    const [existing] = await db.execute(
-      'SELECT id FROM fee_class_plans WHERE institutionId = ? AND (academic_year_id <=> ?) AND class_id = ?',
-      [institutionId, academic_year_id ?? null, class_id]
-    );
+    // Resolve the target plan: by id, else by (inst, year, class, title).
+    let planId = plan_id || null;
+    if (!planId) {
+      const [existing] = await db.execute(
+        'SELECT id FROM fee_class_plans WHERE institutionId = ? AND (academic_year_id <=> ?) AND class_id = ? AND title = ?',
+        [institutionId, academic_year_id ?? null, class_id, planTitle]
+      );
+      if (existing.length) planId = existing[0].id;
+    }
 
-    let planId;
-    if (existing.length) {
-      planId = existing[0].id;
+    if (planId) {
       await db.execute(
-        'UPDATE fee_class_plans SET full_fee = ?, due_date = ?, updated_by = ?, updated_by_name = ? WHERE id = ?',
-        [Number(full_fee) || 0, due_date || null, userId ?? null, userName ?? null, planId]
+        'UPDATE fee_class_plans SET title = ?, fee_category = ?, full_fee = ?, due_date = ?, updated_by = ?, updated_by_name = ? WHERE id = ?',
+        [planTitle, category, Number(full_fee) || 0, due_date || null, userId ?? null, userName ?? null, planId]
       );
     } else {
       const [ins] = await db.execute(
         `INSERT INTO fee_class_plans
-           (institutionId, academic_year_id, class_id, full_fee, due_date, created_by, created_by_name)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [institutionId, academic_year_id ?? null, class_id, Number(full_fee) || 0, due_date || null, userId ?? null, userName ?? null]
+           (institutionId, academic_year_id, class_id, title, fee_category, full_fee, due_date, created_by, created_by_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [institutionId, academic_year_id ?? null, class_id, planTitle, category, Number(full_fee) || 0, due_date || null, userId ?? null, userName ?? null]
       );
       planId = ins.insertId;
     }
@@ -10106,6 +10122,17 @@ app.post('/api/fees/class-plan', async (req, res) => {
   }
 });
 
+// ---- Delete a fee plan (used for Other fees). Cascades installments. ----
+app.delete('/api/fees/class-plan/:id', async (req, res) => {
+  try {
+    await db.execute('DELETE FROM fee_class_plans WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('fees/class-plan delete error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ---- Assign / update a single student's payment mode -------------
 app.post('/api/fees/assign', async (req, res) => {
   const {
@@ -10118,8 +10145,8 @@ app.post('/api/fees/assign', async (req, res) => {
   const mode = payment_mode === 'installment' ? 'installment' : 'full';
   try {
     const [existing] = await db.execute(
-      'SELECT id FROM student_fee_assignments WHERE institutionId = ? AND (academic_year_id <=> ?) AND student_id = ?',
-      [institutionId, academic_year_id ?? null, student_id]
+      'SELECT id FROM student_fee_assignments WHERE institutionId = ? AND (academic_year_id <=> ?) AND student_id = ? AND (plan_id <=> ?)',
+      [institutionId, academic_year_id ?? null, student_id, plan_id ?? null]
     );
     if (existing.length) {
       await db.execute(
@@ -10154,8 +10181,8 @@ app.post('/api/fees/assign-class', async (req, res) => {
   try {
     for (const sid of (student_ids || [])) {
       const [existing] = await db.execute(
-        'SELECT id FROM student_fee_assignments WHERE institutionId = ? AND (academic_year_id <=> ?) AND student_id = ?',
-        [institutionId, academic_year_id ?? null, sid]
+        'SELECT id FROM student_fee_assignments WHERE institutionId = ? AND (academic_year_id <=> ?) AND student_id = ? AND (plan_id <=> ?)',
+        [institutionId, academic_year_id ?? null, sid, plan_id ?? null]
       );
       if (existing.length) {
         await db.execute(
@@ -10190,8 +10217,8 @@ app.post('/api/fees/concession', async (req, res) => {
   const amt = Number(concession_amount) || 0;
   try {
     const [existing] = await db.execute(
-      'SELECT id FROM student_fee_assignments WHERE institutionId = ? AND (academic_year_id <=> ?) AND student_id = ?',
-      [institutionId, academic_year_id ?? null, student_id]
+      'SELECT id FROM student_fee_assignments WHERE institutionId = ? AND (academic_year_id <=> ?) AND student_id = ? AND (plan_id <=> ?)',
+      [institutionId, academic_year_id ?? null, student_id, plan_id ?? null]
     );
     if (existing.length) {
       await db.execute(
@@ -10459,12 +10486,22 @@ app.post('/api/fees/payments/verify', async (req, res) => {
   }
 });
 
+
+// ============================================================
 // Section 27 — Fee Alerts
+// Auto rules (fire automatically on due dates) + Manual sends.
+// Paste after Section 26. Uses the shared `resolveYearId` helper.
+//
+// NOTE: actual delivery is wired to the Notifications module (Section 25)
+// later — each "send" currently records a log row + recipient count. The
+// hook points are marked `// TODO: Notifications fan-out`.
+// ============================================================
+
 function _fa_ymd(d) {
   const x = new Date(d);
   return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
 }
- 
+
 // ---- Config: auto rules + recent send log -----------------------
 app.get('/api/fees/alerts/config/:institutionId', async (req, res) => {
   const institutionId = req.params.institutionId;
@@ -10475,21 +10512,21 @@ app.get('/api/fees/alerts/config/:institutionId', async (req, res) => {
       [institutionId, yearId ?? null]
     );
     rules.sort((a, b) => a.id - b.id);
- 
+
     const [log] = await db.execute(
       `SELECT id, alert_type, rule_id, class_id, audience, message, recipient_count, sent_by_name, created_at
          FROM fee_alert_log WHERE institutionId = ?`,
       [institutionId]
     );
     log.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
- 
+
     res.json({ academic_year_id: yearId ?? null, rules, log: log.slice(0, 50) });
   } catch (err) {
     console.error('alerts/config error:', err);
     res.status(500).json({ error: err.message });
   }
 });
- 
+
 // ---- Create / update an auto rule -------------------------------
 app.post('/api/fees/alerts/auto', async (req, res) => {
   const {
@@ -10521,7 +10558,7 @@ app.post('/api/fees/alerts/auto', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
- 
+
 // ---- Toggle an auto rule on/off ---------------------------------
 app.post('/api/fees/alerts/auto/toggle', async (req, res) => {
   const { id, institutionId, is_active } = req.body;
@@ -10535,7 +10572,7 @@ app.post('/api/fees/alerts/auto/toggle', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
- 
+
 // ---- Delete an auto rule ----------------------------------------
 app.delete('/api/fees/alerts/auto/:id', async (req, res) => {
   try {
@@ -10546,7 +10583,7 @@ app.delete('/api/fees/alerts/auto/:id', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
- 
+
 // ---- Manual send (All classes / one class) ----------------------
 app.post('/api/fees/alerts/manual/send', async (req, res) => {
   const { institutionId, academic_year_id, class_id, message, userId, userName } = req.body;
@@ -10559,14 +10596,14 @@ app.post('/api/fees/alerts/manual/send', async (req, res) => {
     const params = [institutionId];
     if (class_id) { sql += ' AND class_id = ?'; params.push(class_id); }
     const [[cnt]] = await db.execute(sql, params);
- 
+
     await db.execute(
       `INSERT INTO fee_alert_log
          (institutionId, academic_year_id, alert_type, class_id, audience, message, recipient_count, sent_by, sent_by_name)
        VALUES (?, ?, 'manual', ?, ?, ?, ?, ?, ?)`,
       [institutionId, academic_year_id ?? null, class_id ?? null, class_id ? 'class' : 'all', message || null, cnt.c, userId ?? null, userName ?? null]
     );
- 
+
     // TODO: Notifications fan-out (Section 25) — one row per student in scope.
     res.json({ success: true, recipient_count: cnt.c });
   } catch (err) {
@@ -10574,7 +10611,7 @@ app.post('/api/fees/alerts/manual/send', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
- 
+
 // ---- Auto processor: call daily from a scheduler ----------------
 // Body: { institutionId? } — omit to process every institution.
 app.post('/api/fees/alerts/run', async (req, res) => {
@@ -10584,32 +10621,32 @@ app.post('/api/fees/alerts/run', async (req, res) => {
     const rparams = [];
     if (institutionId) { rsql += ' AND institutionId = ?'; rparams.push(institutionId); }
     const [rules] = await db.execute(rsql, rparams);
- 
+
     const today = new Date();
     let processed = 0, logged = 0;
- 
+
     for (const rule of rules) {
       processed++;
       const target = new Date(today);
       if (rule.trigger_type === 'before_due') target.setDate(target.getDate() + (rule.days_offset || 0));
       else if (rule.trigger_type === 'after_due') target.setDate(target.getDate() - (rule.days_offset || 0));
       const t = _fa_ymd(target);
- 
+
       // Classes with an installment due that day
       let isql = 'SELECT DISTINCT class_id FROM fee_installments WHERE institutionId = ? AND due_date = ?';
       const ip = [rule.institutionId, t];
       if (rule.class_id) { isql += ' AND class_id = ?'; ip.push(rule.class_id); }
       const [inst] = await db.execute(isql, ip);
- 
+
       // Classes with a full-payment plan due that day
       let psql = 'SELECT DISTINCT class_id FROM fee_class_plans WHERE institutionId = ? AND due_date = ?';
       const pp = [rule.institutionId, t];
       if (rule.class_id) { psql += ' AND class_id = ?'; pp.push(rule.class_id); }
       const [plans] = await db.execute(psql, pp);
- 
+
       const classIds = [...new Set([...inst, ...plans].map(r => r.class_id).filter(x => x != null))];
       if (classIds.length === 0) continue;
- 
+
       const ph = classIds.map(() => '?').join(',');
       const [[cnt]] = await db.execute(
         `SELECT COUNT(*) AS c FROM users
@@ -10619,7 +10656,7 @@ app.post('/api/fees/alerts/run', async (req, res) => {
         [rule.institutionId, ...classIds]
       );
       if (!cnt.c) continue;
- 
+
       const dedupe = `auto_${rule.id}_${t}`;
       try {
         await db.execute(
@@ -10634,7 +10671,7 @@ app.post('/api/fees/alerts/run', async (req, res) => {
         // Duplicate dedupe_key -> already fired for this rule today; skip.
       }
     }
- 
+
     res.json({ success: true, rules_processed: processed, alerts_logged: logged });
   } catch (err) {
     console.error('alerts/run error:', err);

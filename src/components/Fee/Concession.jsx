@@ -18,8 +18,9 @@ export default function Concession({ data, fetchData, user, canEdit = true }) {
     if (!stillValid) setActiveClass(String(classes[0].id));
   }, [classes, activeClass]);
 
+  // Concessions apply to the Annual fee.
   const plan = useMemo(
-    () => (data.plans || []).find(p => String(p.class_id) === String(activeClass)) || null,
+    () => (data.plans || []).find(p => String(p.class_id) === String(activeClass) && (p.fee_category || 'annual') === 'annual') || null,
     [data.plans, activeClass]
   );
   const fullFeeNum = plan ? Number(plan.full_fee) || 0 : 0;
@@ -31,7 +32,7 @@ export default function Concession({ data, fetchData, user, canEdit = true }) {
   }, [data.students, activeClass]);
 
   const assignmentOf = (sid) =>
-    (data.assignments || []).find(a => String(a.student_id) === String(sid)) || null;
+    (data.assignments || []).find(a => String(a.student_id) === String(sid) && String(a.plan_id) === String(plan?.id)) || null;
 
   // Reset local edits when the class changes.
   useEffect(() => { setEdits({}); }, [activeClass]);
