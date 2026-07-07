@@ -4,7 +4,7 @@ import { API_BASE_URL } from '../../apiConfig';
 import {
   ArrowLeft, 
   Loader2, 
-  Pencil, 
+  Edit3, 
   Trash2, 
   X, 
   Save, 
@@ -173,15 +173,17 @@ export default function AlumniDetail({ alumniId, canEdit, onBack }) {
           className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
           <ArrowLeft className="size-4" /> Back to Alumni
         </button>
+        
+        {/* UPDATED Action Buttons */}
         {canEdit && (
-          <div className="flex items-center gap-3 w-full sm:w-auto">
-            <button onClick={openEdit}
-              className="h-9 px-4 bg-primary/10 text-primary hover:bg-primary/20 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors w-full sm:w-auto">
-              <Pencil className="size-3.5" /> Edit
+          <div className="flex items-center gap-1 sm:gap-2 w-full sm:w-auto justify-end">
+            <button onClick={openEdit} title="Edit"
+              className="size-8 bg-white hover:bg-zinc-50 text-zinc-600 hover:text-primary rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5">
+              <Edit3 className="size-3.5" />
             </button>
-            <button onClick={handleDelete}
-              className="h-9 px-4 bg-red-50 text-red-600 hover:bg-red-100 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors w-full sm:w-auto">
-              <Trash2 className="size-3.5" /> Remove
+            <button onClick={handleDelete} title="Delete"
+              className="size-8 bg-white hover:bg-zinc-50 text-zinc-600 hover:text-red-600 rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5">
+              <Trash2 className="size-3.5" />
             </button>
           </div>
         )}
