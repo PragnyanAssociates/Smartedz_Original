@@ -7,10 +7,21 @@ const inr = (n) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })
     .format(Number(n) || 0);
 
+const parseDbDate = (v) => {
+  if (v == null) return null;
+  if (v instanceof Date) return v;
+  if (typeof v === 'number') return new Date(v);
+  let s = String(v);
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/.test(s) && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(s)) {
+    s = s.replace(' ', 'T') + 'Z';
+  }
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+};
+
 const fmtDateTime = (v) => {
-  if (!v) return '—';
-  const d = new Date(v);
-  if (isNaN(d.getTime())) return '—';
+  const d = parseDbDate(v);
+  if (!d) return '—';
   // Stored UTC, shown in IST with time.
   return new Intl.DateTimeFormat('en-GB', {
     timeZone: 'Asia/Kolkata',
@@ -173,6 +184,12 @@ export default function Payments({ data, user, canEdit = true }) {
                       <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium ring-1 capitalize ${STATUS_STYLE[r.status] || STATUS_STYLE.failed}`}>
                         {r.status === 'paid' ? (r.method === 'offline' ? 'Approved' : 'Paid') : r.status}
                       </span>
+                      {r.verified_at && (r.status === 'rejected' || (r.status === 'paid' && r.method === 'offline')) && (
+                        <div className="text-[10px] text-zinc-400 mt-1 leading-tight">
+                          {r.status === 'rejected' ? 'Rejected' : 'Approved'} by {r.verified_by_name || '—'}<br />
+                          {fmtDateTime(r.verified_at)}
+                        </div>
+                      )}
                     </td>
                     <td className="px-5 py-3 text-[11px] text-zinc-500">
                       {r.provider_payment_id || r.reference_no || `#${r.id}`}
@@ -183,12 +200,14 @@ export default function Payments({ data, user, canEdit = true }) {
                           className="p-1.5 text-zinc-400 hover:text-primary rounded transition-colors">
                           <Eye className="size-4" />
                         </button>
-                        {canEdit && r.status === 'pending' && r.method === 'offline' && (
+                        {canEdit && r.status === 'pending' && (
                           <>
-                            <button onClick={() => act(r.id, 'verify')} disabled={busyId === r.id}
-                              className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-semibold bg-green-600 text-white hover:bg-green-700 disabled:opacity-50">
-                              <Check className="size-3" /> Verify
-                            </button>
+                            {r.method === 'offline' && (
+                              <button onClick={() => act(r.id, 'verify')} disabled={busyId === r.id}
+                                className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-semibold bg-green-600 text-white hover:bg-green-700 disabled:opacity-50">
+                                <Check className="size-3" /> Approve
+                              </button>
+                            )}
                             <button onClick={() => act(r.id, 'reject')} disabled={busyId === r.id}
                               className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-semibold bg-white text-red-600 ring-1 ring-red-200 hover:bg-red-50 disabled:opacity-50">
                               <X className="size-3" /> Reject

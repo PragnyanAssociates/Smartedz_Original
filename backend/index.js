@@ -10379,8 +10379,11 @@ app.post('/api/fees/account', async (req, res) => {
 // =================================================================
 
 // Create a Razorpay order using the school's own keys.
+// IMPORTANT: no DB row is created here — a payment is only recorded once it
+// is fully completed + verified (see /pay/verify). This prevents cancelled or
+// abandoned attempts from ever appearing in the payments list.
 app.post('/api/fees/pay/order', async (req, res) => {
-  const { institutionId, student_id, class_id, plan_id, installment_id, amount } = req.body;
+  const { institutionId, student_id, amount } = req.body;
   const rupees = Number(amount);
   if (!institutionId || !student_id || !rupees || rupees <= 0) {
     return res.status(400).json({ error: 'institutionId, student_id and a positive amount are required.' });
@@ -10391,7 +10394,6 @@ app.post('/api/fees/pay/order', async (req, res) => {
     if (!account || !account.online_enabled) return res.status(400).json({ error: 'Online payment is not enabled for this school.' });
     if (!account.razorpay_key_id || !account.razorpay_key_secret) return res.status(400).json({ error: 'Payment gateway is not configured.' });
 
-    const yearId = await resolveYearId(institutionId);
     const paise = Math.round(rupees * 100);
     const receipt = ('fee_' + student_id + '_' + Date.now()).slice(0, 40);
 
@@ -10406,15 +10408,7 @@ app.post('/api/fees/pay/order', async (req, res) => {
       return res.status(502).json({ error: (order && order.error && order.error.description) || 'Failed to create payment order.' });
     }
 
-    const [ins] = await db.execute(
-      `INSERT INTO fee_payments
-         (institutionId, academic_year_id, student_id, class_id, plan_id, installment_id, amount, method, status, provider, provider_order_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'online', 'pending', 'razorpay', ?)`,
-      [institutionId, yearId ?? null, student_id, class_id ?? null, plan_id ?? null, installment_id ?? null, rupees, order.id]
-    );
-
     res.json({
-      payment_row_id: ins.insertId,
       order_id: order.id,
       key_id: account.razorpay_key_id,
       amount: paise,
@@ -10427,40 +10421,44 @@ app.post('/api/fees/pay/order', async (req, res) => {
   }
 });
 
-// Verify the Razorpay signature and mark the payment paid.
+// Verify the Razorpay signature and record the payment ONLY on success.
+// A cancelled/failed payment writes nothing at all.
 app.post('/api/fees/pay/verify', async (req, res) => {
-  const { payment_row_id, razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
-  if (!payment_row_id || !razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+  const {
+    institutionId, student_id, class_id, plan_id, installment_id, amount,
+    razorpay_order_id, razorpay_payment_id, razorpay_signature
+  } = req.body;
+  const rupees = Number(amount);
+  if (!institutionId || !student_id || !rupees || rupees <= 0 ||
+      !razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
     return res.status(400).json({ error: 'Missing verification fields.' });
   }
   try {
-    const [rows] = await db.execute(
-      `SELECT p.id, a.razorpay_key_secret
-         FROM fee_payments p
-         JOIN fee_accounts a ON a.institutionId = p.institutionId
-        WHERE p.id = ? LIMIT 1`,
-      [payment_row_id]
-    );
-    if (!rows.length) return res.status(404).json({ error: 'Payment not found.' });
-    const secret = rows[0].razorpay_key_secret;
+    const [acc] = await db.execute('SELECT razorpay_key_secret FROM fee_accounts WHERE institutionId = ? LIMIT 1', [institutionId]);
+    const secret = acc[0] && acc[0].razorpay_key_secret;
     if (!secret) return res.status(400).json({ error: 'Gateway not configured.' });
 
     const nodeCrypto = require('crypto');
     const expected = nodeCrypto.createHmac('sha256', secret)
       .update(razorpay_order_id + '|' + razorpay_payment_id)
       .digest('hex');
-
     if (expected !== razorpay_signature) {
-      await db.execute(
-        'UPDATE fee_payments SET status = ?, provider_payment_id = ?, provider_signature = ? WHERE id = ?',
-        ['failed', razorpay_payment_id, razorpay_signature, payment_row_id]
-      );
+      // Signature mismatch -> not a real payment. Record nothing.
       return res.status(400).json({ error: 'Payment signature verification failed.' });
     }
 
+    // Idempotency: never double-record the same gateway payment.
+    const [dupe] = await db.execute('SELECT id FROM fee_payments WHERE provider_payment_id = ? LIMIT 1', [razorpay_payment_id]);
+    if (dupe.length) return res.json({ success: true, already: true });
+
+    const yearId = await resolveYearId(institutionId);
     await db.execute(
-      'UPDATE fee_payments SET status = ?, provider_payment_id = ?, provider_signature = ?, verified_at = NOW() WHERE id = ?',
-      ['paid', razorpay_payment_id, razorpay_signature, payment_row_id]
+      `INSERT INTO fee_payments
+         (institutionId, academic_year_id, student_id, class_id, plan_id, installment_id, amount,
+          method, status, provider, provider_order_id, provider_payment_id, provider_signature, verified_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'online', 'paid', 'razorpay', ?, ?, ?, NOW())`,
+      [institutionId, yearId ?? null, student_id, class_id ?? null, plan_id ?? null, installment_id ?? null, rupees,
+       razorpay_order_id, razorpay_payment_id, razorpay_signature]
     );
     res.json({ success: true });
   } catch (err) {

@@ -7,11 +7,24 @@ const inr = (n) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })
     .format(Number(n) || 0);
 
+// Parse a value from the API into a Date. Bare MySQL datetimes ("YYYY-MM-DD HH:MM:SS",
+// no timezone) are stored UTC — treat them as UTC so IST display is correct.
+const parseDbDate = (v) => {
+  if (v == null) return null;
+  if (v instanceof Date) return v;
+  if (typeof v === 'number') return new Date(v);
+  let s = String(v);
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/.test(s) && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(s)) {
+    s = s.replace(' ', 'T') + 'Z';
+  }
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+};
+
 // Dates stored UTC, shown in IST.
 const fmtIST = (v, withTime = false) => {
-  if (!v) return '—';
-  const d = new Date(v);
-  if (isNaN(d.getTime())) return '—';
+  const d = parseDbDate(v);
+  if (!d) return '—';
   return new Intl.DateTimeFormat('en-GB', {
     timeZone: 'Asia/Kolkata',
     day: '2-digit', month: '2-digit', year: 'numeric',
@@ -317,7 +330,9 @@ function FeeCard({ fee, category, payments, payCfg, user, student, academicYearI
           const vRes = await fetch(`${API_BASE_URL}/fees/pay/verify`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              payment_row_id: order.payment_row_id,
+              institutionId: user.institutionId, student_id: user.id,
+              class_id: student?.class_id ?? null, plan_id: plan.id,
+              installment_id: installment_id ?? null, amount,
               razorpay_order_id: resp.razorpay_order_id,
               razorpay_payment_id: resp.razorpay_payment_id,
               razorpay_signature: resp.razorpay_signature

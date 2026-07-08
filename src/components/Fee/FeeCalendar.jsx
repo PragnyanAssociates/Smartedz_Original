@@ -6,15 +6,26 @@ const inr = (n) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })
     .format(Number(n) || 0);
 
-// IST helpers (payments stored UTC)
+// IST helpers (payments stored UTC). Bare MySQL datetimes get 'Z' so they parse as UTC.
+const parseDbDate = (v) => {
+  if (v == null) return null;
+  if (v instanceof Date) return v;
+  if (typeof v === 'number') return new Date(v);
+  let s = String(v);
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/.test(s) && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(s)) {
+    s = s.replace(' ', 'T') + 'Z';
+  }
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+};
 const istYMD = (v) => {
-  const d = new Date(v);
-  if (isNaN(d.getTime())) return null;
+  const d = parseDbDate(v);
+  if (!d) return null;
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d); // yyyy-mm-dd
 };
 const istTime = (v) => {
-  const d = new Date(v);
-  if (isNaN(d.getTime())) return '';
+  const d = parseDbDate(v);
+  if (!d) return '';
   return new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true }).format(d);
 };
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
