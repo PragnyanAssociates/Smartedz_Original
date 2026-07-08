@@ -12,6 +12,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const { Server } = require('socket.io');   
+const { performance } = require('perf_hooks');
 
 const app = express();
 const server = http.createServer({ maxHeaderSize: 81920 }, app);
@@ -4449,31 +4450,43 @@ app.post('/api/admin/reports/marks/bulk', async (req, res) => {
 // =====================================================================
 
 app.get('/api/admin/reports/class-summaries/:instId', async (req, res) => {
-    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    const instId = req.auth.role === 'Developer'
+        ? req.params.instId
+        : req.auth.institutionId;
+
     try {
+        const start = performance.now();
+
         const yearId = await resolveYearId(instId, req.query.academic_year_id);
+
         const [classes] = await db.execute(
             'SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section',
             [instId]
         );
 
         const summaries = [];
+
         for (const c of classes) {
             const [totalRow] = await db.execute(
                 `SELECT COALESCE(SUM(sm.marks_obtained), 0) AS total
                    FROM student_marks sm
                    JOIN users u ON u.id = sm.student_id
-                  WHERE sm.class_id = ? AND sm.academic_year_id = ?
+                  WHERE sm.class_id = ?
+                    AND sm.academic_year_id = ?
                     AND (u.status IS NULL OR LOWER(TRIM(u.status)) <> 'alumni')`,
                 [c.id, yearId]
             );
 
             const [topStudent] = await db.execute(
-                `SELECT u.name, COALESCE(SUM(sm.marks_obtained), 0) AS marks
+                `SELECT u.name,
+                        COALESCE(SUM(sm.marks_obtained), 0) AS marks
                    FROM users u
                    LEFT JOIN student_marks sm
-                     ON sm.student_id = u.id AND sm.class_id = ? AND sm.academic_year_id = ?
-                  WHERE u.class_id = ? AND LOWER(TRIM(u.role)) = 'student'
+                     ON sm.student_id = u.id
+                    AND sm.class_id = ?
+                    AND sm.academic_year_id = ?
+                  WHERE u.class_id = ?
+                    AND LOWER(TRIM(u.role)) = 'student'
                     AND (u.status IS NULL OR LOWER(TRIM(u.status)) <> 'alumni')
                   GROUP BY u.id, u.name
                   ORDER BY marks DESC
@@ -4482,11 +4495,13 @@ app.get('/api/admin/reports/class-summaries/:instId', async (req, res) => {
             );
 
             const [topSubject] = await db.execute(
-                `SELECT sub.name, COALESCE(SUM(sm.marks_obtained), 0) AS marks
+                `SELECT sub.name,
+                        COALESCE(SUM(sm.marks_obtained), 0) AS marks
                    FROM student_marks sm
                    JOIN subjects sub ON sub.id = sm.subject_id
                    JOIN users u ON u.id = sm.student_id
-                  WHERE sm.class_id = ? AND sm.academic_year_id = ?
+                  WHERE sm.class_id = ?
+                    AND sm.academic_year_id = ?
                     AND (u.status IS NULL OR LOWER(TRIM(u.status)) <> 'alumni')
                   GROUP BY sub.id, sub.name
                   ORDER BY marks DESC
@@ -4501,15 +4516,38 @@ app.get('/api/admin/reports/class-summaries/:instId', async (req, res) => {
                 section: c.section,
                 totalClassMarks: Number(totalRow[0].total) || 0,
                 topStudent: topStudent[0]
-                    ? { name: topStudent[0].name, marks: Number(topStudent[0].marks) || 0 }
-                    : { name: '—', marks: 0 },
+                    ? {
+                          name: topStudent[0].name,
+                          marks: Number(topStudent[0].marks) || 0
+                      }
+                    : {
+                          name: '—',
+                          marks: 0
+                      },
                 topSubject: topSubject[0]
-                    ? { name: topSubject[0].name, marks: Number(topSubject[0].marks) || 0 }
-                    : { name: '—', marks: 0 }
+                    ? {
+                          name: topSubject[0].name,
+                          marks: Number(topSubject[0].marks) || 0
+                      }
+                    : {
+                          name: '—',
+                          marks: 0
+                      }
             });
         }
+
+        const end = performance.now();
+
+        console.log(
+            `[PERF] GET /api/admin/reports/class-summaries/${instId} | Classes: ${classes.length} | Backend Time: ${(end - start).toFixed(2)} ms`
+        );
+
         res.json(summaries);
-    } catch (err) { res.status(500).json({ error: err.message }); }
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 

@@ -123,7 +123,7 @@ export default function MyFee({ user }) {
 
   if (loading) {
     return (
-      <div className="p-8 max-w-[900px] w-full mx-auto">
+      <div className="p-8 w-full">
         <div className="h-96 flex items-center justify-center">
           <div className="size-8 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" />
         </div>
@@ -139,7 +139,7 @@ export default function MyFee({ user }) {
   ];
 
   return (
-    <div className="p-8 max-w-[900px] w-full mx-auto animate-in fade-in duration-700 space-y-6">
+    <div className="p-8 w-full animate-in fade-in duration-700 space-y-6">
       <header>
         <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">My Fee</h1>
         <p className="text-sm text-zinc-500 mt-1">
