@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { IndianRupee, CalendarDays, Wallet, Info, CheckCircle2, Clock, Upload, X, CreditCard, Tag, History, Receipt, Eye, Download, BellRing, Zap, Send } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
 import { downloadDataUrl, downloadReceipt } from './paymentProof';
@@ -602,7 +602,7 @@ function PaymentHistory({ payments, titleFor, onView }) {
                     {p.status === 'pending' ? 'Under verification' : p.status}
                   </span>
                 </td>
-                <td className="px-5 py-3 text-[11px] text-zinc-500">{p.reference_no || p.provider_payment_id || '—'}</td>
+                <td className="px-5 py-3 text-[11px] text-zinc-500">{p.reference_no || p.provider_payment_id || `#${p.id}`}</td>
                 <td className="px-5 py-3">
                   <button onClick={() => onView(p)} title="View proof"
                     className="inline-flex items-center gap-1 text-primary hover:underline text-[11px] font-medium">

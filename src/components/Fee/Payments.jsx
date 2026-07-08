@@ -175,7 +175,7 @@ export default function Payments({ data, user, canEdit = true }) {
                       </span>
                     </td>
                     <td className="px-5 py-3 text-[11px] text-zinc-500">
-                      {r.provider_payment_id || r.reference_no || '—'}
+                      {r.provider_payment_id || r.reference_no || `#${r.id}`}
                     </td>
                     <td className="px-5 py-3">
                       <div className="flex items-center justify-end gap-1.5">

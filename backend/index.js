@@ -10513,7 +10513,7 @@ app.post('/api/fees/payments/verify', async (req, res) => {
 });
 
 // =================================================================
-//  COLLECTION (paid / unpaid per student, across all their fees)
+//  COLLECTION (paid / unpaid per student, per fee + overall)
 // =================================================================
 app.get('/api/fees/collection/:institutionId', async (req, res) => {
   const institutionId = req.params.institutionId;
@@ -10528,20 +10528,21 @@ app.get('/api/fees/collection/:institutionId', async (req, res) => {
       [institutionId]
     );
     const [plans] = await db.execute(
-      'SELECT id, class_id, full_fee, fee_category FROM fee_class_plans WHERE institutionId = ? AND (academic_year_id <=> ?)',
+      'SELECT id, class_id, title, full_fee, fee_category FROM fee_class_plans WHERE institutionId = ? AND (academic_year_id <=> ?)',
       [institutionId, yearId ?? null]
     );
     const [assigns] = await db.execute(
       'SELECT student_id, plan_id, concession_amount FROM student_fee_assignments WHERE institutionId = ? AND (academic_year_id <=> ?)',
       [institutionId, yearId ?? null]
     );
+    // paid grouped by (student, plan) so we can break it down per fee
     const [pays] = await db.execute(
-      "SELECT student_id, SUM(amount) AS paid FROM fee_payments WHERE institutionId = ? AND (academic_year_id <=> ?) AND status = 'paid' GROUP BY student_id",
+      "SELECT student_id, plan_id, SUM(amount) AS paid FROM fee_payments WHERE institutionId = ? AND (academic_year_id <=> ?) AND status = 'paid' GROUP BY student_id, plan_id",
       [institutionId, yearId ?? null]
     );
 
     const paidMap = {};
-    pays.forEach(p => { paidMap[p.student_id] = Number(p.paid) || 0; });
+    pays.forEach(p => { paidMap[`${p.student_id}:${p.plan_id}`] = Number(p.paid) || 0; });
     const concMap = {};
     assigns.forEach(a => { concMap[`${a.student_id}:${a.plan_id}`] = Number(a.concession_amount) || 0; });
     const plansByClass = {};
@@ -10549,15 +10550,23 @@ app.get('/api/fees/collection/:institutionId', async (req, res) => {
 
     const out = students.map(s => {
       const cps = plansByClass[s.class_id] || [];
-      let net = 0;
-      cps.forEach(p => {
+      const fees = cps.map(p => {
         const conc = p.fee_category === 'annual' ? (concMap[`${s.id}:${p.id}`] || 0) : 0;
-        net += Math.max(0, (Number(p.full_fee) || 0) - conc);
+        const net = Math.max(0, (Number(p.full_fee) || 0) - conc);
+        const paid = Math.min(net, paidMap[`${s.id}:${p.id}`] || 0);
+        const balance = Math.max(0, net - paid);
+        const status = net <= 0 ? 'nofee' : (balance <= 0 ? 'paid' : 'unpaid');
+        return { plan_id: p.id, title: p.title || (p.fee_category === 'annual' ? 'Annual Fee' : 'Fee'), fee_category: p.fee_category, net, paid, balance, status };
       });
-      const paid = paidMap[s.id] || 0;
-      const balance = Math.max(0, net - paid);
-      const status = net <= 0 ? 'nofee' : (balance <= 0 ? 'paid' : 'unpaid');
-      return { student_id: s.id, name: s.name, roll_no: s.roll_no, class_id: s.class_id, net, paid, balance, status };
+      const tNet = fees.reduce((a, f) => a + f.net, 0);
+      const tPaid = fees.reduce((a, f) => a + f.paid, 0);
+      const tBal = Math.max(0, tNet - tPaid);
+      const tStatus = tNet <= 0 ? 'nofee' : (tBal <= 0 ? 'paid' : 'unpaid');
+      return {
+        student_id: s.id, name: s.name, roll_no: s.roll_no, class_id: s.class_id,
+        total: { net: tNet, paid: tPaid, balance: tBal, status: tStatus },
+        fees
+      };
     });
 
     res.json({ academic_year_id: yearId ?? null, students: out });
