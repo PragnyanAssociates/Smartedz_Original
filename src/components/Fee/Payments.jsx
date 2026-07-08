@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { ReceiptText, GraduationCap, ChevronDown, Check, X, Eye, Filter } from 'lucide-react';
+import { ReceiptText, GraduationCap, ChevronDown, Check, X, Eye, Filter, Download } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
+import { downloadDataUrl, downloadReceipt } from './paymentProof';
 
 const inr = (n) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })
@@ -31,7 +32,7 @@ export default function Payments({ data, user, canEdit = true }) {
   const [rows, setRows]       = useState([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId]   = useState(null);
-  const [slip, setSlip]       = useState({ open: false, loading: false, img: null });
+  const [proof, setProof]     = useState({ open: false, row: null, loading: false, img: null });
 
   const load = useCallback(async () => {
     if (!user?.institutionId) return;
@@ -74,15 +75,41 @@ export default function Payments({ data, user, canEdit = true }) {
     }
   };
 
-  const viewSlip = async (id) => {
-    setSlip({ open: true, loading: true, img: null });
-    try {
-      const res = await fetch(`${API_BASE_URL}/fees/payment-slip/${id}`);
-      const json = await res.json();
-      setSlip({ open: true, loading: false, img: json?.slip_image || null });
-    } catch (e) {
-      setSlip({ open: true, loading: false, img: null });
+  const receiptFields = (r) => ({
+    title: 'Payment Receipt',
+    receiptNo: r.provider_payment_id || `#${r.id}`,
+    datetime: fmtDateTime(r.created_at),
+    student: r.student_name,
+    fee: '',
+    className: classLabel(r.class_id),
+    method: r.method,
+    ref: r.reference_no || r.provider_payment_id || '—',
+    amount: inr(r.amount),
+    status: r.status
+  });
+
+  const viewProof = async (r) => {
+    if (r.method === 'offline' && Number(r.has_slip) === 1) {
+      setProof({ open: true, row: r, loading: true, img: null });
+      try {
+        const res = await fetch(`${API_BASE_URL}/fees/payment-slip/${r.id}`);
+        const json = await res.json();
+        setProof({ open: true, row: r, loading: false, img: json?.slip_image || null });
+      } catch (e) {
+        setProof({ open: true, row: r, loading: false, img: null });
+      }
+    } else {
+      setProof({ open: true, row: r, loading: false, img: null }); // online / no slip -> receipt
     }
+  };
+
+  const closeProof = () => setProof({ open: false, row: null, loading: false, img: null });
+
+  const downloadProof = () => {
+    const r = proof.row;
+    if (!r) return;
+    if (proof.img) downloadDataUrl(proof.img, `slip-${r.id}.png`);
+    else downloadReceipt(receiptFields(r), `receipt-${r.id}.png`);
   };
 
   const totalPaid = useMemo(
@@ -98,7 +125,7 @@ export default function Payments({ data, user, canEdit = true }) {
           <Filter className="size-3.5" /> Filters
         </span>
         <Select label="Status" value={filters.status} onChange={v => setFilters(f => ({ ...f, status: v }))}
-          options={[{ v: '', l: 'All' }, { v: 'pending', l: 'Pending' }, { v: 'paid', l: 'Paid' }, { v: 'rejected', l: 'Rejected' }, { v: 'failed', l: 'Failed' }]} />
+          options={[{ v: '', l: 'All' }, { v: 'pending', l: 'Pending' }, { v: 'paid', l: 'Approved' }, { v: 'rejected', l: 'Rejected' }]} />
         <Select label="Class" value={filters.class_id} onChange={v => setFilters(f => ({ ...f, class_id: v }))}
           options={[{ v: '', l: 'All classes' }, ...classes.map(c => ({ v: String(c.id), l: `${c.className}${c.section ? ` - ${c.section}` : ''}` }))]} />
         <DateField label="From" value={filters.from} onChange={v => setFilters(f => ({ ...f, from: v }))} />
@@ -144,7 +171,7 @@ export default function Payments({ data, user, canEdit = true }) {
                     <td className="px-5 py-3 text-xs text-zinc-600 capitalize">{r.method}</td>
                     <td className="px-5 py-3">
                       <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium ring-1 capitalize ${STATUS_STYLE[r.status] || STATUS_STYLE.failed}`}>
-                        {r.status}
+                        {r.status === 'paid' ? (r.method === 'offline' ? 'Approved' : 'Paid') : r.status}
                       </span>
                     </td>
                     <td className="px-5 py-3 text-[11px] text-zinc-500">
@@ -152,12 +179,10 @@ export default function Payments({ data, user, canEdit = true }) {
                     </td>
                     <td className="px-5 py-3">
                       <div className="flex items-center justify-end gap-1.5">
-                        {Number(r.has_slip) === 1 && (
-                          <button onClick={() => viewSlip(r.id)} title="View slip"
-                            className="p-1.5 text-zinc-400 hover:text-primary rounded transition-colors">
-                            <Eye className="size-4" />
-                          </button>
-                        )}
+                        <button onClick={() => viewProof(r)} title="View proof"
+                          className="p-1.5 text-zinc-400 hover:text-primary rounded transition-colors">
+                          <Eye className="size-4" />
+                        </button>
                         {canEdit && r.status === 'pending' && r.method === 'offline' && (
                           <>
                             <button onClick={() => act(r.id, 'verify')} disabled={busyId === r.id}
@@ -182,28 +207,66 @@ export default function Payments({ data, user, canEdit = true }) {
         )}
       </div>
 
-      {/* Slip modal */}
-      {slip.open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={() => setSlip({ open: false, loading: false, img: null })}>
+      {/* Proof modal */}
+      {proof.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={closeProof}>
           <div className="bg-white rounded-lg ring-1 ring-black/5 max-w-lg w-full p-4 shadow-xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
-              <h4 className="text-sm font-semibold text-zinc-900">Payment Slip</h4>
-              <button onClick={() => setSlip({ open: false, loading: false, img: null })} className="text-zinc-400 hover:text-zinc-700">
-                <X className="size-5" />
-              </button>
+              <h4 className="text-sm font-semibold text-zinc-900">Payment Proof</h4>
+              <button onClick={closeProof} className="text-zinc-400 hover:text-zinc-700"><X className="size-5" /></button>
             </div>
-            {slip.loading ? (
+            {proof.loading ? (
               <div className="h-40 flex items-center justify-center">
                 <div className="size-7 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" />
               </div>
-            ) : slip.img ? (
-              <img src={slip.img} alt="Payment slip" className="w-full rounded-md ring-1 ring-black/5" />
+            ) : proof.img ? (
+              <img src={proof.img} alt="Payment slip" className="w-full rounded-md ring-1 ring-black/5" />
+            ) : proof.row ? (
+              <ReceiptView fields={receiptFields(proof.row)} />
             ) : (
-              <p className="text-xs text-zinc-500 text-center py-8">Slip not available.</p>
+              <p className="text-xs text-zinc-500 text-center py-8">Proof not available.</p>
             )}
+            <div className="flex justify-end mt-4">
+              <button onClick={downloadProof} disabled={proof.loading}
+                className="inline-flex items-center gap-1.5 bg-primary text-white px-4 py-2 rounded-md text-xs font-medium hover:bg-primary/90 disabled:opacity-60">
+                <Download className="size-3.5" /> Download
+              </button>
+            </div>
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Styled receipt for online / slip-less payments.
+function ReceiptView({ fields }) {
+  const rows = [
+    ['Receipt No', fields.receiptNo],
+    ['Date & Time', fields.datetime],
+    ['Student', fields.student],
+    ['Class', fields.className],
+    ['Method', fields.method],
+    ['Reference', fields.ref],
+  ].filter(r => r[1] && r[1] !== '—');
+  return (
+    <div className="rounded-md ring-1 ring-black/5 overflow-hidden">
+      <div className="bg-primary text-white px-4 py-3 flex items-center justify-between">
+        <span className="text-sm font-semibold">{fields.title}</span>
+        <span className="text-[10px] font-bold uppercase tracking-wider">{fields.status}</span>
+      </div>
+      <div className="p-4 space-y-2">
+        {rows.map(([k, v]) => (
+          <div key={k} className="flex items-center justify-between text-xs">
+            <span className="text-zinc-500">{k}</span>
+            <span className="font-medium text-zinc-900 capitalize">{v}</span>
+          </div>
+        ))}
+        <div className="flex items-center justify-between pt-2 mt-1 border-t border-zinc-100">
+          <span className="text-zinc-500 text-xs">Amount</span>
+          <span className="text-primary font-bold text-lg tabular-nums">{fields.amount}</span>
+        </div>
+      </div>
     </div>
   );
 }

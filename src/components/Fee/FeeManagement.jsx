@@ -1,14 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { IndianRupee, Percent, Landmark, ReceiptText, BellRing } from 'lucide-react';
+import { IndianRupee, Percent, Landmark, ReceiptText, BellRing, CalendarDays, Wallet } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
 import { usePermissions } from '../../Screens/PermissionsContext';
-import FeeAssign  from './FeeAssign';
-import Concession from './Concession';
-import Account    from './Account';
-import Payments   from './Payments';
-import Alerts     from './Alerts';
-import MyFee      from './MyFee';
+import FeeAssign   from './FeeAssign';
+import Concession  from './Concession';
+import Account     from './Account';
+import Payments    from './Payments';
+import Alerts      from './Alerts';
+import FeeCalendar from './FeeCalendar';
+import Collection  from './Collection';
+import MyFee       from './MyFee';
 
 // Must match the module_name used in Modules.js / the Permissions matrix.
 const MODULE_NAME = 'FeeManagement';
@@ -47,11 +49,13 @@ export default function FeeManagement() {
 
   // ---- Management view (admin / permitted staff) ----
   const tabs = [
-    { id: 'assign',     label: 'Fee Assign', icon: IndianRupee },
-    { id: 'concession', label: 'Concession', icon: Percent },
-    { id: 'account',    label: 'Account',    icon: Landmark },
-    { id: 'payments',   label: 'Payments',   icon: ReceiptText },
-    { id: 'alerts',     label: 'Alerts',     icon: BellRing },
+    { id: 'assign',     label: 'Fee Assign',    icon: IndianRupee },
+    { id: 'concession', label: 'Concession',    icon: Percent },
+    { id: 'account',    label: 'Account',       icon: Landmark },
+    { id: 'payments',   label: 'Payments',      icon: ReceiptText },
+    { id: 'collection', label: 'Paid / Unpaid', icon: Wallet },
+    { id: 'alerts',     label: 'Alerts',        icon: BellRing },
+    { id: 'calendar',   label: 'Fee Calendar',  icon: CalendarDays },
   ];
   const tabProps = { data, fetchData, user, canEdit };
 
@@ -93,7 +97,9 @@ export default function FeeManagement() {
             {activeTab === 'concession' && <Concession {...tabProps} />}
             {activeTab === 'account'    && <Account user={user} canEdit={canEdit} />}
             {activeTab === 'payments'   && <Payments {...tabProps} />}
+            {activeTab === 'collection' && <Collection {...tabProps} />}
             {activeTab === 'alerts'     && <Alerts {...tabProps} />}
+            {activeTab === 'calendar'   && <FeeCalendar {...tabProps} />}
           </>
         )}
       </div>

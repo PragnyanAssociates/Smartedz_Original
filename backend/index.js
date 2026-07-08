@@ -10046,7 +10046,8 @@ app.get('/api/fees/my/:studentId', async (req, res) => {
 
     // Payments (no slip_image in this list to keep it light + avoid sort memory)
     const [payRows] = await db.execute(
-      `SELECT id, plan_id, amount, method, status, installment_id, reference_no, note, created_at
+      `SELECT id, plan_id, amount, method, status, installment_id, reference_no, note,
+              provider, provider_payment_id, (slip_image IS NOT NULL) AS has_slip, created_at
          FROM fee_payments
         WHERE institutionId = ? AND (academic_year_id <=> ?) AND student_id = ?`,
       [stu.institutionId, yearId ?? null, studentId]
@@ -10511,6 +10512,61 @@ app.post('/api/fees/payments/verify', async (req, res) => {
   }
 });
 
+// =================================================================
+//  COLLECTION (paid / unpaid per student, across all their fees)
+// =================================================================
+app.get('/api/fees/collection/:institutionId', async (req, res) => {
+  const institutionId = req.params.institutionId;
+  try {
+    const yearId = await resolveYearId(institutionId);
+
+    const [students] = await db.execute(
+      `SELECT id, name, roll_no, class_id FROM users
+        WHERE institutionId = ?
+          AND LOWER(role) LIKE '%student%'
+          AND LOWER(COALESCE(status, 'active')) = 'active'`,
+      [institutionId]
+    );
+    const [plans] = await db.execute(
+      'SELECT id, class_id, full_fee, fee_category FROM fee_class_plans WHERE institutionId = ? AND (academic_year_id <=> ?)',
+      [institutionId, yearId ?? null]
+    );
+    const [assigns] = await db.execute(
+      'SELECT student_id, plan_id, concession_amount FROM student_fee_assignments WHERE institutionId = ? AND (academic_year_id <=> ?)',
+      [institutionId, yearId ?? null]
+    );
+    const [pays] = await db.execute(
+      "SELECT student_id, SUM(amount) AS paid FROM fee_payments WHERE institutionId = ? AND (academic_year_id <=> ?) AND status = 'paid' GROUP BY student_id",
+      [institutionId, yearId ?? null]
+    );
+
+    const paidMap = {};
+    pays.forEach(p => { paidMap[p.student_id] = Number(p.paid) || 0; });
+    const concMap = {};
+    assigns.forEach(a => { concMap[`${a.student_id}:${a.plan_id}`] = Number(a.concession_amount) || 0; });
+    const plansByClass = {};
+    plans.forEach(p => { (plansByClass[p.class_id] = plansByClass[p.class_id] || []).push(p); });
+
+    const out = students.map(s => {
+      const cps = plansByClass[s.class_id] || [];
+      let net = 0;
+      cps.forEach(p => {
+        const conc = p.fee_category === 'annual' ? (concMap[`${s.id}:${p.id}`] || 0) : 0;
+        net += Math.max(0, (Number(p.full_fee) || 0) - conc);
+      });
+      const paid = paidMap[s.id] || 0;
+      const balance = Math.max(0, net - paid);
+      const status = net <= 0 ? 'nofee' : (balance <= 0 ? 'paid' : 'unpaid');
+      return { student_id: s.id, name: s.name, roll_no: s.roll_no, class_id: s.class_id, net, paid, balance, status };
+    });
+
+    res.json({ academic_year_id: yearId ?? null, students: out });
+  } catch (err) {
+    console.error('fees/collection error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 // ============================================================
 // Section 27 — Fee Alerts
@@ -10700,6 +10756,28 @@ app.post('/api/fees/alerts/run', async (req, res) => {
     res.json({ success: true, rules_processed: processed, alerts_logged: logged });
   } catch (err) {
     console.error('alerts/run error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---- Alerts visible to a single student (their class + all-class) ----
+app.get('/api/fees/alerts/my/:studentId', async (req, res) => {
+  const studentId = req.params.studentId;
+  try {
+    const [urows] = await db.execute('SELECT id, class_id, institutionId FROM users WHERE id = ? LIMIT 1', [studentId]);
+    if (!urows.length) return res.status(404).json({ error: 'Student not found.' });
+    const stu = urows[0];
+    const yearId = await resolveYearId(stu.institutionId);
+    const [log] = await db.execute(
+      `SELECT id, alert_type, class_id, message, created_at
+         FROM fee_alert_log
+        WHERE institutionId = ? AND (academic_year_id <=> ?) AND (class_id IS NULL OR class_id = ?)`,
+      [stu.institutionId, yearId ?? null, stu.class_id]
+    );
+    log.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    res.json({ alerts: log.slice(0, 50) });
+  } catch (err) {
+    console.error('alerts/my error:', err);
     res.status(500).json({ error: err.message });
   }
 });

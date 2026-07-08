@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { IndianRupee, CalendarDays, Wallet, Info, CheckCircle2, Clock, Upload, X, CreditCard, Tag, History, Receipt } from 'lucide-react';
+import { IndianRupee, CalendarDays, Wallet, Info, CheckCircle2, Clock, Upload, X, CreditCard, Tag, History, Receipt, Eye, Download, BellRing, Zap, Send } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
+import { downloadDataUrl, downloadReceipt } from './paymentProof';
 
 const inr = (n) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })
     .format(Number(n) || 0);
 
-// Dates are stored UTC, shown in IST.
+// Dates stored UTC, shown in IST.
 const fmtIST = (v, withTime = false) => {
   if (!v) return '—';
   const d = new Date(v);
@@ -50,7 +51,8 @@ const loadRazorpay = () => new Promise(resolve => {
 export default function MyFee({ user }) {
   const [info, setInfo]       = useState(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab]         = useState('annual'); // 'annual' | 'other' | 'history'
+  const [tab, setTab]         = useState('annual');
+  const [proof, setProof]     = useState({ open: false, payment: null, loading: false, img: null });
 
   const load = useCallback(async () => {
     if (!user?.id) return;
@@ -76,11 +78,47 @@ export default function MyFee({ user }) {
     ? { plan: info.plan, installments: info.installments || [], assignment: info.assignment || null }
     : null;
 
-  // plan_id -> title (for the history screen)
   const titleFor = (planId) => {
     if (annualFee && String(annualFee.plan.id) === String(planId)) return annualFee.plan.title || 'Annual Fee';
     const o = otherFees.find(f => String(f.plan.id) === String(planId));
     return o ? o.plan.title : 'Fee';
+  };
+
+  const receiptFields = (p) => ({
+    title: payCfg.account_name || 'Payment Receipt',
+    receiptNo: p.provider_payment_id || `#${p.id}`,
+    datetime: fmtIST(p.created_at, true),
+    student: student?.name,
+    fee: titleFor(p.plan_id),
+    className: student?.className,
+    method: p.method,
+    ref: p.reference_no || p.provider_payment_id || '—',
+    amount: inr(p.amount),
+    status: p.status
+  });
+
+  const viewProof = async (p) => {
+    if (p.method === 'offline' && Number(p.has_slip) === 1) {
+      setProof({ open: true, payment: p, loading: true, img: null });
+      try {
+        const res = await fetch(`${API_BASE_URL}/fees/payment-slip/${p.id}`);
+        const j = await res.json();
+        setProof({ open: true, payment: p, loading: false, img: j?.slip_image || null });
+      } catch {
+        setProof({ open: true, payment: p, loading: false, img: null });
+      }
+    } else {
+      setProof({ open: true, payment: p, loading: false, img: null }); // online / no slip -> receipt
+    }
+  };
+
+  const closeProof = () => setProof({ open: false, payment: null, loading: false, img: null });
+
+  const downloadProof = () => {
+    const p = proof.payment;
+    if (!p) return;
+    if (proof.img) downloadDataUrl(proof.img, `slip-${p.id}.png`);
+    else downloadReceipt(receiptFields(p), `receipt-${p.id}.png`);
   };
 
   if (loading) {
@@ -97,6 +135,7 @@ export default function MyFee({ user }) {
     { id: 'annual',  label: 'Annual Fee',      icon: IndianRupee },
     { id: 'other',   label: 'Other Fee',       icon: Tag },
     { id: 'history', label: 'Payment History', icon: History },
+    { id: 'alerts',  label: 'Alerts',          icon: BellRing },
   ];
 
   return (
@@ -110,7 +149,6 @@ export default function MyFee({ user }) {
         </p>
       </header>
 
-      {/* Tabs */}
       <div className="inline-flex items-center gap-1 bg-zinc-100 p-1 rounded-lg">
         {tabs.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
@@ -136,8 +174,33 @@ export default function MyFee({ user }) {
           : <Empty text="No other fees for your class." />
       )}
 
-      {tab === 'history' && (
-        <PaymentHistory payments={payments} titleFor={titleFor} />
+      {tab === 'history' && <PaymentHistory payments={payments} titleFor={titleFor} onView={viewProof} />}
+
+      {tab === 'alerts' && <StudentAlerts user={user} annualFee={annualFee} otherFees={otherFees} payments={payments} />}
+
+      {/* Proof modal */}
+      {proof.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={closeProof}>
+          <div className="bg-white rounded-lg ring-1 ring-black/5 max-w-lg w-full p-4 shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="text-sm font-semibold text-zinc-900">Payment Proof</h4>
+              <button onClick={closeProof} className="text-zinc-400 hover:text-zinc-700"><X className="size-5" /></button>
+            </div>
+            {proof.loading ? (
+              <div className="h-40 flex items-center justify-center"><div className="size-7 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" /></div>
+            ) : proof.img ? (
+              <img src={proof.img} alt="Payment slip" className="w-full rounded-md ring-1 ring-black/5" />
+            ) : (
+              <ReceiptView fields={receiptFields(proof.payment)} />
+            )}
+            <div className="flex justify-end mt-4">
+              <button onClick={downloadProof} disabled={proof.loading}
+                className="inline-flex items-center gap-1.5 bg-primary text-white px-4 py-2 rounded-md text-xs font-medium hover:bg-primary/90 disabled:opacity-60">
+                <Download className="size-3.5" /> Download
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -153,8 +216,41 @@ function Empty({ text }) {
   );
 }
 
+// Styled receipt shown in the modal for online / slip-less payments.
+function ReceiptView({ fields }) {
+  const rows = [
+    ['Receipt No', fields.receiptNo],
+    ['Date & Time', fields.datetime],
+    ['Student', fields.student],
+    ['Fee', fields.fee],
+    ['Class', fields.className],
+    ['Method', fields.method],
+    ['Reference', fields.ref],
+  ].filter(r => r[1] && r[1] !== '—');
+  return (
+    <div className="rounded-md ring-1 ring-black/5 overflow-hidden">
+      <div className="bg-primary text-white px-4 py-3 flex items-center justify-between">
+        <span className="text-sm font-semibold">{fields.title}</span>
+        <span className="text-[10px] font-bold uppercase tracking-wider">{fields.status}</span>
+      </div>
+      <div className="p-4 space-y-2">
+        {rows.map(([k, v]) => (
+          <div key={k} className="flex items-center justify-between text-xs">
+            <span className="text-zinc-500">{k}</span>
+            <span className="font-medium text-zinc-900">{v}</span>
+          </div>
+        ))}
+        <div className="flex items-center justify-between pt-2 mt-1 border-t border-zinc-100">
+          <span className="text-zinc-500 text-xs">Amount</span>
+          <span className="text-primary font-bold text-lg tabular-nums">{fields.amount}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // =================================================================
-//  One fee (Annual or a single Other fee)
+//  One fee (Annual or a single Other fee) — single connected card
 // =================================================================
 function FeeCard({ fee, category, payments, payCfg, user, student, academicYearId, onChanged, allowModeChange }) {
   const plan = fee.plan;
@@ -302,9 +398,9 @@ function FeeCard({ fee, category, payments, payCfg, user, student, academicYearI
   };
 
   return (
-    <div className="space-y-6">
+    <div className={`ring-1 rounded-lg bg-white overflow-hidden ${feePaid ? 'ring-green-600/20' : 'ring-black/5'}`}>
       {/* Summary */}
-      <div className={`ring-1 rounded-lg bg-white p-5 sm:p-6 ${feePaid ? 'ring-green-600/20' : 'ring-black/5'}`}>
+      <div className="p-5 sm:p-6">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-sm font-semibold text-zinc-900 flex items-center gap-2">
             <Receipt className="size-4 text-primary" /> {plan.title || (isAnnual ? 'Annual Fee' : 'Fee')}
@@ -327,9 +423,9 @@ function FeeCard({ fee, category, payments, payCfg, user, student, academicYearI
         </div>
       </div>
 
-      {/* Payment option (annual lets the student choose; other uses the assigned mode) */}
+      {/* Payment option (annual only) */}
       {allowModeChange && (
-        <div className="ring-1 ring-black/5 rounded-lg bg-white p-5 sm:p-6">
+        <div className="border-t border-zinc-100 p-5 sm:p-6">
           <h3 className="text-sm font-semibold text-zinc-900 flex items-center gap-2 mb-1"><Wallet className="size-4 text-primary" /> Payment Option</h3>
           <p className="text-[11px] text-zinc-500 mb-4">Choose how you'd like to pay this fee.</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -355,57 +451,59 @@ function FeeCard({ fee, category, payments, payCfg, user, student, academicYearI
       )}
 
       {/* Schedule / pay */}
-      {mode === 'installment' && hasInstallments ? (
-        <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden">
-          <div className="p-4 border-b border-zinc-100 flex items-center gap-2">
-            <CalendarDays className="size-4 text-primary" />
-            <h3 className="text-sm font-semibold text-zinc-900">Installment Schedule</h3>
-          </div>
-          {feePaid && <p className="px-5 py-2.5 text-[11px] text-green-800 bg-green-50/70 border-b border-green-100">This fee is fully paid — nothing more due.</p>}
-          <div className="divide-y divide-zinc-100">
-            {installments.map((it, idx) => {
-              const amt = Number(it.amount) || 0;
-              const paid = paidFor(it.id);
-              const pending = pendingFor(it.id);
-              const remaining = Math.max(0, amt - paid);
-              const settled = feePaid || remaining <= 0;
-              const badge = settled ? null : dueBadge(it.due_date);
-              return (
-                <div key={it.id ?? idx} className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-5 py-3 ${settled ? 'opacity-60' : ''}`}>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="text-sm font-medium text-zinc-900">{it.label || `Installment ${idx + 1}`}</p>
-                      {settled && <PaidPill />}
-                      {!settled && pending > 0 && <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium ring-1 bg-amber-50 text-amber-700 ring-amber-600/20"><Clock className="size-3" /> Under verification</span>}
-                      {!settled && pending === 0 && badge && <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium ring-1 ${badge.cls}`}>{badge.text}</span>}
+      <div className="border-t border-zinc-100">
+        {mode === 'installment' && hasInstallments ? (
+          <>
+            <div className="p-4 flex items-center gap-2">
+              <CalendarDays className="size-4 text-primary" />
+              <h3 className="text-sm font-semibold text-zinc-900">Installment Schedule</h3>
+            </div>
+            {feePaid && <p className="px-5 py-2.5 text-[11px] text-green-800 bg-green-50/70 border-y border-green-100">This fee is fully paid — nothing more due.</p>}
+            <div className="divide-y divide-zinc-100 border-t border-zinc-100">
+              {installments.map((it, idx) => {
+                const amt = Number(it.amount) || 0;
+                const paid = paidFor(it.id);
+                const pending = pendingFor(it.id);
+                const remaining = Math.max(0, amt - paid);
+                const settled = feePaid || remaining <= 0;
+                const badge = settled ? null : dueBadge(it.due_date);
+                return (
+                  <div key={it.id ?? idx} className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-5 py-3 ${settled ? 'opacity-60' : ''}`}>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-sm font-medium text-zinc-900">{it.label || `Installment ${idx + 1}`}</p>
+                        {settled && <PaidPill />}
+                        {!settled && pending > 0 && <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium ring-1 bg-amber-50 text-amber-700 ring-amber-600/20"><Clock className="size-3" /> Under verification</span>}
+                        {!settled && pending === 0 && badge && <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium ring-1 ${badge.cls}`}>{badge.text}</span>}
+                      </div>
+                      <p className="text-[11px] text-zinc-500 flex items-center gap-1 mt-0.5"><CalendarDays className="size-3" /> Due {fmtIST(it.due_date)}</p>
                     </div>
-                    <p className="text-[11px] text-zinc-500 flex items-center gap-1 mt-0.5"><CalendarDays className="size-3" /> Due {fmtIST(it.due_date)}</p>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <span className="text-sm font-semibold text-zinc-900 tabular-nums">{inr(amt)}</span>
+                      <PayButtons label={it.label || `Installment ${idx + 1}`} amount={remaining} installment_id={it.id} settled={settled} />
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    <span className="text-sm font-semibold text-zinc-900 tabular-nums">{inr(amt)}</span>
-                    <PayButtons label={it.label || `Installment ${idx + 1}`} amount={remaining} installment_id={it.id} settled={settled} />
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
+          </>
+        ) : mode === 'full' ? (
+          <div className={`p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${feePaid ? 'opacity-80' : ''}`}>
+            <div>
+              <p className="text-sm font-medium text-zinc-900 flex items-center gap-2">Full Payment {feePaid && <PaidPill />}</p>
+              <p className="text-[11px] text-zinc-500 mt-0.5">{feePaid ? 'This fee is fully paid.' : 'Pay the remaining balance in one go.'}</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className={`text-lg font-bold tabular-nums ${feePaid ? 'text-green-700' : 'text-primary'}`}>{inr(balance)}</span>
+              <PayButtons label="Full payment" amount={balance} installment_id={null} settled={feePaid || balance <= 0} />
+            </div>
           </div>
-        </div>
-      ) : mode === 'full' ? (
-        <div className={`ring-1 rounded-lg bg-white p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${feePaid ? 'ring-green-600/20 opacity-80' : 'ring-black/5'}`}>
-          <div>
-            <p className="text-sm font-medium text-zinc-900 flex items-center gap-2">Full Payment {feePaid && <PaidPill />}</p>
-            <p className="text-[11px] text-zinc-500 mt-0.5">{feePaid ? 'This fee is fully paid.' : 'Pay the remaining balance in one go.'}</p>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className={`text-lg font-bold tabular-nums ${feePaid ? 'text-green-700' : 'text-primary'}`}>{inr(balance)}</span>
-            <PayButtons label="Full payment" amount={balance} installment_id={null} settled={feePaid || balance <= 0} />
-          </div>
-        </div>
-      ) : (
-        <p className="text-xs text-zinc-500 text-center py-2">
-          {allowModeChange ? 'Select a payment option above to continue.' : 'Waiting for the school to set a payment option.'}
-        </p>
-      )}
+        ) : (
+          <p className="text-xs text-zinc-500 text-center py-5">
+            {allowModeChange ? 'Select a payment option above to continue.' : 'Waiting for the school to set a payment option.'}
+          </p>
+        )}
+      </div>
 
       {/* Offline modal */}
       {offline.open && (
@@ -469,15 +567,13 @@ function Field({ label, children }) {
 // =================================================================
 //  Payment History (student)
 // =================================================================
-function PaymentHistory({ payments, titleFor }) {
+function PaymentHistory({ payments, titleFor, onView }) {
   const statusStyle = (s) =>
     s === 'paid' ? 'bg-green-50 text-green-700 ring-green-600/20'
     : s === 'pending' ? 'bg-amber-50 text-amber-700 ring-amber-600/20'
     : 'bg-red-50 text-red-700 ring-red-600/20';
 
-  if (!payments.length) {
-    return <Empty text="No payments yet." />;
-  }
+  if (!payments.length) return <Empty text="No payments yet." />;
 
   return (
     <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden">
@@ -486,10 +582,10 @@ function PaymentHistory({ payments, titleFor }) {
         <h3 className="text-sm font-semibold text-zinc-900">Payment History <span className="text-zinc-400 font-normal">({payments.length})</span></h3>
       </div>
       <div className="overflow-x-auto custom-scrollbar">
-        <table className="w-full text-left border-collapse min-w-[640px]">
+        <table className="w-full text-left border-collapse min-w-[680px]">
           <thead>
             <tr className="bg-zinc-50/50">
-              {['Date & Time', 'Fee', 'Amount', 'Method', 'Status', 'Reference'].map(h => (
+              {['Date & Time', 'Fee', 'Amount', 'Method', 'Status', 'Reference', 'Proof'].map(h => (
                 <th key={h} className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100">{h}</th>
               ))}
             </tr>
@@ -506,11 +602,133 @@ function PaymentHistory({ payments, titleFor }) {
                     {p.status === 'pending' ? 'Under verification' : p.status}
                   </span>
                 </td>
-                <td className="px-5 py-3 text-[11px] text-zinc-500">{p.reference_no || '—'}</td>
+                <td className="px-5 py-3 text-[11px] text-zinc-500">{p.reference_no || p.provider_payment_id || '—'}</td>
+                <td className="px-5 py-3">
+                  <button onClick={() => onView(p)} title="View proof"
+                    className="inline-flex items-center gap-1 text-primary hover:underline text-[11px] font-medium">
+                    <Eye className="size-3.5" /> View
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+// =================================================================
+//  Student Alerts — reminders from unpaid dues + messages from school
+// =================================================================
+function StudentAlerts({ user, annualFee, otherFees, payments }) {
+  const [messages, setMessages] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (!user?.id) return;
+      setLoading(true);
+      try {
+        const res = await fetch(`${API_BASE_URL}/fees/alerts/my/${user.id}`);
+        const json = await res.json();
+        if (alive) setMessages(Array.isArray(json?.alerts) ? json.alerts : []);
+      } catch (e) {
+        if (alive) setMessages([]);
+      }
+      if (alive) setLoading(false);
+    })();
+    return () => { alive = false; };
+  }, [user]);
+
+  // Build due-date reminders from the student's own unpaid fees.
+  const reminders = useMemo(() => {
+    const fees = [];
+    if (annualFee) fees.push({ ...annualFee, isAnnual: true });
+    (otherFees || []).forEach(f => fees.push({ ...f, isAnnual: false }));
+
+    const out = [];
+    fees.forEach(f => {
+      const plan = f.plan;
+      const installments = f.installments || [];
+      const assignment = f.assignment || null;
+      const fullFee = Number(plan.full_fee) || 0;
+      const concession = f.isAnnual && assignment ? Number(assignment.concession_amount) || 0 : 0;
+      const net = Math.max(0, fullFee - concession);
+      const mine = (payments || []).filter(p => String(p.plan_id) === String(plan.id));
+      const paidTotal = mine.filter(p => p.status === 'paid').reduce((s, p) => s + Number(p.amount || 0), 0);
+      const feePaid = net > 0 && paidTotal >= net;
+      if (feePaid || net <= 0) return;
+
+      const mode = assignment?.payment_mode || (f.isAnnual ? '' : 'full');
+      const paidFor = (id) => mine.filter(p => p.status === 'paid' && String(p.installment_id) === String(id)).reduce((s, p) => s + Number(p.amount || 0), 0);
+
+      if (mode === 'installment' && installments.length) {
+        installments.forEach(it => {
+          const remaining = Math.max(0, (Number(it.amount) || 0) - paidFor(it.id));
+          if (remaining > 0 && it.due_date) {
+            out.push({ key: `${plan.id}-${it.id}`, title: `${plan.title || 'Fee'} · ${it.label || 'Installment'}`, amount: remaining, due: it.due_date, badge: dueBadge(it.due_date) });
+          }
+        });
+      } else if (plan.due_date) {
+        out.push({ key: `${plan.id}-full`, title: `${plan.title || 'Fee'}`, amount: net - paidTotal, due: plan.due_date, badge: dueBadge(plan.due_date) });
+      }
+    });
+    // soonest first
+    return out.sort((a, b) => new Date(a.due) - new Date(b.due));
+  }, [annualFee, otherFees, payments]);
+
+  return (
+    <div className="space-y-6">
+      {/* Due reminders */}
+      <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden">
+        <div className="p-4 border-b border-zinc-100 flex items-center gap-2">
+          <Zap className="size-4 text-primary" />
+          <h3 className="text-sm font-semibold text-zinc-900">Payment Reminders</h3>
+        </div>
+        {reminders.length === 0 ? (
+          <p className="px-5 py-8 text-center text-xs text-zinc-500 italic">You're all caught up — no pending dues.</p>
+        ) : (
+          <div className="divide-y divide-zinc-100">
+            {reminders.map(r => (
+              <div key={r.key} className="flex items-center justify-between gap-3 px-5 py-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-zinc-900">{r.title}</p>
+                  {r.badge && <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium ring-1 mt-1 ${r.badge.cls}`}><Clock className="size-3" /> {r.badge.text}</span>}
+                </div>
+                <span className="text-sm font-semibold text-zinc-900 tabular-nums shrink-0">{inr(r.amount)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Messages from school */}
+      <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden">
+        <div className="p-4 border-b border-zinc-100 flex items-center gap-2">
+          <Send className="size-4 text-primary" />
+          <h3 className="text-sm font-semibold text-zinc-900">Messages from School</h3>
+        </div>
+        {loading ? (
+          <div className="h-24 flex items-center justify-center"><div className="size-6 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" /></div>
+        ) : messages.length === 0 ? (
+          <p className="px-5 py-8 text-center text-xs text-zinc-500 italic">No messages yet.</p>
+        ) : (
+          <div className="divide-y divide-zinc-100">
+            {messages.map(m => (
+              <div key={m.id} className="px-5 py-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ring-1 ${m.alert_type === 'auto' ? 'bg-primary/10 text-primary ring-primary/20' : 'bg-accent/10 text-accent ring-accent/20'}`}>
+                    {m.alert_type === 'auto' ? <Zap className="size-3" /> : <Send className="size-3" />} {m.alert_type}
+                  </span>
+                  <span className="text-[11px] text-zinc-400">{fmtIST(m.created_at, true)}</span>
+                </div>
+                {m.message && <p className="text-sm text-zinc-700 mt-1.5">{m.message}</p>}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
