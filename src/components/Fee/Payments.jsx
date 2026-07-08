@@ -10,9 +10,12 @@ const fmtDateTime = (v) => {
   if (!v) return '—';
   const d = new Date(v);
   if (isNaN(d.getTime())) return '—';
-  const dd = String(d.getDate()).padStart(2, '0');
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  return `${dd}/${mm}/${d.getFullYear()}`;
+  // Stored UTC, shown in IST with time.
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true
+  }).format(d);
 };
 
 const STATUS_STYLE = {
@@ -123,7 +126,7 @@ export default function Payments({ data, user, canEdit = true }) {
             <table className="w-full text-left border-collapse min-w-[900px]">
               <thead>
                 <tr className="bg-zinc-50/50">
-                  {['Date', 'Student', 'Class', 'Amount', 'Method', 'Status', 'Reference', ''].map((h, i) => (
+                  {['Date & Time', 'Student', 'Class', 'Amount', 'Method', 'Status', 'Reference', ''].map((h, i) => (
                     <th key={i} className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100">{h}</th>
                   ))}
                 </tr>

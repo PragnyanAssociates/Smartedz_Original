@@ -145,7 +145,7 @@ export default function FeeAssign({ data, fetchData, user, canEdit = true }) {
             planInstallments={(data.installments || []).filter(i => annualPlan && i.plan_id === annualPlan.id)}
             {...editorProps}
           />
-          <AssignTable plan={annualPlan} students={students} data={data} user={user} canEdit={canEdit} fetchData={fetchData} selectedClass={selectedClass} />
+          <AssignTable plan={annualPlan} category="annual" students={students} data={data} user={user} canEdit={canEdit} fetchData={fetchData} selectedClass={selectedClass} />
         </>
       ) : otherTitles.length === 0 && otherTitle !== NEW ? (
         <OtherFeePicker titles={otherTitles} amountFor={amountFor} activeTitle={otherTitle}
@@ -167,7 +167,7 @@ export default function FeeAssign({ data, fetchData, user, canEdit = true }) {
             {...editorProps}
           />
 
-          <AssignTable plan={currentOtherPlan} students={students} data={data} user={user} canEdit={canEdit} fetchData={fetchData} selectedClass={selectedClass} />
+          <AssignTable plan={currentOtherPlan} category="other" students={students} data={data} user={user} canEdit={canEdit} fetchData={fetchData} selectedClass={selectedClass} />
         </>
       )}
     </div>
@@ -371,9 +371,10 @@ function PlanEditor({ category, plan, presetTitle, titleEditable, planInstallmen
 }
 
 // ---- Assign to students (per plan) ----
-function AssignTable({ plan, students, data, user, canEdit, fetchData, selectedClass }) {
+function AssignTable({ plan, category = 'annual', students, data, user, canEdit, fetchData, selectedClass }) {
   const [savingId, setSavingId] = useState(null);
   const fullFeeNum = plan ? Number(plan.full_fee) || 0 : 0;
+  const showConcession = category === 'annual'; // concession applies to Annual fee only
 
   const assignmentOf = useCallback(
     (sid) => (data.assignments || []).find(a => String(a.student_id) === String(sid) && String(a.plan_id) === String(plan?.id)) || null,
@@ -435,7 +436,7 @@ function AssignTable({ plan, students, data, user, canEdit, fetchData, selectedC
         <table className="w-full text-left border-collapse min-w-[720px]">
           <thead>
             <tr className="bg-zinc-50/50">
-              {['Roll', 'Student', 'Payment Mode', 'Fee', 'Concession', 'Net Payable'].map(h => (
+              {['Roll', 'Student', 'Payment Mode', 'Fee', ...(showConcession ? ['Concession'] : []), 'Net Payable'].map(h => (
                 <th key={h} className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100">{h}</th>
               ))}
             </tr>
@@ -462,14 +463,16 @@ function AssignTable({ plan, students, data, user, canEdit, fetchData, selectedC
                     </div>
                   </td>
                   <td className="px-5 py-3 text-xs text-zinc-700 tabular-nums">{inr(fullFeeNum)}</td>
-                  <td className="px-5 py-3 text-xs tabular-nums">
-                    {concession > 0 ? <span className="text-accent">− {inr(concession)}</span> : <span className="text-zinc-300">—</span>}
-                  </td>
+                  {showConcession && (
+                    <td className="px-5 py-3 text-xs tabular-nums">
+                      {concession > 0 ? <span className="text-accent">− {inr(concession)}</span> : <span className="text-zinc-300">—</span>}
+                    </td>
+                  )}
                   <td className="px-5 py-3 text-xs font-semibold text-zinc-900 tabular-nums">{inr(net)}</td>
                 </tr>
               );
             }) : (
-              <tr><td colSpan="6" className="px-5 py-8 text-center text-xs text-zinc-500 italic">No active students in this class.</td></tr>
+              <tr><td colSpan={showConcession ? 6 : 5} className="px-5 py-8 text-center text-xs text-zinc-500 italic">No active students in this class.</td></tr>
             )}
           </tbody>
         </table>

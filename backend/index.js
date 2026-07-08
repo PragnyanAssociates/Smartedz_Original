@@ -10020,9 +10020,33 @@ app.get('/api/fees/my/:studentId', async (req, res) => {
       assignment = arows.length ? arows[0] : null;
     }
 
+    // Other fees for this class (Books, Tour, …) — only those this class has.
+    let otherFees = [];
+    if (stu.class_id) {
+      const [orows] = await db.execute(
+        "SELECT * FROM fee_class_plans WHERE institutionId = ? AND (academic_year_id <=> ?) AND class_id = ? AND fee_category = 'other' ORDER BY title",
+        [stu.institutionId, yearId ?? null, stu.class_id]
+      );
+      for (const op of orows) {
+        const [oi] = await db.execute(
+          'SELECT * FROM fee_installments WHERE plan_id = ? ORDER BY sort_order, id',
+          [op.id]
+        );
+        const [oa] = await db.execute(
+          'SELECT * FROM student_fee_assignments WHERE institutionId = ? AND (academic_year_id <=> ?) AND student_id = ? AND plan_id = ? LIMIT 1',
+          [stu.institutionId, yearId ?? null, studentId, op.id]
+        );
+        otherFees.push({
+          plan: { id: op.id, title: op.title, full_fee: op.full_fee, due_date: op.due_date },
+          installments: oi,
+          assignment: oa.length ? oa[0] : null
+        });
+      }
+    }
+
     // Payments (no slip_image in this list to keep it light + avoid sort memory)
     const [payRows] = await db.execute(
-      `SELECT id, amount, method, status, installment_id, reference_no, note, created_at
+      `SELECT id, plan_id, amount, method, status, installment_id, reference_no, note, created_at
          FROM fee_payments
         WHERE institutionId = ? AND (academic_year_id <=> ?) AND student_id = ?`,
       [stu.institutionId, yearId ?? null, studentId]
@@ -10038,9 +10062,10 @@ app.get('/api/fees/my/:studentId', async (req, res) => {
     res.json({
       academic_year_id: yearId ?? null,
       student: { id: stu.id, name: stu.name, roll_no: stu.roll_no, class_id: stu.class_id, className },
-      plan: plan ? { id: plan.id, full_fee: plan.full_fee, due_date: plan.due_date } : null,
+      plan: plan ? { id: plan.id, title: plan.title || 'Annual Fee', full_fee: plan.full_fee, due_date: plan.due_date } : null,
       installments,
       assignment,
+      other_fees: otherFees,
       payments: payRows,
       pay: {
         online_enabled:  acc ? !!acc.online_enabled  : false,
