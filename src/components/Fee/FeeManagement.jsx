@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { IndianRupee, Percent, Landmark, ReceiptText, BellRing, CalendarDays, Wallet } from 'lucide-react';
+import { IndianRupee, Percent, Landmark, ReceiptText, BellRing, CalendarDays, Wallet, BadgePercent } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import FeeAssign   from './FeeAssign';
@@ -50,8 +50,8 @@ export default function FeeManagement() {
   // ---- Management view (admin / permitted staff) ----
   const tabs = [
     { id: 'assign',     label: 'Fee Assign',    icon: IndianRupee },
-    { id: 'concession', label: 'Concession',    icon: Percent },
-    { id: 'account',    label: 'Account',       icon: Landmark },
+    { id: 'concession', label: 'Fee Concessions',    icon: BadgePercent },
+    { id: 'account',    label: 'Account Details',       icon: Landmark },
     { id: 'payments',   label: 'Payments',      icon: ReceiptText },
     { id: 'collection', label: 'Paid / Unpaid', icon: Wallet },
     { id: 'alerts',     label: 'Alerts',        icon: BellRing },
@@ -65,7 +65,7 @@ export default function FeeManagement() {
         <div>
           <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Fee Management</h1>
           <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
-            Set fee structures, assign payment modes, manage concessions, and collect payments.
+            Manage Fee payments both class wise & Student wise.
           </p>
         </div>
         {!canEdit && (

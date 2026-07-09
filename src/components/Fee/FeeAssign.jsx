@@ -6,7 +6,7 @@ const inr = (n) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })
     .format(Number(n) || 0);
 
-const ANNUAL_TITLE = 'Annual Fee';
+const ANNUAL_TITLE = 'Academic Fee';
 const NEW = '__new__';
 
 export default function FeeAssign({ data, fetchData, user, canEdit = true }) {
@@ -84,7 +84,7 @@ export default function FeeAssign({ data, fetchData, user, canEdit = true }) {
       <div className="bg-blue-50/60 border border-blue-100 rounded-md p-4 flex gap-3 text-[11px] text-blue-800 leading-relaxed">
         <Info className="size-4 shrink-0 text-blue-500 mt-0.5" />
         <p>
-          <strong className="text-blue-900">Annual Fee</strong> is the main yearly fee (one per class).
+          <strong className="text-blue-900">Academic Fee</strong> is the main yearly fee (one per class).
           <strong className="text-blue-900"> Other Fee</strong> titles (Books, Tour, Transport…) are shared across classes, but you set the
           amount <em>per class</em> — a class with no amount for a title simply isn't charged it. Per-student discounts live in the <strong>Concession</strong> tab.
         </p>
@@ -125,7 +125,7 @@ export default function FeeAssign({ data, fetchData, user, canEdit = true }) {
       <div className="inline-flex items-center gap-1 bg-zinc-100 p-1 rounded-lg">
         <button onClick={() => setSub('annual')}
           className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-medium transition-colors ${sub === 'annual' ? 'bg-white text-primary shadow-sm' : 'text-zinc-600 hover:text-zinc-900'}`}>
-          <IndianRupee className="size-3.5" /> Annual Fee
+          <IndianRupee className="size-3.5" />Academic Fee
         </button>
         <button onClick={() => setSub('other')}
           className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-medium transition-colors ${sub === 'other' ? 'bg-white text-primary shadow-sm' : 'text-zinc-600 hover:text-zinc-900'}`}>
@@ -291,7 +291,7 @@ function PlanEditor({ category, plan, presetTitle, titleEditable, planInstallmen
             onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
             placeholder={isOther ? 'e.g. Books Fee, Library Fee' : ANNUAL_TITLE}
             className="w-full rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm font-medium text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:bg-zinc-50 disabled:text-zinc-500" />
-          {!isOther && <p className="text-[10px] text-zinc-400 mt-1">The annual fee title is fixed.</p>}
+          {!isOther && <p className="text-[10px] text-zinc-400 mt-1">The Academic fee title is fixed.</p>}
           {isOther && !titleEditable && <p className="text-[10px] text-zinc-400 mt-1">Shared title — set this class's amount below.</p>}
         </div>
         <div className="flex items-center gap-2">
