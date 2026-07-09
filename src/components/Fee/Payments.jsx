@@ -44,6 +44,20 @@ export default function Payments({ data, user, canEdit = true }) {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId]   = useState(null);
   const [proof, setProof]     = useState({ open: false, row: null, loading: false, img: null });
+  const [schoolName, setSchoolName] = useState('');
+
+  useEffect(() => {
+    if (!user?.institutionId) return;
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/fees/account/${user.institutionId}`);
+        const a = await res.json();
+        if (alive) setSchoolName(a?.account_name || '');
+      } catch { /* ignore */ }
+    })();
+    return () => { alive = false; };
+  }, [user]);
 
   const load = useCallback(async () => {
     if (!user?.institutionId) return;
@@ -87,16 +101,17 @@ export default function Payments({ data, user, canEdit = true }) {
   };
 
   const receiptFields = (r) => ({
-    title: 'Payment Receipt',
+    schoolName: schoolName || 'Payment Receipt',
     receiptNo: r.provider_payment_id || `#${r.id}`,
     datetime: fmtDateTime(r.created_at),
     student: r.student_name,
+    roll: r.roll_no,
     fee: '',
     className: classLabel(r.class_id),
     method: r.method,
     ref: r.reference_no || r.provider_payment_id || '—',
     amount: inr(r.amount),
-    status: r.status
+    status: r.status === 'paid' ? 'Paid' : r.status
   });
 
   const viewProof = async (r) => {
@@ -240,13 +255,15 @@ export default function Payments({ data, user, canEdit = true }) {
               </div>
             ) : proof.img ? (
               <img src={proof.img} alt="Payment slip" className="w-full rounded-md ring-1 ring-black/5" />
-            ) : proof.row ? (
+            ) : proof.row?.method === 'online' ? (
               <ReceiptView fields={receiptFields(proof.row)} />
             ) : (
-              <p className="text-xs text-zinc-500 text-center py-8">Proof not available.</p>
+              <div className="py-10 text-center">
+                <p className="text-sm text-zinc-600">No slip was uploaded for this offline payment.</p>
+              </div>
             )}
             <div className="flex justify-end mt-4">
-              <button onClick={downloadProof} disabled={proof.loading}
+              <button onClick={downloadProof} disabled={proof.loading || (!proof.img && proof.row?.method !== 'online')}
                 className="inline-flex items-center gap-1.5 bg-primary text-white px-4 py-2 rounded-md text-xs font-medium hover:bg-primary/90 disabled:opacity-60">
                 <Download className="size-3.5" /> Download
               </button>
@@ -258,33 +275,44 @@ export default function Payments({ data, user, canEdit = true }) {
   );
 }
 
-// Styled receipt for online / slip-less payments.
+// Professional receipt for online payments.
 function ReceiptView({ fields }) {
   const rows = [
     ['Receipt No', fields.receiptNo],
     ['Date & Time', fields.datetime],
-    ['Student', fields.student],
+    ['Student', fields.student + (fields.roll ? `  ·  Roll ${fields.roll}` : '')],
     ['Class', fields.className],
     ['Method', fields.method],
     ['Reference', fields.ref],
   ].filter(r => r[1] && r[1] !== '—');
+  const initial = (fields.schoolName || 'S').trim().charAt(0).toUpperCase();
   return (
-    <div className="rounded-md ring-1 ring-black/5 overflow-hidden">
-      <div className="bg-primary text-white px-4 py-3 flex items-center justify-between">
-        <span className="text-sm font-semibold">{fields.title}</span>
-        <span className="text-[10px] font-bold uppercase tracking-wider">{fields.status}</span>
+    <div className="rounded-lg ring-1 ring-black/5 overflow-hidden">
+      <div className="bg-primary text-white px-5 py-4 flex items-center gap-3">
+        {fields.logoUrl
+          ? <img src={fields.logoUrl} alt="logo" className="size-10 rounded bg-white object-contain" />
+          : <div className="size-10 rounded bg-white/20 flex items-center justify-center text-lg font-bold">{initial}</div>}
+        <div className="min-w-0">
+          <p className="text-sm font-bold truncate">{fields.schoolName}</p>
+          <p className="text-[10px] opacity-85">Fee Payment Receipt</p>
+        </div>
+        <span className="ml-auto text-[10px] font-bold uppercase tracking-wider bg-white/20 px-2 py-1 rounded">{fields.status}</span>
       </div>
-      <div className="p-4 space-y-2">
+      <div className="p-5 space-y-2">
         {rows.map(([k, v]) => (
-          <div key={k} className="flex items-center justify-between text-xs">
-            <span className="text-zinc-500">{k}</span>
-            <span className="font-medium text-zinc-900 capitalize">{v}</span>
+          <div key={k} className="flex items-center justify-between text-xs gap-4">
+            <span className="text-zinc-500 shrink-0">{k}</span>
+            <span className="font-medium text-zinc-900 text-right capitalize">{v}</span>
           </div>
         ))}
-        <div className="flex items-center justify-between pt-2 mt-1 border-t border-zinc-100">
-          <span className="text-zinc-500 text-xs">Amount</span>
-          <span className="text-primary font-bold text-lg tabular-nums">{fields.amount}</span>
+        <div className="flex items-center justify-between pt-3 mt-1 border-t border-zinc-100">
+          <span className="text-zinc-500 text-xs">Amount Paid</span>
+          <span className="text-primary font-bold text-xl tabular-nums">{fields.amount}</span>
         </div>
+      </div>
+      <div className="px-5 py-2.5 border-t border-zinc-100 flex items-center justify-between text-[10px] text-zinc-400">
+        <span>Computer-generated receipt</span>
+        <span>Powered by SmartEdz</span>
       </div>
     </div>
   );

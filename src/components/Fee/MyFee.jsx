@@ -98,16 +98,17 @@ export default function MyFee({ user }) {
   };
 
   const receiptFields = (p) => ({
-    title: payCfg.account_name || 'Payment Receipt',
+    schoolName: payCfg.account_name || 'Payment Receipt',
     receiptNo: p.provider_payment_id || `#${p.id}`,
     datetime: fmtIST(p.created_at, true),
     student: student?.name,
+    roll: student?.roll_no,
     fee: titleFor(p.plan_id),
     className: student?.className,
     method: p.method,
     ref: p.reference_no || p.provider_payment_id || '—',
     amount: inr(p.amount),
-    status: p.status
+    status: p.status === 'paid' ? 'Paid' : p.status
   });
 
   const viewProof = async (p) => {
@@ -145,7 +146,7 @@ export default function MyFee({ user }) {
   }
 
   const tabs = [
-    { id: 'annual',  label: 'Annual Fee',      icon: IndianRupee },
+    { id: 'annual',  label: 'Academic Fee',    icon: IndianRupee },
     { id: 'other',   label: 'Other Fee',       icon: Tag },
     { id: 'history', label: 'Payment History', icon: History },
     { id: 'alerts',  label: 'Alerts',          icon: BellRing },
@@ -203,11 +204,16 @@ export default function MyFee({ user }) {
               <div className="h-40 flex items-center justify-center"><div className="size-7 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" /></div>
             ) : proof.img ? (
               <img src={proof.img} alt="Payment slip" className="w-full rounded-md ring-1 ring-black/5" />
-            ) : (
+            ) : proof.payment?.method === 'online' ? (
               <ReceiptView fields={receiptFields(proof.payment)} />
+            ) : (
+              <div className="py-10 text-center">
+                <Info className="size-6 text-zinc-300 mx-auto mb-2" />
+                <p className="text-sm text-zinc-600">No slip was uploaded for this offline payment.</p>
+              </div>
             )}
             <div className="flex justify-end mt-4">
-              <button onClick={downloadProof} disabled={proof.loading}
+              <button onClick={downloadProof} disabled={proof.loading || (!proof.img && proof.payment?.method !== 'online')}
                 className="inline-flex items-center gap-1.5 bg-primary text-white px-4 py-2 rounded-md text-xs font-medium hover:bg-primary/90 disabled:opacity-60">
                 <Download className="size-3.5" /> Download
               </button>
@@ -229,34 +235,45 @@ function Empty({ text }) {
   );
 }
 
-// Styled receipt shown in the modal for online / slip-less payments.
+// Professional receipt shown for online payments.
 function ReceiptView({ fields }) {
   const rows = [
     ['Receipt No', fields.receiptNo],
     ['Date & Time', fields.datetime],
-    ['Student', fields.student],
-    ['Fee', fields.fee],
+    ['Student', fields.student + (fields.roll ? `  ·  Roll ${fields.roll}` : '')],
     ['Class', fields.className],
+    ['Fee', fields.fee],
     ['Method', fields.method],
     ['Reference', fields.ref],
   ].filter(r => r[1] && r[1] !== '—');
+  const initial = (fields.schoolName || 'S').trim().charAt(0).toUpperCase();
   return (
-    <div className="rounded-md ring-1 ring-black/5 overflow-hidden">
-      <div className="bg-primary text-white px-4 py-3 flex items-center justify-between">
-        <span className="text-sm font-semibold">{fields.title}</span>
-        <span className="text-[10px] font-bold uppercase tracking-wider">{fields.status}</span>
+    <div className="rounded-lg ring-1 ring-black/5 overflow-hidden">
+      <div className="bg-primary text-white px-5 py-4 flex items-center gap-3">
+        {fields.logoUrl
+          ? <img src={fields.logoUrl} alt="logo" className="size-10 rounded bg-white object-contain" />
+          : <div className="size-10 rounded bg-white/20 flex items-center justify-center text-lg font-bold">{initial}</div>}
+        <div className="min-w-0">
+          <p className="text-sm font-bold truncate">{fields.schoolName}</p>
+          <p className="text-[10px] opacity-85">Fee Payment Receipt</p>
+        </div>
+        <span className="ml-auto text-[10px] font-bold uppercase tracking-wider bg-white/20 px-2 py-1 rounded">{fields.status}</span>
       </div>
-      <div className="p-4 space-y-2">
+      <div className="p-5 space-y-2">
         {rows.map(([k, v]) => (
-          <div key={k} className="flex items-center justify-between text-xs">
-            <span className="text-zinc-500">{k}</span>
-            <span className="font-medium text-zinc-900">{v}</span>
+          <div key={k} className="flex items-center justify-between text-xs gap-4">
+            <span className="text-zinc-500 shrink-0">{k}</span>
+            <span className="font-medium text-zinc-900 text-right">{v}</span>
           </div>
         ))}
-        <div className="flex items-center justify-between pt-2 mt-1 border-t border-zinc-100">
-          <span className="text-zinc-500 text-xs">Amount</span>
-          <span className="text-primary font-bold text-lg tabular-nums">{fields.amount}</span>
+        <div className="flex items-center justify-between pt-3 mt-1 border-t border-zinc-100">
+          <span className="text-zinc-500 text-xs">Amount Paid</span>
+          <span className="text-primary font-bold text-xl tabular-nums">{fields.amount}</span>
         </div>
+      </div>
+      <div className="px-5 py-2.5 border-t border-zinc-100 flex items-center justify-between text-[10px] text-zinc-400">
+        <span>Computer-generated receipt</span>
+        <span>Powered by SmartEdz</span>
       </div>
     </div>
   );
@@ -426,7 +443,7 @@ function FeeCard({ fee, category, payments, payCfg, user, student, academicYearI
           })())}
         </div>
         <div className="space-y-2 text-sm">
-          <Row label={isAnnual ? 'Full Fee (Annual)' : 'Fee Amount'} value={inr(fullFee)} />
+          <Row label={isAnnual ? 'Full Fee (Academic)' : 'Fee Amount'} value={inr(fullFee)} />
           {concession > 0 && <Row label={`Concession${assignment?.concession_reason ? ` (${assignment.concession_reason})` : ''}`} value={`− ${inr(concession)}`} valueClass="text-accent" />}
           <Row label="Net Payable" value={inr(net)} />
           {paidTotal > 0 && <Row label="Paid" value={`− ${inr(paidTotal)}`} valueClass="text-green-700" />}

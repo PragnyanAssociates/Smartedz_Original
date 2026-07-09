@@ -10612,6 +10612,108 @@ app.get('/api/fees/collection/:institutionId', async (req, res) => {
   }
 });
 
+// =================================================================
+//  DASHBOARD — aggregated analytics for the Fee Dashboard tab
+// =================================================================
+app.get('/api/fees/dashboard/:institutionId', async (req, res) => {
+  const institutionId = req.params.institutionId;
+  try {
+    const yearId = await resolveYearId(institutionId);
+
+    const [students] = await db.execute(
+      `SELECT id, class_id FROM users
+        WHERE institutionId = ?
+          AND LOWER(role) LIKE '%student%'
+          AND LOWER(COALESCE(status, 'active')) = 'active'`,
+      [institutionId]
+    );
+    const [plans] = await db.execute(
+      'SELECT id, class_id, title, full_fee, fee_category FROM fee_class_plans WHERE institutionId = ? AND (academic_year_id <=> ?)',
+      [institutionId, yearId ?? null]
+    );
+    const [assigns] = await db.execute(
+      'SELECT student_id, plan_id, concession_amount FROM student_fee_assignments WHERE institutionId = ? AND (academic_year_id <=> ?)',
+      [institutionId, yearId ?? null]
+    );
+    const [paidRows] = await db.execute(
+      "SELECT student_id, plan_id, amount, method, created_at FROM fee_payments WHERE institutionId = ? AND (academic_year_id <=> ?) AND status = 'paid'",
+      [institutionId, yearId ?? null]
+    );
+    const [classesRows] = await db.execute(
+      'SELECT id, className, section FROM classes WHERE institutionId = ?', [institutionId]
+    );
+
+    const planById = {}; plans.forEach(p => { planById[p.id] = p; });
+    const plansByClass = {}; plans.forEach(p => { (plansByClass[p.class_id] = plansByClass[p.class_id] || []).push(p); });
+    const concMap = {}; assigns.forEach(a => { concMap[`${a.student_id}:${a.plan_id}`] = Number(a.concession_amount) || 0; });
+    const classLabel = {}; classesRows.forEach(c => { classLabel[c.id] = `${c.className}${c.section ? ` - ${c.section}` : ''}`; });
+
+    const byFee = {}, byClass = {}, studentNet = {};
+    let expected = 0;
+    students.forEach(s => {
+      (plansByClass[s.class_id] || []).forEach(p => {
+        const conc = p.fee_category === 'annual' ? (concMap[`${s.id}:${p.id}`] || 0) : 0;
+        const net = Math.max(0, (Number(p.full_fee) || 0) - conc);
+        expected += net;
+        studentNet[s.id] = (studentNet[s.id] || 0) + net;
+        const ft = p.title || 'Fee';
+        (byFee[ft] = byFee[ft] || { expected: 0, collected: 0 }).expected += net;
+        (byClass[s.class_id] = byClass[s.class_id] || { expected: 0, collected: 0 }).expected += net;
+      });
+    });
+
+    let collected = 0;
+    const byMethod = { online: 0, offline: 0 }, monthly = {}, studentPaid = {};
+    paidRows.forEach(r => {
+      const amt = Number(r.amount) || 0;
+      collected += amt;
+      studentPaid[r.student_id] = (studentPaid[r.student_id] || 0) + amt;
+      const p = planById[r.plan_id];
+      const ft = p ? (p.title || 'Fee') : 'Other';
+      (byFee[ft] = byFee[ft] || { expected: 0, collected: 0 }).collected += amt;
+      if (p) (byClass[p.class_id] = byClass[p.class_id] || { expected: 0, collected: 0 }).collected += amt;
+      byMethod[r.method === 'online' ? 'online' : 'offline'] += amt;
+      const ist = new Date(new Date(r.created_at).getTime() + 330 * 60000); // IST
+      const ym = `${ist.getUTCFullYear()}-${String(ist.getUTCMonth() + 1).padStart(2, '0')}`;
+      monthly[ym] = (monthly[ym] || 0) + amt;
+    });
+
+    let paidCount = 0, unpaidCount = 0, partialCount = 0, owe = 0;
+    students.forEach(s => {
+      const net = studentNet[s.id] || 0;
+      if (net <= 0) return;
+      owe++;
+      const paid = Math.min(net, studentPaid[s.id] || 0);
+      if (paid >= net) paidCount++;
+      else { unpaidCount++; if (paid > 0) partialCount++; }
+    });
+
+    const outstanding = Math.max(0, expected - collected);
+    const rate = expected > 0 ? Math.round((collected / expected) * 1000) / 10 : 0;
+
+    const byFeeArr = Object.entries(byFee)
+      .map(([title, v]) => ({ title, expected: v.expected, collected: v.collected, outstanding: Math.max(0, v.expected - v.collected) }))
+      .sort((a, b) => b.expected - a.expected);
+    const byClassArr = Object.entries(byClass)
+      .map(([cid, v]) => ({ class_id: Number(cid), className: classLabel[cid] || `Class ${cid}`, expected: v.expected, collected: v.collected, outstanding: Math.max(0, v.expected - v.collected) }))
+      .sort((a, b) => b.expected - a.expected);
+    const monthlyArr = Object.entries(monthly)
+      .map(([ym, amount]) => ({ ym, amount }))
+      .sort((a, b) => a.ym.localeCompare(b.ym))
+      .slice(-6);
+
+    res.json({
+      academic_year_id: yearId ?? null,
+      totals: { expected, collected, outstanding, rate, transactions: paidRows.length },
+      students: { total: students.length, owe, paid: paidCount, unpaid: unpaidCount, partial: partialCount },
+      byMethod, byFee: byFeeArr, byClass: byClassArr, monthly: monthlyArr
+    });
+  } catch (err) {
+    console.error('fees/dashboard error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 // ============================================================
 // Section 27 — Fee Alerts

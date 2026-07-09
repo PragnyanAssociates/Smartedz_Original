@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Wallet, CheckCircle2, AlertCircle, GraduationCap, ChevronDown, Tag } from 'lucide-react';
+import { Wallet, CheckCircle2, AlertCircle, GraduationCap, ChevronDown, Tag, Download } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
 
 const inr = (n) =>
@@ -10,7 +10,7 @@ export default function Collection({ data, user }) {
   const classes = data.classes || [];
   const [view, setView]       = useState('unpaid'); // 'paid' | 'unpaid'
   const [classId, setClassId] = useState('');
-  const [feeType, setFeeType] = useState('all');    // 'all' | fee title
+  const [feeType, setFeeType] = useState('');       // a specific fee title
   const [rows, setRows]       = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -35,26 +35,28 @@ export default function Collection({ data, user }) {
     return c ? `${c.className}${c.section ? ` - ${c.section}` : ''}` : '—';
   };
 
-  // Fee-type options from the plans we already have.
+  // Fee-type options from the plans we already have (Academic first).
   const feeTypes = useMemo(() => {
     const set = new Set();
     (data.plans || []).forEach(p => { if (p.title) set.add(p.title); });
-    return [...set].sort((a, b) => (a === 'Annual Fee' ? -1 : b === 'Annual Fee' ? 1 : a.localeCompare(b)));
+    return [...set].sort((a, b) => (a === 'Academic Fee' ? -1 : b === 'Academic Fee' ? 1 : a.localeCompare(b)));
   }, [data.plans]);
+
+  // Default to a specific fee + class (no "All" options).
+  useEffect(() => {
+    if (feeTypes.length && !feeTypes.includes(feeType)) setFeeType(feeTypes[0]);
+  }, [feeTypes, feeType]);
+  useEffect(() => {
+    if (classes.length && !classes.some(c => String(c.id) === String(classId))) setClassId(String(classes[0].id));
+  }, [classes, classId]);
 
   // Resolve each student to a single {net, paid, balance, status} for the chosen fee.
   const scoped = useMemo(() => {
     const list = [];
     rows.forEach(s => {
-      if (feeType === 'all') {
-        const t = s.total || {};
-        if (t.status === 'nofee') return;
-        list.push({ ...s, net: t.net, paid: t.paid, balance: t.balance, status: t.status });
-      } else {
-        const f = (s.fees || []).find(f => f.title === feeType);
-        if (!f || f.status === 'nofee') return; // this class doesn't have this fee
-        list.push({ ...s, net: f.net, paid: f.paid, balance: f.balance, status: f.status });
-      }
+      const f = (s.fees || []).find(f => f.title === feeType);
+      if (!f || f.status === 'nofee') return; // this class doesn't have this fee
+      list.push({ ...s, net: f.net, paid: f.paid, balance: f.balance, status: f.status });
     });
     return list;
   }, [rows, feeType]);
@@ -76,6 +78,29 @@ export default function Collection({ data, user }) {
   }), [inScope]);
 
   const totalUnpaidBalance = useMemo(() => filtered.reduce((s, r) => s + Number(r.balance || 0), 0), [filtered]);
+  const totalPaidCollected = useMemo(() => filtered.reduce((s, r) => s + Number(r.paid || 0), 0), [filtered]);
+
+  const downloadList = () => {
+    const rollVal = (u) => { const n = parseInt(u.roll_no, 10); return isNaN(n) ? Infinity : n; };
+    const rows = [...inScope].sort((a, b) => (rollVal(a) - rollVal(b)) || (a.name || '').localeCompare(b.name || ''));
+    const header = ['Roll', 'Student', 'Class', 'Fee', 'Net Payable', 'Paid', 'Balance', 'Status'];
+    const lines = [header, ...rows.map(r => [
+      r.roll_no || '', r.name || '', classLabel(r.class_id), feeType,
+      Number(r.net || 0), Number(r.paid || 0), Number(r.balance || 0),
+      r.status === 'paid' ? 'Paid' : 'Unpaid'
+    ])];
+    const csv = lines.map(row => row.map(cell => {
+      const s = String(cell ?? '');
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    }).join(',')).join('\n');
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${feeType || 'fee'}_${classLabel(classId)}_collection.csv`.replace(/\s+/g, '-');
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div className="space-y-5">
@@ -94,9 +119,13 @@ export default function Collection({ data, user }) {
 
         <div className="flex items-center gap-4 flex-wrap">
           <LabeledSelect icon={Tag} label="Fee" value={feeType} onChange={setFeeType}
-            options={[{ v: 'all', l: 'All fees' }, ...feeTypes.map(t => ({ v: t, l: t }))]} />
+            options={feeTypes.map(t => ({ v: t, l: t }))} />
           <LabeledSelect icon={GraduationCap} label="Class" value={classId} onChange={setClassId}
-            options={[{ v: '', l: 'All classes' }, ...classes.map(c => ({ v: String(c.id), l: `${c.className}${c.section ? ` - ${c.section}` : ''}` }))]} />
+            options={classes.map(c => ({ v: String(c.id), l: `${c.className}${c.section ? ` - ${c.section}` : ''}` }))} />
+          <button onClick={downloadList} disabled={inScope.length === 0}
+            className="inline-flex items-center gap-1.5 bg-white text-zinc-700 ring-1 ring-zinc-200 px-3 h-8 rounded-md text-xs font-medium hover:bg-zinc-50 transition-colors disabled:opacity-50">
+            <Download className="size-3.5" /> Download
+          </button>
         </div>
       </div>
 
@@ -104,9 +133,11 @@ export default function Collection({ data, user }) {
         <div className="p-4 border-b border-zinc-100 flex items-center justify-between gap-3 flex-wrap">
           <h3 className="text-sm font-semibold text-zinc-900 flex items-center gap-2">
             <Wallet className="size-4 text-primary" /> {view === 'paid' ? 'Fully Paid' : 'Outstanding'}
-            <span className="text-zinc-400 font-normal">· {feeType === 'all' ? 'All fees' : feeType} ({filtered.length})</span>
+            <span className="text-zinc-400 font-normal">· {feeType || '—'} ({filtered.length})</span>
           </h3>
-          {view === 'unpaid' && <span className="text-[11px] text-zinc-500">Total due: <strong className="text-accent tabular-nums">{inr(totalUnpaidBalance)}</strong></span>}
+          {view === 'unpaid'
+            ? <span className="text-[11px] text-zinc-500">Total due: <strong className="text-accent tabular-nums">{inr(totalUnpaidBalance)}</strong></span>
+            : <span className="text-[11px] text-zinc-500">Total collected: <strong className="text-green-700 tabular-nums">{inr(totalPaidCollected)}</strong></span>}
         </div>
 
         {loading ? (
@@ -148,7 +179,7 @@ export default function Collection({ data, user }) {
       </div>
 
       <p className="text-[11px] text-zinc-400">
-        Pick a fee to see who has / hasn't paid <em>that</em> fee, or “All fees” for the overall balance. Students with no matching fee aren't listed.
+        Showing who has and hasn't paid the selected fee for the selected class. Students whose class doesn't have this fee aren't listed.
       </p>
     </div>
   );

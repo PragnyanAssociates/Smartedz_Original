@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { IndianRupee, Percent, Landmark, ReceiptText, BellRing, CalendarDays, Wallet, BadgePercent } from 'lucide-react';
+import { IndianRupee, Percent, Landmark, ReceiptText, BellRing, CalendarDays, Wallet, LayoutDashboard } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import FeeAssign   from './FeeAssign';
@@ -10,6 +10,7 @@ import Payments    from './Payments';
 import Alerts      from './Alerts';
 import FeeCalendar from './FeeCalendar';
 import Collection  from './Collection';
+import FeeDashboard from './FeeDashboard';
 import MyFee       from './MyFee';
 
 // Must match the module_name used in Modules.js / the Permissions matrix.
@@ -23,7 +24,7 @@ export default function FeeManagement() {
   const isStudent = (user?.role || '').toLowerCase().includes('student');
   const canEdit = can ? can(MODULE_NAME, 'edit') : true;
 
-  const [activeTab, setActiveTab] = useState('assign');
+  const [activeTab, setActiveTab] = useState('dashboard');
   const [data, setData] = useState({
     academic_year_id: null, classes: [], students: [], plans: [], installments: [], assignments: []
   });
@@ -49,9 +50,10 @@ export default function FeeManagement() {
 
   // ---- Management view (admin / permitted staff) ----
   const tabs = [
+    { id: 'dashboard',  label: 'Fee Dashboard', icon: LayoutDashboard },
     { id: 'assign',     label: 'Fee Assign',    icon: IndianRupee },
-    { id: 'concession', label: 'Fee Concessions',    icon: BadgePercent },
-    { id: 'account',    label: 'Account Details',       icon: Landmark },
+    { id: 'concession', label: 'Concession',    icon: Percent },
+    { id: 'account',    label: 'Account',       icon: Landmark },
     { id: 'payments',   label: 'Payments',      icon: ReceiptText },
     { id: 'collection', label: 'Paid / Unpaid', icon: Wallet },
     { id: 'alerts',     label: 'Alerts',        icon: BellRing },
@@ -65,7 +67,7 @@ export default function FeeManagement() {
         <div>
           <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Fee Management</h1>
           <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
-            Manage Fee payments both class wise & Student wise.
+            Set fee structures, assign payment modes, manage concessions, and collect payments.
           </p>
         </div>
         {!canEdit && (
@@ -93,6 +95,7 @@ export default function FeeManagement() {
           </div>
         ) : (
           <>
+            {activeTab === 'dashboard'  && <FeeDashboard user={user} />}
             {activeTab === 'assign'     && <FeeAssign {...tabProps} />}
             {activeTab === 'concession' && <Concession {...tabProps} />}
             {activeTab === 'account'    && <Account user={user} canEdit={canEdit} />}
