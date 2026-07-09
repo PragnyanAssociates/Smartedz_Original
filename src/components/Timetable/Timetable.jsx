@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import { API_BASE_URL } from '../../apiConfig';
 import { CalendarDays, Clock, LayoutGrid, Plus, Trash2, Save, Coffee, AlertCircle, ChevronDown, Users, Search, GraduationCap, CalendarRange } from 'lucide-react';
+
 // =====================================================================
 //  HOW THIS MODULE WORKS
 //  ---------------------------------------------------------------------
@@ -33,7 +34,9 @@ import { CalendarDays, Clock, LayoutGrid, Plus, Trash2, Save, Coffee, AlertCircl
 //  Both write to the SAME shared timetable_entries table and warn on
 //  teacher / class clashes before saving.
 // =====================================================================
+
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
 const fmtTime = (t) => {
   if (!t) return '';
   const [h, m] = t.split(':');
@@ -43,6 +46,7 @@ const fmtTime = (t) => {
   const h12 = ((hh + 11) % 12) + 1;
   return `${h12}:${mm} ${ampm}`;
 };
+
 // Render a UTC audit timestamp (Railway stores UTC) as an IST date + time.
 const fmtIST = (val) => {
   if (!val) return '';
@@ -59,6 +63,7 @@ const fmtIST = (val) => {
     hour: '2-digit', minute: '2-digit', hour12: true
   });
 };
+
 // --- 12h <-> 24h helpers for the manual time inputs -----------------
 // 24h "HH:MM"  ->  { t12: "hh:mm", ap: "AM"|"PM" }
 const split24 = (t) => {
@@ -71,6 +76,7 @@ const split24 = (t) => {
   const h12 = ((hh + 11) % 12) + 1;
   return { t12: `${String(h12).padStart(2, '0')}:${mm}`, ap };
 };
+
 // "hh:mm" (12h) + ap  ->  24h "HH:MM", or '' when invalid
 const join24 = (t12, ap) => {
   if (!t12) return '';
@@ -83,6 +89,7 @@ const join24 = (t12, ap) => {
   if (ap === 'AM' && hh === 12) hh = 0;
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
 };
+
 // =====================================================================
 //  ACTIVE-YEAR BADGE — read-only context chip, identical to Attendance.
 // =====================================================================
@@ -94,6 +101,7 @@ function YearBadge({ name }) {
     </div>
   );
 }
+
 // Shared hook: fetch the institution's ACTIVE academic year name (for the badge).
 function useActiveYearName(user) {
   const [activeYearName, setActiveYearName] = useState('');
@@ -111,19 +119,23 @@ function useActiveYearName(user) {
   }, [user]);
   return activeYearName;
 }
+
 // =====================================================================
 //  ENTRY POINT
 // =====================================================================
 export default function Timetable() {
   const { user } = useAuth();
   const { can, loading: permsLoading } = usePermissions();
+
   const role = (user?.role || '').toLowerCase();
   const isStudent = role.includes('student');
   const isTeacher = role.includes('teacher');
   const canEdit   = can('Timetable', 'edit');
   const canDelete = can('Timetable', 'delete');
   const canRead   = can('Timetable', 'read');
+
   const isManager = canEdit || canDelete;   // edit OR delete => can configure
+
   if (permsLoading) {
     return (
       <div className="h-96 flex items-center justify-center">
@@ -131,14 +143,16 @@ export default function Timetable() {
       </div>
     );
   }
+
   // Students and teachers always get their own personal, read-only timetable.
   if (isStudent || isTeacher) {
     return <PersonalTimetable user={user} mode={isStudent ? 'student' : 'teacher'} />;
   }
+
   // Everyone else needs at least read access to view anything.
   if (!isManager && !canRead) {
     return (
-      <div className="p-4 sm:p-8 max-w-[1440px] w-full mx-auto">
+      <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12">
         <div className="ring-1 ring-black/5 bg-white rounded-lg p-6 sm:p-10 text-center max-w-2xl mx-auto flex flex-col items-center">
           <AlertCircle className="text-accent mb-3 size-10 shrink-0" />
           <h2 className="text-lg font-semibold text-zinc-900">No Access</h2>
@@ -147,8 +161,10 @@ export default function Timetable() {
       </div>
     );
   }
+
   return <AdminTimetable user={user} canEdit={canEdit} canDelete={canDelete} isManager={isManager} />;
 }
+
 // =====================================================================
 //  ADMIN / MANAGER + READ-ONLY VIEWER VIEW
 // =====================================================================
@@ -160,10 +176,12 @@ function AdminTimetable({ user, canEdit, canDelete, isManager }) {
     teacherSubjects: {}, metaByClass: {}
   });
   const [loading, setLoading] = useState(true);
+
   // Class Timetable is the default tab for everyone (managers included).
   const [activeTab, setActiveTab] = useState('grid');
   // Active academic year name — shown as a read-only badge (like Attendance).
   const activeYearName = useActiveYearName(user);
+
   const fetchData = useCallback(async () => {
     if (!user?.institutionId) return;
     setLoading(true);
@@ -174,7 +192,9 @@ function AdminTimetable({ user, canEdit, canDelete, isManager }) {
     } catch (e) { console.error('Timetable fetch error:', e); }
     setLoading(false);
   }, [user]);
+
   useEffect(() => { fetchData(); }, [fetchData]);
+
   if (loading) {
     return (
       <div className="h-96 flex items-center justify-center">
@@ -182,9 +202,10 @@ function AdminTimetable({ user, canEdit, canDelete, isManager }) {
       </div>
     );
   }
+
   if (!data.academic_year_id) {
     return (
-      <div className="p-4 sm:p-8 max-w-[1440px] w-full mx-auto">
+      <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12">
         <div className="ring-1 ring-black/5 bg-white rounded-lg p-6 sm:p-10 text-center max-w-2xl mx-auto flex flex-col items-center">
           <AlertCircle className="text-accent mb-3 size-10 shrink-0" />
           <h2 className="text-lg font-semibold text-zinc-900">No Active Academic Year</h2>
@@ -196,6 +217,7 @@ function AdminTimetable({ user, canEdit, canDelete, isManager }) {
       </div>
     );
   }
+
   // Build the tab set from permissions.
   //  • Class Timetable    -> everyone with view access (read-only sees disabled inputs)
   //  • Teachers Timetable -> managers only (edit/delete)
@@ -204,11 +226,13 @@ function AdminTimetable({ user, canEdit, canDelete, isManager }) {
   tabs.push({ id: 'grid', label: 'Class Timetable', icon: LayoutGrid });
   if (isManager) tabs.push({ id: 'teachers', label: 'Teachers Timetable', icon: Users });
   if (isManager) tabs.push({ id: 'setup',    label: 'Days & Periods',     icon: Clock });
+
   const tabIds = tabs.map(t => t.id);
   const current = tabIds.includes(activeTab) ? activeTab : tabIds[0];
   const tabProps = { data, fetchData, user, canEdit };
+
   return (
-<div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto">
+    <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12">
       {/* 1. Page Header */}
       <header className="mb-6 flex flex-col sm:flex-row sm:items-start justify-between gap-3">
         <div className="flex flex-col gap-2">
@@ -219,6 +243,7 @@ function AdminTimetable({ user, canEdit, canDelete, isManager }) {
         </div>
         <YearBadge name={activeYearName} />
       </header>
+
       {/* Segmented Tabs - Horizontally Scrollable on Mobile */}
       <div className="flex items-center gap-2 mb-6 sm:mb-8 border-b border-zinc-200 pb-4 overflow-x-auto custom-scrollbar w-full">
         {tabs.map(t => (
@@ -235,6 +260,7 @@ function AdminTimetable({ user, canEdit, canDelete, isManager }) {
           </button>
         ))}
       </div>
+
       <div className="min-h-[500px]">
         {current === 'setup'    && isManager && <SetupTab    {...tabProps} />}
         {current === 'grid'     &&              <GridTab     {...tabProps} />}
@@ -243,6 +269,7 @@ function AdminTimetable({ user, canEdit, canDelete, isManager }) {
     </div>
   );
 }
+
 // =====================================================================
 //  SUB-COMPONENT 1: SetupTab — Days + Periods (ONE save button)
 //  Times are entered manually as HH:MM with an AM / PM dropdown.
@@ -260,6 +287,7 @@ function SetupTab({ data, fetchData, user, canEdit }) {
       };
     });
   });
+
   const [periods, setPeriods] = useState(() => {
     if (data.periods.length > 0) {
       return data.periods.map(p => {
@@ -276,11 +304,14 @@ function SetupTab({ data, fetchData, user, canEdit }) {
     }
     return [{ period_index: 1, name: 'Period 1', start12: '09:00', start_ap: 'AM', end12: '09:45', end_ap: 'AM', is_break: false }];
   });
+
   const [saving, setSaving] = useState(false);
+
   const toggleDay = (idx) => {
     if (!canEdit) return;
     setDays(prev => prev.map(d => d.day_index === idx ? { ...d, is_working: !d.is_working } : d));
   };
+
   const addPeriod = (isBreak = false) => {
     const last = periods[periods.length - 1];
     setPeriods([...periods, {
@@ -293,14 +324,17 @@ function SetupTab({ data, fetchData, user, canEdit }) {
       is_break: isBreak
     }]);
   };
+
   const updatePeriod = (idx, key, val) => {
     setPeriods(prev => prev.map((p, i) => i === idx ? { ...p, [key]: val } : p));
   };
+
   const removePeriod = (idx) => {
     setPeriods(prev => prev
       .filter((_, i) => i !== idx)
       .map((p, i) => ({ ...p, period_index: i + 1 })));
   };
+
   // --- ONE button: saves working days AND periods together ----------
   const saveAll = async () => {
     // Validate + build the periods payload in 24h form.
@@ -309,12 +343,16 @@ function SetupTab({ data, fetchData, user, canEdit }) {
       if (!p.name?.trim()) return alert('Every period needs a name.');
       const start_time = join24(p.start12, p.start_ap);
       const end_time   = join24(p.end12, p.end_ap);
+
       if (!start_time || !end_time) return alert(`"${p.name}" needs a valid start and end time. Enter as HH:MM (e.g. 09:00) and pick AM/PM.`);
       if (start_time >= end_time)   return alert(`"${p.name}" end time must be after start time.`);
+
       prepared.push({ period_index: prepared.length + 1, name: p.name, start_time, end_time, is_break: p.is_break });
     }
+
     if (prepared.length === 0) return alert('Add at least one period.');
     if (!window.confirm('Saving will update the working days and the bell schedule. Any timetable entries that no longer match the period list will be cleared. Continue?')) return;
+
     setSaving(true);
     try {
       // 1) Working days
@@ -324,6 +362,7 @@ function SetupTab({ data, fetchData, user, canEdit }) {
         body: JSON.stringify({ institutionId: user.institutionId, academic_year_id: data.academic_year_id, days })
       });
       if (!daysRes.ok) throw new Error('days');
+
       // 2) Periods / breaks
       const periodsRes = await fetch(`${API_BASE_URL}/admin/timetable/periods`, {
         method: 'POST',
@@ -331,6 +370,7 @@ function SetupTab({ data, fetchData, user, canEdit }) {
         body: JSON.stringify({ institutionId: user.institutionId, academic_year_id: data.academic_year_id, periods: prepared })
       });
       if (!periodsRes.ok) throw new Error('periods');
+
       alert('Days & periods saved.');
       fetchData();   // read back from backend -> survives refresh
     } catch (e) {
@@ -338,6 +378,7 @@ function SetupTab({ data, fetchData, user, canEdit }) {
     }
     setSaving(false);
   };
+
   return (
     <div className="flex flex-col gap-6">
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start">
@@ -369,6 +410,7 @@ function SetupTab({ data, fetchData, user, canEdit }) {
             ))}
           </div>
         </div>
+
         {/* Column 2: Periods */}
         <div className="lg:col-span-7 ring-1 ring-black/5 bg-white rounded-lg flex flex-col">
           <div className="px-5 py-4 border-b border-zinc-100 flex items-center gap-2">
@@ -378,6 +420,7 @@ function SetupTab({ data, fetchData, user, canEdit }) {
               <p className="text-[11px] text-zinc-500 mt-0.5">The bell schedule — applied globally to all classes. Type the time as HH:MM and pick AM / PM.</p>
             </div>
           </div>
+
           <div className="p-4 sm:p-5 flex flex-col gap-4">
             <div className="flex flex-col gap-3">
               {periods.map((p, idx) => (
@@ -404,6 +447,7 @@ function SetupTab({ data, fetchData, user, canEdit }) {
                       </button>
                     )}
                   </div>
+
                   {/* Row 2: manual time entry — start / end, each HH:MM + AM-PM */}
                   <div className="flex flex-wrap items-center gap-2 sm:pl-9">
                     {/* Start */}
@@ -426,6 +470,7 @@ function SetupTab({ data, fetchData, user, canEdit }) {
                         <ChevronDown className="size-3 text-zinc-400 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                       </div>
                     </div>
+
                     {/* End */}
                     <div className="flex items-center gap-1.5">
                       <span className="text-[10px] font-semibold uppercase text-zinc-400 tracking-wider w-8 text-right sm:text-left">To</span>
@@ -450,6 +495,7 @@ function SetupTab({ data, fetchData, user, canEdit }) {
                 </div>
               ))}
             </div>
+
             {canEdit && (
               <div className="flex gap-2 w-full pt-4 border-t border-zinc-100">
                 <button onClick={() => addPeriod(false)}
@@ -465,6 +511,7 @@ function SetupTab({ data, fetchData, user, canEdit }) {
           </div>
         </div>
       </div>
+
       {/* SINGLE save button for BOTH working days and periods */}
       {canEdit && (
         <div className="flex justify-end">
@@ -477,6 +524,7 @@ function SetupTab({ data, fetchData, user, canEdit }) {
     </div>
   );
 }
+
 // =====================================================================
 //  SUB-COMPONENT 2: GridTab — Class Timetable
 // =====================================================================
@@ -489,7 +537,9 @@ function GridTab({ data, fetchData, user, canEdit }) {
     () => [...data.periods].sort((a, b) => a.period_index - b.period_index),
     [data.periods]
   );
+
   const [selectedClassId, setSelectedClassId] = useState(data.classes[0]?.id || '');
+
   const initialMap = useMemo(() => {
     const map = {};
     data.entries
@@ -503,8 +553,10 @@ function GridTab({ data, fetchData, user, canEdit }) {
       });
     return map;
   }, [data.entries, selectedClassId]);
+
   const [cells, setCells] = useState(initialMap);
   useEffect(() => { setCells(initialMap); }, [initialMap]);
+
   const [saving, setSaving] = useState(false);
 
   // Created/updated audit for the currently-selected class. "Updated by" is
@@ -521,6 +573,7 @@ function GridTab({ data, fetchData, user, canEdit }) {
       return subs.includes(sid);
     });
   }, [data.teachers, data.teacherSubjects]);
+
   // Does this teacher already teach a DIFFERENT class at this day/period?
   const teacherClash = useCallback((dayId, periodId, teacherId) => {
     if (!teacherId) return null;
@@ -534,12 +587,14 @@ function GridTab({ data, fetchData, user, canEdit }) {
     const cls = data.classes.find(c => String(c.id) === String(hit.class_id));
     return cls ? `${cls.className}${cls.section ? ' - ' + cls.section : ''}` : 'another class';
   }, [data.entries, data.classes, selectedClassId]);
+
   const updateCell = (dayId, periodId, key, val) => {
     if (!canEdit) return;
     const k = `${dayId}-${periodId}`;
     setCells(prev => {
       const current = prev[k] || { subject_id: '', teacher_id: '', room_no: '' };
       const next = { ...current, [key]: val };
+
       if (key === 'subject_id' && next.teacher_id) {
         const sid = parseInt(val, 10);
         const subs = data.teacherSubjects?.[parseInt(next.teacher_id, 10)] || [];
@@ -548,6 +603,7 @@ function GridTab({ data, fetchData, user, canEdit }) {
       return { ...prev, [k]: next };
     });
   };
+
   const handleSave = async () => {
     if (!selectedClassId) return;
     const entries = Object.entries(cells).map(([k, v]) => {
@@ -559,6 +615,7 @@ function GridTab({ data, fetchData, user, canEdit }) {
         room_no: v.room_no || null
       };
     });
+
     setSaving(true);
     const res = await fetch(`${API_BASE_URL}/admin/timetable/entries/bulk`, {
       method: 'POST',
@@ -569,7 +626,9 @@ function GridTab({ data, fetchData, user, canEdit }) {
     else alert('Failed to save.');
     setSaving(false);
   };
+
   const classLabel = (c) => `${c.className}${c.section ? ' - ' + c.section : ''}`;
+
   if (workingDays.length === 0 || sortedPeriods.length === 0) {
     return (
       <div className="ring-1 ring-black/5 bg-white rounded-lg p-6 sm:p-10 text-center flex flex-col items-center">
@@ -581,6 +640,7 @@ function GridTab({ data, fetchData, user, canEdit }) {
       </div>
     );
   }
+
   if (data.classes.length === 0) {
     return (
       <div className="ring-1 ring-black/5 bg-white rounded-lg p-6 sm:p-10 text-center flex flex-col items-center">
@@ -592,6 +652,7 @@ function GridTab({ data, fetchData, user, canEdit }) {
       </div>
     );
   }
+
   return (
     <div className="space-y-6">
       <div className="bg-blue-50/50 border border-blue-100 rounded-md p-4 flex gap-3 text-[11px] text-blue-700 leading-relaxed">
@@ -600,6 +661,7 @@ function GridTab({ data, fetchData, user, canEdit }) {
           <strong className="font-semibold text-blue-900">Tip:</strong> Pick a subject first — the teacher dropdown then shows only teachers assigned to that subject. If a teacher is already teaching another class at the same time, a red note appears so you can resolve the clash. Manage subjects in <em>Manage Logins → Subjects</em>.
         </p>
       </div>
+
       {/* Top action bar */}
       <div className="flex flex-col sm:flex-row gap-4 justify-between sm:items-end">
         <div className="flex flex-col gap-1.5 w-full sm:w-auto">
@@ -615,6 +677,7 @@ function GridTab({ data, fetchData, user, canEdit }) {
             </select>
             <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
+
           {/* Per-class created / updated audit */}
           {classMeta && (classMeta.created_by_name || metaWasUpdated) ? (
             <div className="mt-1 flex flex-col gap-0.5 text-[11px] text-zinc-500">
@@ -635,6 +698,7 @@ function GridTab({ data, fetchData, user, canEdit }) {
             <p className="mt-1 text-[11px] text-zinc-400 italic">Not saved yet for this class.</p>
           )}
         </div>
+
         {canEdit && (
           <button onClick={handleSave} disabled={saving}
             className="bg-primary text-white h-9 px-6 rounded-md text-xs font-medium hover:bg-primary/90 transition-colors flex items-center justify-center gap-1.5 w-full sm:w-auto shadow-sm">
@@ -642,6 +706,7 @@ function GridTab({ data, fetchData, user, canEdit }) {
           </button>
         )}
       </div>
+
       <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-x-auto custom-scrollbar flex flex-col">
         <table className="w-full text-left border-collapse min-w-[880px]">
           <thead>
@@ -670,6 +735,7 @@ function GridTab({ data, fetchData, user, canEdit }) {
                 {sortedPeriods.map(p => {
                   const key = `${d.id}-${p.id}`;
                   const cell = cells[key] || { subject_id: '', teacher_id: '', room_no: '' };
+
                   if (p.is_break) {
                     return (
                       <td key={p.id} className="p-4 bg-amber-50/50 text-center border-r border-zinc-100">
@@ -679,6 +745,7 @@ function GridTab({ data, fetchData, user, canEdit }) {
                       </td>
                     );
                   }
+
                   // Teachers eligible for the chosen subject...
                   let teacherOptions = teachersForSubject(cell.subject_id);
                   // ...but ALWAYS keep the already-assigned teacher in the list.
@@ -686,7 +753,9 @@ function GridTab({ data, fetchData, user, canEdit }) {
                     const assigned = data.teachers.find(t => String(t.id) === String(cell.teacher_id));
                     if (assigned) teacherOptions = [assigned, ...teacherOptions];
                   }
+
                   const clashClass = teacherClash(d.id, p.id, cell.teacher_id);
+
                   return (
                     <td key={p.id} className="p-2 sm:p-3 border-r border-zinc-100 align-top">
                       <div className="flex flex-col gap-1.5">
@@ -701,6 +770,7 @@ function GridTab({ data, fetchData, user, canEdit }) {
                           </select>
                           <ChevronDown className="size-3 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
                         </div>
+
                         <div className="relative">
                           <select
                             disabled={!canEdit}
@@ -716,12 +786,14 @@ function GridTab({ data, fetchData, user, canEdit }) {
                           </select>
                           <ChevronDown className="size-3 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
                         </div>
+
                         {clashClass && (
                           <p className="text-[10px] font-medium text-red-600 leading-snug flex items-start gap-1">
                             <AlertCircle className="size-3 shrink-0 mt-0.5" />
                             <span>This teacher is already assigned to <strong className="font-semibold">{clashClass}</strong> during this period. Pick a different teacher, or move that class to another slot.</span>
                           </p>
                         )}
+
                         <input
                           disabled={!canEdit}
                           placeholder="Room (e.g. 101)"
@@ -741,6 +813,7 @@ function GridTab({ data, fetchData, user, canEdit }) {
     </div>
   );
 }
+
 // =====================================================================
 //  SUB-COMPONENT 3: TeachersTimetableTab — managers only
 // =====================================================================
@@ -753,16 +826,19 @@ function TeachersTimetableTab({ data, fetchData, user, canEdit }) {
     () => [...data.periods].sort((a, b) => a.period_index - b.period_index),
     [data.periods]
   );
+
   const teachers = data.teachers || [];
   const [search, setSearch] = useState('');
   const [selectedTeacherId, setSelectedTeacherId] = useState(teachers[0]?.id || '');
   const [saving, setSaving] = useState(false);
+
   const visibleTeachers = useMemo(() => {
     const q = search.trim().toLowerCase();
     const list = !q ? teachers : teachers.filter(t =>
       (t.name || '').toLowerCase().includes(q) || (t.email || '').toLowerCase().includes(q));
     return [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   }, [teachers, search]);
+
   // Prefill the grid from this teacher's existing entries.
   const initialCells = useMemo(() => {
     const map = {};
@@ -777,26 +853,32 @@ function TeachersTimetableTab({ data, fetchData, user, canEdit }) {
       });
     return map;
   }, [data.entries, selectedTeacherId]);
+
   const [cells, setCells] = useState(initialCells);
   useEffect(() => { setCells(initialCells); }, [initialCells]);
+
   const classLabel = (c) => `${c.className}${c.section ? ' - ' + c.section : ''}`;
+
   // Subjects this teacher is qualified for (falls back to all if none set).
   const eligibleSubjects = useMemo(() => {
     const ids = (data.teacherSubjects?.[selectedTeacherId] || []).map(String);
     if (!ids.length) return data.subjects;
     return data.subjects.filter(s => ids.includes(String(s.id)));
   }, [data.subjects, data.teacherSubjects, selectedTeacherId]);
+
   const updateCell = (dayId, periodId, key, val) => {
     if (!canEdit) return;
     const k = `${dayId}-${periodId}`;
     setCells(prev => {
       const cur = prev[k] || { class_id: '', subject_id: '', room_no: '' };
       const next = { ...cur, [key]: val };
+
       // Clearing the class empties the whole cell.
       if (key === 'class_id' && !val) { next.subject_id = ''; next.room_no = ''; }
       return { ...prev, [k]: next };
     });
   };
+
   // Is the chosen class+period already taken by ANOTHER teacher?
   const classSlotClash = useCallback((dayId, periodId, classId) => {
     if (!classId) return null;
@@ -811,6 +893,7 @@ function TeachersTimetableTab({ data, fetchData, user, canEdit }) {
     const s = data.subjects.find(x => String(x.id) === String(hit.subject_id));
     return { teacher: t?.name || 'another teacher', subject: s?.name || '' };
   }, [data.entries, data.teachers, data.subjects, selectedTeacherId]);
+
   const handleSave = async () => {
     if (!selectedTeacherId) return;
     const entries = Object.entries(cells)
@@ -824,6 +907,7 @@ function TeachersTimetableTab({ data, fetchData, user, canEdit }) {
           room_no: v.room_no || null
         };
       });
+
     // Client-side pre-check so the admin sees clashes before the round-trip.
     const clashLines = [];
     for (const e of entries) {
@@ -833,6 +917,7 @@ function TeachersTimetableTab({ data, fetchData, user, canEdit }) {
     if (clashLines.length) {
       return alert('This timetable cannot be saved yet. The following periods are already taken by another teacher:\n\n' + clashLines.join('\n') + '\n\nPlease choose a different period or class, then save again.');
     }
+
     setSaving(true);
     try {
       const res = await fetch(`${API_BASE_URL}/admin/timetable/teacher-entries/bulk`, {
@@ -854,6 +939,7 @@ function TeachersTimetableTab({ data, fetchData, user, canEdit }) {
     } catch (e) { alert('Network error.'); }
     setSaving(false);
   };
+
   if (workingDays.length === 0 || sortedPeriods.length === 0) {
     return (
       <div className="ring-1 ring-black/5 bg-white rounded-lg p-6 sm:p-10 text-center flex flex-col items-center">
@@ -865,6 +951,7 @@ function TeachersTimetableTab({ data, fetchData, user, canEdit }) {
       </div>
     );
   }
+
   if (teachers.length === 0) {
     return (
       <div className="ring-1 ring-black/5 bg-white rounded-lg p-6 sm:p-10 text-center flex flex-col items-center">
@@ -876,7 +963,9 @@ function TeachersTimetableTab({ data, fetchData, user, canEdit }) {
       </div>
     );
   }
+
   const selectedTeacher = teachers.find(t => String(t.id) === String(selectedTeacherId));
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
       {/* LEFT — teacher list */}
@@ -919,6 +1008,7 @@ function TeachersTimetableTab({ data, fetchData, user, canEdit }) {
           )}
         </div>
       </div>
+
       {/* RIGHT — selected teacher's grid */}
       <div className="lg:col-span-9 space-y-4">
         <div className="flex flex-col sm:flex-row gap-3 justify-between sm:items-center">
@@ -936,6 +1026,7 @@ function TeachersTimetableTab({ data, fetchData, user, canEdit }) {
             </button>
           )}
         </div>
+
         <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-x-auto custom-scrollbar flex flex-col">
           <table className="w-full text-left border-collapse min-w-[880px]">
             <thead>
@@ -964,6 +1055,7 @@ function TeachersTimetableTab({ data, fetchData, user, canEdit }) {
                   {sortedPeriods.map(p => {
                     const key = `${d.id}-${p.id}`;
                     const cell = cells[key] || { class_id: '', subject_id: '', room_no: '' };
+
                     if (p.is_break) {
                       return (
                         <td key={p.id} className="p-4 bg-amber-50/50 text-center border-r border-zinc-100">
@@ -973,7 +1065,9 @@ function TeachersTimetableTab({ data, fetchData, user, canEdit }) {
                         </td>
                       );
                     }
+
                     const clash = classSlotClash(d.id, p.id, cell.class_id);
+
                     return (
                       <td key={p.id} className="p-2 sm:p-3 border-r border-zinc-100 align-top">
                         <div className="flex flex-col gap-1.5">
@@ -990,6 +1084,7 @@ function TeachersTimetableTab({ data, fetchData, user, canEdit }) {
                             </select>
                             <ChevronDown className="size-3 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
                           </div>
+
                           {cell.class_id && (
                             <div className="relative">
                               <select
@@ -1003,12 +1098,14 @@ function TeachersTimetableTab({ data, fetchData, user, canEdit }) {
                               <ChevronDown className="size-3 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
                             </div>
                           )}
+
                           {clash && (
                             <p className="text-[10px] font-medium text-red-600 leading-snug flex items-start gap-1">
                               <AlertCircle className="size-3 shrink-0 mt-0.5" />
                               <span>This period is already taken by <strong className="font-semibold">{clash.teacher}</strong>{clash.subject ? <> (teaching <strong className="font-semibold">{clash.subject}</strong>)</> : null}. Choose another period or class.</span>
                             </p>
                           )}
+
                           {cell.class_id && (
                             <input
                               disabled={!canEdit}
@@ -1027,6 +1124,7 @@ function TeachersTimetableTab({ data, fetchData, user, canEdit }) {
             </tbody>
           </table>
         </div>
+
         <div className="bg-blue-50/50 border border-blue-100 rounded-md p-4 flex gap-3 text-[11px] text-blue-700 leading-relaxed">
           <AlertCircle className="size-4 shrink-0 text-blue-500 mt-0.5" />
           <p>
@@ -1039,6 +1137,7 @@ function TeachersTimetableTab({ data, fetchData, user, canEdit }) {
     </div>
   );
 }
+
 // =====================================================================
 //  SUB-COMPONENT 4: PersonalTimetable — read-only "My Timetable"
 // =====================================================================
@@ -1046,6 +1145,7 @@ function PersonalTimetable({ user, mode }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const activeYearName = useActiveYearName(user);
+
   const fetchMine = useCallback(async () => {
     if (!user?.id) return;
     setLoading(true);
@@ -1056,7 +1156,9 @@ function PersonalTimetable({ user, mode }) {
     } catch (e) { console.error('My timetable fetch error:', e); }
     setLoading(false);
   }, [user]);
+
   useEffect(() => { fetchMine(); }, [fetchMine]);
+
   if (loading) {
     return (
       <div className="h-96 flex items-center justify-center">
@@ -1064,9 +1166,10 @@ function PersonalTimetable({ user, mode }) {
       </div>
     );
   }
+
   if (!data || !data.academic_year_id) {
     return (
-      <div className="p-4 sm:p-8 max-w-[1440px] w-full mx-auto">
+      <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12">
         <div className="ring-1 ring-black/5 bg-white rounded-lg p-6 sm:p-10 text-center max-w-2xl mx-auto flex flex-col items-center">
           <AlertCircle className="text-accent mb-3 size-10 shrink-0" />
           <h2 className="text-lg font-semibold text-zinc-900">No Timetable Yet</h2>
@@ -1077,19 +1180,23 @@ function PersonalTimetable({ user, mode }) {
       </div>
     );
   }
+
   const workingDays = [...(data.days || [])].filter(d => d.is_working).sort((a, b) => a.day_index - b.day_index);
   const sortedPeriods = [...(data.periods || [])].sort((a, b) => a.period_index - b.period_index);
+
   const cellMap = {};
   (data.entries || []).forEach(e => { cellMap[`${e.day_id}-${e.period_id}`] = e; });
+
   // Created / updated audit for this timetable (student: their class; teacher:
   // aggregated across their classes). "Updated by" shows only once it's moved
   // meaningfully past creation.
   const ptMeta = data.meta || null;
   const ptMetaWasUpdated = ptMeta && ptMeta.updated_at && ptMeta.updated_by_name &&
     (!ptMeta.created_at || new Date(ptMeta.updated_at) - new Date(ptMeta.created_at) > 1000);
+
   if (workingDays.length === 0 || sortedPeriods.length === 0) {
     return (
-      <div className="p-4 sm:p-8 max-w-[1440px] w-full mx-auto">
+      <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12">
         <div className="ring-1 ring-black/5 bg-white rounded-lg p-6 sm:p-10 text-center max-w-2xl mx-auto flex flex-col items-center">
           <AlertCircle className="text-accent mb-3 size-10 shrink-0" />
           <h2 className="text-lg font-semibold text-zinc-900">No Timetable Yet</h2>
@@ -1100,8 +1207,9 @@ function PersonalTimetable({ user, mode }) {
       </div>
     );
   }
+
   return (
-<div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto">
+    <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12">
       <header className="mb-6 flex flex-col sm:flex-row sm:items-start justify-between gap-3">
         <div className="flex flex-col gap-2">
           <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
@@ -1131,6 +1239,7 @@ function PersonalTimetable({ user, mode }) {
         </div>
         <YearBadge name={activeYearName} />
       </header>
+
       <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-x-auto custom-scrollbar flex flex-col">
         <table className="w-full text-left border-collapse min-w-[880px]">
           <thead>

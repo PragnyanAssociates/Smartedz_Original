@@ -88,7 +88,7 @@ export default function LoginScreen() {
         <div className={`absolute -bottom-24 -right-24 w-96 h-96 rounded-full blur-3xl animate-pulse transition-colors duration-700 ${theme.blob}`} style={{ animationDelay: '2s' }}></div>
       </div>
 
-      <div className="flex-1 w-full flex flex-col items-center justify-center px-4 sm:px-6 lg:px-8 py-12 z-10">
+      <div className="flex-1 w-full flex flex-col items-center justify-center py-12 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 z-10">
 
         {/* Main card */}
         <div className="w-full max-w-5xl bg-white rounded-2xl ring-1 ring-black/5 shadow-2xl shadow-zinc-300/30 flex flex-col md:flex-row overflow-hidden animate-in fade-in slide-in-from-bottom-4 zoom-in-[0.99] duration-500 ease-out">

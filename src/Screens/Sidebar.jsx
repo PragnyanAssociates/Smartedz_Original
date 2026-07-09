@@ -62,7 +62,7 @@ export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMo
       >
         <div className="p-6 pb-2">
           <div className="flex items-center justify-between mb-2">
-            <h2 className="text-xl font-semibold text-zinc-900 tracking-tight leading-none truncate pr-2">
+<h2 className="text-xl font-semibold text-zinc-900 tracking-tight leading-7 truncate pr-2">
               {user?.role || 'Super Admin'}
             </h2>
             

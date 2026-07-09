@@ -45,7 +45,7 @@ export default function ManageLogin() {
   ];
   const tabProps = { data, fetchData, user };
   return (
-    <div className="p-8 max-w-[1440px] w-full mx-auto animate-in fade-in duration-700">
+   <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-4 sm:space-y-6 animate-in fade-in duration-300">
       {/* 1. Page Header */}
       <header className="mb-6 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>

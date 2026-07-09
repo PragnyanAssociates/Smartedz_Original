@@ -247,7 +247,7 @@ export default function Gallery() {
   }
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-6 animate-in fade-in duration-500">
+    <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-6 animate-in fade-in duration-500">
       <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-2">
         <div className="flex flex-col">
           <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Gallery</h1>
@@ -428,7 +428,7 @@ function AlbumDetail({ albumTitle, onBack }) {
   };
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-6 animate-in slide-in-from-bottom-2 duration-300">
+    <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-6 animate-in slide-in-from-bottom-2 duration-300">
       <button onClick={onBack} className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
         <ChevronLeft className="size-4" /> Back to Gallery
       </button>

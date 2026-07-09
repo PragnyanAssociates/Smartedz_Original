@@ -148,7 +148,7 @@ export default function NotificationsScreen({ onNavigate }) {
   ];
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300">
+    <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-4 sm:space-y-6 animate-in fade-in duration-300">
 
       <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div className="flex flex-col">
@@ -186,7 +186,7 @@ export default function NotificationsScreen({ onNavigate }) {
           <Loader2 className="animate-spin size-8 text-primary" />
         </div>
       ) : visible.length === 0 ? (
-        <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
+        <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center max-w-3xl">
           <Inbox className="size-10 text-zinc-300 mb-3" />
           <p className="text-zinc-500 text-sm font-medium">{emptyText}</p>
           <p className="text-zinc-400 text-xs mt-1.5 font-medium">
@@ -194,7 +194,7 @@ export default function NotificationsScreen({ onNavigate }) {
           </p>
         </div>
       ) : (
-        <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden divide-y divide-zinc-100">
+        <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden divide-y divide-zinc-100 max-w-3xl">
           {visible.map(n => {
             const meta = TYPE_META[n.type] || FALLBACK_META;
             const Icon = meta.icon;

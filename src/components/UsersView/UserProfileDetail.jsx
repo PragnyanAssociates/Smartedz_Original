@@ -93,7 +93,7 @@ export default function UserProfileDetail({ userId, seedProfile = null, classes 
   }
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-6 animate-in slide-in-from-bottom-2 duration-300">
+    <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-6 animate-in slide-in-from-bottom-2 duration-300">
 
       {/* Back Button */}
       <button onClick={onBack} className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
@@ -295,9 +295,11 @@ function BasicInfo({ profile, classes = [] }) {
           <h4 className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 pb-2 flex items-center gap-1.5">
             <Info className="size-3.5" /> Additional Details
           </h4>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+          <div className="flex flex-wrap gap-4 sm:gap-6">
             {extra.map(f => (
-              <InfoRow key={f.key} icon={Info} label={f.label} value={f.value} />
+              <div key={f.key} className="w-full sm:w-[250px] lg:w-[280px]">
+                <InfoRow icon={Info} label={f.label} value={f.value} />
+              </div>
             ))}
           </div>
         </div>
@@ -340,11 +342,11 @@ function PerformanceOverview({ userId, role }) {
     return (
       <div className="space-y-6">
         <OverallCard pct={pct} obtained={data.overall_obtained} possible={data.overall_possible} label="Overall Teaching Performance" />
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="flex flex-wrap gap-3">
           {detail.map((d, i) => {
             const b = band(roundPct(d.percentage));
             return (
-              <div key={i} className="bg-white border border-zinc-200 rounded-md p-3 flex justify-between items-center shadow-sm">
+              <div key={i} className="w-full sm:w-[320px] bg-white border border-zinc-200 rounded-md p-3 flex justify-between items-center shadow-sm">
                 <div className="min-w-0 pr-3">
                   <div className="text-sm font-semibold text-zinc-800 truncate">{d.class_group}</div>
                   <div className="text-[11px] font-medium text-zinc-500 truncate mt-0.5">{d.subject_name}</div>
@@ -378,11 +380,11 @@ function PerformanceOverview({ userId, role }) {
           <h4 className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-3 flex items-center gap-1.5">
             <BarChart3 className="size-3.5" /> Exam-wise
           </h4>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="flex flex-wrap gap-3">
             {breakdown.map(ex => {
               const b = band(ex.percentage);
               return (
-                <div key={ex.exam_type_id} className="bg-white border border-zinc-200 rounded-md p-3 flex justify-between items-center shadow-sm">
+                <div key={ex.exam_type_id} className="w-full sm:w-[320px] bg-white border border-zinc-200 rounded-md p-3 flex justify-between items-center shadow-sm">
                   <span className="text-xs font-semibold text-zinc-700 truncate mr-2">{ex.name}</span>
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="text-[11px] font-medium text-zinc-400 tabular-nums">{Math.round(ex.obtained)}/{Math.round(ex.possible)}</span>
