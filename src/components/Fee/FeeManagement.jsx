@@ -67,7 +67,7 @@ export default function FeeManagement() {
         <div>
           <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Fee Management</h1>
           <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
-            Set fee structures, assign payment modes, manage concessions, and collect payments.
+            Manage the Fee payments student wise & Class wise.
           </p>
         </div>
         {!canEdit && (
