@@ -10644,13 +10644,26 @@ app.get('/api/fees/dashboard/:institutionId', async (req, res) => {
     );
 
     const planById = {}; plans.forEach(p => { planById[p.id] = p; });
-    const plansByClass = {}; plans.forEach(p => { (plansByClass[p.class_id] = plansByClass[p.class_id] || []).push(p); });
-    const concMap = {}; assigns.forEach(a => { concMap[`${a.student_id}:${a.plan_id}`] = Number(a.concession_amount) || 0; });
     const classLabel = {}; classesRows.forEach(c => { classLabel[c.id] = `${c.className}${c.section ? ` - ${c.section}` : ''}`; });
+    const concMap = {}; assigns.forEach(a => { concMap[`${a.student_id}:${a.plan_id}`] = Number(a.concession_amount) || 0; });
+
+    // ---- optional filters ----
+    const feeParam   = req.query.fee && req.query.fee !== 'all' ? String(req.query.fee) : null;
+    const classParam = req.query.class_id ? String(req.query.class_id) : null;
+
+    let fPlans = plans;
+    if (feeParam)   fPlans = fPlans.filter(p => (p.title || '') === feeParam);
+    if (classParam) fPlans = fPlans.filter(p => String(p.class_id) === classParam);
+    let fStudents = students;
+    if (classParam) fStudents = fStudents.filter(s => String(s.class_id) === classParam);
+    const allowedPlanIds = new Set(fPlans.map(p => p.id));
+    const fPaid = paidRows.filter(r => allowedPlanIds.has(r.plan_id));
+
+    const plansByClass = {}; fPlans.forEach(p => { (plansByClass[p.class_id] = plansByClass[p.class_id] || []).push(p); });
 
     const byFee = {}, byClass = {}, studentNet = {};
     let expected = 0;
-    students.forEach(s => {
+    fStudents.forEach(s => {
       (plansByClass[s.class_id] || []).forEach(p => {
         const conc = p.fee_category === 'annual' ? (concMap[`${s.id}:${p.id}`] || 0) : 0;
         const net = Math.max(0, (Number(p.full_fee) || 0) - conc);
@@ -10664,7 +10677,7 @@ app.get('/api/fees/dashboard/:institutionId', async (req, res) => {
 
     let collected = 0;
     const byMethod = { online: 0, offline: 0 }, monthly = {}, studentPaid = {};
-    paidRows.forEach(r => {
+    fPaid.forEach(r => {
       const amt = Number(r.amount) || 0;
       collected += amt;
       studentPaid[r.student_id] = (studentPaid[r.student_id] || 0) + amt;
@@ -10679,7 +10692,7 @@ app.get('/api/fees/dashboard/:institutionId', async (req, res) => {
     });
 
     let paidCount = 0, unpaidCount = 0, partialCount = 0, owe = 0;
-    students.forEach(s => {
+    fStudents.forEach(s => {
       const net = studentNet[s.id] || 0;
       if (net <= 0) return;
       owe++;
@@ -10704,8 +10717,8 @@ app.get('/api/fees/dashboard/:institutionId', async (req, res) => {
 
     res.json({
       academic_year_id: yearId ?? null,
-      totals: { expected, collected, outstanding, rate, transactions: paidRows.length },
-      students: { total: students.length, owe, paid: paidCount, unpaid: unpaidCount, partial: partialCount },
+      totals: { expected, collected, outstanding, rate, transactions: fPaid.length },
+      students: { total: fStudents.length, owe, paid: paidCount, unpaid: unpaidCount, partial: partialCount },
       byMethod, byFee: byFeeArr, byClass: byClassArr, monthly: monthlyArr
     });
   } catch (err) {

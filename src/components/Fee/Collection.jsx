@@ -123,7 +123,7 @@ export default function Collection({ data, user }) {
           <LabeledSelect icon={GraduationCap} label="Class" value={classId} onChange={setClassId}
             options={classes.map(c => ({ v: String(c.id), l: `${c.className}${c.section ? ` - ${c.section}` : ''}` }))} />
           <button onClick={downloadList} disabled={inScope.length === 0}
-            className="inline-flex items-center gap-1.5 bg-white text-zinc-700 ring-1 ring-zinc-200 px-3 h-8 rounded-md text-xs font-medium hover:bg-zinc-50 transition-colors disabled:opacity-50">
+            className="inline-flex items-center gap-1.5 bg-primary text-white px-3.5 h-8 rounded-md text-xs font-semibold hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-50">
             <Download className="size-3.5" /> Download
           </button>
         </div>

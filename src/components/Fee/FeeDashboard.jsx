@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { IndianRupee, TrendingUp, Wallet, AlertCircle, CheckCircle2, PieChart, BarChart3, CreditCard, Landmark, Users, RefreshCw } from 'lucide-react';
+import { IndianRupee, TrendingUp, Wallet, AlertCircle, CheckCircle2, PieChart, BarChart3, CreditCard, Landmark, Users, RefreshCw, Tag, GraduationCap, ChevronDown } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
 
 const inr = (n) =>
@@ -17,15 +17,27 @@ const ACCENT  = '#f29132';
 const GREEN   = '#16a34a';
 const TRACK   = '#eef2f7';
 
-export default function FeeDashboard({ user }) {
+export default function FeeDashboard({ data: ctx = {}, user }) {
+  const classes = ctx.classes || [];
   const [data, setData]       = useState(null);
   const [loading, setLoading] = useState(true);
+  const [feeType, setFeeType] = useState('all');
+  const [classId, setClassId] = useState('');
+
+  const feeTypes = useMemo(() => {
+    const set = new Set();
+    (ctx.plans || []).forEach(p => { if (p.title) set.add(p.title); });
+    return [...set].sort((a, b) => (a === 'Academic Fee' ? -1 : b === 'Academic Fee' ? 1 : a.localeCompare(b)));
+  }, [ctx.plans]);
 
   const load = useCallback(async () => {
     if (!user?.institutionId) return;
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/fees/dashboard/${user.institutionId}`);
+      const qs = new URLSearchParams();
+      if (feeType && feeType !== 'all') qs.set('fee', feeType);
+      if (classId) qs.set('class_id', classId);
+      const res = await fetch(`${API_BASE_URL}/fees/dashboard/${user.institutionId}?${qs.toString()}`);
       const json = await res.json();
       setData(json || null);
     } catch (e) {
@@ -33,33 +45,41 @@ export default function FeeDashboard({ user }) {
       setData(null);
     }
     setLoading(false);
-  }, [user]);
+  }, [user, feeType, classId]);
 
   useEffect(() => { load(); }, [load]);
 
-  if (loading) {
-    return (
-      <div className="h-96 flex items-center justify-center">
-        <div className="size-8 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" />
-      </div>
-    );
-  }
-  if (!data) {
-    return <div className="h-40 flex items-center justify-center text-sm text-zinc-400">Couldn't load dashboard data.</div>;
-  }
-
-  const t = data.totals || {};
-  const st = data.students || {};
-  const method = data.byMethod || { online: 0, offline: 0 };
+  const t = data?.totals || {};
+  const st = data?.students || {};
+  const method = data?.byMethod || { online: 0, offline: 0 };
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <p className="text-[11px] text-zinc-400">Live overview for the active academic year.</p>
+      {/* Filter bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-zinc-50/50 p-3 rounded-md ring-1 ring-black/5">
+        <div className="flex items-center gap-4 flex-wrap">
+          <LabeledSelect icon={Tag} label="Fee" value={feeType} onChange={setFeeType}
+            options={[{ v: 'all', l: 'All fees' }, ...feeTypes.map(f => ({ v: f, l: f }))]} />
+          <LabeledSelect icon={GraduationCap} label="Class" value={classId} onChange={setClassId}
+            options={[{ v: '', l: 'All classes' }, ...classes.map(c => ({ v: String(c.id), l: `${c.className}${c.section ? ` - ${c.section}` : ''}` }))]} />
+        </div>
         <button onClick={load} className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary">
           <RefreshCw className="size-3.5" /> Refresh
         </button>
       </div>
+
+      {loading ? (
+        <div className="h-96 flex items-center justify-center">
+          <div className="size-8 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" />
+        </div>
+      ) : !data ? (
+        <div className="h-40 flex items-center justify-center text-sm text-zinc-400">Couldn't load dashboard data.</div>
+      ) : (
+      <>
+      <p className="text-[11px] text-zinc-400 -mt-2">
+        Showing <strong className="text-zinc-600">{feeType === 'all' ? 'all fees' : feeType}</strong>
+        {classId ? <> · <strong className="text-zinc-600">{classes.find(c => String(c.id) === String(classId))?.className}</strong></> : ' · all classes'} for the active academic year.
+      </p>
 
       {/* KPI cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -135,6 +155,8 @@ export default function FeeDashboard({ user }) {
           ) : <Empty text="No classes with fees yet." />}
         </Card>
       </div>
+      </>
+      )}
     </div>
   );
 }
@@ -243,15 +265,36 @@ function MonthlyBars({ data }) {
     <div>
       <div className="flex items-end gap-3 h-40">
         {data.map((m, i) => {
-          const h = Math.max(2, (m.amount / max) * 100);
+          const h = m.amount > 0 ? Math.max(4, (m.amount / max) * 100) : 0;
           return (
-            <div key={i} className="flex-1 flex flex-col items-center gap-1.5 group">
-              <span className="text-[9px] text-zinc-400 tabular-nums opacity-0 group-hover:opacity-100 transition-opacity">{compact(m.amount)}</span>
-              <div className="w-full rounded-t-md bg-primary/80 hover:bg-primary transition-colors" style={{ height: `${h}%` }} title={inr(m.amount)} />
-              <span className="text-[9px] text-zinc-400">{monthLabel(m.ym)}</span>
+            <div key={i} className="flex-1 h-full flex flex-col justify-end">
+              <div className="w-full rounded-t-md bg-primary/80 hover:bg-primary transition-colors"
+                style={{ height: `${h}%` }} title={`${monthLabel(m.ym)}: ${inr(m.amount)}`} />
             </div>
           );
         })}
+      </div>
+      <div className="flex gap-3 mt-1.5">
+        {data.map((m, i) => (
+          <span key={i} className="flex-1 text-center text-[9px] text-zinc-400">{monthLabel(m.ym)}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LabeledSelect({ icon: Icon, label, value, onChange, options }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
+        {Icon && <Icon className="size-3.5" />} {label}
+      </span>
+      <div className="relative">
+        <select value={value} onChange={e => onChange(e.target.value)}
+          className="h-8 appearance-none rounded border border-zinc-200 bg-white pl-2 pr-7 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer">
+          {options.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
+        </select>
+        <ChevronDown className="size-3.5 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
       </div>
     </div>
   );

@@ -84,8 +84,8 @@ export default function FeeAssign({ data, fetchData, user, canEdit = true }) {
       <div className="bg-blue-50/60 border border-blue-100 rounded-md p-4 flex gap-3 text-[11px] text-blue-800 leading-relaxed">
         <Info className="size-4 shrink-0 text-blue-500 mt-0.5" />
         <p>
-          Set the <strong className="text-blue-900">Academic Fee</strong> (one per class), and add <strong className="text-blue-900">Other Fees</strong> like
-          Books or Transport with a per-class amount. Discounts go in the <strong>Fee Concessions</strong> tab.
+          Set the <strong className="text-blue-900">Academic Fee</strong> per each class & Add
+          Books fee, Transport fee..etc of each class in the <strong className="text-blue-900">Other Fee</strong>. Discounts go in the <strong>Fee Concessions</strong> tab.
         </p>
       </div>
 

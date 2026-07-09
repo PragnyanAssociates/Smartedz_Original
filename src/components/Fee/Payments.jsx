@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { ReceiptText, GraduationCap, ChevronDown, Check, X, Eye, Filter, Download } from 'lucide-react';
+import { ReceiptText, GraduationCap, ChevronDown, Check, X, Eye, Filter, Download, Search } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
 import { downloadDataUrl, downloadReceipt } from './paymentProof';
 
@@ -39,7 +39,8 @@ const STATUS_STYLE = {
 
 export default function Payments({ data, user, canEdit = true }) {
   const classes = data.classes || [];
-  const [filters, setFilters] = useState({ status: 'pending', class_id: '', from: '', to: '' });
+  const [filters, setFilters] = useState({ status: '', class_id: '', from: '', to: '' });
+  const [search, setSearch]   = useState('');
   const [rows, setRows]       = useState([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId]   = useState(null);
@@ -138,9 +139,18 @@ export default function Payments({ data, user, canEdit = true }) {
     else downloadReceipt(receiptFields(r), `receipt-${r.id}.png`);
   };
 
+  const view = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter(r =>
+      (r.student_name || '').toLowerCase().includes(q) ||
+      String(r.roll_no || '').toLowerCase().includes(q)
+    );
+  }, [rows, search]);
+
   const totalPaid = useMemo(
-    () => rows.filter(r => r.status === 'paid').reduce((s, r) => s + Number(r.amount || 0), 0),
-    [rows]
+    () => view.filter(r => r.status === 'paid').reduce((s, r) => s + Number(r.amount || 0), 0),
+    [view]
   );
 
   return (
@@ -156,16 +166,24 @@ export default function Payments({ data, user, canEdit = true }) {
           options={[{ v: '', l: 'All classes' }, ...classes.map(c => ({ v: String(c.id), l: `${c.className}${c.section ? ` - ${c.section}` : ''}` }))]} />
         <DateField label="From" value={filters.from} onChange={v => setFilters(f => ({ ...f, from: v }))} />
         <DateField label="To" value={filters.to} onChange={v => setFilters(f => ({ ...f, to: v }))} />
-        {(filters.from || filters.to || filters.class_id || filters.status !== 'pending') && (
-          <button onClick={() => setFilters({ status: 'pending', class_id: '', from: '', to: '' })}
-            className="text-[11px] font-medium text-primary hover:underline ml-auto">Reset</button>
+        <div className="flex flex-col gap-1 ml-auto">
+          <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Search</span>
+          <div className="relative">
+            <Search className="size-3.5 text-zinc-400 absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Student or roll…"
+              className="h-8 w-48 rounded border border-zinc-200 bg-white pl-7 pr-2 text-xs text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40" />
+          </div>
+        </div>
+        {(filters.from || filters.to || filters.class_id || filters.status || search) && (
+          <button onClick={() => { setFilters({ status: '', class_id: '', from: '', to: '' }); setSearch(''); }}
+            className="text-[11px] font-medium text-primary hover:underline self-end">Reset</button>
         )}
       </div>
 
       <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden">
         <div className="p-4 border-b border-zinc-100 flex items-center justify-between gap-3 flex-wrap">
           <h3 className="text-sm font-semibold text-zinc-900 flex items-center gap-2">
-            <ReceiptText className="size-4 text-primary" /> Payments <span className="text-zinc-400 font-normal">({rows.length})</span>
+            <ReceiptText className="size-4 text-primary" /> Payments <span className="text-zinc-400 font-normal">({view.length})</span>
           </h3>
           <span className="text-[11px] text-zinc-500">Paid in view: <strong className="text-green-700 tabular-nums">{inr(totalPaid)}</strong></span>
         </div>
@@ -185,7 +203,7 @@ export default function Payments({ data, user, canEdit = true }) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
-                {rows.length > 0 ? rows.map(r => (
+                {view.length > 0 ? view.map(r => (
                   <tr key={r.id} className="hover:bg-zinc-50/60 transition-colors">
                     <td className="px-5 py-3 text-xs text-zinc-600 whitespace-nowrap">{fmtDateTime(r.created_at)}</td>
                     <td className="px-5 py-3">

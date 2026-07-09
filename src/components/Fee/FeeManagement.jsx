@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { IndianRupee, Percent, Landmark, ReceiptText, BellRing, CalendarDays, Wallet, LayoutDashboard } from 'lucide-react';
+import { IndianRupee, Percent, Landmark, ReceiptText, BellRing, CalendarDays, Wallet, LayoutDashboard, BadgePercent } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import FeeAssign   from './FeeAssign';
@@ -52,8 +52,8 @@ export default function FeeManagement() {
   const tabs = [
     { id: 'dashboard',  label: 'Fee Dashboard', icon: LayoutDashboard },
     { id: 'assign',     label: 'Fee Assign',    icon: IndianRupee },
-    { id: 'concession', label: 'Concession',    icon: Percent },
-    { id: 'account',    label: 'Account',       icon: Landmark },
+    { id: 'concession', label: 'Fee Concessions',    icon: BadgePercent },
+    { id: 'account',    label: 'Account Details',       icon: Landmark },
     { id: 'payments',   label: 'Payments',      icon: ReceiptText },
     { id: 'collection', label: 'Paid / Unpaid', icon: Wallet },
     { id: 'alerts',     label: 'Alerts',        icon: BellRing },
