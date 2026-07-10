@@ -17,18 +17,14 @@ const ACCENT  = '#f29132';
 const GREEN   = '#16a34a';
 const TRACK   = '#eef2f7';
 
-export default function FeeDashboard({ data: ctx = {}, user }) {
-  const classes = ctx.classes || [];
+export default function FeeDashboard({ user }) {
   const [data, setData]       = useState(null);
   const [loading, setLoading] = useState(true);
   const [feeType, setFeeType] = useState('all');
   const [classId, setClassId] = useState('');
-
-  const feeTypes = useMemo(() => {
-    const set = new Set();
-    (ctx.plans || []).forEach(p => { if (p.title) set.add(p.title); });
-    return [...set].sort((a, b) => (a === 'Academic Fee' ? -1 : b === 'Academic Fee' ? 1 : a.localeCompare(b)));
-  }, [ctx.plans]);
+  // Filter options captured from the first (unfiltered) load so they always work.
+  const [allFees, setAllFees]       = useState([]);
+  const [allClasses, setAllClasses] = useState([]);
 
   const load = useCallback(async () => {
     if (!user?.institutionId) return;
@@ -40,6 +36,11 @@ export default function FeeDashboard({ data: ctx = {}, user }) {
       const res = await fetch(`${API_BASE_URL}/fees/dashboard/${user.institutionId}?${qs.toString()}`);
       const json = await res.json();
       setData(json || null);
+      // On the unfiltered call, remember the complete fee + class lists for the dropdowns.
+      if (json && feeType === 'all' && !classId) {
+        setAllFees((json.byFee || []).map(f => f.title));
+        setAllClasses((json.byClass || []).map(c => ({ id: c.class_id, name: c.className })));
+      }
     } catch (e) {
       console.error('Dashboard fetch error:', e);
       setData(null);
@@ -59,9 +60,9 @@ export default function FeeDashboard({ data: ctx = {}, user }) {
       <div className="flex flex-wrap items-center justify-between gap-3 bg-zinc-50/50 p-3 rounded-md ring-1 ring-black/5">
         <div className="flex items-center gap-4 flex-wrap">
           <LabeledSelect icon={Tag} label="Fee" value={feeType} onChange={setFeeType}
-            options={[{ v: 'all', l: 'All fees' }, ...feeTypes.map(f => ({ v: f, l: f }))]} />
+            options={[{ v: 'all', l: 'All fees' }, ...[...allFees].sort((a, b) => (a === 'Academic Fee' ? -1 : b === 'Academic Fee' ? 1 : a.localeCompare(b))).map(f => ({ v: f, l: f }))]} />
           <LabeledSelect icon={GraduationCap} label="Class" value={classId} onChange={setClassId}
-            options={[{ v: '', l: 'All classes' }, ...classes.map(c => ({ v: String(c.id), l: `${c.className}${c.section ? ` - ${c.section}` : ''}` }))]} />
+            options={[{ v: '', l: 'All classes' }, ...allClasses.map(c => ({ v: String(c.id), l: c.name }))]} />
         </div>
         <button onClick={load} className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary">
           <RefreshCw className="size-3.5" /> Refresh
@@ -78,7 +79,7 @@ export default function FeeDashboard({ data: ctx = {}, user }) {
       <>
       <p className="text-[11px] text-zinc-400 -mt-2">
         Showing <strong className="text-zinc-600">{feeType === 'all' ? 'all fees' : feeType}</strong>
-        {classId ? <> · <strong className="text-zinc-600">{classes.find(c => String(c.id) === String(classId))?.className}</strong></> : ' · all classes'} for the active academic year.
+        {classId ? <> · <strong className="text-zinc-600">{allClasses.find(c => String(c.id) === String(classId))?.name}</strong></> : ' · all classes'} for the active academic year.
       </p>
 
       {/* KPI cards */}
@@ -134,9 +135,7 @@ export default function FeeDashboard({ data: ctx = {}, user }) {
 
         {/* Monthly trend */}
         <Card title="Monthly Collection" icon={BarChart3}>
-          {data.monthly && data.monthly.length ? (
-            <MonthlyBars data={data.monthly} />
-          ) : <Empty text="No collection history yet." />}
+          <MonthlyBars data={data.monthly || []} />
         </Card>
       </div>
 
@@ -260,23 +259,44 @@ function BarList({ items }) {
 }
 
 function MonthlyBars({ data }) {
-  const max = Math.max(...data.map(m => m.amount), 1);
+  // Always show a fixed 6-month window so it reads like a real bar chart.
+  const map = {};
+  (data || []).forEach(m => { map[m.ym] = m.amount; });
+  const now = new Date();
+  const months = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    months.push({ ym, amount: map[ym] || 0 });
+  }
+  const max = Math.max(...months.map(m => m.amount), 1);
+
   return (
     <div>
-      <div className="flex items-end gap-3 h-40">
-        {data.map((m, i) => {
-          const h = m.amount > 0 ? Math.max(4, (m.amount / max) * 100) : 0;
-          return (
-            <div key={i} className="flex-1 h-full flex flex-col justify-end">
-              <div className="w-full rounded-t-md bg-primary/80 hover:bg-primary transition-colors"
-                style={{ height: `${h}%` }} title={`${monthLabel(m.ym)}: ${inr(m.amount)}`} />
-            </div>
-          );
-        })}
+      <div className="relative h-44">
+        {/* gridlines */}
+        <div className="absolute inset-0 flex flex-col justify-between pointer-events-none">
+          {[0, 1, 2, 3].map(i => <div key={i} className="border-t border-dashed border-zinc-100" />)}
+        </div>
+        {/* bars */}
+        <div className="relative h-full flex items-end justify-between gap-2 sm:gap-4 px-1">
+          {months.map((m, i) => {
+            const h = m.amount > 0 ? Math.max(6, Math.min(90, (m.amount / max) * 90)) : 0;
+            return (
+              <div key={i} className="flex-1 h-full flex flex-col justify-end items-center">
+                {m.amount > 0 && (
+                  <span className="text-[9px] font-semibold text-zinc-500 tabular-nums mb-1 whitespace-nowrap">{compact(m.amount)}</span>
+                )}
+                <div className="w-6 sm:w-9 rounded-md bg-gradient-to-t from-primary to-primary/70 hover:from-primary hover:to-primary transition-colors"
+                  style={{ height: `${h}%` }} title={`${monthLabel(m.ym)} · ${inr(m.amount)}`} />
+              </div>
+            );
+          })}
+        </div>
       </div>
-      <div className="flex gap-3 mt-1.5">
-        {data.map((m, i) => (
-          <span key={i} className="flex-1 text-center text-[9px] text-zinc-400">{monthLabel(m.ym)}</span>
+      <div className="flex justify-between gap-2 sm:gap-4 px-1 mt-2">
+        {months.map((m, i) => (
+          <span key={i} className="flex-1 text-center text-[10px] font-medium text-zinc-400">{monthLabel(m.ym)}</span>
         ))}
       </div>
     </div>
