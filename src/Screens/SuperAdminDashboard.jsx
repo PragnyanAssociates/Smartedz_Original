@@ -4,6 +4,7 @@ import DashboardHeader from './DashboardHeader';
 import Overview from './Overview';
 import ManageLogin from './ManageLogin';
 import FeeManagement from '../components/Fee/FeeManagement';
+import DailyExpenses from '../components/DailyExpenses/DailyExpenses';
 import Timetable from '../components/Timetable/Timetable';
 import AcademicCalendar from '../components/Calendar/AcademicCalendar';
 import Attendance from '../components/Attendance/Attendance';
@@ -85,6 +86,7 @@ function DashboardShell() {
       case 'overview':          return <Overview />;
       case 'manage-login':      return <ManageLogin />;
       case 'FeeManagement':      return <FeeManagement />;
+      case 'DailyExpenses':      return <DailyExpenses />;
       case 'timetable':         return <Timetable />;
       case 'academic-calendar': return <AcademicCalendar />;
       case 'attendance':        return <Attendance />;

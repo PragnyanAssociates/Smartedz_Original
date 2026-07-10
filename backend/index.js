@@ -145,6 +145,7 @@ const DEFAULT_MODULES = [
     'Overview',
     'Manage Logins',
     'FeeManagement',
+    'DailyExpenses',
     'Timetable',
     'Academic Calendar',
     'Attendance',
@@ -10941,6 +10942,218 @@ app.get('/api/fees/alerts/my/:studentId', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+
+
+// =================================================================
+//  SECTION 28 — DAILY EXPENSES (Debit Vouchers)
+//  Assumes `app`, `db` (mysql2/promise pool) and `resolveYearId`
+//  are already defined above this section.
+// =================================================================
+
+const EXP_HEADS = [
+  'Salaries', 'Utilities', 'Office Maintenance', 'Building Maintenance',
+  'Transportation', 'Academic Maintenance', 'Events & Programs',
+  'IT & Equipment', 'Hostel & Canteen', 'Miscellaneous'
+];
+
+// ---- Next voucher number (per institution) ----------------------
+app.get('/api/expenses/next-number/:institutionId', async (req, res) => {
+  try {
+    const [rows] = await db.execute(
+      'SELECT COALESCE(MAX(seq), 0) AS maxSeq FROM expense_vouchers WHERE institutionId = ?',
+      [req.params.institutionId]
+    );
+    const seq = (rows[0]?.maxSeq || 0) + 1;
+    res.json({ seq, voucher_no: `VCH-${String(seq).padStart(5, '0')}` });
+  } catch (err) {
+    console.error('expenses/next-number error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---- Create a voucher ------------------------------------------
+app.post('/api/expenses/voucher', async (req, res) => {
+  const {
+    institutionId, voucher_date, name_title, phone_no, head_of_account,
+    sub_head, account_type, total_amount, amount_in_words, attachment,
+    particulars = [], userId, userName
+  } = req.body;
+
+  if (!institutionId || !head_of_account) {
+    return res.status(400).json({ error: 'institutionId and Head of A/C are required.' });
+  }
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    const yearId = await resolveYearId(institutionId);
+
+    // Server-assigned running number (authoritative, avoids duplicates).
+    const [mx] = await conn.execute(
+      'SELECT COALESCE(MAX(seq), 0) AS maxSeq FROM expense_vouchers WHERE institutionId = ? FOR UPDATE',
+      [institutionId]
+    );
+    const seq = (mx[0]?.maxSeq || 0) + 1;
+    const voucher_no = `VCH-${String(seq).padStart(5, '0')}`;
+
+    const [ins] = await conn.execute(
+      `INSERT INTO expense_vouchers
+         (institutionId, academic_year_id, seq, voucher_no, voucher_type, voucher_date,
+          name_title, phone_no, head_of_account, sub_head, account_type,
+          total_amount, amount_in_words, attachment, created_by, created_by_name)
+       VALUES (?, ?, ?, ?, 'Debit', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [institutionId, yearId ?? null, seq, voucher_no, voucher_date || new Date().toISOString().slice(0, 10),
+       name_title || null, phone_no || null, head_of_account, sub_head || null, account_type || null,
+       Number(total_amount) || 0, amount_in_words || null, attachment || null, userId ?? null, userName ?? null]
+    );
+    const voucherId = ins.insertId;
+
+    const rows = (particulars || []).filter(p => (p.description || '').trim() !== '' || Number(p.amount) > 0);
+    for (let i = 0; i < rows.length; i++) {
+      await conn.execute(
+        'INSERT INTO expense_voucher_particulars (voucher_id, description, amount, sort_order) VALUES (?, ?, ?, ?)',
+        [voucherId, (rows[i].description || '').trim(), Number(rows[i].amount) || 0, i]
+      );
+    }
+
+    await conn.commit();
+    res.json({ success: true, id: voucherId, voucher_no });
+  } catch (err) {
+    await conn.rollback();
+    console.error('expenses/voucher create error:', err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    conn.release();
+  }
+});
+
+// ---- List vouchers (no attachment payload) ----------------------
+app.get('/api/expenses/list/:institutionId', async (req, res) => {
+  const { institutionId } = req.params;
+  const { search, head, from, to, limit } = req.query;
+  try {
+    const where = ['institutionId = ?'];
+    const params = [institutionId];
+    if (head)  { where.push('head_of_account = ?'); params.push(head); }
+    if (from)  { where.push('voucher_date >= ?');   params.push(from); }
+    if (to)    { where.push('voucher_date <= ?');   params.push(to); }
+    if (search) {
+      where.push('(voucher_no LIKE ? OR name_title LIKE ? OR head_of_account LIKE ? OR sub_head LIKE ?)');
+      const q = `%${search}%`;
+      params.push(q, q, q, q);
+    }
+    const [rows] = await db.execute(
+      `SELECT id, voucher_no, seq, voucher_date, name_title, phone_no, head_of_account, sub_head,
+              account_type, total_amount, (attachment IS NOT NULL) AS has_attachment,
+              created_by_name, created_at, updated_at
+         FROM expense_vouchers
+        WHERE ${where.join(' AND ')}`,
+      params
+    );
+    // Sort in Node (newest first) to avoid DB sort-memory issues.
+    rows.sort((a, b) => (b.seq || 0) - (a.seq || 0));
+    const lim = parseInt(limit, 10);
+    res.json(Number.isFinite(lim) && lim > 0 ? rows.slice(0, lim) : rows);
+  } catch (err) {
+    console.error('expenses/list error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---- Single voucher (with particulars + attachment) -------------
+app.get('/api/expenses/details/:id', async (req, res) => {
+  try {
+    const [rows] = await db.execute('SELECT * FROM expense_vouchers WHERE id = ? LIMIT 1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Voucher not found.' });
+    const [parts] = await db.execute(
+      'SELECT description, amount, sort_order FROM expense_voucher_particulars WHERE voucher_id = ? ORDER BY sort_order, id',
+      [req.params.id]
+    );
+    res.json({ ...rows[0], particulars: parts });
+  } catch (err) {
+    console.error('expenses/details error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---- Attachment only -------------------------------------------
+app.get('/api/expenses/attachment/:id', async (req, res) => {
+  try {
+    const [rows] = await db.execute('SELECT attachment FROM expense_vouchers WHERE id = ? LIMIT 1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Not found.' });
+    res.json({ attachment: rows[0].attachment || null });
+  } catch (err) {
+    console.error('expenses/attachment error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---- Update a voucher ------------------------------------------
+app.put('/api/expenses/voucher/:id', async (req, res) => {
+  const {
+    voucher_date, name_title, phone_no, head_of_account, sub_head, account_type,
+    total_amount, amount_in_words, attachment, removeAttachment,
+    particulars = [], userId, userName
+  } = req.body;
+  const id = req.params.id;
+  if (!head_of_account) return res.status(400).json({ error: 'Head of A/C is required.' });
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    // attachment: keep as-is unless a new one is sent or removal requested.
+    let attachClause = '';
+    const params = [
+      voucher_date || null, name_title || null, phone_no || null, head_of_account,
+      sub_head || null, account_type || null, Number(total_amount) || 0, amount_in_words || null,
+      userId ?? null, userName ?? null
+    ];
+    if (attachment) { attachClause = ', attachment = ?'; params.push(attachment); }
+    else if (removeAttachment) { attachClause = ', attachment = NULL'; }
+
+    params.push(id);
+    await conn.execute(
+      `UPDATE expense_vouchers SET
+         voucher_date = ?, name_title = ?, phone_no = ?, head_of_account = ?, sub_head = ?,
+         account_type = ?, total_amount = ?, amount_in_words = ?,
+         updated_by = ?, updated_by_name = ?, updated_at = NOW()${attachClause}
+       WHERE id = ?`,
+      params
+    );
+
+    await conn.execute('DELETE FROM expense_voucher_particulars WHERE voucher_id = ?', [id]);
+    const rows = (particulars || []).filter(p => (p.description || '').trim() !== '' || Number(p.amount) > 0);
+    for (let i = 0; i < rows.length; i++) {
+      await conn.execute(
+        'INSERT INTO expense_voucher_particulars (voucher_id, description, amount, sort_order) VALUES (?, ?, ?, ?)',
+        [id, (rows[i].description || '').trim(), Number(rows[i].amount) || 0, i]
+      );
+    }
+
+    await conn.commit();
+    res.json({ success: true });
+  } catch (err) {
+    await conn.rollback();
+    console.error('expenses/voucher update error:', err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    conn.release();
+  }
+});
+
+// ---- Delete a voucher ------------------------------------------
+app.delete('/api/expenses/voucher/:id', async (req, res) => {
+  try {
+    await db.execute('DELETE FROM expense_vouchers WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('expenses/voucher delete error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
 
 // =====================================================================
 const PORT = process.env.PORT || 3001;
