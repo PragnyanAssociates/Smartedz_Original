@@ -1,0 +1,224 @@
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { Wallet, ReceiptText, TrendingDown, CalendarClock, PieChart, BarChart3, Landmark, CreditCard, Filter, ChevronDown, RefreshCw } from 'lucide-react';
+import { API_BASE_URL } from '../../apiConfig';
+import { HEAD_OF_ACCOUNT } from './VoucherForm';
+
+const inr = (n) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(Number(n) || 0);
+const compact = (n) => new Intl.NumberFormat('en-IN', { notation: 'compact', maximumFractionDigits: 1 }).format(Number(n) || 0);
+const monthLabel = (ym) => { const [y, m] = ym.split('-'); return new Date(Number(y), Number(m) - 1, 1).toLocaleDateString('en-GB', { month: 'short' }); };
+
+const ACCENT = '#f29132';
+const PRIMARY = '#3284c7';
+const PALETTE = ['#3284c7', '#f29132', '#16a34a', '#8b5cf6', '#ec4899', '#0ea5e9', '#eab308', '#ef4444', '#14b8a6', '#64748b'];
+
+export default function ExpensesDashboard({ user }) {
+  const [data, setData]       = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [head, setHead]       = useState('');
+  const [range, setRange]     = useState({ from: '', to: '' });
+
+  const load = useCallback(async () => {
+    if (!user?.institutionId) return;
+    setLoading(true);
+    try {
+      const qs = new URLSearchParams();
+      if (head) qs.set('head', head);
+      if (range.from) qs.set('from', range.from);
+      if (range.to) qs.set('to', range.to);
+      const res = await fetch(`${API_BASE_URL}/expenses/dashboard/${user.institutionId}?${qs.toString()}`);
+      const json = await res.json();
+      setData(json || null);
+    } catch (e) {
+      console.error('Expenses dashboard fetch error:', e);
+      setData(null);
+    }
+    setLoading(false);
+  }, [user, head, range]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const t = data?.totals || {};
+
+  return (
+    <div className="space-y-6">
+      {/* Filters */}
+      <div className="flex flex-wrap items-end gap-3 bg-zinc-50/50 p-3 rounded-md ring-1 ring-black/5">
+        <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider self-center"><Filter className="size-3.5" /> Filters</span>
+        <div className="flex flex-col gap-1">
+          <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Head</span>
+          <div className="relative">
+            <select value={head} onChange={e => setHead(e.target.value)}
+              className="h-8 appearance-none rounded border border-zinc-200 bg-white pl-2 pr-7 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer">
+              <option value="">All heads</option>
+              {HEAD_OF_ACCOUNT.map(h => <option key={h} value={h}>{h}</option>)}
+            </select>
+            <ChevronDown className="size-3.5 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+        </div>
+        <DateField label="From" value={range.from} onChange={v => setRange(r => ({ ...r, from: v }))} />
+        <DateField label="To" value={range.to} onChange={v => setRange(r => ({ ...r, to: v }))} />
+        {(head || range.from || range.to) && (
+          <button onClick={() => { setHead(''); setRange({ from: '', to: '' }); }} className="text-[11px] font-medium text-primary hover:underline self-center">Reset</button>
+        )}
+        <button onClick={load} className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ml-auto self-center">
+          <RefreshCw className="size-3.5" /> Refresh
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="h-96 flex items-center justify-center"><div className="size-8 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" /></div>
+      ) : !data ? (
+        <div className="h-40 flex items-center justify-center text-sm text-zinc-400">Couldn't load dashboard data.</div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <Kpi icon={TrendingDown}  tone="accent"  label="Total Spent"   value={inr(t.total)}      sub={`${t.count || 0} vouchers`} />
+            <Kpi icon={ReceiptText}   tone="primary" label="Vouchers"      value={t.count || 0}      sub="in this view" />
+            <Kpi icon={Wallet}        tone="zinc"    label="Avg / Voucher" value={inr(t.avg)}        sub="average spend" />
+            <Kpi icon={CalendarClock} tone="green"   label="This Month"    value={inr(t.thisMonth)}  sub="current calendar month" />
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+            <Card title="Spending by Head" icon={Landmark} className="lg:col-span-2">
+              {data.byHead && data.byHead.length ? (
+                <BarList items={data.byHead.map((h, i) => ({ label: h.head, value: h.amount, sub: `${h.count} voucher${h.count === 1 ? '' : 's'}`, color: PALETTE[i % PALETTE.length] }))}
+                  max={Math.max(...data.byHead.map(h => h.amount), 1)} />
+              ) : <Empty text="No expenses yet." />}
+            </Card>
+
+            <Card title="By Method" icon={CreditCard}>
+              {data.byMethod && data.byMethod.length ? (
+                <div className="flex flex-col items-center gap-4">
+                  <Donut size={150} thickness={22}
+                    segments={data.byMethod.map((m, i) => ({ label: m.method, value: m.amount, color: PALETTE[i % PALETTE.length] }))}
+                    centerLabel={compact(t.total)} centerSub="spent" />
+                  <div className="w-full space-y-2">
+                    {data.byMethod.map((m, i) => (
+                      <div key={m.method} className="flex items-center gap-2 text-xs">
+                        <span className="size-3 rounded-sm shrink-0" style={{ backgroundColor: PALETTE[i % PALETTE.length] }} />
+                        <span className="text-zinc-500">{m.method}</span>
+                        <span className="ml-auto font-semibold text-zinc-900 tabular-nums">{inr(m.amount)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : <Empty text="No payments yet." />}
+            </Card>
+          </div>
+
+          <Card title="Monthly Spending" icon={BarChart3}>
+            <MonthlyBars data={data.monthly || []} />
+          </Card>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------- pieces ----------
+function Kpi({ icon: Icon, label, value, sub, tone }) {
+  const tones = { zinc: 'bg-zinc-100 text-zinc-600', green: 'bg-green-50 text-green-600', accent: 'bg-accent/10 text-accent', primary: 'bg-primary/10 text-primary' };
+  return (
+    <div className="ring-1 ring-black/5 rounded-lg bg-white p-4">
+      <span className={`size-9 rounded-lg flex items-center justify-center mb-3 ${tones[tone] || tones.zinc}`}><Icon className="size-4.5" /></span>
+      <p className="text-xl font-bold text-zinc-900 tabular-nums leading-tight">{value}</p>
+      <p className="text-xs font-medium text-zinc-600 mt-0.5">{label}</p>
+      {sub && <p className="text-[10px] text-zinc-400 mt-0.5">{sub}</p>}
+    </div>
+  );
+}
+function Card({ title, icon: Icon, children, className = '' }) {
+  return (
+    <div className={`ring-1 ring-black/5 rounded-lg bg-white overflow-hidden ${className}`}>
+      <div className="p-4 border-b border-zinc-100 flex items-center gap-2">{Icon && <Icon className="size-4 text-primary" />}<h3 className="text-sm font-semibold text-zinc-900">{title}</h3></div>
+      <div className="p-5">{children}</div>
+    </div>
+  );
+}
+function Empty({ text }) { return <p className="text-xs text-zinc-400 italic text-center py-8">{text}</p>; }
+
+function BarList({ items, max }) {
+  return (
+    <div className="space-y-4">
+      {items.map((it, i) => {
+        const pct = max > 0 ? Math.max(2, (it.value / max) * 100) : 0;
+        return (
+          <div key={i}>
+            <div className="flex items-center justify-between text-xs mb-1.5">
+              <span className="font-medium text-zinc-700 truncate pr-2">{it.label} {it.sub && <span className="text-zinc-400 font-normal">· {it.sub}</span>}</span>
+              <span className="text-zinc-900 font-semibold tabular-nums shrink-0">{inr(it.value)}</span>
+            </div>
+            <div className="h-2.5 rounded-full bg-zinc-100 overflow-hidden">
+              <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: it.color || PRIMARY }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function Donut({ segments, size = 150, thickness = 22, centerLabel, centerSub }) {
+  const total = segments.reduce((s, x) => s + (x.value || 0), 0);
+  const r = (size - thickness) / 2;
+  const C = 2 * Math.PI * r;
+  let offset = 0;
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0">
+      <g transform={`rotate(-90 ${size / 2} ${size / 2})`}>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#eef2f7" strokeWidth={thickness} />
+        {total > 0 && segments.map((s, i) => {
+          const len = ((s.value || 0) / total) * C;
+          const el = <circle key={i} cx={size / 2} cy={size / 2} r={r} fill="none" stroke={s.color} strokeWidth={thickness} strokeDasharray={`${len} ${C - len}`} strokeDashoffset={-offset} />;
+          offset += len; return el;
+        })}
+      </g>
+      {centerLabel != null && <text x="50%" y="48%" textAnchor="middle" dominantBaseline="middle" fill="#18181b" style={{ fontSize: 20, fontWeight: 700 }}>{centerLabel}</text>}
+      {centerSub && <text x="50%" y="63%" textAnchor="middle" dominantBaseline="middle" fill="#a1a1aa" style={{ fontSize: 10 }}>{centerSub}</text>}
+    </svg>
+  );
+}
+
+function MonthlyBars({ data }) {
+  const map = {}; (data || []).forEach(m => { map[m.ym] = m.amount; });
+  const now = new Date();
+  const months = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    months.push({ ym: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, amount: map[`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`] || 0 });
+  }
+  const max = Math.max(...months.map(m => m.amount), 1);
+  return (
+    <div>
+      <div className="relative h-44">
+        <div className="absolute inset-0 flex flex-col justify-between pointer-events-none">
+          {[0, 1, 2, 3].map(i => <div key={i} className="border-t border-dashed border-zinc-100" />)}
+        </div>
+        <div className="relative h-full flex items-end justify-between gap-2 sm:gap-4 px-1">
+          {months.map((m, i) => {
+            const h = m.amount > 0 ? Math.max(6, Math.min(90, (m.amount / max) * 90)) : 0;
+            return (
+              <div key={i} className="flex-1 h-full flex flex-col justify-end items-center">
+                {m.amount > 0 && <span className="text-[9px] font-semibold text-zinc-500 tabular-nums mb-1 whitespace-nowrap">{compact(m.amount)}</span>}
+                <div className="w-6 sm:w-9 rounded-md bg-gradient-to-t from-accent to-accent/70 hover:to-accent transition-colors" style={{ height: `${h}%` }} title={`${monthLabel(m.ym)} · ${inr(m.amount)}`} />
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div className="flex justify-between gap-2 sm:gap-4 px-1 mt-2">
+        {months.map((m, i) => <span key={i} className="flex-1 text-center text-[10px] font-medium text-zinc-400">{monthLabel(m.ym)}</span>)}
+      </div>
+    </div>
+  );
+}
+
+function DateField({ label, value, onChange }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">{label}</span>
+      <input type="date" value={value} onChange={e => onChange(e.target.value)}
+        className="h-8 rounded border border-zinc-200 bg-white px-2 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40" />
+    </div>
+  );
+}

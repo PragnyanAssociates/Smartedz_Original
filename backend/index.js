@@ -11045,7 +11045,7 @@ app.get('/api/expenses/list/:institutionId', async (req, res) => {
     const [rows] = await db.execute(
       `SELECT id, voucher_no, seq, voucher_date, name_title, phone_no, head_of_account, sub_head,
               account_type, total_amount, (attachment IS NOT NULL) AS has_attachment,
-              created_by_name, created_at, updated_at
+              created_by_name, updated_by_name, created_at, updated_at
          FROM expense_vouchers
         WHERE ${where.join(' AND ')}`,
       params
@@ -11149,6 +11149,66 @@ app.delete('/api/expenses/voucher/:id', async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error('expenses/voucher delete error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---- Dashboard analytics (filters: head, from, to) --------------
+app.get('/api/expenses/dashboard/:institutionId', async (req, res) => {
+  const { institutionId } = req.params;
+  const { head, from, to } = req.query;
+  try {
+    const where = ['institutionId = ?'];
+    const params = [institutionId];
+    if (head) { where.push('head_of_account = ?'); params.push(head); }
+    if (from) { where.push('voucher_date >= ?');   params.push(from); }
+    if (to)   { where.push('voucher_date <= ?');   params.push(to); }
+
+    const [rows] = await db.execute(
+      `SELECT voucher_date, head_of_account, account_type, total_amount
+         FROM expense_vouchers WHERE ${where.join(' AND ')}`,
+      params
+    );
+
+    let total = 0;
+    const byHead = {}, byMethod = {}, monthly = {};
+    rows.forEach(r => {
+      const amt = Number(r.total_amount) || 0;
+      total += amt;
+      const h = r.head_of_account || 'Other';
+      (byHead[h] = byHead[h] || { amount: 0, count: 0 });
+      byHead[h].amount += amt; byHead[h].count += 1;
+      const m = r.account_type || 'Others';
+      byMethod[m] = (byMethod[m] || 0) + amt;
+      const ym = String(r.voucher_date).slice(0, 7); // YYYY-MM
+      monthly[ym] = (monthly[ym] || 0) + amt;
+    });
+
+    const count = rows.length;
+    const avg = count ? Math.round(total / count) : 0;
+
+    // this-month total (calendar month, IST-ish based on plain dates)
+    const now = new Date();
+    const curYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const thisMonth = monthly[curYm] || 0;
+
+    const byHeadArr = Object.entries(byHead)
+      .map(([h, v]) => ({ head: h, amount: v.amount, count: v.count }))
+      .sort((a, b) => b.amount - a.amount);
+    const byMethodArr = Object.entries(byMethod)
+      .map(([m, amount]) => ({ method: m, amount }))
+      .sort((a, b) => b.amount - a.amount);
+    const monthlyArr = Object.entries(monthly)
+      .map(([ym, amount]) => ({ ym, amount }))
+      .sort((a, b) => a.ym.localeCompare(b.ym))
+      .slice(-6);
+
+    res.json({
+      totals: { total, count, avg, thisMonth },
+      byHead: byHeadArr, byMethod: byMethodArr, monthly: monthlyArr
+    });
+  } catch (err) {
+    console.error('expenses/dashboard error:', err);
     res.status(500).json({ error: err.message });
   }
 });

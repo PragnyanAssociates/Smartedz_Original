@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Search, ChevronDown, Eye, Pencil, Trash2, Download, X, Plus, ListChecks, Filter } from 'lucide-react';
+import { Search, ChevronDown, Eye, Pencil, Trash2, Download, Plus, ListChecks, Filter } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
-import { HEAD_OF_ACCOUNT, fmtAmt, fmtDate } from './VoucherForm';
+import { HEAD_OF_ACCOUNT, fmtAmt } from './VoucherForm';
+import VoucherView, { fmtISTDateTime, fmtVoucherDate } from './VoucherView';
 
 export default function Register({ user, canEdit = true, refreshKey = 0, onEdit, onNew }) {
   const [rows, setRows]       = useState([]);
@@ -9,7 +10,7 @@ export default function Register({ user, canEdit = true, refreshKey = 0, onEdit,
   const [search, setSearch]   = useState('');
   const [head, setHead]       = useState('');
   const [range, setRange]     = useState({ from: '', to: '' });
-  const [view, setView]       = useState(null);   // details for modal
+  const [viewId, setViewId]   = useState(null);
   const [busyId, setBusyId]   = useState(null);
 
   const load = useCallback(async () => {
@@ -45,14 +46,6 @@ export default function Register({ user, canEdit = true, refreshKey = 0, onEdit,
 
   const total = useMemo(() => filtered.reduce((s, r) => s + Number(r.total_amount || 0), 0), [filtered]);
 
-  const openView = async (id) => {
-    try {
-      const res = await fetch(`${API_BASE_URL}/expenses/details/${id}`);
-      const d = await res.json();
-      setView(d);
-    } catch { alert('Could not load the voucher.'); }
-  };
-
   const del = async (id) => {
     if (!window.confirm('Delete this voucher? This cannot be undone.')) return;
     setBusyId(id);
@@ -66,7 +59,7 @@ export default function Register({ user, canEdit = true, refreshKey = 0, onEdit,
   const downloadCsv = () => {
     const header = ['#', 'Voucher No', 'Date', 'Head of A/C', 'Sub Head', 'Name/Title', 'Transfer through', 'Amount'];
     const lines = [header, ...filtered.map((r, i) => [
-      i + 1, r.voucher_no, fmtDate(r.voucher_date), r.head_of_account, r.sub_head || '',
+      i + 1, r.voucher_no, fmtVoucherDate(r.voucher_date), r.head_of_account, r.sub_head || '',
       r.name_title || '', r.account_type || '', Number(r.total_amount || 0)
     ])];
     const csv = lines.map(row => row.map(c => {
@@ -134,7 +127,7 @@ export default function Register({ user, canEdit = true, refreshKey = 0, onEdit,
             <table className="w-full text-left border-collapse min-w-[820px]">
               <thead>
                 <tr className="bg-zinc-50/50">
-                  {['#', 'Voucher No', 'Date', 'Head of A/C', 'Name / Title', 'Through', 'Amount', ''].map((h, i) => (
+                  {['#', 'Voucher No', 'Date', 'Head of A/C', 'Name / Title', 'Through', 'Amount', 'Recorded By', ''].map((h, i) => (
                     <th key={i} className="px-4 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100">{h}</th>
                   ))}
                 </tr>
@@ -144,21 +137,26 @@ export default function Register({ user, canEdit = true, refreshKey = 0, onEdit,
                   <tr key={r.id} className="hover:bg-zinc-50/60 transition-colors">
                     <td className="px-4 py-3 text-xs text-zinc-400 tabular-nums">{i + 1}</td>
                     <td className="px-4 py-3 text-sm font-semibold text-primary">{r.voucher_no}</td>
-                    <td className="px-4 py-3 text-xs text-zinc-600 whitespace-nowrap">{fmtDate(r.voucher_date)}</td>
+                    <td className="px-4 py-3 text-xs text-zinc-600 whitespace-nowrap">{fmtVoucherDate(r.voucher_date)}</td>
                     <td className="px-4 py-3 text-xs text-zinc-700">{r.head_of_account}{r.sub_head ? <span className="text-zinc-400"> · {r.sub_head}</span> : ''}</td>
                     <td className="px-4 py-3 text-sm text-zinc-900">{r.name_title || '—'}</td>
                     <td className="px-4 py-3 text-xs text-zinc-600">{r.account_type || '—'}</td>
                     <td className="px-4 py-3 text-sm font-semibold text-zinc-900 tabular-nums whitespace-nowrap">₹{fmtAmt(r.total_amount)}</td>
                     <td className="px-4 py-3">
+                      <div className="text-xs text-zinc-700">{r.created_by_name || '—'}</div>
+                      <div className="text-[10px] text-zinc-400 whitespace-nowrap">{fmtISTDateTime(r.created_at)}</div>
+                      {r.updated_at && <div className="text-[10px] text-amber-600 whitespace-nowrap">edited · {r.updated_by_name || '—'}</div>}
+                    </td>
+                    <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
-                        <button onClick={() => openView(r.id)} title="View" className="p-1.5 text-zinc-400 hover:text-primary rounded"><Eye className="size-4" /></button>
+                        <button onClick={() => setViewId(r.id)} title="View" className="p-1.5 text-zinc-400 hover:text-primary rounded"><Eye className="size-4" /></button>
                         {canEdit && <button onClick={() => onEdit(r.id)} title="Edit" className="p-1.5 text-zinc-400 hover:text-primary rounded"><Pencil className="size-4" /></button>}
                         {canEdit && <button onClick={() => del(r.id)} disabled={busyId === r.id} title="Delete" className="p-1.5 text-zinc-400 hover:text-accent rounded disabled:opacity-40"><Trash2 className="size-4" /></button>}
                       </div>
                     </td>
                   </tr>
                 )) : (
-                  <tr><td colSpan="8" className="px-4 py-10 text-center text-xs text-zinc-500 italic">No vouchers found.</td></tr>
+                  <tr><td colSpan="9" className="px-4 py-10 text-center text-xs text-zinc-500 italic">No vouchers found.</td></tr>
                 )}
               </tbody>
             </table>
@@ -166,74 +164,11 @@ export default function Register({ user, canEdit = true, refreshKey = 0, onEdit,
         )}
       </div>
 
-      {view && <ViewModal v={view} onClose={() => setView(null)} onEdit={canEdit ? (id) => { setView(null); onEdit(id); } : null} />}
+      {viewId && <VoucherView id={viewId} onClose={() => setViewId(null)} onEdit={canEdit ? (id) => { setViewId(null); onEdit(id); } : null} />}
     </div>
   );
 }
 
-function ViewModal({ v, onClose, onEdit }) {
-  const parts = v.particulars || [];
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={onClose}>
-      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-xl" onClick={e => e.stopPropagation()}>
-        <div className="bg-primary text-white px-5 py-3 flex items-center justify-between sticky top-0">
-          <div>
-            <p className="text-sm font-bold">{v.voucher_no}</p>
-            <p className="text-[10px] opacity-85">Debit Voucher · {fmtDate(v.voucher_date)}</p>
-          </div>
-          <button onClick={onClose} className="text-white/80 hover:text-white"><X className="size-5" /></button>
-        </div>
-        <div className="p-5 space-y-3 text-sm">
-          <Info label="Head of A/C" value={v.head_of_account} />
-          {v.sub_head && <Info label="Sub Head" value={v.sub_head} />}
-          {v.name_title && <Info label="Name / Title" value={v.name_title} />}
-          {v.phone_no && <Info label="Phone" value={v.phone_no} />}
-          <Info label="Transfer through" value={v.account_type || '—'} />
-
-          <div className="ring-1 ring-zinc-200 rounded-md overflow-hidden mt-2">
-            <div className="flex bg-zinc-50 px-3 py-2 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-200">
-              <span className="flex-1">Particulars</span><span className="w-28 text-right">Amount</span>
-            </div>
-            {parts.map((p, i) => (
-              <div key={i} className="flex px-3 py-2 border-b border-zinc-100 last:border-0 text-xs">
-                <span className="flex-1 text-zinc-700">{p.description}</span>
-                <span className="w-28 text-right tabular-nums text-zinc-900">₹{fmtAmt(p.amount)}</span>
-              </div>
-            ))}
-            <div className="flex bg-zinc-50 px-3 py-2.5 border-t border-zinc-200">
-              <span className="flex-1 text-sm font-semibold text-zinc-700">Total</span>
-              <span className="w-28 text-right text-sm font-bold text-primary tabular-nums">₹{fmtAmt(v.total_amount)}</span>
-            </div>
-          </div>
-          {v.amount_in_words && <p className="text-[11px] text-zinc-500"><span className="font-medium text-zinc-600">In words:</span> {v.amount_in_words}</p>}
-
-          {v.attachment && (
-            <div>
-              <p className="text-xs font-medium text-zinc-600 mb-1.5">Payment Proof</p>
-              <img src={v.attachment} alt="proof" className="w-full rounded-md ring-1 ring-black/5" />
-            </div>
-          )}
-        </div>
-        {onEdit && (
-          <div className="px-5 py-3 border-t border-zinc-100 flex justify-end">
-            <button onClick={() => onEdit(v.id)} className="inline-flex items-center gap-1.5 bg-primary text-white px-4 py-2 rounded-md text-xs font-medium hover:bg-primary/90">
-              <Pencil className="size-3.5" /> Edit
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function Info({ label, value }) {
-  return (
-    <div className="flex items-center justify-between gap-4">
-      <span className="text-zinc-500 text-xs shrink-0">{label}</span>
-      <span className="font-medium text-zinc-900 text-right">{value}</span>
-    </div>
-  );
-}
 function DateField({ label, value, onChange }) {
   return (
     <div className="flex flex-col gap-1">

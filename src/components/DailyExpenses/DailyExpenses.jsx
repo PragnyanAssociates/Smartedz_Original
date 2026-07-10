@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
-import { FilePlus2, ListChecks } from 'lucide-react';
+import { FilePlus2, ListChecks, CalendarDays, LayoutDashboard } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
 import VoucherForm from './VoucherForm';
 import Register from './Register';
+import ExpensesCalendar from './ExpensesCalendar';
+import ExpensesDashboard from './ExpensesDashboard';
 
 const MODULE_NAME = 'DailyExpenses';
 
@@ -14,7 +16,7 @@ export default function DailyExpenses() {
   const can = permissions?.can;
   const canEdit = can ? can(MODULE_NAME, 'edit') : true;
 
-  const [tab, setTab]           = useState('voucher');   // 'voucher' | 'register'
+  const [tab, setTab]           = useState('dashboard');
   const [editingId, setEditingId] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [school, setSchool]     = useState({});
@@ -45,8 +47,10 @@ export default function DailyExpenses() {
   const onSaved = () => { setEditingId(null); setRefreshKey(k => k + 1); setTab('register'); };
 
   const tabs = [
+    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'voucher',  label: editingId ? 'Edit Voucher' : 'New Voucher', icon: FilePlus2 },
     { id: 'register', label: 'Register', icon: ListChecks },
+    { id: 'calendar', label: 'Expenses Calendar', icon: CalendarDays },
   ];
 
   return (
@@ -70,18 +74,22 @@ export default function DailyExpenses() {
         ))}
       </div>
 
-      {tab === 'voucher' ? (
+      {tab === 'dashboard' ? (
+        <ExpensesDashboard user={user} />
+      ) : tab === 'voucher' ? (
         <VoucherForm
           key={editingId || 'new'}
           user={user} canEdit={canEdit} editingId={editingId} school={school}
           onSaved={onSaved}
           onCancel={editingId ? () => { setEditingId(null); setTab('register'); } : null}
         />
-      ) : (
+      ) : tab === 'register' ? (
         <Register
           user={user} canEdit={canEdit} refreshKey={refreshKey}
           onEdit={editVoucher} onNew={newVoucher}
         />
+      ) : (
+        <ExpensesCalendar user={user} />
       )}
     </div>
   );
