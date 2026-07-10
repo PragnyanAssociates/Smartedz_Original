@@ -361,10 +361,10 @@ export default function TeacherLabs({ canManage = true }) {
                         className="size-7 bg-white hover:bg-zinc-50 text-zinc-600 hover:text-primary rounded-md shadow-sm ring-1 ring-inset ring-black/5 flex items-center justify-center transition-colors">
                         <Edit className="size-3.5" />
                       </button>
-                      <button onClick={(e) => handleDelete(lab, e)}
-                        className="size-7 bg-white hover:bg-zinc-50 text-zinc-600 hover:text-red-600 rounded-md shadow-sm ring-1 ring-inset ring-black/5 flex items-center justify-center transition-colors">
-                        <Trash2 className="size-3.5" />
-                      </button>
+<button onClick={(e) => handleDelete(lab, e)}
+  className="size-7 bg-white hover:bg-red-50 text-zinc-600 hover:text-red-600 rounded-md shadow-sm ring-1 ring-inset ring-black/5 flex items-center justify-center transition-colors">
+  <Trash2 className="size-3.5" />
+</button>
                     </div>
                   )}
                 </div>
@@ -619,12 +619,18 @@ function LabDetailView({ lab, onBack, canManage, onEdit, onDelete }) {
           className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
           <ArrowLeft className="size-4" /> Back to Digital Labs
         </button>
-        {canManage && (
-           <div className="flex gap-2 w-full sm:w-auto">
-              <button onClick={() => onEdit(lab)} className="h-8 flex-1 sm:flex-none px-3 bg-white ring-1 ring-inset ring-black/5 text-zinc-600 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 hover:bg-zinc-50 shadow-sm transition-colors"><Edit className="size-3.5" /> Edit Lab</button>
-              <button onClick={() => onDelete(lab)} className="h-8 flex-1 sm:flex-none px-3 bg-white ring-1 ring-inset ring-red-200 text-red-600 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 hover:bg-red-50 shadow-sm transition-colors"><Trash2 className="size-3.5" /> Delete Lab</button>
-           </div>
-        )}
+      {canManage && (
+  <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
+    <button onClick={() => onEdit(lab)}
+      className="h-8 px-3 bg-white border border-zinc-200 text-zinc-700 hover:text-primary hover:bg-zinc-50 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shadow-sm w-full sm:w-auto">
+      <Edit className="size-3.5" /> Edit Lab
+    </button>
+    <button onClick={() => onDelete(lab)}
+      className="h-8 px-3 bg-white border border-zinc-200 text-zinc-700 hover:text-red-600 hover:bg-red-50 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shadow-sm w-full sm:w-auto">
+      <Trash2 className="size-3.5" /> Delete Lab
+    </button>
+  </div>
+)}
       </div>
 
       <div className="bg-white rounded-lg ring-1 ring-black/5 p-5 sm:p-6 shadow-sm">

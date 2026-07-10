@@ -58,7 +58,7 @@ export default function DailyExpenses() {
       <header className="mb-6 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Daily Expenses</h1>
-          <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">Record debit vouchers for day-to-day school expenses and keep a running register.</p>
+          <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">Record debit vouchers for day-to-day expenses and keep a running register.</p>
         </div>
         {!canEdit && <span className="text-[10px] font-semibold text-accent bg-accent/10 px-2.5 py-1 rounded-full uppercase tracking-wider">View only</span>}
       </header>
