@@ -1,6 +1,5 @@
 import React, { useRef, useEffect } from 'react';
 
-// Loads Leaflet from CDN once and resolves with the global L.
 function loadLeaflet() {
   return new Promise((resolve) => {
     if (window.L) return resolve(window.L);
@@ -20,7 +19,26 @@ function loadLeaflet() {
   });
 }
 
-// Extract lat,lng from a Google-Maps-style link or raw "lat,lng".
+// Inject animation styles once.
+function ensureStyles() {
+  if (document.getElementById('transport-map-css')) return;
+  const st = document.createElement('style');
+  st.id = 'transport-map-css';
+  st.textContent = `
+  @keyframes pinDrop{0%{transform:translateY(-16px) scale(.7);opacity:0}60%{transform:translateY(3px) scale(1.05)}100%{transform:translateY(0) scale(1);opacity:1}}
+  .tp-pin{animation:pinDrop .5s cubic-bezier(.34,1.56,.64,1) both}
+  @keyframes tpPing{0%{transform:scale(.5);opacity:.7}100%{transform:scale(2);opacity:0}}
+  .tp-pin-ring{position:absolute;inset:-4px;border-radius:50%;animation:tpPing 1.8s ease-out infinite}
+  @keyframes busBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
+  @keyframes busRing{0%{transform:scale(.5);opacity:.55}100%{transform:scale(2.2);opacity:0}}
+  .live-bus-wrap{position:relative;display:flex;align-items:center;justify-content:center;width:38px;height:38px}
+  .live-bus-ring{position:absolute;width:38px;height:38px;border-radius:50%;background:rgba(50,132,199,.4);animation:busRing 1.6s ease-out infinite}
+  .live-bus-glyph{position:relative;font-size:26px;line-height:1;filter:drop-shadow(0 2px 3px rgba(0,0,0,.35));animation:busBob 1s ease-in-out infinite}
+  .leaflet-marker-icon.live-bus{transition:transform 1.1s linear}
+  `;
+  document.head.appendChild(st);
+}
+
 export function parseLatLng(link) {
   if (!link) return null;
   const s = String(link);
@@ -35,7 +53,6 @@ export function parseLatLng(link) {
   return null;
 }
 
-// Road geometry through the given points (in order), via OSRM. Returns [[lat,lng],...] or null.
 async function osrmGeo(list) {
   if (!list || list.length < 2) return null;
   try {
@@ -49,16 +66,17 @@ async function osrmGeo(list) {
   return null;
 }
 
-export default function LeafletMap({ points = [], onMapClick, height = 520, routed = false }) {
+export default function LeafletMap({ points = [], onMapClick, height = 520, routed = false, liveLocation = null }) {
   const elRef = useRef(null);
   const mapRef = useRef(null);
   const layerRef = useRef(null);
-  const animRef = useRef(null);
+  const busRef = useRef(null);
   const clickRef = useRef(onMapClick);
   useEffect(() => { clickRef.current = onMapClick; }, [onMapClick]);
 
   useEffect(() => {
     let alive = true;
+    ensureStyles();
     loadLeaflet().then((L) => {
       if (!alive || !L || !elRef.current || mapRef.current) return;
       const map = L.map(elRef.current, { scrollWheelZoom: true }).setView([17.385, 78.4867], 12);
@@ -70,45 +88,42 @@ export default function LeafletMap({ points = [], onMapClick, height = 520, rout
       mapRef.current = map;
       setTimeout(() => map.invalidateSize(), 200);
       draw();
+      updateBus();
     });
-    return () => {
-      alive = false;
-      if (animRef.current) { clearInterval(animRef.current); animRef.current = null; }
-      if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; }
-    };
+    return () => { alive = false; if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; } busRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => { draw(); /* eslint-disable-next-line */ }, [JSON.stringify(points), routed]);
+  useEffect(() => { updateBus(); /* eslint-disable-next-line */ }, [liveLocation && liveLocation.lat, liveLocation && liveLocation.lng]);
 
-  function stopAnim() { if (animRef.current) { clearInterval(animRef.current); animRef.current = null; } }
-
-  function busMarker(L, latlng) {
-    const icon = L.divIcon({
+  function busIcon(L) {
+    return L.divIcon({
       className: '',
-      html: `<div style="background:#111827;border:2px solid #fff;border-radius:50%;width:30px;height:30px;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 7px rgba(0,0,0,.45)">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6v6"/><path d="M16 6v6"/><path d="M2 12h19.6"/><path d="M18 18h3s.5-1.7.8-2.8c.1-.4.2-.8.2-1.2V10c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v6h2"/><circle cx="7" cy="18" r="2"/><path d="M9 18h5"/><circle cx="16" cy="18" r="2"/></svg>
-      </div>`,
-      iconSize: [30, 30], iconAnchor: [15, 15]
+      html: `<div class="live-bus-wrap"><span class="live-bus-ring"></span><span class="live-bus-glyph">🚌</span></div>`,
+      iconSize: [38, 38], iconAnchor: [19, 19]
     });
-    return L.marker(latlng, { icon, zIndexOffset: 1000 });
   }
 
-  function animateBus(L, layer, geo) {
-    const marker = busMarker(L, geo[0]).addTo(layer);
-    let i = 0;
-    const step = Math.max(1, Math.round(geo.length / 400));
-    animRef.current = setInterval(() => {
-      i += step;
-      if (i >= geo.length) i = 0;
-      marker.setLatLng(geo[i]);
-    }, 70);
+  function updateBus() {
+    const L = window.L, map = mapRef.current;
+    if (!L || !map) return;
+    if (!liveLocation || liveLocation.lat == null || liveLocation.lng == null) {
+      if (busRef.current) { map.removeLayer(busRef.current); busRef.current = null; }
+      return;
+    }
+    const ll = [Number(liveLocation.lat), Number(liveLocation.lng)];
+    if (!busRef.current) {
+      busRef.current = L.marker(ll, { icon: busIcon(L), zIndexOffset: 1000 }).addTo(map);
+      const el = busRef.current.getElement(); if (el) el.classList.add('live-bus');
+    } else {
+      busRef.current.setLatLng(ll);
+    }
   }
 
   function draw() {
     const L = window.L, map = mapRef.current, layer = layerRef.current;
     if (!L || !map || !layer) return;
-    stopAnim();
     layer.clearLayers();
 
     const valid = points.filter(p => p.lat != null && p.lng != null && !isNaN(+p.lat) && !isNaN(+p.lng))
@@ -121,7 +136,10 @@ export default function LeafletMap({ points = [], onMapClick, height = 520, rout
     const addMarkers = (list, color) => list.forEach((p, i) => {
       const icon = L.divIcon({
         className: '',
-        html: `<div style="background:${color};color:#fff;border:2px solid #fff;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;box-shadow:0 1px 4px rgba(0,0,0,.35)">${i + 1}</div>`,
+        html: `<div class="tp-pin" style="position:relative;width:26px;height:26px">
+                 <span class="tp-pin-ring" style="box-shadow:0 0 0 3px ${color}"></span>
+                 <div style="position:relative;background:${color};color:#fff;border:2px solid #fff;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;box-shadow:0 1px 4px rgba(0,0,0,.35)">${i + 1}</div>
+               </div>`,
         iconSize: [26, 26], iconAnchor: [13, 13]
       });
       L.marker([p.lat, p.lng], { icon }).addTo(layer)
@@ -137,23 +155,16 @@ export default function LeafletMap({ points = [], onMapClick, height = 520, rout
       return;
     }
 
-    // routed: draw road-following lines + animate a bus on the primary line
     (async () => {
       const [pGeo, dGeo] = await Promise.all([osrmGeo(pickups), osrmGeo(drops)]);
       if (!mapRef.current || !layerRef.current) return;
       const bounds = [];
-
       const drawLine = (geo, list, color) => {
-        if (geo) { L.polyline(geo, { color, weight: 6, opacity: 0.9 }).addTo(layer); geo.forEach(c => bounds.push(c)); return geo; }
-        if (list.length > 1) { const s = list.map(p => [p.lat, p.lng]); L.polyline(s, { color, weight: 4, opacity: 0.6, dashArray: '6,8' }).addTo(layer); s.forEach(c => bounds.push(c)); return s; }
-        return null;
+        if (geo) { L.polyline(geo, { color, weight: 6, opacity: 0.9 }).addTo(layer); geo.forEach(c => bounds.push(c)); return; }
+        if (list.length > 1) { const s = list.map(p => [p.lat, p.lng]); L.polyline(s, { color, weight: 4, opacity: 0.6, dashArray: '6,8' }).addTo(layer); s.forEach(c => bounds.push(c)); }
       };
-      const pLine = drawLine(pGeo, pickups, '#3284c7');
-      const dLine = drawLine(dGeo, drops, '#f29132');
-
-      const primary = (pGeo && pGeo.length > 1) ? pGeo : ((dGeo && dGeo.length > 1) ? dGeo : (pLine && pLine.length > 1 ? pLine : dLine));
-      if (primary && primary.length > 1) animateBus(L, layer, primary);
-
+      drawLine(pGeo, pickups, '#3284c7');
+      drawLine(dGeo, drops, '#f29132');
       const fitPts = bounds.length ? bounds : valid.map(p => [p.lat, p.lng]);
       try { map.fitBounds(fitPts, { padding: [50, 50], maxZoom: 16 }); } catch { /* noop */ }
     })();

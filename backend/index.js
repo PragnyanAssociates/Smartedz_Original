@@ -11551,32 +11551,78 @@ app.get('/api/transport/classes/:institutionId', async (req, res) => {
 function tParseLatLng(str) {
   if (!str) return null;
   const s = String(str);
-  let m = s.match(/@(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)/);                                   if (m) return { lat: +m[1], lng: +m[2] };
+  let m = s.match(/!3d(-?\d{1,3}\.\d+)!4d(-?\d{1,3}\.\d+)/);                                if (m) return { lat: +m[1], lng: +m[2] };
+  m = s.match(/@(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)/);                                         if (m) return { lat: +m[1], lng: +m[2] };
   m = s.match(/[?&](?:q|query|ll|destination|center|daddr|sll)=(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)/); if (m) return { lat: +m[1], lng: +m[2] };
-  m = s.match(/!3d(-?\d{1,3}\.\d+)!4d(-?\d{1,3}\.\d+)/);                                    if (m) return { lat: +m[1], lng: +m[2] };
-  m = s.match(/\/(-?\d{1,2}\.\d{3,}),(-?\d{1,3}\.\d{3,})/);                                 if (m) return { lat: +m[1], lng: +m[2] };
-  m = s.match(/^\s*(-?\d{1,3}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)\s*$/);                            if (m) return { lat: +m[1], lng: +m[2] };
+  m = s.match(/\/(-?\d{1,2}\.\d{3,}),(-?\d{1,3}\.\d{3,})/);                                  if (m) return { lat: +m[1], lng: +m[2] };
+  m = s.match(/^\s*(-?\d{1,3}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)\s*$/);                             if (m) return { lat: +m[1], lng: +m[2] };
   return null;
+}
+
+const RESOLVE_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
+
+async function resolveMapCoords(startUrl) {
+  let cur = startUrl;
+  for (let i = 0; i < 6; i++) {
+    // check the current URL (and decoded form) for coordinates first
+    let ll = tParseLatLng(cur) || (() => { try { return tParseLatLng(decodeURIComponent(cur)); } catch { return null; } })();
+    if (ll) return { ll, finalUrl: cur };
+    let r;
+    try { r = await fetch(cur, { redirect: 'manual', headers: { 'User-Agent': RESOLVE_UA } }); }
+    catch { return { ll: null, finalUrl: cur }; }
+    const loc = r.headers.get('location');
+    if (loc && r.status >= 300 && r.status < 400) {
+      cur = loc.startsWith('http') ? loc : new URL(loc, cur).href;
+      continue;
+    }
+    // no more redirects — scan the body
+    let body = '';
+    try { body = await r.text(); } catch { /* noop */ }
+    ll = tParseLatLng(body);
+    return { ll, finalUrl: r.url || cur };
+  }
+  return { ll: null, finalUrl: cur };
 }
 
 app.get('/api/transport/resolve-link', async (req, res) => {
   const { url } = req.query;
   if (!url) return res.status(400).json({ error: 'url is required' });
   try {
-    const r = await fetch(url, {
-      redirect: 'follow',
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36' }
-    });
-    // Try the final (expanded) URL first, then a decoded version, then the body.
-    let ll = tParseLatLng(r.url);
-    if (!ll) { try { ll = tParseLatLng(decodeURIComponent(r.url)); } catch { /* noop */ } }
-    if (!ll) { try { ll = tParseLatLng(await r.text()); } catch { /* noop */ } }
-    if (ll) return res.json({ lat: ll.lat, lng: ll.lng, resolved: r.url });
-    return res.json({ lat: null, lng: null, resolved: r.url });
+    const { ll, finalUrl } = await resolveMapCoords(url);
+    if (ll) return res.json({ lat: ll.lat, lng: ll.lng, resolved: finalUrl });
+    return res.json({ lat: null, lng: null, resolved: finalUrl });
   } catch (err) {
     console.error('resolve-link error:', err);
     res.status(500).json({ error: err.message });
   }
+});
+
+// ---- Live driver tracking ----
+app.post('/api/transport/track', async (req, res) => {
+  const { route_id, institutionId, lat, lng, heading, is_active, driver_id, driver_name } = req.body;
+  if (!route_id) return res.status(400).json({ error: 'route_id is required' });
+  try {
+    await db.execute(
+      `INSERT INTO transport_live_location (route_id, institutionId, lat, lng, heading, is_active, driver_id, driver_name, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
+       ON DUPLICATE KEY UPDATE institutionId = VALUES(institutionId), lat = VALUES(lat), lng = VALUES(lng),
+         heading = VALUES(heading), is_active = VALUES(is_active), driver_id = VALUES(driver_id),
+         driver_name = VALUES(driver_name), updated_at = NOW()`,
+      [route_id, institutionId ?? null, lat ?? null, lng ?? null, heading ?? null, is_active === false ? 0 : 1, driver_id ?? null, driver_name ?? null]
+    );
+    res.json({ success: true });
+  } catch (err) { console.error('transport/track post error:', err); res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/transport/track/:routeId', async (req, res) => {
+  try {
+    const [rows] = await db.execute(
+      `SELECT lat, lng, heading, is_active, driver_name, TIMESTAMPDIFF(SECOND, updated_at, NOW()) AS seconds_ago
+         FROM transport_live_location WHERE route_id = ? LIMIT 1`,
+      [req.params.routeId]
+    );
+    res.json(rows[0] || null);
+  } catch (err) { console.error('transport/track get error:', err); res.status(500).json({ error: err.message }); }
 });
 
 
