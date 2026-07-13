@@ -146,6 +146,7 @@ const DEFAULT_MODULES = [
     'Manage Logins',
     'FeeManagement',
     'DailyExpenses',
+    'Transport',
     'Timetable',
     'Academic Calendar',
     'Attendance',
@@ -11211,6 +11212,339 @@ app.get('/api/expenses/dashboard/:institutionId', async (req, res) => {
     console.error('expenses/dashboard error:', err);
     res.status(500).json({ error: err.message });
   }
+});
+
+
+
+// =================================================================
+//  SECTION 29 — TRANSPORT
+//  Assumes `app`, `db` (mysql2/promise pool) and `resolveYearId`
+//  are already defined above this section.
+// =================================================================
+
+// ---------- helpers: roles + users (for picking driver/conductor) ----------
+app.get('/api/transport/roles/:institutionId', async (req, res) => {
+  try {
+    const [rows] = await db.execute(
+      `SELECT DISTINCT role FROM users
+        WHERE institutionId = ? AND role IS NOT NULL AND role <> ''
+          AND LOWER(COALESCE(status,'active')) = 'active'
+        ORDER BY role`,
+      [req.params.institutionId]
+    );
+    res.json(rows.map(r => r.role));
+  } catch (err) { console.error('transport/roles error:', err); res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/transport/users-by-role/:institutionId', async (req, res) => {
+  const { role } = req.query;
+  if (!role) return res.json([]);
+  try {
+    const [rows] = await db.execute(
+      `SELECT id, name, roll_no, class_id FROM users
+        WHERE institutionId = ? AND role = ?
+          AND LOWER(COALESCE(status,'active')) = 'active'
+        ORDER BY name`,
+      [req.params.institutionId, role]
+    );
+    res.json(rows);
+  } catch (err) { console.error('transport/users-by-role error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// students of a class, roll-wise (for route assignment)
+app.get('/api/transport/class-students/:institutionId', async (req, res) => {
+  const { class_id } = req.query;
+  try {
+    const yearId = await resolveYearId(req.params.institutionId);
+    const params = [req.params.institutionId];
+    let sql = `SELECT id, name, roll_no, class_id FROM users
+                WHERE institutionId = ? AND LOWER(role) LIKE '%student%'
+                  AND LOWER(COALESCE(status,'active')) = 'active'`;
+    if (class_id) { sql += ' AND class_id = ?'; params.push(class_id); }
+    const [rows] = await db.execute(sql, params);
+    rows.sort((a, b) => {
+      const ra = parseInt(a.roll_no, 10), rb = parseInt(b.roll_no, 10);
+      if (!isNaN(ra) && !isNaN(rb)) return ra - rb;
+      return (a.name || '').localeCompare(b.name || '');
+    });
+    res.json({ academic_year_id: yearId ?? null, students: rows });
+  } catch (err) { console.error('transport/class-students error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// ---------- VEHICLES ----------
+app.get('/api/transport/vehicles/:institutionId', async (req, res) => {
+  try {
+    const [rows] = await db.execute(
+      'SELECT * FROM transport_vehicles WHERE institutionId = ? ORDER BY vehicle_no',
+      [req.params.institutionId]
+    );
+    res.json(rows);
+  } catch (err) { console.error('transport/vehicles error:', err); res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/transport/vehicle', async (req, res) => {
+  const { institutionId, vehicle_no, vehicle_name, vehicle_type, capacity, notes, is_active, userId, userName } = req.body;
+  if (!institutionId || !vehicle_no) return res.status(400).json({ error: 'institutionId and vehicle number are required.' });
+  try {
+    const [ins] = await db.execute(
+      `INSERT INTO transport_vehicles (institutionId, vehicle_no, vehicle_name, vehicle_type, capacity, notes, is_active, created_by, created_by_name)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [institutionId, vehicle_no, vehicle_name || null, vehicle_type || null, capacity ?? null, notes || null, is_active === false ? 0 : 1, userId ?? null, userName ?? null]
+    );
+    res.json({ success: true, id: ins.insertId });
+  } catch (err) { console.error('transport/vehicle create error:', err); res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/transport/vehicle/:id', async (req, res) => {
+  const { vehicle_no, vehicle_name, vehicle_type, capacity, notes, is_active, userId, userName } = req.body;
+  try {
+    await db.execute(
+      `UPDATE transport_vehicles SET vehicle_no = ?, vehicle_name = ?, vehicle_type = ?, capacity = ?, notes = ?, is_active = ?,
+              updated_by = ?, updated_by_name = ?, updated_at = NOW() WHERE id = ?`,
+      [vehicle_no, vehicle_name || null, vehicle_type || null, capacity ?? null, notes || null, is_active === false ? 0 : 1, userId ?? null, userName ?? null, req.params.id]
+    );
+    res.json({ success: true });
+  } catch (err) { console.error('transport/vehicle update error:', err); res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/transport/vehicle/:id', async (req, res) => {
+  try { await db.execute('DELETE FROM transport_vehicles WHERE id = ?', [req.params.id]); res.json({ success: true }); }
+  catch (err) { console.error('transport/vehicle delete error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// ---------- STAFF (drivers & conductors) ----------
+app.get('/api/transport/staff/:institutionId', async (req, res) => {
+  const { staff_role } = req.query;
+  try {
+    const params = [req.params.institutionId];
+    let sql = `SELECT s.*, u.name, u.roll_no FROM transport_staff s
+                 JOIN users u ON u.id = s.user_id
+                WHERE s.institutionId = ?`;
+    if (staff_role) { sql += ' AND s.staff_role = ?'; params.push(staff_role); }
+    sql += ' ORDER BY s.staff_role, u.name';
+    const [rows] = await db.execute(sql, params);
+    res.json(rows);
+  } catch (err) { console.error('transport/staff error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// bulk add selected users as Driver/Conductor
+app.post('/api/transport/staff', async (req, res) => {
+  const { institutionId, staff_role, user_ids = [], userId, userName } = req.body;
+  if (!institutionId || !staff_role || !user_ids.length) return res.status(400).json({ error: 'institutionId, staff_role and user_ids are required.' });
+  try {
+    for (const uid of user_ids) {
+      await db.execute(
+        `INSERT IGNORE INTO transport_staff (institutionId, user_id, staff_role, created_by, created_by_name)
+         VALUES (?, ?, ?, ?, ?)`,
+        [institutionId, uid, staff_role, userId ?? null, userName ?? null]
+      );
+    }
+    res.json({ success: true, added: user_ids.length });
+  } catch (err) { console.error('transport/staff add error:', err); res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/transport/staff/:id', async (req, res) => {
+  const { license_no, phone, is_active } = req.body;
+  try {
+    await db.execute(
+      'UPDATE transport_staff SET license_no = ?, phone = ?, is_active = ? WHERE id = ?',
+      [license_no || null, phone || null, is_active === false ? 0 : 1, req.params.id]
+    );
+    res.json({ success: true });
+  } catch (err) { console.error('transport/staff update error:', err); res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/transport/staff/:id', async (req, res) => {
+  try { await db.execute('DELETE FROM transport_staff WHERE id = ?', [req.params.id]); res.json({ success: true }); }
+  catch (err) { console.error('transport/staff delete error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// ---------- ROUTES ----------
+app.get('/api/transport/routes/:institutionId', async (req, res) => {
+  try {
+    const [rows] = await db.execute(
+      `SELECT r.*, v.vehicle_no, v.vehicle_name,
+              d.name AS driver_name, c.name AS conductor_name,
+              (SELECT COUNT(*) FROM transport_route_points p WHERE p.route_id = r.id) AS point_count,
+              (SELECT COUNT(*) FROM transport_route_students s WHERE s.route_id = r.id) AS student_count
+         FROM transport_routes r
+         LEFT JOIN transport_vehicles v ON v.id = r.vehicle_id
+         LEFT JOIN users d ON d.id = r.driver_id
+         LEFT JOIN users c ON c.id = r.conductor_id
+        WHERE r.institutionId = ?
+        ORDER BY r.route_name`,
+      [req.params.institutionId]
+    );
+    res.json(rows);
+  } catch (err) { console.error('transport/routes error:', err); res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/transport/route/:id', async (req, res) => {
+  try {
+    const [rows] = await db.execute(
+      `SELECT r.*, v.vehicle_no, v.vehicle_name, d.name AS driver_name, c.name AS conductor_name
+         FROM transport_routes r
+         LEFT JOIN transport_vehicles v ON v.id = r.vehicle_id
+         LEFT JOIN users d ON d.id = r.driver_id
+         LEFT JOIN users c ON c.id = r.conductor_id
+        WHERE r.id = ? LIMIT 1`,
+      [req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Route not found.' });
+    const [points] = await db.execute(
+      'SELECT * FROM transport_route_points WHERE route_id = ? ORDER BY point_type, seq_order, id',
+      [req.params.id]
+    );
+    res.json({ ...rows[0], points });
+  } catch (err) { console.error('transport/route error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// create route (+ points)
+app.post('/api/transport/route', async (req, res) => {
+  const { institutionId, route_name, route_code, vehicle_id, driver_id, conductor_id, notes, points = [], userId, userName } = req.body;
+  if (!institutionId || !route_name) return res.status(400).json({ error: 'institutionId and route name are required.' });
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    const yearId = await resolveYearId(institutionId);
+    const [ins] = await conn.execute(
+      `INSERT INTO transport_routes (institutionId, academic_year_id, route_name, route_code, vehicle_id, driver_id, conductor_id, notes, created_by, created_by_name)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [institutionId, yearId ?? null, route_name, route_code || null, vehicle_id ?? null, driver_id ?? null, conductor_id ?? null, notes || null, userId ?? null, userName ?? null]
+    );
+    const routeId = ins.insertId;
+    await insertPoints(conn, routeId, points);
+    await conn.commit();
+    res.json({ success: true, id: routeId });
+  } catch (err) { await conn.rollback(); console.error('transport/route create error:', err); res.status(500).json({ error: err.message }); }
+  finally { conn.release(); }
+});
+
+// update route (+ replace points)
+app.put('/api/transport/route/:id', async (req, res) => {
+  const { route_name, route_code, vehicle_id, driver_id, conductor_id, notes, is_active, points, userId, userName } = req.body;
+  const id = req.params.id;
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    await conn.execute(
+      `UPDATE transport_routes SET route_name = ?, route_code = ?, vehicle_id = ?, driver_id = ?, conductor_id = ?, notes = ?, is_active = ?,
+              updated_by = ?, updated_by_name = ?, updated_at = NOW() WHERE id = ?`,
+      [route_name, route_code || null, vehicle_id ?? null, driver_id ?? null, conductor_id ?? null, notes || null, is_active === false ? 0 : 1, userId ?? null, userName ?? null, id]
+    );
+    if (Array.isArray(points)) {
+      await conn.execute('DELETE FROM transport_route_points WHERE route_id = ?', [id]);
+      await insertPoints(conn, id, points);
+    }
+    await conn.commit();
+    res.json({ success: true });
+  } catch (err) { await conn.rollback(); console.error('transport/route update error:', err); res.status(500).json({ error: err.message }); }
+  finally { conn.release(); }
+});
+
+app.delete('/api/transport/route/:id', async (req, res) => {
+  try { await db.execute('DELETE FROM transport_routes WHERE id = ?', [req.params.id]); res.json({ success: true }); }
+  catch (err) { console.error('transport/route delete error:', err); res.status(500).json({ error: err.message }); }
+});
+
+async function insertPoints(conn, routeId, points) {
+  const pickup = points.filter(p => p.point_type === 'pickup');
+  const drop = points.filter(p => p.point_type === 'drop');
+  const write = async (list) => {
+    for (let i = 0; i < list.length; i++) {
+      const p = list[i];
+      if (!(p.title || '').trim()) continue;
+      await conn.execute(
+        `INSERT INTO transport_route_points (route_id, point_type, title, location_link, latitude, longitude, seq_order, arrival_time, notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [routeId, p.point_type, p.title.trim(), p.location_link || null,
+         p.latitude ?? null, p.longitude ?? null, i, p.arrival_time || null, p.notes || null]
+      );
+    }
+  };
+  await write(pickup);
+  await write(drop);
+}
+
+// ---------- ROUTE STUDENTS ----------
+app.get('/api/transport/route-students/:routeId', async (req, res) => {
+  try {
+    const [rows] = await db.execute(
+      `SELECT rs.id, rs.student_id, rs.pickup_point_id, rs.drop_point_id, u.name, u.roll_no, u.class_id
+         FROM transport_route_students rs JOIN users u ON u.id = rs.student_id
+        WHERE rs.route_id = ?`,
+      [req.params.routeId]
+    );
+    rows.sort((a, b) => {
+      const ra = parseInt(a.roll_no, 10), rb = parseInt(b.roll_no, 10);
+      if (!isNaN(ra) && !isNaN(rb)) return ra - rb;
+      return (a.name || '').localeCompare(b.name || '');
+    });
+    res.json(rows);
+  } catch (err) { console.error('transport/route-students error:', err); res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/transport/route-students', async (req, res) => {
+  const { institutionId, route_id, student_ids = [], pickup_point_id, drop_point_id, userId, userName } = req.body;
+  if (!institutionId || !route_id || !student_ids.length) return res.status(400).json({ error: 'institutionId, route_id and student_ids are required.' });
+  try {
+    const yearId = await resolveYearId(institutionId);
+    for (const sid of student_ids) {
+      await db.execute(
+        `INSERT INTO transport_route_students (institutionId, academic_year_id, route_id, student_id, pickup_point_id, drop_point_id, created_by, created_by_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE pickup_point_id = VALUES(pickup_point_id), drop_point_id = VALUES(drop_point_id)`,
+        [institutionId, yearId ?? null, route_id, sid, pickup_point_id ?? null, drop_point_id ?? null, userId ?? null, userName ?? null]
+      );
+    }
+    res.json({ success: true, added: student_ids.length });
+  } catch (err) { console.error('transport/route-students add error:', err); res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/transport/route-student/:id', async (req, res) => {
+  try { await db.execute('DELETE FROM transport_route_students WHERE id = ?', [req.params.id]); res.json({ success: true }); }
+  catch (err) { console.error('transport/route-student delete error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// ---------- ATTENDANCE (conductor) ----------
+app.get('/api/transport/attendance/:routeId', async (req, res) => {
+  const { trip_type, date } = req.query;
+  try {
+    const [rows] = await db.execute(
+      `SELECT student_id, status, point_id, marked_by_name, marked_at
+         FROM transport_attendance
+        WHERE route_id = ? AND (trip_type <=> ?) AND (attendance_date <=> ?)`,
+      [req.params.routeId, trip_type ?? null, date ?? null]
+    );
+    res.json(rows);
+  } catch (err) { console.error('transport/attendance get error:', err); res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/transport/attendance', async (req, res) => {
+  const { institutionId, route_id, trip_type, attendance_date, records = [], userId, userName } = req.body;
+  if (!institutionId || !route_id || !trip_type || !attendance_date) return res.status(400).json({ error: 'institutionId, route_id, trip_type and date are required.' });
+  try {
+    for (const r of records) {
+      await db.execute(
+        `INSERT INTO transport_attendance (institutionId, route_id, student_id, trip_type, attendance_date, status, point_id, marked_by, marked_by_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE status = VALUES(status), point_id = VALUES(point_id), marked_by = VALUES(marked_by), marked_by_name = VALUES(marked_by_name), marked_at = NOW()`,
+        [institutionId, route_id, r.student_id, trip_type, attendance_date, r.status === 'present' ? 'present' : 'absent', r.point_id ?? null, userId ?? null, userName ?? null]
+      );
+    }
+    res.json({ success: true, saved: records.length });
+  } catch (err) { console.error('transport/attendance save error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// ---- Classes (for the Assign Students class picker) ----
+app.get('/api/transport/classes/:institutionId', async (req, res) => {
+  try {
+    const [rows] = await db.execute(
+      'SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section',
+      [req.params.institutionId]
+    );
+    res.json(rows);
+  } catch (err) { console.error('transport/classes error:', err); res.status(500).json({ error: err.message }); }
 });
 
 

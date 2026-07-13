@@ -45,6 +45,14 @@ export const MODULES = [
     navigateTo: '/FeeManagement'
   },
   {
+    id: 'Transport',
+    module_name: 'Transport',
+    label: 'Transport',
+    title: 'Transport',
+    imageSource: 'https://cdn-icons-png.flaticon.com/128/2945/2945694.png',
+    navigateTo: '/Transport'
+  },
+  {
     id: 'timetable',
     module_name: 'Timetable',
     label: 'Timetable',

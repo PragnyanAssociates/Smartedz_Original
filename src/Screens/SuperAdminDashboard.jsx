@@ -5,6 +5,7 @@ import Overview from './Overview';
 import ManageLogin from './ManageLogin';
 import FeeManagement from '../components/Fee/FeeManagement';
 import DailyExpenses from '../components/DailyExpenses/DailyExpenses';
+import Transport from '../components/Transport/Transport';
 import Timetable from '../components/Timetable/Timetable';
 import AcademicCalendar from '../components/Calendar/AcademicCalendar';
 import Attendance from '../components/Attendance/Attendance';
@@ -85,8 +86,9 @@ function DashboardShell() {
     switch (activeTab) {
       case 'overview':          return <Overview />;
       case 'manage-login':      return <ManageLogin />;
-      case 'DailyExpenses':      return <DailyExpenses />;
-      case 'FeeManagement':      return <FeeManagement />;
+      case 'DailyExpenses':     return <DailyExpenses />;
+      case 'FeeManagement':     return <FeeManagement />;
+      case 'Transport':         return <Transport />;
       case 'timetable':         return <Timetable />;
       case 'academic-calendar': return <AcademicCalendar />;
       case 'attendance':        return <Attendance />;
