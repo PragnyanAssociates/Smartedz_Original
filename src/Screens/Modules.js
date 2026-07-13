@@ -28,6 +28,14 @@ export const MODULES = [
     imageSource: 'https://cdn-icons-png.flaticon.com/128/15096/15096966.png',
     navigateTo: '/ManageLogins'
   },
+   {
+    id: 'DailyExpenses',
+    module_name: 'DailyExpenses',
+    label: 'Daily Expenses',
+    title: 'Daily Expenses',
+    imageSource: 'https://cdn-icons-png.flaticon.com/128/10758/10758868.png',
+    navigateTo: '/DailyExpenses'
+  },
   {
     id: 'FeeManagement',
     module_name: 'FeeManagement',
@@ -35,14 +43,6 @@ export const MODULES = [
     title: 'Fee Management',
     imageSource: 'https://cdn-icons-png.flaticon.com/128/6394/6394798.png',
     navigateTo: '/FeeManagement'
-  },
-  {
-    id: 'DailyExpenses',
-    module_name: 'DailyExpenses',
-    label: 'Daily Expenses',
-    title: 'Daily Expenses',
-    imageSource: 'https://cdn-icons-png.flaticon.com/128/10758/10758868.png',
-    navigateTo: '/DailyExpenses'
   },
   {
     id: 'timetable',

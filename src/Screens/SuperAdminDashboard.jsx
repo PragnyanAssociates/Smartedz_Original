@@ -85,8 +85,8 @@ function DashboardShell() {
     switch (activeTab) {
       case 'overview':          return <Overview />;
       case 'manage-login':      return <ManageLogin />;
-      case 'FeeManagement':      return <FeeManagement />;
       case 'DailyExpenses':      return <DailyExpenses />;
+      case 'FeeManagement':      return <FeeManagement />;
       case 'timetable':         return <Timetable />;
       case 'academic-calendar': return <AcademicCalendar />;
       case 'attendance':        return <Attendance />;
