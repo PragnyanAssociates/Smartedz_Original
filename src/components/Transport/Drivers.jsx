@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Users, Plus, Trash2, X, ChevronDown, UserPlus, Search, Check } from 'lucide-react';
+import { Users, Plus, Trash2, X, ChevronDown, UserPlus, Search, Check, Eye, Pencil, Save } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
 
 export default function Drivers({ user, canEdit, canDelete }) {
@@ -7,6 +7,9 @@ export default function Drivers({ user, canEdit, canDelete }) {
   const [rows, setRows]       = useState([]);
   const [loading, setLoading] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
+  const [viewing, setViewing] = useState(null);   // staff row
+  const [editing, setEditing] = useState(null);   // {id, license_no, phone, is_active}
+  const [savingEdit, setSavingEdit] = useState(false);
   const [busyId, setBusyId]   = useState(null);
 
   const load = useCallback(async () => {
@@ -29,6 +32,18 @@ export default function Drivers({ user, canEdit, canDelete }) {
       const res = await fetch(`${API_BASE_URL}/transport/staff/${id}`, { method: 'DELETE' });
       if (res.ok) await load();
     } finally { setBusyId(null); }
+  };
+
+  const saveEdit = async () => {
+    setSavingEdit(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/transport/staff/${editing.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ license_no: editing.license_no, phone: editing.phone, is_active: editing.is_active })
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); alert(e.error || 'Could not save.'); }
+      else { setEditing(null); await load(); }
+    } finally { setSavingEdit(false); }
   };
 
   return (
@@ -73,7 +88,9 @@ export default function Drivers({ user, canEdit, canDelete }) {
                       </span>
                     </td>
                     <td className="px-5 py-3">
-                      <div className="flex justify-end">
+                      <div className="flex justify-end gap-1">
+                        <button onClick={() => setViewing(s)} className="p-1.5 text-zinc-400 hover:text-primary rounded" title="View"><Eye className="size-4" /></button>
+                        {canEdit && <button onClick={() => setEditing({ id: s.id, license_no: s.license_no || '', phone: s.phone || '', is_active: !!s.is_active })} className="p-1.5 text-zinc-400 hover:text-primary rounded" title="Edit"><Pencil className="size-4" /></button>}
                         {canDelete && <button onClick={() => del(s.id)} disabled={busyId === s.id} className="p-1.5 text-zinc-400 hover:text-accent rounded disabled:opacity-40" title="Remove"><Trash2 className="size-4" /></button>}
                       </div>
                     </td>
@@ -88,8 +105,54 @@ export default function Drivers({ user, canEdit, canDelete }) {
       </div>
 
       {addOpen && <AddStaffModal user={user} staffRole={tab} existing={rows.map(r => r.user_id)} onClose={() => setAddOpen(false)} onAdded={() => { setAddOpen(false); load(); }} />}
+
+      {viewing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={() => setViewing(null)}>
+          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-sm shadow-xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="bg-primary text-white px-5 py-3 flex items-center justify-between">
+              <span className="text-sm font-bold flex items-center gap-2"><Users className="size-4" /> {viewing.name}</span>
+              <button onClick={() => setViewing(null)} className="text-white/80 hover:text-white"><X className="size-5" /></button>
+            </div>
+            <div className="p-5 space-y-2.5 text-sm">
+              <VRow label="Role" value={viewing.staff_role} />
+              <VRow label="License No" value={viewing.license_no || '—'} />
+              <VRow label="Phone" value={viewing.phone || '—'} />
+              <VRow label="Status" value={viewing.is_active ? 'Active' : 'Inactive'} />
+              {viewing.created_by_name && <VRow label="Added by" value={viewing.created_by_name} />}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={() => setEditing(null)}>
+          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-sm p-5 shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="text-sm font-semibold text-zinc-900">Edit {tab}</h4>
+              <button onClick={() => setEditing(null)} className="text-zinc-400 hover:text-zinc-700"><X className="size-5" /></button>
+            </div>
+            <div className="space-y-3">
+              <div className="flex flex-col"><label className="text-xs font-medium text-zinc-600 mb-1.5">License No</label>
+                <input value={editing.license_no} onChange={e => setEditing(m => ({ ...m, license_no: e.target.value }))} className={inputCls} placeholder="For drivers" /></div>
+              <div className="flex flex-col"><label className="text-xs font-medium text-zinc-600 mb-1.5">Phone</label>
+                <input value={editing.phone} onChange={e => setEditing(m => ({ ...m, phone: e.target.value.replace(/[^\d+ ]/g, '') }))} className={inputCls} inputMode="tel" /></div>
+              <label className="flex items-center gap-2 text-xs text-zinc-600 cursor-pointer">
+                <input type="checkbox" checked={editing.is_active} onChange={e => setEditing(m => ({ ...m, is_active: e.target.checked }))} className="accent-primary" /> Active
+              </label>
+            </div>
+            <div className="flex justify-end gap-2 mt-5">
+              <button onClick={() => setEditing(null)} className="px-4 py-2 rounded-md text-xs font-medium text-zinc-700 ring-1 ring-zinc-200 hover:bg-zinc-50">Cancel</button>
+              <button onClick={saveEdit} disabled={savingEdit} className="inline-flex items-center gap-1.5 bg-primary text-white px-4 py-2 rounded-md text-xs font-semibold hover:bg-primary/90 disabled:opacity-60"><Save className="size-3.5" /> {savingEdit ? 'Saving…' : 'Save'}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+function VRow({ label, value }) {
+  return <div className="flex items-center justify-between gap-4"><span className="text-zinc-500 text-xs shrink-0">{label}</span><span className="font-medium text-zinc-900 text-right">{value}</span></div>;
 }
 
 // role -> users -> checkbox select -> register as Driver/Conductor

@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Route as RouteIcon, Plus, Pencil, Trash2, ChevronLeft, MapPin, Bus, User, Users, X, Save, ChevronDown, MapPinned } from 'lucide-react';
+import { Route as RouteIcon, Plus, Pencil, Trash2, ChevronLeft, MapPin, Bus, User, Users, X, Save, ChevronDown, MapPinned, Eye, ExternalLink, Navigation } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
 import LeafletMap, { parseLatLng } from './LeafletMap';
 
 export default function Routes({ user, canEdit, canDelete }) {
-  const [mode, setMode]       = useState('list');   // 'list' | 'edit'
+  const [mode, setMode]       = useState('list');   // 'list' | 'edit' | 'view'
   const [editingId, setEditingId] = useState(null);
+  const [viewingId, setViewingId] = useState(null);
   const [rows, setRows]       = useState([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId]   = useState(null);
@@ -29,6 +30,11 @@ export default function Routes({ user, canEdit, canDelete }) {
     try { const res = await fetch(`${API_BASE_URL}/transport/route/${id}`, { method: 'DELETE' }); if (res.ok) await load(); }
     finally { setBusyId(null); }
   };
+
+  if (mode === 'view') {
+    return <RouteView routeId={viewingId} onBack={() => { setMode('list'); setViewingId(null); }}
+      onEdit={canEdit ? () => { setEditingId(viewingId); setViewingId(null); setMode('edit'); } : null} />;
+  }
 
   if (mode === 'edit') {
     return <RouteEditor user={user} canEdit={canEdit} editingId={editingId}
@@ -74,6 +80,7 @@ export default function Routes({ user, canEdit, canDelete }) {
                     <td className="px-5 py-3 text-xs text-zinc-600 tabular-nums">{r.student_count}</td>
                     <td className="px-5 py-3">
                       <div className="flex items-center justify-end gap-1">
+                        <button onClick={() => { setViewingId(r.id); setMode('view'); }} className="p-1.5 text-zinc-400 hover:text-primary rounded" title="View"><Eye className="size-4" /></button>
                         {canEdit && <button onClick={() => { setEditingId(r.id); setMode('edit'); }} className="p-1.5 text-zinc-400 hover:text-primary rounded" title="Edit"><Pencil className="size-4" /></button>}
                         {canDelete && <button onClick={() => del(r.id)} disabled={busyId === r.id} className="p-1.5 text-zinc-400 hover:text-accent rounded disabled:opacity-40" title="Delete"><Trash2 className="size-4" /></button>}
                       </div>
@@ -107,6 +114,7 @@ function RouteEditor({ user, canEdit, editingId, onBack, onSaved }) {
   const [pickupPts, setPickupPts] = useState([]);
   const [dropPts, setDropPts]     = useState([]);
   const [pointTab, setPointTab]   = useState('pickup');
+  const [resolving, setResolving] = useState(new Set());
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -155,6 +163,41 @@ function RouteEditor({ user, canEdit, editingId, onBack, onSaved }) {
   }));
   const removePoint = (i) => setCur(list => list.filter((_, idx) => idx !== i));
 
+  // Resolve one point's link (used on blur). Short goo.gl links resolve via the backend.
+  const resolveLink = async (i, tabAtCall) => {
+    const list = tabAtCall === 'pickup' ? pickupPts : dropPts;
+    const setFn = tabAtCall === 'pickup' ? setPickupPts : setDropPts;
+    const p = list[i];
+    if (!p) return;
+    const link = (p.location_link || '').trim();
+    if (!link) return;
+    const local = parseLatLng(link);
+    if (local) { setFn(l => l.map((x, idx) => idx === i ? { ...x, lat: local.lat, lng: local.lng } : x)); return; }
+    if (!/^https?:\/\//i.test(link)) return;
+    const key = `${tabAtCall}-${i}`;
+    setResolving(s => new Set(s).add(key));
+    try {
+      const d = await fetch(`${API_BASE_URL}/transport/resolve-link?url=${encodeURIComponent(link)}`).then(r => r.json());
+      if (d.lat != null && d.lng != null) setFn(l => l.map((x, idx) => idx === i ? { ...x, lat: d.lat, lng: d.lng } : x));
+    } catch { /* ignore */ }
+    finally { setResolving(s => { const n = new Set(s); n.delete(key); return n; }); }
+  };
+
+  // Resolve every unpinned URL point (used on save).
+  const resolveArr = async (arr) => Promise.all(arr.map(async (p) => {
+    if (p.lat != null && p.lng != null) return p;
+    const link = (p.location_link || '').trim();
+    const local = parseLatLng(link);
+    if (local) return { ...p, lat: local.lat, lng: local.lng };
+    if (/^https?:\/\//i.test(link)) {
+      try {
+        const d = await fetch(`${API_BASE_URL}/transport/resolve-link?url=${encodeURIComponent(link)}`).then(r => r.json());
+        if (d.lat != null && d.lng != null) return { ...p, lat: d.lat, lng: d.lng };
+      } catch { /* ignore */ }
+    }
+    return p;
+  }));
+
   const mapPoints = [
     ...pickupPts.map(p => ({ ...p, point_type: 'pickup' })),
     ...dropPts.map(p => ({ ...p, point_type: 'drop' })),
@@ -164,9 +207,12 @@ function RouteEditor({ user, canEdit, editingId, onBack, onSaved }) {
     if (!form.route_name.trim()) return alert('Route name is required.');
     setSaving(true);
     try {
+      // Resolve any pasted map links to coordinates before saving.
+      const [rp, rd] = await Promise.all([resolveArr(pickupPts), resolveArr(dropPts)]);
+      setPickupPts(rp); setDropPts(rd);
       const points = [
-        ...pickupPts.map(p => ({ point_type: 'pickup', ...clean(p) })),
-        ...dropPts.map(p => ({ point_type: 'drop', ...clean(p) })),
+        ...rp.map(p => ({ point_type: 'pickup', ...clean(p) })),
+        ...rd.map(p => ({ point_type: 'drop', ...clean(p) })),
       ].filter(p => (p.title || '').trim());
       const body = {
         institutionId: user.institutionId,
@@ -221,16 +267,17 @@ function RouteEditor({ user, canEdit, editingId, onBack, onSaved }) {
               {cur.length === 0 && <p className="text-xs text-zinc-400 italic text-center py-4">No {pointTab} points yet. Add a row or click the map.</p>}
               {cur.map((p, i) => {
                 const pinned = p.lat != null && p.lng != null;
+                const isResolving = resolving.has(`${pointTab}-${i}`);
                 return (
                   <div key={i} className="ring-1 ring-zinc-200 rounded-md p-3 space-y-2">
                     <div className="flex items-center gap-2">
                       <span className={`size-6 shrink-0 rounded-full text-white text-[10px] font-bold flex items-center justify-center ${pointTab === 'pickup' ? 'bg-primary' : 'bg-accent'}`}>{i + 1}</span>
                       <input value={p.title} onChange={e => updatePoint(i, 'title', e.target.value)} placeholder="Point title (e.g. Main Gate)" className="flex-1 h-8 px-2 text-sm outline-none bg-transparent border-b border-transparent focus:border-primary/40" />
-                      <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${pinned ? 'text-green-700 bg-green-50' : 'text-zinc-400 bg-zinc-100'}`}>{pinned ? 'pinned' : 'not pinned'}</span>
+                      <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${isResolving ? 'text-blue-600 bg-blue-50' : pinned ? 'text-green-700 bg-green-50' : 'text-zinc-400 bg-zinc-100'}`}>{isResolving ? 'resolving…' : pinned ? 'pinned' : 'not pinned'}</span>
                       <button onClick={() => removePoint(i)} className="text-zinc-300 hover:text-accent"><Trash2 className="size-4" /></button>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2">
-                      <input value={p.location_link} onChange={e => updatePoint(i, 'location_link', e.target.value)} placeholder="Paste Google Maps link or lat,lng" className={`${inputCls} h-8 text-xs`} />
+                      <input value={p.location_link} onChange={e => updatePoint(i, 'location_link', e.target.value)} onBlur={() => resolveLink(i, pointTab)} placeholder="Paste Google Maps link or lat,lng" className={`${inputCls} h-8 text-xs`} />
                       <input value={p.arrival_time} onChange={e => updatePoint(i, 'arrival_time', e.target.value)} placeholder="08:15 AM" className={`${inputCls} h-8 text-xs w-full sm:w-28`} />
                     </div>
                   </div>
@@ -287,6 +334,126 @@ function Select({ value, onChange, options, icon: Icon, empty }) {
       {Icon && <Icon className="size-4 text-zinc-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />}
       <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
       {only && empty && <p className="text-[10px] text-amber-600 mt-1">{empty}</p>}
+    </div>
+  );
+}
+
+// =================================================================
+//  Route view (read-only) — points left, road-routed map right
+// =================================================================
+function gmapsDir(list) {
+  const pts = list.filter(p => p.lat != null && p.lng != null);
+  if (!pts.length) return null;
+  const origin = `${pts[0].lat},${pts[0].lng}`;
+  const destination = `${pts[pts.length - 1].lat},${pts[pts.length - 1].lng}`;
+  const waypoints = pts.slice(1, -1).map(p => `${p.lat},${p.lng}`).join('|');
+  let url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}&travelmode=driving`;
+  if (waypoints) url += `&waypoints=${encodeURIComponent(waypoints)}`;
+  return url;
+}
+
+function RouteView({ routeId, onBack, onEdit }) {
+  const [route, setRoute] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setLoading(true);
+      try {
+        const r = await fetch(`${API_BASE_URL}/transport/route/${routeId}`).then(x => x.json());
+        if (alive) setRoute(r || null);
+      } catch { if (alive) setRoute(null); }
+      if (alive) setLoading(false);
+    })();
+    return () => { alive = false; };
+  }, [routeId]);
+
+  if (loading) return <div className="h-96 flex items-center justify-center"><div className="size-8 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" /></div>;
+  if (!route) return <div className="p-8 text-center text-sm text-zinc-400">Route not found.</div>;
+
+  const pts = (route.points || []).map(p => ({ ...p, lat: p.latitude != null ? Number(p.latitude) : null, lng: p.longitude != null ? Number(p.longitude) : null }));
+  const pickups = pts.filter(p => p.point_type === 'pickup');
+  const drops = pts.filter(p => p.point_type === 'drop');
+  const mapPoints = pts.map(p => ({ point_type: p.point_type, title: p.title, lat: p.lat, lng: p.lng }));
+  const pickupNav = gmapsDir(pickups);
+  const dropNav = gmapsDir(drops);
+
+  const PointList = ({ title, list, color }) => (
+    <div>
+      <p className="text-xs font-semibold text-zinc-700 mb-2 flex items-center gap-1.5"><span className="size-2.5 rounded-full" style={{ backgroundColor: color }} /> {title} <span className="text-zinc-400 font-normal">({list.length})</span></p>
+      {list.length ? (
+        <div className="space-y-2">
+          {list.map((p, i) => (
+            <div key={p.id} className="flex items-center gap-2.5 ring-1 ring-zinc-200 rounded-md px-3 py-2">
+              <span className="size-6 shrink-0 rounded-full text-white text-[10px] font-bold flex items-center justify-center" style={{ backgroundColor: color }}>{i + 1}</span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm text-zinc-900 truncate">{p.title}{p.arrival_time ? <span className="text-zinc-400 font-normal"> · {p.arrival_time}</span> : ''}</p>
+                {p.location_link && <a href={p.location_link} target="_blank" rel="noreferrer" className="text-[11px] text-primary hover:underline inline-flex items-center gap-1 truncate"><MapPin className="size-3" /> location</a>}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : <p className="text-[11px] text-zinc-400 italic">No {title.toLowerCase()} points.</p>}
+    </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      <button onClick={onBack} className="inline-flex items-center gap-1.5 text-xs font-medium text-zinc-500 hover:text-primary"><ChevronLeft className="size-4" /> Back to routes</button>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+        {/* Left — details + points */}
+        <div className="space-y-5">
+          <div className="ring-1 ring-black/5 rounded-lg bg-white p-5">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-base font-bold text-zinc-900 flex items-center gap-2"><RouteIcon className="size-4 text-primary" /> {route.route_name}</h3>
+                {route.route_code && <p className="text-[11px] text-zinc-400 mt-0.5 ml-6">{route.route_code}</p>}
+              </div>
+              {onEdit && <button onClick={onEdit} className="inline-flex items-center gap-1.5 text-xs font-medium text-primary ring-1 ring-primary/30 px-3 py-1.5 rounded-md hover:bg-primary/5"><Pencil className="size-3.5" /> Edit</button>}
+            </div>
+            <div className="grid grid-cols-3 gap-3 mt-4 text-xs">
+              <Meta icon={Bus} label="Vehicle" value={route.vehicle_no || '—'} />
+              <Meta icon={User} label="Driver" value={route.driver_name || '—'} />
+              <Meta icon={Users} label="Conductor" value={route.conductor_name || '—'} />
+            </div>
+          </div>
+
+          <div className="ring-1 ring-black/5 rounded-lg bg-white p-5 space-y-5">
+            <PointList title="Pickup" list={pickups} color="#3284c7" />
+            <div className="border-t border-zinc-100" />
+            <PointList title="Drop" list={drops} color="#f29132" />
+          </div>
+        </div>
+
+        {/* Right — map */}
+        <div className="lg:sticky lg:top-4">
+          <div className="ring-1 ring-black/5 rounded-lg bg-white p-3">
+            <div className="flex items-center justify-between gap-2 mb-2 px-1 flex-wrap">
+              <div className="flex items-center gap-3">
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-700"><MapPinned className="size-4 text-primary" /> Route Map</span>
+                <span className="inline-flex items-center gap-1 text-[10px] text-zinc-500"><span className="size-2.5 rounded-full bg-primary" /> Pickup</span>
+                <span className="inline-flex items-center gap-1 text-[10px] text-zinc-500"><span className="size-2.5 rounded-full bg-accent" /> Drop</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {pickupNav && <a href={pickupNav} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[10px] font-medium text-primary hover:underline"><Navigation className="size-3" /> Pickup</a>}
+                {dropNav && <a href={dropNav} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[10px] font-medium text-accent hover:underline"><Navigation className="size-3" /> Drop</a>}
+              </div>
+            </div>
+            <LeafletMap points={mapPoints} routed height={560} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Meta({ icon: Icon, label, value }) {
+  return (
+    <div className="rounded-md bg-zinc-50 ring-1 ring-zinc-100 p-2.5">
+      <p className="text-[10px] text-zinc-400 uppercase tracking-wider flex items-center gap-1"><Icon className="size-3" /> {label}</p>
+      <p className="text-sm font-medium text-zinc-900 truncate mt-0.5">{value}</p>
     </div>
   );
 }

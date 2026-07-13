@@ -11547,6 +11547,38 @@ app.get('/api/transport/classes/:institutionId', async (req, res) => {
   } catch (err) { console.error('transport/classes error:', err); res.status(500).json({ error: err.message }); }
 });
 
+// ---- Resolve a (possibly shortened) Google Maps link to lat/lng ----
+function tParseLatLng(str) {
+  if (!str) return null;
+  const s = String(str);
+  let m = s.match(/@(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)/);                                   if (m) return { lat: +m[1], lng: +m[2] };
+  m = s.match(/[?&](?:q|query|ll|destination|center|daddr|sll)=(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)/); if (m) return { lat: +m[1], lng: +m[2] };
+  m = s.match(/!3d(-?\d{1,3}\.\d+)!4d(-?\d{1,3}\.\d+)/);                                    if (m) return { lat: +m[1], lng: +m[2] };
+  m = s.match(/\/(-?\d{1,2}\.\d{3,}),(-?\d{1,3}\.\d{3,})/);                                 if (m) return { lat: +m[1], lng: +m[2] };
+  m = s.match(/^\s*(-?\d{1,3}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)\s*$/);                            if (m) return { lat: +m[1], lng: +m[2] };
+  return null;
+}
+
+app.get('/api/transport/resolve-link', async (req, res) => {
+  const { url } = req.query;
+  if (!url) return res.status(400).json({ error: 'url is required' });
+  try {
+    const r = await fetch(url, {
+      redirect: 'follow',
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36' }
+    });
+    // Try the final (expanded) URL first, then a decoded version, then the body.
+    let ll = tParseLatLng(r.url);
+    if (!ll) { try { ll = tParseLatLng(decodeURIComponent(r.url)); } catch { /* noop */ } }
+    if (!ll) { try { ll = tParseLatLng(await r.text()); } catch { /* noop */ } }
+    if (ll) return res.json({ lat: ll.lat, lng: ll.lng, resolved: r.url });
+    return res.json({ lat: null, lng: null, resolved: r.url });
+  } catch (err) {
+    console.error('resolve-link error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 
 // =====================================================================

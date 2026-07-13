@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Bus, Plus, Pencil, Trash2, X, Save, ChevronDown } from 'lucide-react';
+import { Bus, Plus, Pencil, Trash2, X, Save, ChevronDown, Eye } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
 
 const TYPES = ['Bus', 'Van', 'Auto', 'Car', 'Other'];
@@ -9,6 +9,7 @@ export default function Vehicles({ user, canEdit, canDelete }) {
   const [rows, setRows]       = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal]     = useState(null);   // {id?, ...form}
+  const [viewing, setViewing] = useState(null);   // vehicle row for read-only view
   const [saving, setSaving]   = useState(false);
   const [busyId, setBusyId]   = useState(null);
 
@@ -96,6 +97,7 @@ export default function Vehicles({ user, canEdit, canDelete }) {
                     </td>
                     <td className="px-5 py-3">
                       <div className="flex items-center justify-end gap-1">
+                        <button onClick={() => setViewing(v)} className="p-1.5 text-zinc-400 hover:text-primary rounded" title="View"><Eye className="size-4" /></button>
                         {canEdit && <button onClick={() => openEdit(v)} className="p-1.5 text-zinc-400 hover:text-primary rounded" title="Edit"><Pencil className="size-4" /></button>}
                         {canDelete && <button onClick={() => del(v.id)} disabled={busyId === v.id} className="p-1.5 text-zinc-400 hover:text-accent rounded disabled:opacity-40" title="Delete"><Trash2 className="size-4" /></button>}
                       </div>
@@ -145,6 +147,33 @@ export default function Vehicles({ user, canEdit, canDelete }) {
           </div>
         </div>
       )}
+      {viewing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={() => setViewing(null)}>
+          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-md shadow-xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="bg-primary text-white px-5 py-3 flex items-center justify-between">
+              <span className="text-sm font-bold flex items-center gap-2"><Bus className="size-4" /> {viewing.vehicle_no}</span>
+              <button onClick={() => setViewing(null)} className="text-white/80 hover:text-white"><X className="size-5" /></button>
+            </div>
+            <div className="p-5 space-y-2.5 text-sm">
+              <ViewRow label="Name / Model" value={viewing.vehicle_name || '—'} />
+              <ViewRow label="Type" value={viewing.vehicle_type || '—'} />
+              <ViewRow label="Capacity" value={viewing.capacity ?? '—'} />
+              <ViewRow label="Status" value={viewing.is_active ? 'Active' : 'Inactive'} />
+              {viewing.notes && <ViewRow label="Notes" value={viewing.notes} />}
+              {viewing.created_by_name && <ViewRow label="Added by" value={viewing.created_by_name} />}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ViewRow({ label, value }) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <span className="text-zinc-500 text-xs shrink-0">{label}</span>
+      <span className="font-medium text-zinc-900 text-right">{value}</span>
     </div>
   );
 }
