@@ -412,7 +412,9 @@ function RouteView({ routeId, user, canEdit, onBack, onEdit }) {
       (err) => { alert('Could not get location: ' + err.message); setTracking(false); },
       { enableHighAccuracy: true, maximumAge: 2000, timeout: 12000 }
     );
-    // immediate first post handled by first watch callback
+    // Launch turn-by-turn navigation through the route in Google Maps.
+    const nav = pickupNav || dropNav;
+    if (nav) window.open(nav, '_blank');
   };
 
   const stopTrip = () => {
@@ -480,8 +482,8 @@ function RouteView({ routeId, user, canEdit, onBack, onEdit }) {
             </div>
             <div className="grid grid-cols-3 gap-3 mt-4 text-xs">
               <Meta icon={Bus} label="Vehicle" value={route.vehicle_no || '—'} />
-              <Meta icon={User} label="Driver" value={route.driver_name || '—'} />
-              <Meta icon={Users} label="Conductor" value={route.conductor_name || '—'} />
+              <Meta icon={User} label="Driver" value={route.driver_name || '—'} phone={route.driver_phone} />
+              <Meta icon={Users} label="Conductor" value={route.conductor_name || '—'} phone={route.conductor_phone} />
             </div>
             {canDrive && (
               <p className="text-[11px] text-zinc-400 mt-3">
@@ -520,11 +522,14 @@ function RouteView({ routeId, user, canEdit, onBack, onEdit }) {
   );
 }
 
-function Meta({ icon: Icon, label, value }) {
+function Meta({ icon: Icon, label, value, phone }) {
   return (
     <div className="rounded-md bg-zinc-50 ring-1 ring-zinc-100 p-2.5">
       <p className="text-[10px] text-zinc-400 uppercase tracking-wider flex items-center gap-1"><Icon className="size-3" /> {label}</p>
       <p className="text-sm font-medium text-zinc-900 truncate mt-0.5">{value}</p>
+      {phone
+        ? <a href={`tel:${phone}`} className="text-[11px] text-primary hover:underline inline-flex items-center gap-1 mt-0.5">{phone}</a>
+        : null}
     </div>
   );
 }

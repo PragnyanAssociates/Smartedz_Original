@@ -29,8 +29,10 @@ export default function AssignStudents({ user, canEdit, canDelete }) {
           fetch(`${API_BASE_URL}/transport/routes/${user.institutionId}`).then(x => x.json()),
           fetch(`${API_BASE_URL}/transport/classes/${user.institutionId}`).then(x => x.json()),
         ]);
-        setRoutes(Array.isArray(r) ? r : []);
+        const rlist = Array.isArray(r) ? r : [];
+        setRoutes(rlist);
         setClasses(Array.isArray(c) ? c : []);
+        if (rlist.length) setRouteId(prev => prev || String(rlist[0].id));
       } catch { /* ignore */ }
     })();
   }, [user]);
@@ -103,24 +105,25 @@ export default function AssignStudents({ user, canEdit, canDelete }) {
 
   return (
     <div className="space-y-5">
-      {/* Route picker */}
-      <div className="ring-1 ring-black/5 rounded-lg bg-white p-4 flex flex-wrap items-center gap-3">
-        <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-700"><RouteIcon className="size-4 text-primary" /> Route</span>
-        <div className="relative">
-          <select value={routeId} onChange={e => setRouteId(e.target.value)} className={`${inputCls} appearance-none pr-8 cursor-pointer min-w-[240px]`}>
-            <option value="">Select a route…</option>
-            {routes.map(r => <option key={r.id} value={r.id}>{r.route_name}{r.route_code ? ` (${r.route_code})` : ''}</option>)}
-          </select>
-          <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+      {/* Route picker (only when routes exist) */}
+      {routes.length > 0 && (
+        <div className="ring-1 ring-black/5 rounded-lg bg-white p-4 flex flex-wrap items-center gap-3">
+          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-700"><RouteIcon className="size-4 text-primary" /> Route</span>
+          <div className="relative">
+            <select value={routeId} onChange={e => setRouteId(e.target.value)} className={`${inputCls} appearance-none pr-8 cursor-pointer min-w-[240px]`}>
+              {routes.map(r => <option key={r.id} value={r.id}>{r.route_name}{r.route_code ? ` (${r.route_code})` : ''}</option>)}
+            </select>
+            <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+          {route && <span className="text-[11px] text-zinc-500">{assigned.length} student{assigned.length === 1 ? '' : 's'} assigned</span>}
         </div>
-        {route && <span className="text-[11px] text-zinc-500">{assigned.length} student{assigned.length === 1 ? '' : 's'} assigned</span>}
-      </div>
+      )}
 
       {!routeId ? (
         <div className="ring-1 ring-black/5 rounded-lg bg-white p-10 text-center">
           <UserCheck className="size-6 text-zinc-300 mx-auto mb-3" />
-          <p className="text-sm font-medium text-zinc-700">Pick a route to assign students.</p>
-          <p className="text-xs text-zinc-500 mt-1">Create routes in the Routes tab first.</p>
+          <p className="text-sm font-medium text-zinc-700">No routes yet.</p>
+          <p className="text-xs text-zinc-500 mt-1">Create a route in the Routes tab first, then assign students here.</p>
         </div>
       ) : loadingRoute ? (
         <div className="h-48 flex items-center justify-center"><div className="size-7 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" /></div>

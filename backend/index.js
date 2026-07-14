@@ -11382,11 +11382,14 @@ app.get('/api/transport/routes/:institutionId', async (req, res) => {
 app.get('/api/transport/route/:id', async (req, res) => {
   try {
     const [rows] = await db.execute(
-      `SELECT r.*, v.vehicle_no, v.vehicle_name, d.name AS driver_name, c.name AS conductor_name
+      `SELECT r.*, v.vehicle_no, v.vehicle_name, d.name AS driver_name, c.name AS conductor_name,
+              ds.phone AS driver_phone, cs.phone AS conductor_phone
          FROM transport_routes r
          LEFT JOIN transport_vehicles v ON v.id = r.vehicle_id
          LEFT JOIN users d ON d.id = r.driver_id
          LEFT JOIN users c ON c.id = r.conductor_id
+         LEFT JOIN transport_staff ds ON ds.user_id = r.driver_id AND ds.staff_role = 'Driver' AND ds.institutionId = r.institutionId
+         LEFT JOIN transport_staff cs ON cs.user_id = r.conductor_id AND cs.staff_role = 'Conductor' AND cs.institutionId = r.institutionId
         WHERE r.id = ? LIMIT 1`,
       [req.params.id]
     );
@@ -11623,6 +11626,57 @@ app.get('/api/transport/track/:routeId', async (req, res) => {
     );
     res.json(rows[0] || null);
   } catch (err) { console.error('transport/track get error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// ---- Student self-view: their route, crew (with phones), points, attendance ----
+app.get('/api/transport/my/:studentId', async (req, res) => {
+  const studentId = req.params.studentId;
+  try {
+    const [rs] = await db.execute(
+      'SELECT route_id, pickup_point_id, drop_point_id FROM transport_route_students WHERE student_id = ? LIMIT 1',
+      [studentId]
+    );
+    if (!rs.length) return res.json({ route: null, points: [], attendance: [] });
+    const routeId = rs[0].route_id;
+
+    const [rows] = await db.execute(
+      `SELECT r.id, r.route_name, r.route_code, r.driver_id, r.conductor_id,
+              v.vehicle_no, v.vehicle_name, d.name AS driver_name, c.name AS conductor_name,
+              ds.phone AS driver_phone, cs.phone AS conductor_phone
+         FROM transport_routes r
+         LEFT JOIN transport_vehicles v ON v.id = r.vehicle_id
+         LEFT JOIN users d ON d.id = r.driver_id
+         LEFT JOIN users c ON c.id = r.conductor_id
+         LEFT JOIN transport_staff ds ON ds.user_id = r.driver_id AND ds.staff_role = 'Driver' AND ds.institutionId = r.institutionId
+         LEFT JOIN transport_staff cs ON cs.user_id = r.conductor_id AND cs.staff_role = 'Conductor' AND cs.institutionId = r.institutionId
+        WHERE r.id = ? LIMIT 1`,
+      [routeId]
+    );
+    const [points] = await db.execute(
+      'SELECT id, point_type, title, latitude, longitude, seq_order FROM transport_route_points WHERE route_id = ? ORDER BY point_type, seq_order, id',
+      [routeId]
+    );
+    const [att] = await db.execute(
+      'SELECT trip_type, attendance_date, status FROM transport_attendance WHERE route_id = ? AND student_id = ?',
+      [routeId, studentId]
+    );
+    res.json({
+      route: rows[0] || null,
+      pickup_point_id: rs[0].pickup_point_id, drop_point_id: rs[0].drop_point_id,
+      points, attendance: att
+    });
+  } catch (err) { console.error('transport/my error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// ---- Attendance records for one student (for the calendar) ----
+app.get('/api/transport/attendance/student/:studentId', async (req, res) => {
+  try {
+    const [rows] = await db.execute(
+      'SELECT trip_type, attendance_date, status FROM transport_attendance WHERE student_id = ?',
+      [req.params.studentId]
+    );
+    res.json(rows);
+  } catch (err) { console.error('transport/attendance/student error:', err); res.status(500).json({ error: err.message }); }
 });
 
 
