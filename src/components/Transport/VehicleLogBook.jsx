@@ -3,9 +3,9 @@ import { History, Wrench } from 'lucide-react';
 import DailyLog from './DailyLog';
 import ServiceRepair from './ServiceRepair';
 
-export default function VehicleLogBook({ user, canEdit, canDelete }) {
+export default function VehicleLogBook({ user, canEdit, canDelete, lockedVehicleId = null }) {
   const [tab, setTab] = useState('daily');
-  const props = { user, canEdit, canDelete };
+  const props = { user, canEdit, canDelete, lockedVehicleId };
 
   return (
     <div className="space-y-5">

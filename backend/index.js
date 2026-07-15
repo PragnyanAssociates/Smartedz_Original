@@ -11231,7 +11231,7 @@ app.get('/api/expenses/dashboard/:institutionId', async (req, res) => {
 //  are already defined above this section.
 // =================================================================
 
-// ---------- helpers: roles + users (for picking driver/conductor) ----------
+// ---------- helpers: roles + users (for picking driver/assistant) ----------
 app.get('/api/transport/roles/:institutionId', async (req, res) => {
   try {
     const [rows] = await db.execute(
@@ -11346,7 +11346,7 @@ app.delete('/api/transport/vehicle/:id', async (req, res) => {
   catch (err) { console.error('transport/vehicle delete error:', err); res.status(500).json({ error: err.message }); }
 });
 
-// ---------- STAFF (drivers & conductors) ----------
+// ---------- STAFF (drivers & assistants) ----------
 app.get('/api/transport/staff/:institutionId', async (req, res) => {
   const { staff_role } = req.query;
   try {
@@ -11382,7 +11382,7 @@ app.get('/api/transport/staff-details/:id', async (req, res) => {
   } catch (err) { console.error('transport/staff-details error:', err); res.status(500).json({ error: err.message }); }
 });
 
-// bulk add selected users as Driver/Conductor
+// bulk add selected users as Driver/Assistant
 app.post('/api/transport/staff', async (req, res) => {
   const { institutionId, staff_role, user_ids = [], userId, userName } = req.body;
   if (!institutionId || !staff_role || !user_ids.length) return res.status(400).json({ error: 'institutionId, staff_role and user_ids are required.' });
@@ -11428,13 +11428,13 @@ app.get('/api/transport/routes/:institutionId', async (req, res) => {
     const [rows] = await db.execute(
       `SELECT r.*, v.vehicle_no, v.vehicle_code, v.vehicle_name,
               (v.vehicle_image IS NOT NULL) AS vehicle_has_image,
-              d.name AS driver_name, c.name AS conductor_name,
+              d.name AS driver_name, c.name AS assistant_name,
               (SELECT COUNT(*) FROM transport_route_points p WHERE p.route_id = r.id) AS point_count,
               (SELECT COUNT(*) FROM transport_route_students s WHERE s.route_id = r.id) AS student_count
          FROM transport_routes r
          LEFT JOIN transport_vehicles v ON v.id = r.vehicle_id
          LEFT JOIN users d ON d.id = r.driver_id
-         LEFT JOIN users c ON c.id = r.conductor_id
+         LEFT JOIN users c ON c.id = r.assistant_id
         WHERE r.institutionId = ?
         ORDER BY r.route_name`,
       [req.params.institutionId]
@@ -11446,14 +11446,14 @@ app.get('/api/transport/routes/:institutionId', async (req, res) => {
 app.get('/api/transport/route/:id', async (req, res) => {
   try {
     const [rows] = await db.execute(
-      `SELECT r.*, v.vehicle_no, v.vehicle_name, d.name AS driver_name, c.name AS conductor_name,
-              ds.phone AS driver_phone, cs.phone AS conductor_phone
+      `SELECT r.*, v.vehicle_no, v.vehicle_name, d.name AS driver_name, c.name AS assistant_name,
+              ds.phone AS driver_phone, cs.phone AS assistant_phone
          FROM transport_routes r
          LEFT JOIN transport_vehicles v ON v.id = r.vehicle_id
          LEFT JOIN users d ON d.id = r.driver_id
-         LEFT JOIN users c ON c.id = r.conductor_id
+         LEFT JOIN users c ON c.id = r.assistant_id
          LEFT JOIN transport_staff ds ON ds.user_id = r.driver_id AND ds.staff_role = 'Driver' AND ds.institutionId = r.institutionId
-         LEFT JOIN transport_staff cs ON cs.user_id = r.conductor_id AND cs.staff_role = 'Conductor' AND cs.institutionId = r.institutionId
+         LEFT JOIN transport_staff cs ON cs.user_id = r.assistant_id AND cs.staff_role = 'Assistant' AND cs.institutionId = r.institutionId
         WHERE r.id = ? LIMIT 1`,
       [req.params.id]
     );
@@ -11468,16 +11468,16 @@ app.get('/api/transport/route/:id', async (req, res) => {
 
 // create route (+ points)
 app.post('/api/transport/route', async (req, res) => {
-  const { institutionId, route_name, route_code, vehicle_id, driver_id, conductor_id, notes, points = [], userId, userName } = req.body;
+  const { institutionId, route_name, route_code, vehicle_id, driver_id, assistant_id, notes, points = [], userId, userName } = req.body;
   if (!institutionId || !route_name) return res.status(400).json({ error: 'institutionId and route name are required.' });
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
     const yearId = await resolveYearId(institutionId);
     const [ins] = await conn.execute(
-      `INSERT INTO transport_routes (institutionId, academic_year_id, route_name, route_code, vehicle_id, driver_id, conductor_id, notes, created_by, created_by_name)
+      `INSERT INTO transport_routes (institutionId, academic_year_id, route_name, route_code, vehicle_id, driver_id, assistant_id, notes, created_by, created_by_name)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [institutionId, yearId ?? null, route_name, route_code || null, vehicle_id ?? null, driver_id ?? null, conductor_id ?? null, notes || null, userId ?? null, userName ?? null]
+      [institutionId, yearId ?? null, route_name, route_code || null, vehicle_id ?? null, driver_id ?? null, assistant_id ?? null, notes || null, userId ?? null, userName ?? null]
     );
     const routeId = ins.insertId;
     await insertPoints(conn, routeId, points);
@@ -11489,15 +11489,15 @@ app.post('/api/transport/route', async (req, res) => {
 
 // update route (+ replace points)
 app.put('/api/transport/route/:id', async (req, res) => {
-  const { route_name, route_code, vehicle_id, driver_id, conductor_id, notes, is_active, points, userId, userName } = req.body;
+  const { route_name, route_code, vehicle_id, driver_id, assistant_id, notes, is_active, points, userId, userName } = req.body;
   const id = req.params.id;
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
     await conn.execute(
-      `UPDATE transport_routes SET route_name = ?, route_code = ?, vehicle_id = ?, driver_id = ?, conductor_id = ?, notes = ?, is_active = ?,
+      `UPDATE transport_routes SET route_name = ?, route_code = ?, vehicle_id = ?, driver_id = ?, assistant_id = ?, notes = ?, is_active = ?,
               updated_by = ?, updated_by_name = ?, updated_at = NOW() WHERE id = ?`,
-      [route_name, route_code || null, vehicle_id ?? null, driver_id ?? null, conductor_id ?? null, notes || null, is_active === false ? 0 : 1, userId ?? null, userName ?? null, id]
+      [route_name, route_code || null, vehicle_id ?? null, driver_id ?? null, assistant_id ?? null, notes || null, is_active === false ? 0 : 1, userId ?? null, userName ?? null, id]
     );
     if (Array.isArray(points)) {
       await conn.execute('DELETE FROM transport_route_points WHERE route_id = ?', [id]);
@@ -11573,7 +11573,7 @@ app.delete('/api/transport/route-student/:id', async (req, res) => {
   catch (err) { console.error('transport/route-student delete error:', err); res.status(500).json({ error: err.message }); }
 });
 
-// ---------- ATTENDANCE (conductor) ----------
+// ---------- ATTENDANCE (assistant) ----------
 app.get('/api/transport/attendance/:routeId', async (req, res) => {
   const { trip_type, date } = req.query;
   try {
@@ -11704,15 +11704,15 @@ app.get('/api/transport/my/:studentId', async (req, res) => {
     const routeId = rs[0].route_id;
 
     const [rows] = await db.execute(
-      `SELECT r.id, r.route_name, r.route_code, r.driver_id, r.conductor_id,
-              v.vehicle_no, v.vehicle_name, d.name AS driver_name, c.name AS conductor_name,
-              ds.phone AS driver_phone, cs.phone AS conductor_phone
+      `SELECT r.id, r.route_name, r.route_code, r.driver_id, r.assistant_id,
+              v.vehicle_no, v.vehicle_name, d.name AS driver_name, c.name AS assistant_name,
+              ds.phone AS driver_phone, cs.phone AS assistant_phone
          FROM transport_routes r
          LEFT JOIN transport_vehicles v ON v.id = r.vehicle_id
          LEFT JOIN users d ON d.id = r.driver_id
-         LEFT JOIN users c ON c.id = r.conductor_id
+         LEFT JOIN users c ON c.id = r.assistant_id
          LEFT JOIN transport_staff ds ON ds.user_id = r.driver_id AND ds.staff_role = 'Driver' AND ds.institutionId = r.institutionId
-         LEFT JOIN transport_staff cs ON cs.user_id = r.conductor_id AND cs.staff_role = 'Conductor' AND cs.institutionId = r.institutionId
+         LEFT JOIN transport_staff cs ON cs.user_id = r.assistant_id AND cs.staff_role = 'Assistant' AND cs.institutionId = r.institutionId
         WHERE r.id = ? LIMIT 1`,
       [routeId]
     );
@@ -11947,6 +11947,68 @@ app.get('/api/transport/staff-photo/:id', async (req, res) => {
     );
     res.json({ image: rows[0]?.profile_pic || null });
   } catch (err) { console.error('transport/staff-photo error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// =================================================================
+//  CREW (Driver & Assistant) — scoped access
+//  Note: named CREW_ROLE_NAME to avoid clashing with CREW_ROLE
+//  defined near SYSTEM_ROLES at the top of index.js.
+// =================================================================
+const CREW_ROLE_NAME = 'Driver & Assistant';
+
+// Users who may be registered as transport crew — locked to the system role.
+app.get('/api/transport/crew-users/:institutionId', async (req, res) => {
+  try {
+    const [rows] = await db.execute(
+      `SELECT id, name, email, phone_no FROM users
+        WHERE institutionId = ? AND role = ?
+          AND LOWER(COALESCE(status,'active')) = 'active'
+        ORDER BY name`,
+      [req.params.institutionId, CREW_ROLE_NAME]
+    );
+    res.json(rows);
+  } catch (err) { console.error('transport/crew-users error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// Everything a driver / assistant is allowed to see: only THEIR routes.
+app.get('/api/transport/my-duty/:userId', async (req, res) => {
+  const userId = req.params.userId;
+  try {
+    const [staff] = await db.execute(
+      'SELECT id, staff_role, license_no, phone, is_active FROM transport_staff WHERE user_id = ?',
+      [userId]
+    );
+
+    const [routes] = await db.execute(
+      `SELECT r.id, r.route_name, r.route_code, r.notes, r.driver_id, r.assistant_id,
+              r.vehicle_id, v.vehicle_no, v.vehicle_code, v.vehicle_name, v.vehicle_type,
+              v.capacity, v.registration_date, (v.vehicle_image IS NOT NULL) AS vehicle_has_image,
+              d.name AS driver_name, a.name AS assistant_name,
+              ds.phone AS driver_phone, asx.phone AS assistant_phone,
+              (SELECT COUNT(*) FROM transport_route_students s WHERE s.route_id = r.id) AS student_count
+         FROM transport_routes r
+         LEFT JOIN transport_vehicles v ON v.id = r.vehicle_id
+         LEFT JOIN users d ON d.id = r.driver_id
+         LEFT JOIN users a ON a.id = r.assistant_id
+         LEFT JOIN transport_staff ds  ON ds.user_id  = r.driver_id    AND ds.staff_role  = 'Driver'    AND ds.institutionId = r.institutionId
+         LEFT JOIN transport_staff asx ON asx.user_id = r.assistant_id AND asx.staff_role = 'Assistant' AND asx.institutionId = r.institutionId
+        WHERE r.driver_id = ? OR r.assistant_id = ?
+        ORDER BY r.route_name`,
+      [userId, userId]
+    );
+
+    // Attach the points for each of their routes.
+    for (const r of routes) {
+      const [points] = await db.execute(
+        'SELECT id, point_type, title, location_link, latitude, longitude, seq_order, arrival_time FROM transport_route_points WHERE route_id = ? ORDER BY point_type, seq_order, id',
+        [r.id]
+      );
+      r.points = points;
+      r.my_role = String(r.driver_id) === String(userId) ? 'Driver' : 'Assistant';
+    }
+
+    res.json({ staff, routes });
+  } catch (err) { console.error('transport/my-duty error:', err); res.status(500).json({ error: err.message }); }
 });
 
 

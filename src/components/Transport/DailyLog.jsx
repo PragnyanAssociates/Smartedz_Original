@@ -12,7 +12,7 @@ const inr = (n) => new Intl.NumberFormat('en-IN', { style: 'currency', currency:
 const prettyDate = (k) => { const [y, m, d] = k.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }); };
 const firstOfMonth = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-01`;
 
-export default function DailyLog({ user, canEdit, canDelete }) {
+export default function DailyLog({ user, canEdit, canDelete, lockedVehicleId = null }) {
   const today = new Date();
   const [vehicles, setVehicles] = useState([]);
   const [cursor, setCursor]     = useState(new Date(today.getFullYear(), today.getMonth(), 1));
@@ -24,7 +24,7 @@ export default function DailyLog({ user, canEdit, canDelete }) {
 
   // range summary
   const [range, setRange]   = useState({ from: firstOfMonth(today), to: ymd(today) });
-  const [vehicleId, setVehicleId] = useState('');
+  const [vehicleId, setVehicleId] = useState(lockedVehicleId ? String(lockedVehicleId) : '');
   const [summary, setSummary] = useState(null);
 
   const year = cursor.getFullYear(), month = cursor.getMonth();
@@ -34,10 +34,11 @@ export default function DailyLog({ user, canEdit, canDelete }) {
     (async () => {
       try {
         const v = await fetch(`${API_BASE_URL}/transport/vehicles/${user.institutionId}`).then(x => x.json());
-        setVehicles(Array.isArray(v) ? v : []);
+        const list = Array.isArray(v) ? v : [];
+        setVehicles(lockedVehicleId ? list.filter(x => String(x.id) === String(lockedVehicleId)) : list);
       } catch { setVehicles([]); }
     })();
-  }, [user]);
+  }, [user, lockedVehicleId]);
 
   const loadMonth = useCallback(async () => {
     if (!user?.institutionId) return;
@@ -45,12 +46,13 @@ export default function DailyLog({ user, canEdit, canDelete }) {
     try {
       const from = `${year}-${pad(month + 1)}-01`;
       const to = `${year}-${pad(month + 1)}-${pad(new Date(year, month + 1, 0).getDate())}`;
-      const res = await fetch(`${API_BASE_URL}/transport/logs/${user.institutionId}?from=${from}&to=${to}`);
+      const vq = lockedVehicleId ? `&vehicle_id=${lockedVehicleId}` : '';
+      const res = await fetch(`${API_BASE_URL}/transport/logs/${user.institutionId}?from=${from}&to=${to}${vq}`);
       const json = await res.json();
       setMonthLogs(Array.isArray(json) ? json : []);
     } catch { setMonthLogs([]); }
     setLoading(false);
-  }, [user, year, month]);
+  }, [user, year, month, lockedVehicleId]);
 
   useEffect(() => { loadMonth(); }, [loadMonth]);
 
@@ -104,6 +106,7 @@ export default function DailyLog({ user, canEdit, canDelete }) {
           <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider self-center"><Filter className="size-3.5" /> Totals for period</span>
           <DateField label="From" value={range.from} onChange={v => setRange(r => ({ ...r, from: v }))} />
           <DateField label="To" value={range.to} onChange={v => setRange(r => ({ ...r, to: v }))} />
+          {!lockedVehicleId && (
           <div className="flex flex-col gap-1">
             <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Vehicle</span>
             <div className="relative">
@@ -115,6 +118,7 @@ export default function DailyLog({ user, canEdit, canDelete }) {
               <ChevronDown className="size-3.5 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
           </div>
+          )}
           <div className="flex gap-2 ml-auto self-center">
             <Quick label="This month" onClick={() => setRange({ from: firstOfMonth(today), to: ymd(today) })} />
             <Quick label="This year" onClick={() => setRange({ from: `${today.getFullYear()}-01-01`, to: ymd(today) })} />
@@ -202,7 +206,7 @@ export default function DailyLog({ user, canEdit, canDelete }) {
               <p className="text-[11px] text-zinc-500 mt-0.5">{num(dayTotals.trips)} trips · {num(dayTotals.distance)} km · {num(dayTotals.fuel)} L</p>
             </div>
             {canEdit && (
-              <button onClick={() => setModal({ vehicle_id: vehicles[0]?.id || '', log_date: selected, trips: '', distance_km: '', fuel_litres: '', fuel_cost: '', driver_name: '', notes: '' })}
+              <button onClick={() => setModal({ vehicle_id: lockedVehicleId || vehicles[0]?.id || '', log_date: selected, trips: '', distance_km: '', fuel_litres: '', fuel_cost: '', driver_name: '', notes: '' })}
                 className="inline-flex items-center gap-1.5 bg-primary text-white px-3.5 h-8 rounded-md text-xs font-semibold hover:bg-primary/90 shadow-sm">
                 <Plus className="size-3.5" /> Add Log
               </button>
@@ -245,12 +249,12 @@ export default function DailyLog({ user, canEdit, canDelete }) {
         </div>
       </div>
 
-      {modal && <LogModal user={user} vehicles={vehicles} value={modal} onClose={() => setModal(null)} onSaved={async () => { setModal(null); await refresh(); }} />}
+      {modal && <LogModal user={user} vehicles={vehicles} value={modal} locked={!!lockedVehicleId} onClose={() => setModal(null)} onSaved={async () => { setModal(null); await refresh(); }} />}
     </div>
   );
 }
 
-function LogModal({ user, vehicles, value, onClose, onSaved }) {
+function LogModal({ user, vehicles, value, onClose, onSaved, locked = false }) {
   const [f, setF] = useState(value);
   const [saving, setSaving] = useState(false);
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
@@ -279,7 +283,8 @@ function LogModal({ user, vehicles, value, onClose, onSaved }) {
           <div className="col-span-2">
             <Field label="Vehicle *">
               <div className="relative">
-                <select value={f.vehicle_id} onChange={e => set('vehicle_id', e.target.value)} className={`${inputCls} appearance-none pr-8 cursor-pointer`}>
+                <select value={f.vehicle_id} onChange={e => set('vehicle_id', e.target.value)} disabled={locked}
+                  className={`${inputCls} appearance-none pr-8 cursor-pointer disabled:bg-zinc-50 disabled:text-zinc-500`}>
                   <option value="">Select vehicle…</option>
                   {vehicles.map(v => <option key={v.id} value={v.id}>{v.vehicle_no}{v.vehicle_code ? ` · ${v.vehicle_code}` : ''}{v.vehicle_name ? ` · ${v.vehicle_name}` : ''}</option>)}
                 </select>

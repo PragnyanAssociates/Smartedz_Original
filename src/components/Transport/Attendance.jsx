@@ -5,7 +5,7 @@ import AttendanceCalendar from './AttendanceCalendar';
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
-export default function Attendance({ user, canEdit }) {
+export default function Attendance({ user, canEdit, lockedRouteId = null, routesOverride = null }) {
   const [routes, setRoutes]   = useState([]);
   const [routeId, setRouteId] = useState('');
   const [trip, setTrip]       = useState('pickup');
@@ -17,19 +17,28 @@ export default function Attendance({ user, canEdit }) {
   const [calFor, setCalFor]   = useState(null);    // student for calendar modal
 
   useEffect(() => {
+    // Crew screens pass their own routes; admins load every route.
+    if (routesOverride) {
+      setRoutes(routesOverride);
+      setRouteId(String(lockedRouteId || routesOverride[0]?.id || ''));
+      return;
+    }
     if (!user?.institutionId) return;
     (async () => {
       try {
         const r = await fetch(`${API_BASE_URL}/transport/routes/${user.institutionId}`).then(x => x.json());
         const list = Array.isArray(r) ? r : [];
         setRoutes(list);
-        if (list.length) setRouteId(String(list[0].id));
+        if (list.length) setRouteId(String(lockedRouteId || list[0].id));
       } catch { /* ignore */ }
     })();
-  }, [user]);
+  }, [user, routesOverride, lockedRouteId]);
 
   const route = routes.find(r => String(r.id) === String(routeId));
-  const canMark = canEdit || (route && String(user?.id) === String(route.conductor_id));
+  // The route's assistant marks attendance; the driver may also mark it (useful
+  // when no assistant is assigned). Admins with edit rights can always mark.
+  const isRouteCrew = route && (String(user?.id) === String(route.assistant_id) || String(user?.id) === String(route.driver_id));
+  const canMark = canEdit || isRouteCrew;
 
   const load = useCallback(async () => {
     if (!routeId) { setStudents([]); setStatus({}); return; }
@@ -63,7 +72,7 @@ export default function Attendance({ user, canEdit }) {
   }, [students, status]);
 
   const save = async () => {
-    if (!canMark) return alert('Only the route conductor or an admin can mark attendance.');
+    if (!canMark) return alert('Only the route assistant or an admin can mark attendance.');
     setSaving(true);
     try {
       const records = students.map(s => ({ student_id: s.student_id, status: status[s.student_id] || 'present' }));
@@ -82,13 +91,17 @@ export default function Attendance({ user, canEdit }) {
       <div className="ring-1 ring-black/5 rounded-lg bg-white p-4 flex flex-wrap items-center gap-4">
         <div className="flex items-center gap-2">
           <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-700"><RouteIcon className="size-4 text-primary" /> Route</span>
-          <div className="relative">
-            <select value={routeId} onChange={e => setRouteId(e.target.value)} className={`${inputCls} appearance-none pr-8 cursor-pointer min-w-[200px]`}>
-              {!routes.length && <option value="">No routes</option>}
-              {routes.map(r => <option key={r.id} value={r.id}>{r.route_name}{r.route_code ? ` (${r.route_code})` : ''}</option>)}
-            </select>
-            <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-          </div>
+          {lockedRouteId ? (
+            <span className="text-sm font-semibold text-zinc-900">{route?.route_name || '—'}{route?.route_code ? ` (${route.route_code})` : ''}</span>
+          ) : (
+            <div className="relative">
+              <select value={routeId} onChange={e => setRouteId(e.target.value)} className={`${inputCls} appearance-none pr-8 cursor-pointer min-w-[200px]`}>
+                {!routes.length && <option value="">No routes</option>}
+                {routes.map(r => <option key={r.id} value={r.id}>{r.route_name}{r.route_code ? ` (${r.route_code})` : ''}</option>)}
+              </select>
+              <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
+          )}
         </div>
         <div className="inline-flex items-center gap-1 bg-zinc-100 p-1 rounded-lg">
           {['pickup', 'drop'].map(t => (

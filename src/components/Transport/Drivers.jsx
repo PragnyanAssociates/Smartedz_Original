@@ -6,7 +6,7 @@ import { Thumb, Lightbox } from './ImageBits';
 const fmtDate = (v) => { if (!v) return '—'; const s = String(v).slice(0, 10); const [y, m, d] = s.split('-'); return d ? `${d}/${m}/${y}` : s; };
 
 export default function Drivers({ user, canEdit, canDelete }) {
-  const [tab, setTab]         = useState('Driver');   // 'Driver' | 'Conductor'
+  const [tab, setTab]         = useState('Driver');   // 'Driver' | 'Assistant'
   const [rows, setRows]       = useState([]);
   const [loading, setLoading] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
@@ -85,7 +85,7 @@ export default function Drivers({ user, canEdit, canDelete }) {
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="inline-flex items-center gap-1 bg-zinc-100 p-1 rounded-lg">
-          {['Driver', 'Conductor'].map(r => (
+          {['Driver', 'Assistant'].map(r => (
             <button key={r} onClick={() => setTab(r)}
               className={`px-3.5 py-1.5 rounded-md text-xs font-medium transition-colors ${tab === r ? 'bg-white text-primary shadow-sm' : 'text-zinc-600 hover:text-zinc-900'}`}>
               {r}s
@@ -293,40 +293,28 @@ function ProofShow({ title, img, onEnlarge }) {
   );
 }
 
-// role -> users -> checkbox select -> register as Driver/Conductor
+// Users with the permanent "Driver & Assistant" role -> checkbox -> register
+// as a Driver or an Assistant for transport.
 function AddStaffModal({ user, staffRole, existing, onClose, onAdded }) {
-  const [roles, setRoles]     = useState([]);
-  const [role, setRole]       = useState('');
   const [users, setUsers]     = useState([]);
-  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [loadingUsers, setLoadingUsers] = useState(true);
   const [picked, setPicked]   = useState(new Set());
   const [search, setSearch]   = useState('');
   const [saving, setSaving]   = useState(false);
 
   useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch(`${API_BASE_URL}/transport/roles/${user.institutionId}`);
-        const json = await res.json();
-        setRoles(Array.isArray(json) ? json : []);
-      } catch { setRoles([]); }
-    })();
-  }, [user]);
-
-  useEffect(() => {
-    if (!role) { setUsers([]); return; }
     let alive = true;
     (async () => {
       setLoadingUsers(true);
       try {
-        const res = await fetch(`${API_BASE_URL}/transport/users-by-role/${user.institutionId}?role=${encodeURIComponent(role)}`);
+        const res = await fetch(`${API_BASE_URL}/transport/crew-users/${user.institutionId}`);
         const json = await res.json();
-        if (alive) { setUsers(Array.isArray(json) ? json : []); setPicked(new Set()); }
+        if (alive) setUsers(Array.isArray(json) ? json : []);
       } catch { if (alive) setUsers([]); }
       if (alive) setLoadingUsers(false);
     })();
     return () => { alive = false; };
-  }, [role, user]);
+  }, [user]);
 
   const toggle = (id) => setPicked(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const filtered = users.filter(u => !search.trim() || (u.name || '').toLowerCase().includes(search.trim().toLowerCase()));
@@ -348,49 +336,47 @@ function AddStaffModal({ user, staffRole, existing, onClose, onAdded }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={onClose}>
       <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-md max-h-[90vh] flex flex-col shadow-xl" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-5 border-b border-zinc-100">
-          <h4 className="text-sm font-semibold text-zinc-900">Add {staffRole}s</h4>
+          <div>
+            <h4 className="text-sm font-semibold text-zinc-900">Add {staffRole}s</h4>
+            <p className="text-[11px] text-zinc-500 mt-0.5">From the <strong className="text-zinc-700">Driver &amp; Assistant</strong> role</p>
+          </div>
           <button onClick={onClose} className="text-zinc-400 hover:text-zinc-700"><X className="size-5" /></button>
         </div>
 
         <div className="p-5 space-y-3 overflow-y-auto">
-          <div className="flex flex-col">
-            <label className="text-xs font-medium text-zinc-600 mb-1.5">1 · Select a role</label>
-            <div className="relative">
-              <select value={role} onChange={e => setRole(e.target.value)} className={`${inputCls} appearance-none pr-8 cursor-pointer`}>
-                <option value="">Choose role…</option>
-                {roles.map(r => <option key={r} value={r}>{r}</option>)}
-              </select>
-              <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
+          <div className="rounded-md bg-blue-50/60 ring-1 ring-blue-100 p-3 text-[11px] text-blue-800 leading-relaxed">
+            Only users created with the <strong>Driver &amp; Assistant</strong> role appear here. Missing someone?
+            Add them in <strong>Users</strong> with that role first, then come back.
           </div>
 
-          {role && (
-            <div>
-              <label className="text-xs font-medium text-zinc-600 mb-1.5 block">2 · Select users ({picked.size} chosen)</label>
-              <div className="relative mb-2">
-                <Search className="size-3.5 text-zinc-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name…" className={`${inputCls} pl-8`} />
-              </div>
-              <div className="ring-1 ring-zinc-200 rounded-md max-h-56 overflow-y-auto divide-y divide-zinc-100">
-                {loadingUsers ? (
-                  <div className="h-24 flex items-center justify-center"><div className="size-6 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" /></div>
-                ) : filtered.length ? filtered.map(u => {
-                  const already = existing.includes(u.id);
-                  const on = picked.has(u.id);
-                  return (
-                    <button key={u.id} onClick={() => !already && toggle(u.id)} disabled={already}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors ${already ? 'opacity-50 cursor-not-allowed' : 'hover:bg-zinc-50'}`}>
-                      <span className={`size-4 rounded border flex items-center justify-center shrink-0 ${on ? 'bg-primary border-primary' : 'border-zinc-300'}`}>
-                        {on && <Check className="size-3 text-white" />}
-                      </span>
-                      <span className="text-sm text-zinc-800 flex-1">{u.name}</span>
-                      {already && <span className="text-[10px] text-zinc-400">already added</span>}
-                    </button>
-                  );
-                }) : <p className="px-3 py-6 text-center text-xs text-zinc-400 italic">No users in this role.</p>}
-              </div>
+          <div>
+            <label className="text-xs font-medium text-zinc-600 mb-1.5 block">Select users ({picked.size} chosen)</label>
+            <div className="relative mb-2">
+              <Search className="size-3.5 text-zinc-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name…" className={`${inputCls} pl-8`} />
             </div>
-          )}
+            <div className="ring-1 ring-zinc-200 rounded-md max-h-64 overflow-y-auto divide-y divide-zinc-100">
+              {loadingUsers ? (
+                <div className="h-24 flex items-center justify-center"><div className="size-6 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" /></div>
+              ) : filtered.length ? filtered.map(u => {
+                const already = existing.includes(u.id);
+                const on = picked.has(u.id);
+                return (
+                  <button key={u.id} onClick={() => !already && toggle(u.id)} disabled={already}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors ${already ? 'opacity-50 cursor-not-allowed' : 'hover:bg-zinc-50'}`}>
+                    <span className={`size-4 rounded border flex items-center justify-center shrink-0 ${on ? 'bg-primary border-primary' : 'border-zinc-300'}`}>
+                      {on && <Check className="size-3 text-white" />}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm text-zinc-800 truncate">{u.name}</p>
+                      {u.phone_no && <p className="text-[10px] text-zinc-400">{u.phone_no}</p>}
+                    </div>
+                    {already && <span className="text-[10px] text-zinc-400">already added</span>}
+                  </button>
+                );
+              }) : <p className="px-3 py-6 text-center text-xs text-zinc-400 italic">No users with the Driver &amp; Assistant role yet.</p>}
+            </div>
+          </div>
         </div>
 
         <div className="flex justify-end gap-2 p-5 border-t border-zinc-100">

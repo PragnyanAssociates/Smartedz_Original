@@ -63,7 +63,7 @@ export default function Routes({ user, canEdit, canDelete }) {
             <table className="w-full text-left border-collapse min-w-[820px]">
               <thead>
                 <tr className="bg-zinc-50/50">
-                  {['Route', 'Vehicle', 'Driver', 'Conductor', 'Points', 'Students', ''].map((h, i) => (
+                  {['Route', 'Vehicle', 'Driver', 'Assistant', 'Points', 'Students', ''].map((h, i) => (
                     <th key={i} className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100">{h}</th>
                   ))}
                 </tr>
@@ -88,7 +88,7 @@ export default function Routes({ user, canEdit, canDelete }) {
                       ) : <span className="text-xs text-zinc-400">—</span>}
                     </td>
                     <td className="px-5 py-3 text-xs text-zinc-700">{r.driver_name || '—'}</td>
-                    <td className="px-5 py-3 text-xs text-zinc-700">{r.conductor_name || '—'}</td>
+                    <td className="px-5 py-3 text-xs text-zinc-700">{r.assistant_name || '—'}</td>
                     <td className="px-5 py-3 text-xs text-zinc-600 tabular-nums">{r.point_count}</td>
                     <td className="px-5 py-3 text-xs text-zinc-600 tabular-nums">{r.student_count}</td>
                     <td className="px-5 py-3">
@@ -123,9 +123,9 @@ function RouteEditor({ user, canEdit, editingId, onBack, onSaved }) {
 
   const [vehicles, setVehicles]     = useState([]);
   const [drivers, setDrivers]       = useState([]);
-  const [conductors, setConductors] = useState([]);
+  const [assistants, setAssistants] = useState([]);
 
-  const [form, setForm] = useState({ route_name: '', route_code: '', vehicle_id: '', driver_id: '', conductor_id: '', notes: '' });
+  const [form, setForm] = useState({ route_name: '', route_code: '', vehicle_id: '', driver_id: '', assistant_id: '', notes: '' });
   const [pickupPts, setPickupPts] = useState([]);
   const [dropPts, setDropPts]     = useState([]);
   const [pointTab, setPointTab]   = useState('pickup');
@@ -139,11 +139,11 @@ function RouteEditor({ user, canEdit, editingId, onBack, onSaved }) {
         const [v, d, c] = await Promise.all([
           fetch(`${API_BASE_URL}/transport/vehicles/${user.institutionId}`).then(r => r.json()),
           fetch(`${API_BASE_URL}/transport/staff/${user.institutionId}?staff_role=Driver`).then(r => r.json()),
-          fetch(`${API_BASE_URL}/transport/staff/${user.institutionId}?staff_role=Conductor`).then(r => r.json()),
+          fetch(`${API_BASE_URL}/transport/staff/${user.institutionId}?staff_role=Assistant`).then(r => r.json()),
         ]);
         setVehicles(Array.isArray(v) ? v : []);
         setDrivers(Array.isArray(d) ? d : []);
-        setConductors(Array.isArray(c) ? c : []);
+        setAssistants(Array.isArray(c) ? c : []);
       } catch { /* ignore */ }
 
       if (isEdit) {
@@ -151,7 +151,7 @@ function RouteEditor({ user, canEdit, editingId, onBack, onSaved }) {
           const r = await fetch(`${API_BASE_URL}/transport/route/${editingId}`).then(x => x.json());
           setForm({
             route_name: r.route_name || '', route_code: r.route_code || '',
-            vehicle_id: r.vehicle_id ?? '', driver_id: r.driver_id ?? '', conductor_id: r.conductor_id ?? '', notes: r.notes || ''
+            vehicle_id: r.vehicle_id ?? '', driver_id: r.driver_id ?? '', assistant_id: r.assistant_id ?? '', notes: r.notes || ''
           });
           const pts = r.points || [];
           setPickupPts(pts.filter(p => p.point_type === 'pickup').map(mapPt));
@@ -232,7 +232,7 @@ function RouteEditor({ user, canEdit, editingId, onBack, onSaved }) {
       const body = {
         institutionId: user.institutionId,
         route_name: form.route_name.trim(), route_code: form.route_code.trim(),
-        vehicle_id: form.vehicle_id || null, driver_id: form.driver_id || null, conductor_id: form.conductor_id || null,
+        vehicle_id: form.vehicle_id || null, driver_id: form.driver_id || null, assistant_id: form.assistant_id || null,
         notes: form.notes, points, userId: user?.id ?? null, userName: user?.name ?? null
       };
       const url = isEdit ? `${API_BASE_URL}/transport/route/${editingId}` : `${API_BASE_URL}/transport/route`;
@@ -259,8 +259,8 @@ function RouteEditor({ user, canEdit, editingId, onBack, onSaved }) {
               <Field label="Route Name *"><input value={form.route_name} onChange={e => set('route_name', e.target.value)} className={inputCls} placeholder="e.g. Route 1 — City Center" /></Field>
               <Field label="Route Code"><input value={form.route_code} onChange={e => set('route_code', e.target.value)} className={inputCls} placeholder="R-01" /></Field>
               <Field label="Vehicle"><Select value={form.vehicle_id} onChange={v => set('vehicle_id', v)} options={[{ v: '', l: 'Unassigned' }, ...vehicles.map(x => ({ v: x.id, l: `${x.vehicle_no}${x.vehicle_name ? ` · ${x.vehicle_name}` : ''}` }))]} icon={Bus} /></Field>
-              <Field label="Driver"><Select value={form.driver_id} onChange={v => set('driver_id', v)} options={[{ v: '', l: 'Unassigned' }, ...drivers.map(x => ({ v: x.user_id, l: x.name }))]} icon={User} empty="No drivers — add them in Drivers & Conductors" /></Field>
-              <Field label="Conductor"><Select value={form.conductor_id} onChange={v => set('conductor_id', v)} options={[{ v: '', l: 'Unassigned' }, ...conductors.map(x => ({ v: x.user_id, l: x.name }))]} icon={Users} empty="No conductors — add them in Drivers & Conductors" /></Field>
+              <Field label="Driver"><Select value={form.driver_id} onChange={v => set('driver_id', v)} options={[{ v: '', l: 'Unassigned' }, ...drivers.map(x => ({ v: x.user_id, l: x.name }))]} icon={User} empty="No drivers — add them in Drivers & Assistants" /></Field>
+              <Field label="Assistant"><Select value={form.assistant_id} onChange={v => set('assistant_id', v)} options={[{ v: '', l: 'Unassigned' }, ...assistants.map(x => ({ v: x.user_id, l: x.name }))]} icon={Users} empty="No assistants — add them in Drivers & Assistants" /></Field>
               <div className="sm:col-span-2"><Field label="Notes"><input value={form.notes} onChange={e => set('notes', e.target.value)} className={inputCls} /></Field></div>
             </div>
           </div>
@@ -443,7 +443,7 @@ function RouteView({ routeId, user, canEdit, onBack, onEdit }) {
   if (loading) return <div className="h-96 flex items-center justify-center"><div className="size-8 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" /></div>;
   if (!route) return <div className="p-8 text-center text-sm text-zinc-400">Route not found.</div>;
 
-  const isCrew = user && (String(user.id) === String(route.driver_id) || String(user.id) === String(route.conductor_id));
+  const isCrew = user && (String(user.id) === String(route.driver_id) || String(user.id) === String(route.assistant_id));
   const canDrive = isCrew || canEdit;
 
   const pts = (route.points || []).map(p => ({ ...p, lat: p.latitude != null ? Number(p.latitude) : null, lng: p.longitude != null ? Number(p.longitude) : null }));
@@ -498,7 +498,7 @@ function RouteView({ routeId, user, canEdit, onBack, onEdit }) {
             <div className="grid grid-cols-3 gap-3 mt-4 text-xs">
               <Meta icon={Bus} label="Vehicle" value={route.vehicle_no || '—'} />
               <Meta icon={User} label="Driver" value={route.driver_name || '—'} phone={route.driver_phone} />
-              <Meta icon={Users} label="Conductor" value={route.conductor_name || '—'} phone={route.conductor_phone} />
+              <Meta icon={Users} label="Assistant" value={route.assistant_name || '—'} phone={route.assistant_phone} />
             </div>
             {canDrive && (
               <p className="text-[11px] text-zinc-400 mt-3">

@@ -7,11 +7,11 @@ const inr = (n) => new Intl.NumberFormat('en-IN', { style: 'currency', currency:
 const fmtDate = (v) => { if (!v) return '—'; const s = String(v).slice(0, 10); const [y, m, d] = s.split('-'); return d ? `${d}/${m}/${y}` : s; };
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
-export default function ServiceRepair({ user, canEdit, canDelete }) {
+export default function ServiceRepair({ user, canEdit, canDelete, lockedVehicleId = null }) {
   const [vehicles, setVehicles] = useState([]);
   const [rows, setRows]     = useState([]);
   const [loading, setLoading] = useState(true);
-  const [vehicleId, setVehicleId] = useState('');
+  const [vehicleId, setVehicleId] = useState(lockedVehicleId ? String(lockedVehicleId) : '');
   const [range, setRange]   = useState({ from: '', to: '' });
   const [modal, setModal]   = useState(null);
   const [viewId, setViewId] = useState(null);
@@ -22,10 +22,11 @@ export default function ServiceRepair({ user, canEdit, canDelete }) {
     (async () => {
       try {
         const v = await fetch(`${API_BASE_URL}/transport/vehicles/${user.institutionId}`).then(x => x.json());
-        setVehicles(Array.isArray(v) ? v : []);
+        const list = Array.isArray(v) ? v : [];
+        setVehicles(lockedVehicleId ? list.filter(x => String(x.id) === String(lockedVehicleId)) : list);
       } catch { setVehicles([]); }
     })();
-  }, [user]);
+  }, [user, lockedVehicleId]);
 
   const load = useCallback(async () => {
     if (!user?.institutionId) return;
@@ -57,6 +58,7 @@ export default function ServiceRepair({ user, canEdit, canDelete }) {
     <div className="space-y-5">
       <div className="flex flex-wrap items-end gap-3 bg-zinc-50/50 p-3 rounded-md ring-1 ring-black/5">
         <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider self-center"><Filter className="size-3.5" /> Filters</span>
+        {!lockedVehicleId && (
         <div className="flex flex-col gap-1">
           <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Vehicle</span>
           <div className="relative">
@@ -68,12 +70,13 @@ export default function ServiceRepair({ user, canEdit, canDelete }) {
             <ChevronDown className="size-3.5 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
         </div>
+        )}
         <DateField label="From" value={range.from} onChange={v => setRange(r => ({ ...r, from: v }))} />
         <DateField label="To" value={range.to} onChange={v => setRange(r => ({ ...r, to: v }))} />
         {(vehicleId || range.from || range.to) && <button onClick={() => { setVehicleId(''); setRange({ from: '', to: '' }); }} className="text-[11px] font-medium text-primary hover:underline self-center">Reset</button>}
         <span className="text-[11px] text-zinc-500 ml-auto self-center">Total spent: <strong className="text-accent tabular-nums">{inr(total)}</strong></span>
         {canEdit && (
-          <button onClick={() => setModal({ vehicle_id: vehicles[0]?.id || '', service_date: todayISO(), service_type: 'Service', cost: '', odometer_km: '', garage: '', details: '', attachment: '' })}
+          <button onClick={() => setModal({ vehicle_id: lockedVehicleId || vehicles[0]?.id || '', service_date: todayISO(), service_type: 'Service', cost: '', odometer_km: '', garage: '', details: '', attachment: '' })}
             className="inline-flex items-center gap-1.5 bg-primary text-white px-3.5 h-8 rounded-md text-xs font-semibold hover:bg-primary/90 shadow-sm">
             <Plus className="size-3.5" /> Add Record
           </button>
