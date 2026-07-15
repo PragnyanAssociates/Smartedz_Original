@@ -15,6 +15,8 @@ import {
 //    onNavigate(tabId). The `link` field holds the dashboard tab id
 //    (the module `id` from Screens/Modules.js).
 //  • Mark-all-read and delete one are supported.
+//  • The list fills the full content width like every other module —
+//    the body text simply gets more room on wide screens.
 //
 //  Props: onNavigate(tabId) — switches the dashboard's active tab.
 // =====================================================================
@@ -180,13 +182,13 @@ export default function NotificationsScreen({ onNavigate }) {
         ))}
       </div>
 
-      {/* List */}
+      {/* List — full content width, same as every other module */}
       {loading ? (
         <div className="h-64 flex items-center justify-center">
           <Loader2 className="animate-spin size-8 text-primary" />
         </div>
       ) : visible.length === 0 ? (
-        <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center max-w-3xl">
+        <div className="w-full bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
           <Inbox className="size-10 text-zinc-300 mb-3" />
           <p className="text-zinc-500 text-sm font-medium">{emptyText}</p>
           <p className="text-zinc-400 text-xs mt-1.5 font-medium">
@@ -194,30 +196,42 @@ export default function NotificationsScreen({ onNavigate }) {
           </p>
         </div>
       ) : (
-        <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden divide-y divide-zinc-100 max-w-3xl">
+        <div className="w-full bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden divide-y divide-zinc-100">
           {visible.map(n => {
             const meta = TYPE_META[n.type] || FALLBACK_META;
             const Icon = meta.icon;
             return (
               <div key={n.id} onClick={() => handleClick(n)}
-                className={`group flex items-start gap-3 p-4 cursor-pointer transition-colors ${
+                className={`group flex items-start gap-3 sm:gap-4 p-4 sm:px-5 cursor-pointer transition-colors ${
                   n.is_read ? 'hover:bg-zinc-50/60' : 'bg-primary/[0.03] hover:bg-primary/[0.06]'
                 }`}>
                 <div className={`size-9 rounded-md ${meta.bg} ${meta.text} ring-1 ${meta.ring} flex items-center justify-center shrink-0`}>
                   <Icon className="size-4" />
                 </div>
 
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className={`text-sm truncate ${n.is_read ? 'font-medium text-zinc-700' : 'font-semibold text-zinc-900'}`}>
-                      {n.title}
-                    </p>
-                    {!n.is_read && <span className="size-1.5 rounded-full bg-primary shrink-0" />}
+                {/* Title + body take the free space; meta sits on the right on wide screens */}
+                <div className="flex-1 min-w-0 flex flex-col lg:flex-row lg:items-start lg:gap-6">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className={`text-sm truncate ${n.is_read ? 'font-medium text-zinc-700' : 'font-semibold text-zinc-900'}`}>
+                        {n.title}
+                      </p>
+                      {!n.is_read && <span className="size-1.5 rounded-full bg-primary shrink-0" />}
+                    </div>
+                    {n.body && <p className="text-xs text-zinc-500 mt-0.5 line-clamp-2 font-medium">{n.body}</p>}
+                    <span className="text-[10px] font-medium text-zinc-400 uppercase tracking-wider mt-1 inline-block lg:hidden">
+                      {meta.label} · {timeAgo(n.created_at)}
+                    </span>
                   </div>
-                  {n.body && <p className="text-xs text-zinc-500 mt-0.5 line-clamp-2 font-medium">{n.body}</p>}
-                  <span className="text-[10px] font-medium text-zinc-400 uppercase tracking-wider mt-1 inline-block">
-                    {meta.label} · {timeAgo(n.created_at)}
-                  </span>
+
+                  <div className="hidden lg:flex items-center gap-2 shrink-0 pt-0.5">
+                    <span className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full ${meta.bg} ${meta.text} ring-1 ${meta.ring}`}>
+                      {meta.label}
+                    </span>
+                    <span className="text-[10px] font-medium text-zinc-400 uppercase tracking-wider tabular-nums w-20 text-right">
+                      {timeAgo(n.created_at)}
+                    </span>
+                  </div>
                 </div>
 
                 <button onClick={(e) => remove(e, n.id)} title="Remove"

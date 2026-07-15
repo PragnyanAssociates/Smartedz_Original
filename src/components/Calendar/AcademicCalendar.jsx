@@ -13,47 +13,35 @@ const eventTypesConfig = {
   Other: { color: '#ec4899', displayName: 'Other' },
 };
 
+const MODULE_NAME = 'Academic Calendar';
+
 const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-// How-to-use content — same shape as the Transport module guide.
+// How-to-use content — same shape/style as the Transport module guide.
 const GUIDE_STEPS = [
-  {
-    n: 1,
-    title: 'Move around the year',
-    body: 'Use the arrows either side of the month name to step backward or forward. The current day is always marked with a filled circle, and the sidebar lists every event of the month you are looking at.'
-  },
-  {
-    n: 2,
-    title: 'Add an event',
-    body: 'Click any day cell on the grid — the New Event form opens with that date already filled in. Give it a title, pick a type, and optionally add a time (e.g. 10:00 AM) and a description. Save with Create Event.'
-  },
-  {
-    n: 3,
-    title: 'Pick the right type',
-    body: 'Meeting, Event, Festival, Holiday, Exam or Other. The type decides the colour of the chip on the grid and the stripe in the sidebar — see the Color Legend card. Use Holiday for no-school days so everyone spots them at a glance.'
-  },
-  {
-    n: 4,
-    title: 'Edit or remove',
-    body: 'Hover an event in the Events for <Month> list and use Edit to change any field, or Delete to remove it. Deleting also clears the notification that went out for it.'
-  },
-  {
-    n: 5,
-    title: 'Who gets told',
-    body: 'Creating or updating an event pushes a notification to every active user of the school — students, teachers and staff. Tapping it in the Notifications screen brings them straight back here.'
-  },
-  {
-    n: 6,
-    title: 'Records',
-    body: 'Each event stores who created it and who last edited it, with IST timestamps. That line shows under the event in the sidebar so you always know the source.'
-  }
+  ['1 \u00b7 Move around the year', 'Use the arrows either side of the month name to step backward or forward. Today is always marked with a filled circle, and the sidebar lists every event of the month you are looking at.'],
+  ['2 \u00b7 Add an event', 'Click any day cell on the grid \u2014 the New Event form opens with that date already filled in. Give it a title, pick a type, and optionally add a time (e.g. 10:00 AM) and a description. Save with Create Event.'],
+  ['3 \u00b7 Pick the right type', 'Meeting, Event, Festival, Holiday, Exam or Other. The type decides the colour of the chip on the grid and the stripe in the sidebar \u2014 see the Color Legend card. Use Holiday for no-school days so everyone spots them at a glance.'],
+  ['4 \u00b7 Edit or remove', 'Hover an event in the Events list and use Edit to change any field, or Delete to remove it. Deleting also clears the notification that went out for it.'],
+  ['5 \u00b7 Who gets told', 'Creating or updating an event pushes a notification to every active user of the school \u2014 students, teachers and staff. Tapping it in Notifications brings them straight back here.'],
+  ['6 \u00b7 Records', 'Each event stores who created it and who last edited it, with IST timestamps. That line shows under the event in the sidebar, so you always know the source.'],
 ];
+const GUIDE_NOTE = 'Permissions: give a role Read to let them look, Read + Edit to let them add and change events, and Read + Edit + Delete for the full console like a Super Admin. Hide removes Academic Calendar from their sidebar entirely.';
 
 export default function AcademicCalendar() {
   const { user } = useAuth();
-  const { can } = usePermissions();
-  const isAdmin = user?.role === 'Super Admin' || can('Academic Calendar', 'edit');
+  const permissions = usePermissions();
+  const can = permissions?.can;
+  const isAllAccess = !!permissions?.isAllAccess;
+
+  const canEdit   = can ? can(MODULE_NAME, 'edit')   : false;
+  const canDelete = can ? can(MODULE_NAME, 'delete') : false;
+
+  const isAdmin = user?.role === 'Super Admin' || canEdit;
+  // The guide is written for people who actually set the calendar up.
+  // Read-only (and hidden) roles never see the button.
+  const fullAccess = isAllAccess || (canEdit && canDelete);
 
   const [loading, setLoading] = useState(true);
   const [events, setEvents] = useState([]);
@@ -164,11 +152,13 @@ export default function AcademicCalendar() {
           <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Academic Calendar</h1>
           <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">Manage school events, holidays, and important academic dates.</p>
         </div>
+        {fullAccess && (
         <button
           onClick={() => setShowGuide(true)}
-          className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-white border border-zinc-200 text-zinc-600 text-xs font-medium hover:bg-zinc-50 hover:text-zinc-900 transition-colors shrink-0 self-start shadow-sm">
-          <HelpCircle className="size-4" /> How to use
+          className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors shrink-0 self-start">
+          <HelpCircle className="size-3.5" /> How to use
         </button>
+        )}
       </header>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start">
@@ -331,36 +321,24 @@ export default function AcademicCalendar() {
         </div>
       </div>
 
-      {/* How to use — guide modal */}
-      {showGuide && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4" onClick={() => setShowGuide(false)}>
-          <div onClick={(ev) => ev.stopPropagation()}
-            className="bg-zinc-50 rounded-lg w-full max-w-2xl shadow-xl ring-1 ring-black/5 overflow-hidden flex flex-col max-h-[85vh]">
-
-            <div className="bg-primary px-5 py-4 flex items-center justify-between shrink-0">
-              <h2 className="text-white text-base font-semibold flex items-center gap-2">
-                <HelpCircle className="size-5" /> Using the Academic Calendar
-              </h2>
-              <button onClick={() => setShowGuide(false)} className="text-white/80 hover:text-white transition-colors">
-                <X className="size-5" />
-              </button>
+      {/* How to use — guide modal (same shell as Transport) */}
+      {showGuide && fullAccess && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={() => setShowGuide(false)}>
+          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg max-h-[85vh] overflow-y-auto shadow-xl" onClick={ev => ev.stopPropagation()}>
+            <div className="bg-primary text-white px-5 py-3 flex items-center justify-between sticky top-0">
+              <span className="text-sm font-bold flex items-center gap-2"><HelpCircle className="size-4" /> Using the Academic Calendar</span>
+              <button onClick={() => setShowGuide(false)} className="text-white/80 hover:text-white"><X className="size-5" /></button>
             </div>
-
-            <div className="p-5 space-y-3 overflow-y-auto custom-scrollbar">
-              {GUIDE_STEPS.map(s => (
-                <div key={s.n} className="bg-white rounded-md ring-1 ring-black/5 p-4">
-                  <h3 className="text-sm font-semibold text-zinc-900 mb-1.5">{s.n} · {s.title}</h3>
-                  <p className="text-[13px] text-primary/90 leading-relaxed">{s.body}</p>
+            <div className="p-5 space-y-3">
+              {GUIDE_STEPS.map(([t, d], i) => (
+                <div key={i} className="rounded-md ring-1 ring-zinc-100 bg-zinc-50/60 p-3">
+                  <p className="text-xs font-semibold text-zinc-800">{t}</p>
+                  <p className="text-[11px] text-zinc-600 leading-relaxed mt-1">{d}</p>
                 </div>
               ))}
-
-              <div className="bg-primary/5 rounded-md ring-1 ring-primary/15 p-4 flex gap-3">
-                <ShieldCheck className="size-4 text-primary shrink-0 mt-0.5" />
-                <p className="text-[13px] text-primary/90 leading-relaxed">
-                  Permissions: give a role Read to let them view the calendar, Read + Edit to let them add and change events,
-                  and Read + Edit + Delete for the full console like a Super Admin. Hide removes Academic Calendar from their
-                  sidebar entirely.
-                </p>
+              <div className="rounded-md bg-blue-50/60 ring-1 ring-blue-100 p-3 flex gap-2">
+                <ShieldCheck className="size-4 text-blue-500 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-blue-800 leading-relaxed">{GUIDE_NOTE}</p>
               </div>
             </div>
           </div>

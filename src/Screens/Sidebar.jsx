@@ -14,7 +14,7 @@ export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMo
   const visibleItems = useMemo(() => {
     const q = query.trim().toLowerCase();
     return MODULES.filter(m => {
-      if (m.hideFromSidebar) return false; 
+      if (m.hideFromSidebar) return false;
       if (!m.alwaysVisible && !isVisible(m.module_name)) return false;
       if (q && !m.label.toLowerCase().includes(q)) return false;
       return true;
@@ -36,7 +36,7 @@ export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMo
     loadCount();
     const t = setInterval(loadCount, 30000);
     return () => { active = false; clearInterval(t); };
-}, [user?.id]);
+  }, [user?.id]);
 
   // Intercept tab clicks to close the mobile menu automatically
   const handleTabClick = (id) => {
@@ -44,41 +44,47 @@ export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMo
     setIsMobileOpen(false);
   };
 
+  const handleLogout = () => {
+    if (window.confirm('Are you sure you want to logout?')) {
+      logout();
+    }
+  };
+
   return (
     <>
       {/* MOBILE OVERLAY: Dims the background when sidebar is open on small screens */}
       {isMobileOpen && (
-        <div 
+        <div
           className="fixed inset-0 z-40 bg-zinc-900/40 backdrop-blur-sm md:hidden transition-opacity"
           onClick={() => setIsMobileOpen(false)}
         />
       )}
 
       {/* SIDEBAR CONTAINER: Sliding on mobile, fixed static on desktop */}
-      <aside 
+      <aside
         className={`fixed inset-y-0 left-0 z-50 w-72 bg-white border-r border-zinc-200 flex flex-col h-[100dvh] shrink-0 transition-transform duration-300 ease-in-out md:static md:translate-x-0 shadow-2xl md:shadow-none ${
           isMobileOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
         <div className="p-6 pb-2">
           <div className="flex items-center justify-between mb-2">
-<h2 className="text-xl font-semibold text-zinc-900 tracking-tight leading-7 truncate pr-2">
+            <h2 className="text-xl font-semibold text-zinc-900 tracking-tight leading-7 truncate pr-2">
               {user?.role || 'Super Admin'}
             </h2>
-            
+
             {/* Quick Actions (Calendar & Notifications) */}
             <div className="flex items-center gap-1 shrink-0">
-              
+
               {/* LINKED EXACTLY LIKE PROFILE: Passes 'academic-calendar' to DashboardShell */}
-              <button 
+              <button
                 onClick={() => handleTabClick('academic-calendar')}
                 className={`p-1.5 rounded-md transition-colors ${activeTab === 'academic-calendar' ? 'bg-primary/10 text-primary' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`}
                 title="Academic Calendar"
               >
                 <Calendar className="size-4" />
               </button>
-              
-              <button 
+
+              <button
                 onClick={() => handleTabClick('notifications')}
                 className={`p-1.5 rounded-md transition-colors ${activeTab === 'notifications' ? 'bg-primary/10 text-primary' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'} relative`}
                 title="Notifications"
@@ -92,7 +98,7 @@ export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMo
               </button>
 
               {/* Mobile Close Button */}
-              <button 
+              <button
                 onClick={() => setIsMobileOpen(false)}
                 className="md:hidden p-1.5 text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 rounded-md transition-colors ml-1"
               >
@@ -100,7 +106,7 @@ export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMo
               </button>
             </div>
           </div>
-          
+
           <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
             Administrative Control
           </p>
@@ -136,15 +142,15 @@ export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMo
                 key={item.id}
                 onClick={() => handleTabClick(item.id)}
                 className={`w-full flex items-center gap-3 px-3 py-2 rounded-md transition-colors group ${
-                  activeTab === item.id 
-                    ? 'bg-primary text-white shadow-sm' 
+                  activeTab === item.id
+                    ? 'bg-primary text-white shadow-sm'
                     : 'text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900'
                 }`}
               >
                 <div className={`p-1 rounded transition-colors ${activeTab === item.id ? 'bg-white/20' : 'bg-transparent group-hover:bg-zinc-200/50'}`}>
-                  <img 
-                    src={item.imageSource} 
-                    alt={item.label} 
+                  <img
+                    src={item.imageSource}
+                    alt={item.label}
                     className="size-5 object-contain shrink-0"
                     style={{ filter: activeTab === item.id ? 'brightness(1.2)' : 'none' }}
                   />
@@ -157,51 +163,55 @@ export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMo
           )}
         </nav>
 
-        {/* User Profile Card */}
+        {/* User Profile Card + separate Logout button */}
         <div className="p-4 border-t border-zinc-200 bg-zinc-50/50 shrink-0">
-          
-          <button 
-            onClick={() => handleTabClick('profile')}
-            className={`w-full flex items-center gap-3 p-3 rounded-lg ring-1 transition-all ${
-              activeTab === 'profile' 
-              ? 'ring-primary/40 bg-white shadow-sm' 
-              : 'ring-black/5 bg-white hover:ring-primary/20 hover:bg-zinc-50/80'
-            }`}
-          >
-            <div className="size-8 rounded-full flex items-center justify-center text-white font-semibold text-xs shrink-0 transition-colors overflow-hidden bg-primary shadow-sm">
-              {user?.profile_pic ? (
-                <img 
-                  src={user.profile_pic} 
-                  className="w-full h-full object-cover" 
-                  alt="avatar" 
-                  onError={(e) => { e.target.style.display = 'none'; }} 
-                />
-              ) : (
-                user?.name?.charAt(0).toUpperCase() || 'A'
-              )}
-            </div>
-            
-            <div className="flex-1 min-w-0 text-left">
-              <p className="text-sm font-semibold text-zinc-900 truncate">{user?.name || 'User'}</p>
-              <p className={`text-[10px] font-medium uppercase tracking-wide ${activeTab === 'profile' ? 'text-primary' : 'text-zinc-500'}`}>
-                 {user?.role || 'Admin'}
-              </p>
-            </div>
-            
-            {/* UPDATED LOGOUT BUTTON */}
-            <div 
-              onClick={(e) => { 
-                e.stopPropagation(); 
-                if (window.confirm('Are you sure you want to logout?')) {
-                  logout(); 
-                }
-              }} 
-              className="p-1.5 text-zinc-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors group"
+
+          <div className={`flex items-stretch rounded-lg ring-1 bg-white overflow-hidden transition-all ${
+            activeTab === 'profile' ? 'ring-primary/40 shadow-sm' : 'ring-black/5'
+          }`}>
+
+            {/* Profile — unchanged behaviour */}
+            <button
+              onClick={() => handleTabClick('profile')}
+              className={`flex-1 min-w-0 flex items-center gap-3 p-3 text-left transition-colors ${
+                activeTab === 'profile' ? 'bg-white' : 'bg-white hover:bg-zinc-50/80'
+              }`}
+            >
+              <div className="size-8 rounded-full flex items-center justify-center text-white font-semibold text-xs shrink-0 transition-colors overflow-hidden bg-primary shadow-sm">
+                {user?.profile_pic ? (
+                  <img
+                    src={user.profile_pic}
+                    className="w-full h-full object-cover"
+                    alt="avatar"
+                    onError={(e) => { e.target.style.display = 'none'; }}
+                  />
+                ) : (
+                  user?.name?.charAt(0).toUpperCase() || 'A'
+                )}
+              </div>
+
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-zinc-900 truncate">{user?.name || 'User'}</p>
+                <p className={`text-[10px] font-medium uppercase tracking-wide ${activeTab === 'profile' ? 'text-primary' : 'text-zinc-500'}`}>
+                  {user?.role || 'Admin'}
+                </p>
+              </div>
+            </button>
+
+            {/* Divider */}
+            <div className="w-px bg-zinc-200 shrink-0" />
+
+            {/* Logout — clearly its own control */}
+            <button
+              type="button"
+              onClick={handleLogout}
               title="Logout"
+              className="shrink-0 w-16 flex flex-col items-center justify-center gap-0.5 px-2 py-2 bg-red-50 text-red-500 hover:bg-red-100 hover:text-red-600 active:bg-red-200/70 transition-colors group"
             >
               <LogOut className="size-4 shrink-0 transition-transform group-hover:scale-110" />
-            </div>
-          </button>
+              <span className="text-[10px] font-semibold uppercase tracking-wide leading-none">Logout</span>
+            </button>
+          </div>
         </div>
       </aside>
     </>
