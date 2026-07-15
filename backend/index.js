@@ -11666,16 +11666,43 @@ app.get('/api/transport/resolve-link', async (req, res) => {
 
 // ---- Live driver tracking ----
 app.post('/api/transport/track', async (req, res) => {
-  const { route_id, institutionId, lat, lng, heading, is_active, driver_id, driver_name } = req.body;
+  // action: 'start' | 'ping' | 'complete'  (legacy is_active still honoured)
+  const { route_id, institutionId, lat, lng, heading, trip_type, driver_id, driver_name } = req.body;
+  let action = req.body.action;
+  if (!action) action = req.body.is_active === false ? 'complete' : 'ping';
   if (!route_id) return res.status(400).json({ error: 'route_id is required' });
+
   try {
+    if (action === 'start') {
+      await db.execute(
+        `INSERT INTO transport_live_location
+           (route_id, institutionId, lat, lng, heading, is_active, trip_status, trip_type, started_at, ended_at, driver_id, driver_name, started_by_name, updated_at)
+         VALUES (?, ?, ?, ?, ?, 1, 'running', ?, NOW(), NULL, ?, ?, ?, NOW())
+         ON DUPLICATE KEY UPDATE institutionId = VALUES(institutionId), lat = VALUES(lat), lng = VALUES(lng), heading = VALUES(heading),
+           is_active = 1, trip_status = 'running', trip_type = VALUES(trip_type), started_at = NOW(), ended_at = NULL,
+           driver_id = VALUES(driver_id), driver_name = VALUES(driver_name), started_by_name = VALUES(started_by_name), updated_at = NOW()`,
+        [route_id, institutionId ?? null, lat ?? null, lng ?? null, heading ?? null,
+         trip_type === 'drop' ? 'drop' : 'pickup', driver_id ?? null, driver_name ?? null, driver_name ?? null]
+      );
+      return res.json({ success: true, trip_status: 'running' });
+    }
+
+    if (action === 'complete') {
+      await db.execute(
+        `UPDATE transport_live_location
+            SET is_active = 0, trip_status = 'completed', ended_at = NOW(), updated_at = NOW()
+          WHERE route_id = ?`,
+        [route_id]
+      );
+      return res.json({ success: true, trip_status: 'completed' });
+    }
+
+    // ping — position update while a trip is running
     await db.execute(
-      `INSERT INTO transport_live_location (route_id, institutionId, lat, lng, heading, is_active, driver_id, driver_name, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
-       ON DUPLICATE KEY UPDATE institutionId = VALUES(institutionId), lat = VALUES(lat), lng = VALUES(lng),
-         heading = VALUES(heading), is_active = VALUES(is_active), driver_id = VALUES(driver_id),
-         driver_name = VALUES(driver_name), updated_at = NOW()`,
-      [route_id, institutionId ?? null, lat ?? null, lng ?? null, heading ?? null, is_active === false ? 0 : 1, driver_id ?? null, driver_name ?? null]
+      `INSERT INTO transport_live_location (route_id, institutionId, lat, lng, heading, is_active, trip_status, driver_id, driver_name, updated_at)
+       VALUES (?, ?, ?, ?, ?, 1, 'running', ?, ?, NOW())
+       ON DUPLICATE KEY UPDATE lat = VALUES(lat), lng = VALUES(lng), heading = VALUES(heading), updated_at = NOW()`,
+      [route_id, institutionId ?? null, lat ?? null, lng ?? null, heading ?? null, driver_id ?? null, driver_name ?? null]
     );
     res.json({ success: true });
   } catch (err) { console.error('transport/track post error:', err); res.status(500).json({ error: err.message }); }
@@ -11684,12 +11711,32 @@ app.post('/api/transport/track', async (req, res) => {
 app.get('/api/transport/track/:routeId', async (req, res) => {
   try {
     const [rows] = await db.execute(
-      `SELECT lat, lng, heading, is_active, driver_name, TIMESTAMPDIFF(SECOND, updated_at, NOW()) AS seconds_ago
+      `SELECT lat, lng, heading, is_active, trip_status, trip_type, driver_name, started_by_name,
+              started_at, ended_at,
+              TIMESTAMPDIFF(SECOND, updated_at, NOW()) AS seconds_ago
          FROM transport_live_location WHERE route_id = ? LIMIT 1`,
       [req.params.routeId]
     );
     res.json(rows[0] || null);
   } catch (err) { console.error('transport/track get error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// Live state for EVERY route of a school — lets an admin watch all buses at once.
+app.get('/api/transport/live/:institutionId', async (req, res) => {
+  try {
+    const [rows] = await db.execute(
+      `SELECT l.route_id, l.lat, l.lng, l.is_active, l.trip_status, l.trip_type,
+              l.driver_name, l.started_at, l.ended_at,
+              TIMESTAMPDIFF(SECOND, l.updated_at, NOW()) AS seconds_ago
+         FROM transport_live_location l
+         JOIN transport_routes r ON r.id = l.route_id
+        WHERE r.institutionId = ?`,
+      [req.params.institutionId]
+    );
+    const map = {};
+    rows.forEach(r => { map[r.route_id] = r; });
+    res.json(map);
+  } catch (err) { console.error('transport/live error:', err); res.status(500).json({ error: err.message }); }
 });
 
 // ---- Student self-view: their route, crew (with phones), points, attendance ----

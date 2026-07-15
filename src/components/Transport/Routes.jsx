@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Route as RouteIcon, Plus, Pencil, Trash2, ChevronLeft, MapPin, Bus, User, Users, X, Save, ChevronDown, MapPinned, Eye, ExternalLink, Navigation, Play, Square, Radio } from 'lucide-react';
+import { Route as RouteIcon, Plus, Pencil, Trash2, ChevronLeft, MapPin, Bus, User, Users, X, Save, ChevronDown, MapPinned, Eye, ExternalLink, Navigation } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
 import LeafletMap, { parseLatLng } from './LeafletMap';
 import { Thumb, Lightbox } from './ImageBits';
+import TripStatus, { TripPill, tripState } from './TripStatus';
 
 export default function Routes({ user, canEdit, canDelete }) {
   const [mode, setMode]       = useState('list');   // 'list' | 'edit' | 'view'
@@ -12,6 +13,7 @@ export default function Routes({ user, canEdit, canDelete }) {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId]   = useState(null);
   const [zoom, setZoom]       = useState(null);   // {src, alt}
+  const [live, setLive]       = useState({});     // route_id -> track
 
   const load = useCallback(async () => {
     if (!user?.institutionId) return;
@@ -25,6 +27,21 @@ export default function Routes({ user, canEdit, canDelete }) {
   }, [user]);
 
   useEffect(() => { if (mode === 'list') load(); }, [load, mode]);
+
+  // Watch every route's trip state so the school can see which buses are out.
+  useEffect(() => {
+    if (mode !== 'list' || !user?.institutionId) return;
+    let alive = true;
+    const tick = async () => {
+      try {
+        const d = await fetch(`${API_BASE_URL}/transport/live/${user.institutionId}`).then(x => x.json());
+        if (alive) setLive(d && typeof d === 'object' ? d : {});
+      } catch { /* ignore */ }
+    };
+    tick();
+    const id = setInterval(tick, 6000);
+    return () => { alive = false; clearInterval(id); };
+  }, [mode, user]);
 
   const del = async (id) => {
     if (!window.confirm('Delete this route? Its points and student assignments will be removed.')) return;
@@ -63,7 +80,7 @@ export default function Routes({ user, canEdit, canDelete }) {
             <table className="w-full text-left border-collapse min-w-[820px]">
               <thead>
                 <tr className="bg-zinc-50/50">
-                  {['Route', 'Vehicle', 'Driver', 'Assistant', 'Points', 'Students', ''].map((h, i) => (
+                  {['Route', 'Vehicle', 'Driver', 'Assistant', 'Points', 'Students', 'Trip', ''].map((h, i) => (
                     <th key={i} className="px-5 py-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100">{h}</th>
                   ))}
                 </tr>
@@ -91,6 +108,7 @@ export default function Routes({ user, canEdit, canDelete }) {
                     <td className="px-5 py-3 text-xs text-zinc-700">{r.assistant_name || '—'}</td>
                     <td className="px-5 py-3 text-xs text-zinc-600 tabular-nums">{r.point_count}</td>
                     <td className="px-5 py-3 text-xs text-zinc-600 tabular-nums">{r.student_count}</td>
+                    <td className="px-5 py-3"><TripPill track={live[r.id]} /></td>
                     <td className="px-5 py-3">
                       <div className="flex items-center justify-end gap-1">
                         <button onClick={() => { setViewingId(r.id); setMode('view'); }} className="p-1.5 text-zinc-400 hover:text-primary rounded" title="View"><Eye className="size-4" /></button>
@@ -100,7 +118,7 @@ export default function Routes({ user, canEdit, canDelete }) {
                     </td>
                   </tr>
                 )) : (
-                  <tr><td colSpan="7" className="px-5 py-10 text-center text-xs text-zinc-500 italic">No routes yet. Create one to add pickup &amp; drop points.</td></tr>
+                  <tr><td colSpan="8" className="px-5 py-10 text-center text-xs text-zinc-500 italic">No routes yet. Create one to add pickup &amp; drop points.</td></tr>
                 )}
               </tbody>
             </table>
@@ -367,13 +385,12 @@ function gmapsDir(list) {
   return url;
 }
 
+// Read-only for the school: watch any route, never drive it. Only the route's
+// driver / assistant can start or complete a trip (see MyDuty).
 function RouteView({ routeId, user, canEdit, onBack, onEdit }) {
   const [route, setRoute] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [liveLoc, setLiveLoc] = useState(null);   // {lat,lng} when a trip is live
-  const [tracking, setTracking] = useState(false);
-  const watchRef = useRef(null);
-  const lastPost = useRef(0);
+  const [track, setTrack] = useState(null);
 
   useEffect(() => {
     let alive = true;
@@ -388,64 +405,24 @@ function RouteView({ routeId, user, canEdit, onBack, onEdit }) {
     return () => { alive = false; };
   }, [routeId]);
 
-  // Poll the live location (for viewers). Fresh = active and updated in the last 30s.
+  // Poll this route's trip state (status + position).
   useEffect(() => {
     let alive = true;
     const tick = async () => {
       try {
         const d = await fetch(`${API_BASE_URL}/transport/track/${routeId}`).then(x => x.json());
-        if (!alive) return;
-        if (d && d.is_active && d.lat != null && d.lng != null && Number(d.seconds_ago) < 30) setLiveLoc({ lat: Number(d.lat), lng: Number(d.lng) });
-        else if (!tracking) setLiveLoc(null);
+        if (alive) setTrack(d || null);
       } catch { /* ignore */ }
     };
     tick();
     const id = setInterval(tick, 4000);
     return () => { alive = false; clearInterval(id); };
-  }, [routeId, tracking]);
-
-  // stop watching on unmount
-  useEffect(() => () => { if (watchRef.current != null && navigator.geolocation) navigator.geolocation.clearWatch(watchRef.current); }, []);
-
-  const postTrack = (lat, lng, heading, active) => {
-    fetch(`${API_BASE_URL}/transport/track`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ route_id: routeId, institutionId: user?.institutionId, lat, lng, heading, is_active: active, driver_id: user?.id ?? null, driver_name: user?.name ?? null })
-    }).catch(() => {});
-  };
-
-  const startTrip = () => {
-    if (!navigator.geolocation) return alert('Location is not supported on this device/browser.');
-    setTracking(true);
-    watchRef.current = navigator.geolocation.watchPosition(
-      (pos) => {
-        const { latitude, longitude, heading } = pos.coords;
-        setLiveLoc({ lat: latitude, lng: longitude });
-        const now = Date.now();
-        if (now - lastPost.current > 2500) { lastPost.current = now; postTrack(latitude, longitude, heading ?? null, true); }
-      },
-      (err) => { alert('Could not get location: ' + err.message); setTracking(false); },
-      { enableHighAccuracy: true, maximumAge: 2000, timeout: 12000 }
-    );
-    // Launch turn-by-turn navigation through the route in Google Maps.
-    const nav = pickupNav || dropNav;
-    if (nav) window.open(nav, '_blank');
-  };
-
-  const stopTrip = () => {
-    if (watchRef.current != null && navigator.geolocation) navigator.geolocation.clearWatch(watchRef.current);
-    watchRef.current = null;
-    setTracking(false);
-    postTrack(null, null, null, false);
-    setLiveLoc(null);
-  };
+  }, [routeId]);
 
   if (loading) return <div className="h-96 flex items-center justify-center"><div className="size-8 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" /></div>;
   if (!route) return <div className="p-8 text-center text-sm text-zinc-400">Route not found.</div>;
 
-  const isCrew = user && (String(user.id) === String(route.driver_id) || String(user.id) === String(route.assistant_id));
-  const canDrive = isCrew || canEdit;
-
+  const live = tripState(track);
   const pts = (route.points || []).map(p => ({ ...p, lat: p.latitude != null ? Number(p.latitude) : null, lng: p.longitude != null ? Number(p.longitude) : null }));
   const pickups = pts.filter(p => p.point_type === 'pickup');
   const drops = pts.filter(p => p.point_type === 'drop');
@@ -484,14 +461,11 @@ function RouteView({ routeId, user, canEdit, onBack, onEdit }) {
               <div>
                 <h3 className="text-base font-bold text-zinc-900 flex items-center gap-2">
                   <RouteIcon className="size-4 text-primary" /> {route.route_name}
-                  {liveLoc && <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-green-700 bg-green-50 ring-1 ring-green-600/20 px-2 py-0.5 rounded-full"><Radio className="size-3 animate-pulse" /> Live</span>}
+                  <TripPill track={track} />
                 </h3>
                 {route.route_code && <p className="text-[11px] text-zinc-400 mt-0.5 ml-6">{route.route_code}</p>}
               </div>
               <div className="flex items-center gap-2">
-                {canDrive && (tracking
-                  ? <button onClick={stopTrip} className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-red-600 px-3 py-1.5 rounded-md hover:bg-red-700"><Square className="size-3.5" /> Stop Trip</button>
-                  : <button onClick={startTrip} className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-green-600 px-3 py-1.5 rounded-md hover:bg-green-700"><Play className="size-3.5" /> Start Trip</button>)}
                 {onEdit && <button onClick={onEdit} className="inline-flex items-center gap-1.5 text-xs font-medium text-primary ring-1 ring-primary/30 px-3 py-1.5 rounded-md hover:bg-primary/5"><Pencil className="size-3.5" /> Edit</button>}
               </div>
             </div>
@@ -500,11 +474,7 @@ function RouteView({ routeId, user, canEdit, onBack, onEdit }) {
               <Meta icon={User} label="Driver" value={route.driver_name || '—'} phone={route.driver_phone} />
               <Meta icon={Users} label="Assistant" value={route.assistant_name || '—'} phone={route.assistant_phone} />
             </div>
-            {canDrive && (
-              <p className="text-[11px] text-zinc-400 mt-3">
-                {tracking ? 'Sharing live location — the bus follows your position on the map.' : 'Driver: tap “Start Trip” to share your live GPS location. Others watching this route will see the bus move.'}
-              </p>
-            )}
+            <div className="mt-4"><TripStatus track={track} /></div>
           </div>
 
           <div className="ring-1 ring-black/5 rounded-lg bg-white p-5 space-y-5">
@@ -522,14 +492,14 @@ function RouteView({ routeId, user, canEdit, onBack, onEdit }) {
                 <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-700"><MapPinned className="size-4 text-primary" /> Route Map</span>
                 <span className="inline-flex items-center gap-1 text-[10px] text-zinc-500"><span className="size-2.5 rounded-full bg-primary" /> Pickup</span>
                 <span className="inline-flex items-center gap-1 text-[10px] text-zinc-500"><span className="size-2.5 rounded-full bg-accent" /> Drop</span>
-                {liveLoc && <span className="inline-flex items-center gap-1 text-[10px] text-green-700 font-medium">🚌 Bus live</span>}
+                {live.live && <span className="inline-flex items-center gap-1 text-[10px] text-green-700 font-medium">🚌 Bus live</span>}
               </div>
               <div className="flex items-center gap-2">
                 {pickupNav && <a href={pickupNav} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[10px] font-medium text-primary hover:underline"><Navigation className="size-3" /> Pickup</a>}
                 {dropNav && <a href={dropNav} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[10px] font-medium text-accent hover:underline"><Navigation className="size-3" /> Drop</a>}
               </div>
             </div>
-            <LeafletMap points={mapPoints} routed liveLocation={liveLoc} height={560} />
+            <LeafletMap points={mapPoints} routed liveLocation={live.live ? { lat: Number(track.lat), lng: Number(track.lng) } : null} height={560} />
           </div>
         </div>
       </div>

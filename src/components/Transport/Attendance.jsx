@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { ClipboardCheck, Route as RouteIcon, ChevronDown, Check, X, Save, CalendarDays, CheckCheck, Ban } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
 import AttendanceCalendar from './AttendanceCalendar';
+import { fmtISTDateTime } from './TripStatus';
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
@@ -12,6 +13,7 @@ export default function Attendance({ user, canEdit, lockedRouteId = null, routes
   const [date, setDate]       = useState(todayISO());
   const [students, setStudents] = useState([]);
   const [status, setStatus]   = useState({});     // student_id -> 'present'|'absent'
+  const [marks, setMarks]     = useState({});     // student_id -> { marked_by_name, marked_at }
   const [loading, setLoading] = useState(false);
   const [saving, setSaving]   = useState(false);
   const [calFor, setCalFor]   = useState(null);    // student for calendar modal
@@ -50,13 +52,17 @@ export default function Attendance({ user, canEdit, lockedRouteId = null, routes
       ]);
       const s = Array.isArray(studs) ? studs : [];
       setStudents(s);
-      const marked = {};
-      (Array.isArray(att) ? att : []).forEach(a => { marked[a.student_id] = a.status; });
+      const marked = {}, meta = {};
+      (Array.isArray(att) ? att : []).forEach(a => {
+        marked[a.student_id] = a.status;
+        meta[a.student_id] = { marked_by_name: a.marked_by_name, marked_at: a.marked_at };
+      });
       // default unmarked -> present
       const map = {};
       s.forEach(x => { map[x.student_id] = marked[x.student_id] || 'present'; });
       setStatus(map);
-    } catch { setStudents([]); setStatus({}); }
+      setMarks(meta);
+    } catch { setStudents([]); setStatus({}); setMarks({}); }
     setLoading(false);
   }, [routeId, trip, date]);
 
@@ -81,7 +87,7 @@ export default function Attendance({ user, canEdit, lockedRouteId = null, routes
         body: JSON.stringify({ institutionId: user.institutionId, route_id: routeId, trip_type: trip, attendance_date: date, records, userId: user?.id ?? null, userName: user?.name ?? null })
       });
       if (!res.ok) { const e = await res.json().catch(() => ({})); alert(e.error || 'Could not save.'); }
-      else alert('Attendance saved.');
+      else { await load(); alert('Attendance saved.'); }
     } finally { setSaving(false); }
   };
 
@@ -134,11 +140,17 @@ export default function Attendance({ user, canEdit, lockedRouteId = null, routes
             <div className="divide-y divide-zinc-100">
               {students.map(s => {
                 const on = status[s.student_id] === 'present';
+                const m = marks[s.student_id];
                 return (
                   <div key={s.student_id} className="flex items-center gap-3 px-5 py-2.5">
                     <span className="text-[11px] font-semibold text-zinc-400 w-8 tabular-nums">{s.roll_no || '—'}</span>
-                    <span className="text-sm text-zinc-900 flex-1">{s.name}</span>
-                    <button onClick={() => setCalFor(s)} className="text-[11px] text-primary hover:underline inline-flex items-center gap-1"><CalendarDays className="size-3.5" /> calendar</button>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-zinc-900 truncate">{s.name}</p>
+                      {m?.marked_at
+                        ? <p className="text-[10px] text-zinc-400 truncate">Marked by <span className="text-zinc-500 font-medium">{m.marked_by_name || 'Unknown'}</span> · {fmtISTDateTime(m.marked_at)}</p>
+                        : <p className="text-[10px] text-amber-600">Not marked yet</p>}
+                    </div>
+                    <button onClick={() => setCalFor(s)} className="text-[11px] text-primary hover:underline inline-flex items-center gap-1 shrink-0"><CalendarDays className="size-3.5" /> calendar</button>
                     {canMark ? (
                       <div className="inline-flex items-center rounded-md ring-1 ring-zinc-200 overflow-hidden">
                         <button onClick={() => setStatus(p => ({ ...p, [s.student_id]: 'present' }))} className={`px-2.5 py-1 text-[11px] font-semibold ${on ? 'bg-green-600 text-white' : 'text-zinc-500 hover:bg-zinc-50'}`}>Present</button>

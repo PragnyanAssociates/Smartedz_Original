@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Bus, User, Users, Phone, MapPinned, Radio, CalendarDays, MapPin, Info, Navigation } from 'lucide-react';
+import { Bus, User, Users, Phone, MapPinned, CalendarDays, MapPin, Info, Navigation } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
 import LeafletMap from './LeafletMap';
 import AttendanceCalendar from './AttendanceCalendar';
+import TripStatus, { TripPill, tripState } from './TripStatus';
 
 export default function MyTransport({ user }) {
   const [data, setData]       = useState(null);
   const [loading, setLoading] = useState(true);
-  const [liveLoc, setLiveLoc] = useState(null);
+  const [track, setTrack] = useState(null);
   const [tab, setTab]         = useState('route');      // 'route' | 'attendance'
   const [stopTab, setStopTab] = useState('pickup');     // 'pickup' | 'drop'
 
@@ -34,9 +35,7 @@ export default function MyTransport({ user }) {
     const tick = async () => {
       try {
         const d = await fetch(`${API_BASE_URL}/transport/track/${routeId}`).then(x => x.json());
-        if (!alive) return;
-        if (d && d.is_active && d.lat != null && d.lng != null && Number(d.seconds_ago) < 30) setLiveLoc({ lat: Number(d.lat), lng: Number(d.lng) });
-        else setLiveLoc(null);
+        if (alive) setTrack(d || null);
       } catch { /* ignore */ }
     };
     tick();
@@ -63,6 +62,8 @@ export default function MyTransport({ user }) {
   }
 
   const r = data.route;
+  const live = tripState(track);
+  const busAt = live.live ? { lat: Number(track.lat), lng: Number(track.lng) } : null;
   const shown = allPoints.filter(p => p.point_type === stopTab);
   const myPointId = stopTab === 'pickup' ? data.pickup_point_id : data.drop_point_id;
   const color = stopTab === 'pickup' ? '#3284c7' : '#f29132';
@@ -74,8 +75,9 @@ export default function MyTransport({ user }) {
         <h3 className="text-base font-bold text-zinc-900 flex items-center gap-2">
           <MapPinned className="size-4 text-primary" /> {r.route_name}
           {r.route_code && <span className="text-[11px] font-normal text-zinc-400">{r.route_code}</span>}
-          {liveLoc && <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-green-700 bg-green-50 ring-1 ring-green-600/20 px-2 py-0.5 rounded-full"><Radio className="size-3 animate-pulse" /> Live</span>}
+          <TripPill track={track} />
         </h3>
+        <div className="mt-3"><TripStatus track={track} /></div>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
           <Info2 icon={Bus} label="Bus Number" value={r.vehicle_no || '—'} />
           <Info2 icon={Bus} label="Bus Name" value={r.vehicle_name || '—'} />
@@ -149,10 +151,10 @@ export default function MyTransport({ user }) {
                 <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-700"><MapPinned className="size-4 text-primary" /> Live Bus</span>
                 <span className="inline-flex items-center gap-1 text-[10px] text-zinc-500"><span className="size-2.5 rounded-full bg-primary" /> Pickup</span>
                 <span className="inline-flex items-center gap-1 text-[10px] text-zinc-500"><span className="size-2.5 rounded-full bg-accent" /> Drop</span>
-                {liveLoc ? <span className="text-[10px] text-green-700 font-medium ml-auto">🚌 On the way</span> : <span className="text-[10px] text-zinc-400 ml-auto">Bus not running now</span>}
+                {busAt ? <span className="text-[10px] text-green-700 font-medium ml-auto">🚌 On the way</span> : <span className="text-[10px] text-zinc-400 ml-auto">Bus not running now</span>}
               </div>
-              <LeafletMap points={allPoints} routed liveLocation={liveLoc} height={520} />
-              <p className="text-[10px] text-zinc-400 mt-1.5">The bus appears once your driver starts the trip, and moves in real time.</p>
+              <LeafletMap points={allPoints} routed liveLocation={busAt} height={520} />
+              <p className="text-[10px] text-zinc-400 mt-1.5">The route is always shown. The bus appears only once your driver starts the trip, and disappears when the trip is completed.</p>
             </div>
           </div>
         </div>

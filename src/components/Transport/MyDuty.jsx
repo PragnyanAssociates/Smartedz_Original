@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Bus, MapPinned, ClipboardCheck, NotebookPen, Play, Square, Radio, Navigation, User, Users, Phone, ChevronDown, Route as RouteIcon, Info, MapPin } from 'lucide-react';
+import { Bus, MapPinned, ClipboardCheck, NotebookPen, Play, CheckCircle2, Navigation, User, Users, Phone, ChevronDown, Route as RouteIcon, Info, MapPin } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
 import LeafletMap from './LeafletMap';
 import Attendance from './Attendance';
 import VehicleLogBook from './VehicleLogBook';
 import { Thumb, Lightbox } from './ImageBits';
+import TripStatus, { tripState } from './TripStatus';
 
 // Turn-by-turn link through a set of points, in order.
 function gmapsDir(list) {
@@ -24,7 +25,8 @@ export default function MyDuty({ user }) {
   const [routeId, setRouteId] = useState('');
   const [tab, setTab]       = useState('route');     // 'route' | 'attendance' | 'logbook'
   const [stopTab, setStopTab] = useState('pickup');
-  const [liveLoc, setLiveLoc] = useState(null);
+  const [track, setTrack]   = useState(null);   // server trip state
+  const [liveLoc, setLiveLoc] = useState(null); // my own GPS while driving
   const [tracking, setTracking] = useState(false);
   const [zoom, setZoom]     = useState(null);
   const watchRef = useRef(null);
@@ -48,22 +50,20 @@ export default function MyDuty({ user }) {
 
   const route = useMemo(() => (duty?.routes || []).find(r => String(r.id) === String(routeId)) || null, [duty, routeId]);
 
-  // Watch the live position for this route (so an assistant sees the driver's bus too).
+  // Watch this route's trip state (so an assistant sees the driver's bus too).
   useEffect(() => {
     if (!routeId) return;
     let alive = true;
     const tick = async () => {
       try {
         const d = await fetch(`${API_BASE_URL}/transport/track/${routeId}`).then(x => x.json());
-        if (!alive) return;
-        if (d && d.is_active && d.lat != null && d.lng != null && Number(d.seconds_ago) < 30) setLiveLoc({ lat: Number(d.lat), lng: Number(d.lng) });
-        else if (!tracking) setLiveLoc(null);
+        if (alive) setTrack(d || null);
       } catch { /* ignore */ }
     };
     tick();
     const id = setInterval(tick, 4000);
     return () => { alive = false; clearInterval(id); };
-  }, [routeId, tracking]);
+  }, [routeId]);
 
   useEffect(() => () => { if (watchRef.current != null && navigator.geolocation) navigator.geolocation.clearWatch(watchRef.current); }, []);
 
@@ -78,36 +78,52 @@ export default function MyDuty({ user }) {
   const pickupNav = gmapsDir(pickups);
   const dropNav = gmapsDir(drops);
 
-  const postTrack = (lat, lng, heading, active) => {
+  const postTrack = (action, lat, lng, heading) =>
     fetch(`${API_BASE_URL}/transport/track`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ route_id: routeId, institutionId: user?.institutionId, lat, lng, heading, is_active: active, driver_id: user?.id ?? null, driver_name: user?.name ?? null })
+      body: JSON.stringify({
+        action, route_id: routeId, institutionId: user?.institutionId,
+        lat, lng, heading, trip_type: stopTab,
+        driver_id: user?.id ?? null, driver_name: user?.name ?? null
+      })
     }).catch(() => {});
+
+  const refreshTrack = async () => {
+    try { const d = await fetch(`${API_BASE_URL}/transport/track/${routeId}`).then(x => x.json()); setTrack(d || null); } catch { /* ignore */ }
   };
 
-  const startTrip = () => {
+  const startTrip = async () => {
     if (!navigator.geolocation) return alert('Location is not supported on this device/browser.');
+    const label = stopTab === 'drop' ? 'DROP' : 'PICKUP';
+    if (!window.confirm(`Start the ${label} trip for ${route?.route_name}?\n\nYour live location will be shared with students and the school until you complete the trip.`)) return;
+
     setTracking(true);
+    await postTrack('start', null, null, null);   // marks the trip running immediately
+    await refreshTrack();
+
     watchRef.current = navigator.geolocation.watchPosition(
       (pos) => {
         const { latitude, longitude, heading } = pos.coords;
         setLiveLoc({ lat: latitude, lng: longitude });
         const now = Date.now();
-        if (now - lastPost.current > 2500) { lastPost.current = now; postTrack(latitude, longitude, heading ?? null, true); }
+        if (now - lastPost.current > 2500) { lastPost.current = now; postTrack('ping', latitude, longitude, heading ?? null); }
       },
-      (err) => { alert('Could not get location: ' + err.message); setTracking(false); },
+      (err) => { alert('Could not get location: ' + err.message); },
       { enableHighAccuracy: true, maximumAge: 2000, timeout: 12000 }
     );
+
     const nav = stopTab === 'drop' ? (dropNav || pickupNav) : (pickupNav || dropNav);
     if (nav) window.open(nav, '_blank');
   };
 
-  const stopTrip = () => {
+  const completeTrip = async () => {
+    if (!window.confirm('Complete this trip?\n\nLive tracking stops and the bus disappears from the map.')) return;
     if (watchRef.current != null && navigator.geolocation) navigator.geolocation.clearWatch(watchRef.current);
     watchRef.current = null;
     setTracking(false);
-    postTrack(null, null, null, false);
     setLiveLoc(null);
+    await postTrack('complete', null, null, null);
+    await refreshTrack();
   };
 
   if (loading) return <div className="h-96 flex items-center justify-center"><div className="size-8 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" /></div>;
@@ -121,6 +137,10 @@ export default function MyDuty({ user }) {
       </div>
     );
   }
+
+  const live = tripState(track);
+  const running = live.status === 'running';
+  const busAt = tracking && liveLoc ? liveLoc : (live.live ? { lat: Number(track.lat), lng: Number(track.lng) } : null);
 
   const shown = stopTab === 'pickup' ? pickups : drops;
   const color = stopTab === 'pickup' ? '#3284c7' : '#f29132';
@@ -137,7 +157,7 @@ export default function MyDuty({ user }) {
               <h3 className="text-base font-bold text-zinc-900 flex items-center gap-2 flex-wrap">
                 {route?.route_name}
                 <span className="text-[10px] font-bold uppercase tracking-wider text-primary bg-primary/10 px-2 py-0.5 rounded-full">You are the {route?.my_role}</span>
-                {liveLoc && <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-green-700 bg-green-50 ring-1 ring-green-600/20 px-2 py-0.5 rounded-full"><Radio className="size-3 animate-pulse" /> Live</span>}
+
               </h3>
               <p className="text-[11px] text-zinc-500 mt-0.5">{route?.vehicle_no || 'No bus'}{route?.vehicle_code ? ` · ${route.vehicle_code}` : ''}{route?.vehicle_name ? ` · ${route.vehicle_name}` : ''}{route?.capacity ? ` · ${route.capacity} seats` : ''}</p>
             </div>
@@ -146,16 +166,17 @@ export default function MyDuty({ user }) {
           <div className="flex items-center gap-2">
             {(duty.routes || []).length > 1 && (
               <div className="relative">
-                <select value={routeId} onChange={e => { setRouteId(e.target.value); if (tracking) stopTrip(); }}
+                <select value={routeId} disabled={tracking} onChange={e => setRouteId(e.target.value)}
+                  title={tracking ? 'Complete the current trip before switching routes' : ''}
                   className="h-9 appearance-none rounded-md border border-zinc-200 bg-white pl-3 pr-8 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer">
                   {duty.routes.map(r => <option key={r.id} value={r.id}>{r.route_name}</option>)}
                 </select>
                 <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
             )}
-            {tracking
-              ? <button onClick={stopTrip} className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-red-600 px-4 py-2 rounded-md hover:bg-red-700 shadow-sm"><Square className="size-3.5" /> Stop Trip</button>
-              : <button onClick={startTrip} className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-green-600 px-4 py-2 rounded-md hover:bg-green-700 shadow-sm"><Play className="size-3.5" /> Start Trip</button>}
+            {running
+              ? <button onClick={completeTrip} className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-red-600 px-4 py-2 rounded-md hover:bg-red-700 shadow-sm"><CheckCircle2 className="size-3.5" /> Complete Trip</button>
+              : <button onClick={startTrip} className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-green-600 px-4 py-2 rounded-md hover:bg-green-700 shadow-sm"><Play className="size-3.5" /> Start {stopTab === 'drop' ? 'Drop' : 'Pickup'} Trip</button>}
           </div>
         </div>
 
@@ -166,12 +187,15 @@ export default function MyDuty({ user }) {
           <Crew icon={Users} label="Assistant" name={route?.assistant_name} phone={route?.assistant_phone} me={route?.my_role === 'Assistant'} />
         </div>
 
-        <p className="text-[11px] text-zinc-400 mt-3 flex items-start gap-1.5">
-          <Info className="size-3.5 shrink-0 mt-px" />
-          {tracking
-            ? 'Sharing your live location — students and the school can see the bus moving. Keep this page open until the trip ends, then tap Stop Trip.'
-            : 'Tap Start Trip to open Google Maps navigation for this route and share your live location with students and the school.'}
-        </p>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <TripStatus track={track} />
+          <p className="text-[11px] text-zinc-400 flex items-start gap-1.5 max-w-[52ch]">
+            <Info className="size-3.5 shrink-0 mt-px" />
+            {running
+              ? 'Keep this page open while driving so your location keeps updating. Tap Complete Trip when the run is finished.'
+              : `Pick the ${stopTab === 'drop' ? 'Drop' : 'Pickup'} tab below, then Start Trip — Google Maps opens for navigation and the bus goes live for students.`}
+          </p>
+        </div>
       </div>
 
       {/* Tabs */}
@@ -221,9 +245,9 @@ export default function MyDuty({ user }) {
                 <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-700"><MapPinned className="size-4 text-primary" /> Route Map</span>
                 <span className="inline-flex items-center gap-1 text-[10px] text-zinc-500"><span className="size-2.5 rounded-full bg-primary" /> Pickup</span>
                 <span className="inline-flex items-center gap-1 text-[10px] text-zinc-500"><span className="size-2.5 rounded-full bg-accent" /> Drop</span>
-                {liveLoc && <span className="text-[10px] text-green-700 font-medium ml-auto">🚌 Live</span>}
+                {busAt ? <span className="text-[10px] text-green-700 font-medium ml-auto">🚌 Live</span> : <span className="text-[10px] text-zinc-400 ml-auto">Bus hidden until trip starts</span>}
               </div>
-              <LeafletMap points={points} routed liveLocation={liveLoc} height={520} />
+              <LeafletMap points={points} routed liveLocation={busAt} height={520} />
             </div>
           </div>
         </div>
