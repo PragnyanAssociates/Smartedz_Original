@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
-import { Bus, Users, Route as RouteIcon, UserCheck, ClipboardCheck } from 'lucide-react';
+import { Bus, Users, Route as RouteIcon, UserCheck, ClipboardCheck, NotebookPen } from 'lucide-react';
 import Vehicles from './Vehicles';
 import Drivers from './Drivers';
 import Routes from './Routes';
 import AssignStudents from './AssignStudents';
 import Attendance from './Attendance';
 import MyTransport from './MyTransport';
+import VehicleLogBook from './VehicleLogBook';
 
 const MODULE_NAME = 'Transport';
 
@@ -28,6 +29,7 @@ export default function Transport() {
     { id: 'attendance', label: 'Attendance',           icon: ClipboardCheck },
     { id: 'vehicles',   label: 'Vehicles',             icon: Bus },
     { id: 'staff',      label: 'Drivers & Conductors', icon: Users },
+    { id: 'logbook',    label: 'Vehicle Log Book',     icon: NotebookPen },
   ];
   const props = { user, canEdit, canDelete };
 
@@ -63,6 +65,7 @@ export default function Transport() {
           {tab === 'attendance' && <Attendance user={user} canEdit={canEdit} />}
           {tab === 'vehicles' && <Vehicles {...props} />}
           {tab === 'staff' && <Drivers {...props} />}
+          {tab === 'logbook' && <VehicleLogBook {...props} />}
         </>
       )}
     </div>

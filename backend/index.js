@@ -11272,36 +11272,61 @@ app.get('/api/transport/class-students/:institutionId', async (req, res) => {
 });
 
 // ---------- VEHICLES ----------
+// List excludes the image blob (kept light); has_image tells the UI one exists.
 app.get('/api/transport/vehicles/:institutionId', async (req, res) => {
   try {
     const [rows] = await db.execute(
-      'SELECT * FROM transport_vehicles WHERE institutionId = ? ORDER BY vehicle_no',
+      `SELECT id, institutionId, vehicle_no, vehicle_code, vehicle_name, vehicle_type, registration_date,
+              capacity, notes, is_active, (vehicle_image IS NOT NULL) AS has_image,
+              created_by_name, updated_by_name, created_at, updated_at
+         FROM transport_vehicles WHERE institutionId = ? ORDER BY vehicle_no`,
       [req.params.institutionId]
     );
     res.json(rows);
   } catch (err) { console.error('transport/vehicles error:', err); res.status(500).json({ error: err.message }); }
 });
 
+// Full record (with image) for the eye / edit views.
+app.get('/api/transport/vehicle/:id', async (req, res) => {
+  try {
+    const [rows] = await db.execute('SELECT * FROM transport_vehicles WHERE id = ? LIMIT 1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Vehicle not found.' });
+    res.json(rows[0]);
+  } catch (err) { console.error('transport/vehicle get error:', err); res.status(500).json({ error: err.message }); }
+});
+
 app.post('/api/transport/vehicle', async (req, res) => {
-  const { institutionId, vehicle_no, vehicle_name, vehicle_type, capacity, notes, is_active, userId, userName } = req.body;
+  const { institutionId, vehicle_no, vehicle_code, vehicle_name, vehicle_type, registration_date,
+          capacity, notes, vehicle_image, is_active, userId, userName } = req.body;
   if (!institutionId || !vehicle_no) return res.status(400).json({ error: 'institutionId and vehicle number are required.' });
   try {
     const [ins] = await db.execute(
-      `INSERT INTO transport_vehicles (institutionId, vehicle_no, vehicle_name, vehicle_type, capacity, notes, is_active, created_by, created_by_name)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [institutionId, vehicle_no, vehicle_name || null, vehicle_type || null, capacity ?? null, notes || null, is_active === false ? 0 : 1, userId ?? null, userName ?? null]
+      `INSERT INTO transport_vehicles (institutionId, vehicle_no, vehicle_code, vehicle_name, vehicle_type, registration_date,
+                                       capacity, notes, vehicle_image, is_active, created_by, created_by_name)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [institutionId, vehicle_no, vehicle_code || null, vehicle_name || null, vehicle_type || null, registration_date || null,
+       capacity ?? null, notes || null, vehicle_image || null, is_active === false ? 0 : 1, userId ?? null, userName ?? null]
     );
     res.json({ success: true, id: ins.insertId });
   } catch (err) { console.error('transport/vehicle create error:', err); res.status(500).json({ error: err.message }); }
 });
 
 app.put('/api/transport/vehicle/:id', async (req, res) => {
-  const { vehicle_no, vehicle_name, vehicle_type, capacity, notes, is_active, userId, userName } = req.body;
+  const { vehicle_no, vehicle_code, vehicle_name, vehicle_type, registration_date,
+          capacity, notes, vehicle_image, removeImage, is_active, userId, userName } = req.body;
   try {
+    // image: untouched unless a new one is sent or removal requested
+    let imgClause = '';
+    const params = [vehicle_no, vehicle_code || null, vehicle_name || null, vehicle_type || null, registration_date || null,
+                    capacity ?? null, notes || null, is_active === false ? 0 : 1, userId ?? null, userName ?? null];
+    if (vehicle_image) { imgClause = ', vehicle_image = ?'; params.push(vehicle_image); }
+    else if (removeImage) { imgClause = ', vehicle_image = NULL'; }
+    params.push(req.params.id);
     await db.execute(
-      `UPDATE transport_vehicles SET vehicle_no = ?, vehicle_name = ?, vehicle_type = ?, capacity = ?, notes = ?, is_active = ?,
-              updated_by = ?, updated_by_name = ?, updated_at = NOW() WHERE id = ?`,
-      [vehicle_no, vehicle_name || null, vehicle_type || null, capacity ?? null, notes || null, is_active === false ? 0 : 1, userId ?? null, userName ?? null, req.params.id]
+      `UPDATE transport_vehicles SET vehicle_no = ?, vehicle_code = ?, vehicle_name = ?, vehicle_type = ?, registration_date = ?,
+              capacity = ?, notes = ?, is_active = ?, updated_by = ?, updated_by_name = ?, updated_at = NOW()${imgClause}
+        WHERE id = ?`,
+      params
     );
     res.json({ success: true });
   } catch (err) { console.error('transport/vehicle update error:', err); res.status(500).json({ error: err.message }); }
@@ -11317,7 +11342,12 @@ app.get('/api/transport/staff/:institutionId', async (req, res) => {
   const { staff_role } = req.query;
   try {
     const params = [req.params.institutionId];
-    let sql = `SELECT s.*, u.name, u.roll_no FROM transport_staff s
+    let sql = `SELECT s.id, s.institutionId, s.user_id, s.staff_role, s.license_no, s.aadhar_no, s.phone, s.is_active,
+                      (s.license_image IS NOT NULL) AS has_license_image,
+                      (s.aadhar_image IS NOT NULL) AS has_aadhar_image,
+                      s.created_by_name, s.created_at,
+                      u.name, u.email, u.role AS user_role, u.roll_no
+                 FROM transport_staff s
                  JOIN users u ON u.id = s.user_id
                 WHERE s.institutionId = ?`;
     if (staff_role) { sql += ' AND s.staff_role = ?'; params.push(staff_role); }
@@ -11325,6 +11355,21 @@ app.get('/api/transport/staff/:institutionId', async (req, res) => {
     const [rows] = await db.execute(sql, params);
     res.json(rows);
   } catch (err) { console.error('transport/staff error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// Full staff record incl. proof images + the user's own details (eye / edit view).
+app.get('/api/transport/staff-details/:id', async (req, res) => {
+  try {
+    const [rows] = await db.execute(
+      `SELECT s.*, u.name, u.email, u.username, u.role AS user_role, u.phone_no AS user_phone,
+              u.dob, u.gender, u.address, u.profile_pic, u.joining_date, u.experience
+         FROM transport_staff s JOIN users u ON u.id = s.user_id
+        WHERE s.id = ? LIMIT 1`,
+      [req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Staff not found.' });
+    res.json(rows[0]);
+  } catch (err) { console.error('transport/staff-details error:', err); res.status(500).json({ error: err.message }); }
 });
 
 // bulk add selected users as Driver/Conductor
@@ -11344,11 +11389,19 @@ app.post('/api/transport/staff', async (req, res) => {
 });
 
 app.put('/api/transport/staff/:id', async (req, res) => {
-  const { license_no, phone, is_active } = req.body;
+  const { license_no, aadhar_no, phone, is_active,
+          license_image, removeLicenseImage, aadhar_image, removeAadharImage } = req.body;
   try {
+    let extra = '';
+    const params = [license_no || null, aadhar_no || null, phone || null, is_active === false ? 0 : 1];
+    if (license_image) { extra += ', license_image = ?'; params.push(license_image); }
+    else if (removeLicenseImage) { extra += ', license_image = NULL'; }
+    if (aadhar_image) { extra += ', aadhar_image = ?'; params.push(aadhar_image); }
+    else if (removeAadharImage) { extra += ', aadhar_image = NULL'; }
+    params.push(req.params.id);
     await db.execute(
-      'UPDATE transport_staff SET license_no = ?, phone = ?, is_active = ? WHERE id = ?',
-      [license_no || null, phone || null, is_active === false ? 0 : 1, req.params.id]
+      `UPDATE transport_staff SET license_no = ?, aadhar_no = ?, phone = ?, is_active = ?${extra} WHERE id = ?`,
+      params
     );
     res.json({ success: true });
   } catch (err) { console.error('transport/staff update error:', err); res.status(500).json({ error: err.message }); }
@@ -11677,6 +11730,194 @@ app.get('/api/transport/attendance/student/:studentId', async (req, res) => {
     );
     res.json(rows);
   } catch (err) { console.error('transport/attendance/student error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// =================================================================
+//  VEHICLE LOG BOOK — daily running log
+// =================================================================
+
+// List logs (filters: vehicle_id, from, to). Sorted in Node.
+app.get('/api/transport/logs/:institutionId', async (req, res) => {
+  const { vehicle_id, from, to } = req.query;
+  try {
+    const where = ['l.institutionId = ?'];
+    const params = [req.params.institutionId];
+    if (vehicle_id) { where.push('l.vehicle_id = ?'); params.push(vehicle_id); }
+    if (from) { where.push('l.log_date >= ?'); params.push(from); }
+    if (to)   { where.push('l.log_date <= ?'); params.push(to); }
+    const [rows] = await db.execute(
+      `SELECT l.*, v.vehicle_no, v.vehicle_code, v.vehicle_name
+         FROM transport_vehicle_logs l
+         JOIN transport_vehicles v ON v.id = l.vehicle_id
+        WHERE ${where.join(' AND ')}`,
+      params
+    );
+    rows.sort((a, b) => String(b.log_date).localeCompare(String(a.log_date)) || (a.vehicle_no || '').localeCompare(b.vehicle_no || ''));
+    res.json(rows);
+  } catch (err) { console.error('transport/logs error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// Range summary: per-vehicle totals + grand totals + per-day trend.
+app.get('/api/transport/logs-summary/:institutionId', async (req, res) => {
+  const { vehicle_id, from, to } = req.query;
+  try {
+    const where = ['l.institutionId = ?'];
+    const params = [req.params.institutionId];
+    if (vehicle_id) { where.push('l.vehicle_id = ?'); params.push(vehicle_id); }
+    if (from) { where.push('l.log_date >= ?'); params.push(from); }
+    if (to)   { where.push('l.log_date <= ?'); params.push(to); }
+    const [rows] = await db.execute(
+      `SELECT l.vehicle_id, l.log_date, l.trips, l.distance_km, l.fuel_litres, l.fuel_cost,
+              v.vehicle_no, v.vehicle_code, v.vehicle_name
+         FROM transport_vehicle_logs l
+         JOIN transport_vehicles v ON v.id = l.vehicle_id
+        WHERE ${where.join(' AND ')}`,
+      params
+    );
+
+    const byVehicle = {};
+    const daily = {};
+    const totals = { trips: 0, distance: 0, fuel: 0, cost: 0, days: 0 };
+    rows.forEach(r => {
+      const k = r.vehicle_id;
+      byVehicle[k] = byVehicle[k] || {
+        vehicle_id: k, vehicle_no: r.vehicle_no, vehicle_code: r.vehicle_code, vehicle_name: r.vehicle_name,
+        trips: 0, distance: 0, fuel: 0, cost: 0, days: 0
+      };
+      const t = Number(r.trips) || 0, d = Number(r.distance_km) || 0, f = Number(r.fuel_litres) || 0, c = Number(r.fuel_cost) || 0;
+      byVehicle[k].trips += t; byVehicle[k].distance += d; byVehicle[k].fuel += f; byVehicle[k].cost += c; byVehicle[k].days += 1;
+      totals.trips += t; totals.distance += d; totals.fuel += f; totals.cost += c;
+      const day = String(r.log_date).slice(0, 10);
+      daily[day] = daily[day] || { date: day, trips: 0, distance: 0, fuel: 0 };
+      daily[day].trips += t; daily[day].distance += d; daily[day].fuel += f;
+    });
+    totals.days = Object.keys(daily).length;
+
+    const vehicles = Object.values(byVehicle).map(v => ({
+      ...v,
+      mileage: v.fuel > 0 ? +(v.distance / v.fuel).toFixed(2) : null   // km per litre
+    })).sort((a, b) => (a.vehicle_no || '').localeCompare(b.vehicle_no || ''));
+
+    res.json({
+      totals: { ...totals, mileage: totals.fuel > 0 ? +(totals.distance / totals.fuel).toFixed(2) : null },
+      vehicles,
+      daily: Object.values(daily).sort((a, b) => a.date.localeCompare(b.date))
+    });
+  } catch (err) { console.error('transport/logs-summary error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// Create / update a day's log (one row per vehicle per date).
+app.post('/api/transport/log', async (req, res) => {
+  const { institutionId, vehicle_id, log_date, trips, distance_km, fuel_litres, fuel_cost, driver_name, notes, userId, userName } = req.body;
+  if (!institutionId || !vehicle_id || !log_date) return res.status(400).json({ error: 'institutionId, vehicle and date are required.' });
+  try {
+    await db.execute(
+      `INSERT INTO transport_vehicle_logs (institutionId, vehicle_id, log_date, trips, distance_km, fuel_litres, fuel_cost, driver_name, notes, created_by, created_by_name)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE trips = VALUES(trips), distance_km = VALUES(distance_km), fuel_litres = VALUES(fuel_litres),
+         fuel_cost = VALUES(fuel_cost), driver_name = VALUES(driver_name), notes = VALUES(notes),
+         updated_by = VALUES(created_by), updated_by_name = VALUES(created_by_name), updated_at = NOW()`,
+      [institutionId, vehicle_id, log_date, Number(trips) || 0, Number(distance_km) || 0, Number(fuel_litres) || 0,
+       fuel_cost === '' || fuel_cost == null ? null : Number(fuel_cost), driver_name || null, notes || null, userId ?? null, userName ?? null]
+    );
+    res.json({ success: true });
+  } catch (err) { console.error('transport/log save error:', err); res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/transport/log/:id', async (req, res) => {
+  const { trips, distance_km, fuel_litres, fuel_cost, driver_name, notes, log_date, vehicle_id, userId, userName } = req.body;
+  try {
+    await db.execute(
+      `UPDATE transport_vehicle_logs SET vehicle_id = ?, log_date = ?, trips = ?, distance_km = ?, fuel_litres = ?, fuel_cost = ?,
+              driver_name = ?, notes = ?, updated_by = ?, updated_by_name = ?, updated_at = NOW() WHERE id = ?`,
+      [vehicle_id, log_date, Number(trips) || 0, Number(distance_km) || 0, Number(fuel_litres) || 0,
+       fuel_cost === '' || fuel_cost == null ? null : Number(fuel_cost), driver_name || null, notes || null,
+       userId ?? null, userName ?? null, req.params.id]
+    );
+    res.json({ success: true });
+  } catch (err) { console.error('transport/log update error:', err); res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/transport/log/:id', async (req, res) => {
+  try { await db.execute('DELETE FROM transport_vehicle_logs WHERE id = ?', [req.params.id]); res.json({ success: true }); }
+  catch (err) { console.error('transport/log delete error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// =================================================================
+//  VEHICLE LOG BOOK — service / repair
+// =================================================================
+app.get('/api/transport/service/:institutionId', async (req, res) => {
+  const { vehicle_id, from, to } = req.query;
+  try {
+    const where = ['s.institutionId = ?'];
+    const params = [req.params.institutionId];
+    if (vehicle_id) { where.push('s.vehicle_id = ?'); params.push(vehicle_id); }
+    if (from) { where.push('s.service_date >= ?'); params.push(from); }
+    if (to)   { where.push('s.service_date <= ?'); params.push(to); }
+    const [rows] = await db.execute(
+      `SELECT s.id, s.vehicle_id, s.service_date, s.service_type, s.cost, s.odometer_km, s.garage, s.details,
+              (s.attachment IS NOT NULL) AS has_attachment, s.created_by_name, s.updated_by_name, s.created_at, s.updated_at,
+              v.vehicle_no, v.vehicle_code, v.vehicle_name
+         FROM transport_vehicle_service s
+         JOIN transport_vehicles v ON v.id = s.vehicle_id
+        WHERE ${where.join(' AND ')}`,
+      params
+    );
+    rows.sort((a, b) => String(b.service_date).localeCompare(String(a.service_date)));
+    res.json(rows);
+  } catch (err) { console.error('transport/service error:', err); res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/transport/service-details/:id', async (req, res) => {
+  try {
+    const [rows] = await db.execute(
+      `SELECT s.*, v.vehicle_no, v.vehicle_code, v.vehicle_name
+         FROM transport_vehicle_service s JOIN transport_vehicles v ON v.id = s.vehicle_id
+        WHERE s.id = ? LIMIT 1`,
+      [req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Record not found.' });
+    res.json(rows[0]);
+  } catch (err) { console.error('transport/service-details error:', err); res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/transport/service', async (req, res) => {
+  const { institutionId, vehicle_id, service_date, service_type, cost, odometer_km, garage, details, attachment, userId, userName } = req.body;
+  if (!institutionId || !vehicle_id || !service_date) return res.status(400).json({ error: 'institutionId, vehicle and service date are required.' });
+  try {
+    const [ins] = await db.execute(
+      `INSERT INTO transport_vehicle_service (institutionId, vehicle_id, service_date, service_type, cost, odometer_km, garage, details, attachment, created_by, created_by_name)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [institutionId, vehicle_id, service_date, service_type || null, Number(cost) || 0,
+       odometer_km === '' || odometer_km == null ? null : Number(odometer_km), garage || null, details || null,
+       attachment || null, userId ?? null, userName ?? null]
+    );
+    res.json({ success: true, id: ins.insertId });
+  } catch (err) { console.error('transport/service create error:', err); res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/transport/service/:id', async (req, res) => {
+  const { vehicle_id, service_date, service_type, cost, odometer_km, garage, details, attachment, removeAttachment, userId, userName } = req.body;
+  try {
+    let attClause = '';
+    const params = [vehicle_id, service_date, service_type || null, Number(cost) || 0,
+                    odometer_km === '' || odometer_km == null ? null : Number(odometer_km), garage || null, details || null,
+                    userId ?? null, userName ?? null];
+    if (attachment) { attClause = ', attachment = ?'; params.push(attachment); }
+    else if (removeAttachment) { attClause = ', attachment = NULL'; }
+    params.push(req.params.id);
+    await db.execute(
+      `UPDATE transport_vehicle_service SET vehicle_id = ?, service_date = ?, service_type = ?, cost = ?, odometer_km = ?,
+              garage = ?, details = ?, updated_by = ?, updated_by_name = ?, updated_at = NOW()${attClause} WHERE id = ?`,
+      params
+    );
+    res.json({ success: true });
+  } catch (err) { console.error('transport/service update error:', err); res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/transport/service/:id', async (req, res) => {
+  try { await db.execute('DELETE FROM transport_vehicle_service WHERE id = ?', [req.params.id]); res.json({ success: true }); }
+  catch (err) { console.error('transport/service delete error:', err); res.status(500).json({ error: err.message }); }
 });
 
 
