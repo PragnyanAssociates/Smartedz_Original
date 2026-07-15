@@ -2,7 +2,10 @@ import React, { useState, useMemo } from 'react';
 import { Plus, Edit, Trash2, X, ShieldCheck, Lock, Users } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
 
-const SYSTEM_ROLES = ['Super Admin', 'Student', 'Teacher'];
+// Must mirror SYSTEM_ROLES in index.js on the backend.
+// 'Driver & Assistant' is the transport crew role (drivers + their
+// assistants who mark pickup/drop attendance).
+const SYSTEM_ROLES = ['Super Admin', 'Student', 'Teacher', 'Driver & Assistant'];
 const isSystem = (name) => SYSTEM_ROLES.includes(name);
 
 // Passed-out students (status 'alumni') have left the school. They are
@@ -219,7 +222,7 @@ export default function RolesTab({ data, fetchData, user }) {
                   required
                   className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors"
                 />
-                {isSystem(roleName.trim()) && (
+                {isRoleSystem(roleName.trim()) && (
                   <p className="mt-1.5 text-[10px] text-red-500 font-semibold uppercase tracking-wider">
                     "{roleName.trim()}" is a reserved system role name.
                   </p>
@@ -230,8 +233,9 @@ export default function RolesTab({ data, fetchData, user }) {
                 <div className="flex items-center gap-1.5 mb-1.5 text-zinc-700 font-semibold uppercase tracking-wider">
                   <Lock className="size-3.5" /> System roles are protected
                 </div>
-                Super Admin, Student, and Teacher exist in every school and cannot be renamed or
-                deleted. They guarantee a stable foundation for core modules.
+                Super Admin, Student, Teacher, and Driver &amp; Assistant exist in every school and
+                cannot be renamed or deleted. They guarantee a stable foundation for core modules —
+                Driver &amp; Assistant powers the Transport crew (bus drivers and their assistants).
               </div>
 
               <div className="pt-2 flex justify-end gap-3">

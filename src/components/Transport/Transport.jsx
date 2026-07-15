@@ -24,11 +24,11 @@ export default function Transport() {
   const [tab, setTab] = useState('routes');
 
   const tabs = [
-    { id: 'routes',     label: 'Routes',               icon: RouteIcon },
+    { id: 'vehicles',   label: 'Vehicles',             icon: Bus },
+    { id: 'staff',      label: 'Drivers & Attendant', icon: Users },
     { id: 'students',   label: 'Assign Students',      icon: UserCheck },
     { id: 'attendance', label: 'Attendance',           icon: ClipboardCheck },
-    { id: 'vehicles',   label: 'Vehicles',             icon: Bus },
-    { id: 'staff',      label: 'Drivers & Conductors', icon: Users },
+    { id: 'routes',     label: 'Routes',               icon: RouteIcon },
     { id: 'logbook',    label: 'Vehicle Log Book',     icon: NotebookPen },
   ];
   const props = { user, canEdit, canDelete };

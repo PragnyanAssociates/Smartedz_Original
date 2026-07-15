@@ -170,15 +170,24 @@ const DEFAULT_MODULES = [
 ];
 
 // =====================================================================
-//  SYSTEM ROLES — These three are seeded for every school and cannot
+//  SYSTEM ROLES — These are seeded for every school and cannot
 //  be renamed or deleted by anyone (not even Super Admin from the UI).
-//  Future modules (Attendance, Marks, etc.) can rely on these EXACT
-//  names without worrying about case/plural variations.
+//  Future modules (Attendance, Marks, Transport, etc.) can rely on these
+//  EXACT names without worrying about case/plural variations.
+//
+//  'Driver & Assistant' is the transport crew role: bus drivers and their
+//  assistants (who mark student pickup/drop attendance). It is permanent so
+//  the Transport module can safely restrict what crew members see and do.
 //
 //  IMPORTANT: must mirror SYSTEM_ROLES in RolesTab.jsx on the frontend.
 // =====================================================================
-const SYSTEM_ROLES = ['Super Admin', 'Student', 'Teacher'];
+const SYSTEM_ROLES = ['Super Admin', 'Student', 'Teacher', 'Driver & Assistant'];
 const isSystemRole = (name) => SYSTEM_ROLES.includes(name);
+
+// Canonical transport crew role. Transport uses this to decide who may be
+// registered as a Driver / Assistant, and to scope what crew can see.
+const CREW_ROLE = 'Driver & Assistant';
+const isCrewRoleName = (role) => (role || '').trim().toLowerCase() === CREW_ROLE.toLowerCase();
 
 const PLAN_DAYS = {
     '7 days': 7, '30 days': 30, '90 days': 90, '180 days': 180,
