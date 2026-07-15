@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Bus, Plus, Pencil, Trash2, X, Save, ChevronDown, Eye, Upload, ImageIcon } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
+import { Thumb, Lightbox } from './ImageBits';
 
 const TYPES = ['Bus', 'Van', 'Auto', 'Car', 'Other'];
 const EMPTY = { vehicle_no: '', vehicle_code: '', vehicle_name: '', vehicle_type: 'Bus', registration_date: '', capacity: '', notes: '', vehicle_image: '', is_active: true };
@@ -14,6 +15,7 @@ export default function Vehicles({ user, canEdit, canDelete }) {
   const [saving, setSaving]   = useState(false);
   const [busyId, setBusyId]   = useState(null);
   const [removeImg, setRemoveImg] = useState(false);
+  const [zoom, setZoom]       = useState(null);   // {src, alt}
 
   const load = useCallback(async () => {
     if (!user?.institutionId) return;
@@ -110,7 +112,13 @@ export default function Vehicles({ user, canEdit, canDelete }) {
               <tbody className="divide-y divide-zinc-100">
                 {rows.length ? rows.map(v => (
                   <tr key={v.id} className="hover:bg-zinc-50/60 transition-colors">
-                    <td className="px-5 py-3 text-sm font-semibold text-zinc-900 flex items-center gap-2"><Bus className="size-4 text-primary" /> {v.vehicle_no}</td>
+                    <td className="px-5 py-3 text-sm font-semibold text-zinc-900">
+                      <div className="flex items-center gap-2.5">
+                        <Thumb endpoint={`/transport/vehicle-image/${v.id}`} has={v.has_image} alt={v.vehicle_no} icon={Bus}
+                          className="size-10" onEnlarge={(src, alt) => setZoom({ src, alt })} />
+                        {v.vehicle_no}
+                      </div>
+                    </td>
                     <td className="px-5 py-3 text-xs text-zinc-600">{v.vehicle_code || '—'}</td>
                     <td className="px-5 py-3 text-sm text-zinc-700">{v.vehicle_name || '—'}</td>
                     <td className="px-5 py-3 text-xs text-zinc-600">{v.vehicle_type || '—'}</td>
@@ -171,7 +179,8 @@ export default function Vehicles({ user, canEdit, canDelete }) {
                       <button onClick={() => { setModal(m => ({ ...m, vehicle_image: '' })); setRemoveImg(true); }} className="inline-flex items-center gap-1 text-[11px] text-accent hover:underline"><X className="size-3.5" /> Remove</button>
                     )}
                   </div>
-                  {shownImage && <img src={shownImage} alt="vehicle" className="mt-2 max-h-40 rounded-md ring-1 ring-black/5" />}
+                  {shownImage && <img src={shownImage} alt="vehicle" onClick={() => setZoom({ src: shownImage, alt: modal.vehicle_no || 'Vehicle' })}
+                    className="mt-2 max-h-40 rounded-md ring-1 ring-black/5 cursor-zoom-in hover:opacity-90 transition-opacity" />}
                 </Field>
               </div>
               <label className="sm:col-span-2 flex items-center gap-2 text-xs text-zinc-600 cursor-pointer">
@@ -188,12 +197,14 @@ export default function Vehicles({ user, canEdit, canDelete }) {
         </div>
       )}
 
-      {viewId && <VehicleView id={viewId} onClose={() => setViewId(null)} />}
+      {viewId && <VehicleView id={viewId} onClose={() => setViewId(null)} onEnlarge={(src, alt) => setZoom({ src, alt })} />}
+
+      {zoom && <Lightbox src={zoom.src} alt={zoom.alt} onClose={() => setZoom(null)} />}
     </div>
   );
 }
 
-function VehicleView({ id, onClose }) {
+function VehicleView({ id, onClose, onEnlarge }) {
   const [v, setV] = useState(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -218,7 +229,8 @@ function VehicleView({ id, onClose }) {
         ) : (
           <div className="p-5 space-y-2.5 text-sm">
             {v.vehicle_image
-              ? <img src={v.vehicle_image} alt="vehicle" className="w-full rounded-md ring-1 ring-black/5 mb-3" />
+              ? <img src={v.vehicle_image} alt={v.vehicle_no} onClick={() => onEnlarge && onEnlarge(v.vehicle_image, v.vehicle_no)}
+                    className="w-full rounded-md ring-1 ring-black/5 mb-3 cursor-zoom-in hover:opacity-90 transition-opacity" />
               : <div className="w-full h-32 rounded-md bg-zinc-50 ring-1 ring-zinc-100 flex flex-col items-center justify-center text-zinc-300 mb-3"><ImageIcon className="size-6" /><span className="text-[10px] mt-1">No image</span></div>}
             <ViewRow label="Code" value={v.vehicle_code || '—'} />
             <ViewRow label="Name / Model" value={v.vehicle_name || '—'} />

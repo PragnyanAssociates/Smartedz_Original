@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Users, Plus, Trash2, X, ChevronDown, UserPlus, Search, Check, Eye, Pencil, Save, Upload, FileText, Phone, ShieldCheck } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
+import { Thumb, Lightbox } from './ImageBits';
 
 const fmtDate = (v) => { if (!v) return '—'; const s = String(v).slice(0, 10); const [y, m, d] = s.split('-'); return d ? `${d}/${m}/${y}` : s; };
 
@@ -13,6 +14,7 @@ export default function Drivers({ user, canEdit, canDelete }) {
   const [editing, setEditing] = useState(null);
   const [savingEdit, setSavingEdit] = useState(false);
   const [busyId, setBusyId]   = useState(null);
+  const [zoom, setZoom]       = useState(null);   // {src, alt}
 
   const load = useCallback(async () => {
     if (!user?.institutionId) return;
@@ -113,7 +115,13 @@ export default function Drivers({ user, canEdit, canDelete }) {
               <tbody className="divide-y divide-zinc-100">
                 {rows.length ? rows.map(s => (
                   <tr key={s.id} className="hover:bg-zinc-50/60 transition-colors">
-                    <td className="px-5 py-3 text-sm font-medium text-zinc-900 flex items-center gap-2"><Users className="size-4 text-primary" /> {s.name}</td>
+                    <td className="px-5 py-3 text-sm font-medium text-zinc-900">
+                      <div className="flex items-center gap-2.5">
+                        <Thumb endpoint={`/transport/staff-photo/${s.id}`} has={s.has_photo} alt={s.name} icon={Users}
+                          className="size-9" rounded="rounded-full" onEnlarge={(src, alt) => setZoom({ src, alt })} />
+                        {s.name}
+                      </div>
+                    </td>
                     <td className="px-5 py-3 text-xs text-zinc-600">{s.staff_role}</td>
                     <td className="px-5 py-3 text-xs text-zinc-600">{s.phone || '—'}</td>
                     <td className="px-5 py-3 text-xs text-zinc-600">{s.license_no || '—'}</td>
@@ -147,7 +155,9 @@ export default function Drivers({ user, canEdit, canDelete }) {
 
       {addOpen && <AddStaffModal user={user} staffRole={tab} existing={rows.map(r => r.user_id)} onClose={() => setAddOpen(false)} onAdded={() => { setAddOpen(false); load(); }} />}
 
-      {viewId && <StaffView id={viewId} onClose={() => setViewId(null)} />}
+      {viewId && <StaffView id={viewId} onClose={() => setViewId(null)} onEnlarge={(src, alt) => setZoom({ src, alt })} />}
+
+      {zoom && <Lightbox src={zoom.src} alt={zoom.alt} onClose={() => setZoom(null)} />}
 
       {editing && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={() => setEditing(null)}>
@@ -167,10 +177,10 @@ export default function Drivers({ user, canEdit, canDelete }) {
 
             <p className="text-xs font-semibold text-zinc-700 mt-5 mb-2 flex items-center gap-1.5"><ShieldCheck className="size-3.5 text-primary" /> Proofs</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <ProofBox title="Driving Licence" img={licenseShown}
+              <ProofBox title="Driving Licence" img={licenseShown} onEnlarge={(src, alt) => setZoom({ src, alt })}
                 onPick={e => pickImage(e, 'license_image')}
                 onRemove={() => setEditing(m => ({ ...m, license_image: '', removeLicense: true }))} />
-              <ProofBox title="Aadhaar Card" img={aadharShown}
+              <ProofBox title="Aadhaar Card" img={aadharShown} onEnlarge={(src, alt) => setZoom({ src, alt })}
                 onPick={e => pickImage(e, 'aadhar_image')}
                 onRemove={() => setEditing(m => ({ ...m, aadhar_image: '', removeAadhar: true }))} />
             </div>
@@ -186,12 +196,13 @@ export default function Drivers({ user, canEdit, canDelete }) {
   );
 }
 
-function ProofBox({ title, img, onPick, onRemove }) {
+function ProofBox({ title, img, onPick, onRemove, onEnlarge }) {
   return (
     <div className="ring-1 ring-zinc-200 rounded-md p-3">
       <p className="text-[11px] font-medium text-zinc-700 mb-2 flex items-center gap-1.5"><FileText className="size-3.5 text-zinc-400" /> {title}</p>
       {img
-        ? <img src={img} alt={title} className="w-full max-h-32 object-contain rounded ring-1 ring-black/5 bg-zinc-50 mb-2" />
+        ? <img src={img} alt={title} onClick={() => onEnlarge && onEnlarge(img, title)}
+              className="w-full max-h-32 object-contain rounded ring-1 ring-black/5 bg-zinc-50 mb-2 cursor-zoom-in hover:opacity-90 transition-opacity" />
         : <div className="w-full h-24 rounded bg-zinc-50 ring-1 ring-zinc-100 flex items-center justify-center text-[10px] text-zinc-400 mb-2">Not uploaded</div>}
       <div className="flex items-center gap-2">
         <label className="cursor-pointer inline-flex items-center gap-1.5 text-primary ring-1 ring-primary/30 px-2.5 py-1.5 rounded text-[11px] font-medium hover:bg-primary/5">
@@ -204,7 +215,7 @@ function ProofBox({ title, img, onPick, onRemove }) {
   );
 }
 
-function StaffView({ id, onClose }) {
+function StaffView({ id, onClose, onEnlarge }) {
   const [d, setD] = useState(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -230,7 +241,8 @@ function StaffView({ id, onClose }) {
           <div className="p-5 space-y-2.5 text-sm">
             <div className="flex items-center gap-3 pb-3 border-b border-zinc-100">
               {d.profile_pic
-                ? <img src={d.profile_pic} alt={d.name} className="size-14 rounded-full object-cover ring-1 ring-black/5" />
+                ? <img src={d.profile_pic} alt={d.name} onClick={() => onEnlarge && onEnlarge(d.profile_pic, d.name)}
+                    className="size-14 rounded-full object-cover ring-1 ring-black/5 cursor-zoom-in hover:opacity-90 transition-opacity" />
                 : <div className="size-14 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-lg">{(d.name || '?').charAt(0).toUpperCase()}</div>}
               <div className="min-w-0">
                 <p className="text-base font-semibold text-zinc-900 truncate">{d.name}</p>
@@ -257,8 +269,8 @@ function StaffView({ id, onClose }) {
 
             <p className="text-xs font-semibold text-zinc-700 pt-3 flex items-center gap-1.5 border-t border-zinc-100"><ShieldCheck className="size-3.5 text-primary" /> Proofs</p>
             <div className="grid grid-cols-2 gap-3">
-              <ProofShow title="Driving Licence" img={d.license_image} />
-              <ProofShow title="Aadhaar Card" img={d.aadhar_image} />
+              <ProofShow title="Driving Licence" img={d.license_image} onEnlarge={onEnlarge} />
+              <ProofShow title="Aadhaar Card" img={d.aadhar_image} onEnlarge={onEnlarge} />
             </div>
 
             {d.created_by_name && <p className="text-[11px] text-zinc-400 pt-2 border-t border-zinc-100">Added by {d.created_by_name}</p>}
@@ -269,12 +281,13 @@ function StaffView({ id, onClose }) {
   );
 }
 
-function ProofShow({ title, img }) {
+function ProofShow({ title, img, onEnlarge }) {
   return (
     <div>
       <p className="text-[10px] text-zinc-400 uppercase tracking-wider mb-1">{title}</p>
       {img
-        ? <a href={img} target="_blank" rel="noreferrer"><img src={img} alt={title} className="w-full max-h-28 object-contain rounded ring-1 ring-black/5 bg-zinc-50 hover:opacity-90" /></a>
+        ? <img src={img} alt={title} onClick={() => onEnlarge && onEnlarge(img, title)}
+              className="w-full max-h-28 object-contain rounded ring-1 ring-black/5 bg-zinc-50 cursor-zoom-in hover:opacity-90 transition-opacity" />
         : <div className="w-full h-20 rounded bg-zinc-50 ring-1 ring-zinc-100 flex items-center justify-center text-[10px] text-zinc-400">Not uploaded</div>}
     </div>
   );

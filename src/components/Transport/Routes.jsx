@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Route as RouteIcon, Plus, Pencil, Trash2, ChevronLeft, MapPin, Bus, User, Users, X, Save, ChevronDown, MapPinned, Eye, ExternalLink, Navigation, Play, Square, Radio } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
 import LeafletMap, { parseLatLng } from './LeafletMap';
+import { Thumb, Lightbox } from './ImageBits';
 
 export default function Routes({ user, canEdit, canDelete }) {
   const [mode, setMode]       = useState('list');   // 'list' | 'edit' | 'view'
@@ -10,6 +11,7 @@ export default function Routes({ user, canEdit, canDelete }) {
   const [rows, setRows]       = useState([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId]   = useState(null);
+  const [zoom, setZoom]       = useState(null);   // {src, alt}
 
   const load = useCallback(async () => {
     if (!user?.institutionId) return;
@@ -73,7 +75,18 @@ export default function Routes({ user, canEdit, canDelete }) {
                       <div className="text-sm font-semibold text-zinc-900 flex items-center gap-2"><RouteIcon className="size-4 text-primary" /> {r.route_name}</div>
                       {r.route_code && <div className="text-[11px] text-zinc-400 ml-6">{r.route_code}</div>}
                     </td>
-                    <td className="px-5 py-3 text-xs text-zinc-700">{r.vehicle_no || '—'}</td>
+                    <td className="px-5 py-3">
+                      {r.vehicle_no ? (
+                        <div className="flex items-center gap-2.5">
+                          <Thumb endpoint={`/transport/vehicle-image/${r.vehicle_id}`} has={r.vehicle_has_image} alt={r.vehicle_no} icon={Bus}
+                            className="size-10" onEnlarge={(src, alt) => setZoom({ src, alt })} />
+                          <div className="min-w-0">
+                            <p className="text-xs font-semibold text-zinc-900 truncate">{r.vehicle_no}</p>
+                            <p className="text-[10px] text-zinc-400 truncate">{r.vehicle_code ? r.vehicle_code : ''}{r.vehicle_code && r.vehicle_name ? ' · ' : ''}{r.vehicle_name || ''}</p>
+                          </div>
+                        </div>
+                      ) : <span className="text-xs text-zinc-400">—</span>}
+                    </td>
                     <td className="px-5 py-3 text-xs text-zinc-700">{r.driver_name || '—'}</td>
                     <td className="px-5 py-3 text-xs text-zinc-700">{r.conductor_name || '—'}</td>
                     <td className="px-5 py-3 text-xs text-zinc-600 tabular-nums">{r.point_count}</td>
@@ -94,6 +107,8 @@ export default function Routes({ user, canEdit, canDelete }) {
           </div>
         )}
       </div>
+
+      {zoom && <Lightbox src={zoom.src} alt={zoom.alt} onClose={() => setZoom(null)} />}
     </div>
   );
 }

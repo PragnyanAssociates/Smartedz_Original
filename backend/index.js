@@ -11346,7 +11346,8 @@ app.get('/api/transport/staff/:institutionId', async (req, res) => {
                       (s.license_image IS NOT NULL) AS has_license_image,
                       (s.aadhar_image IS NOT NULL) AS has_aadhar_image,
                       s.created_by_name, s.created_at,
-                      u.name, u.email, u.role AS user_role, u.roll_no
+                      u.name, u.email, u.role AS user_role, u.roll_no,
+                      (u.profile_pic IS NOT NULL AND u.profile_pic <> '') AS has_photo
                  FROM transport_staff s
                  JOIN users u ON u.id = s.user_id
                 WHERE s.institutionId = ?`;
@@ -11416,7 +11417,8 @@ app.delete('/api/transport/staff/:id', async (req, res) => {
 app.get('/api/transport/routes/:institutionId', async (req, res) => {
   try {
     const [rows] = await db.execute(
-      `SELECT r.*, v.vehicle_no, v.vehicle_name,
+      `SELECT r.*, v.vehicle_no, v.vehicle_code, v.vehicle_name,
+              (v.vehicle_image IS NOT NULL) AS vehicle_has_image,
               d.name AS driver_name, c.name AS conductor_name,
               (SELECT COUNT(*) FROM transport_route_points p WHERE p.route_id = r.id) AS point_count,
               (SELECT COUNT(*) FROM transport_route_students s WHERE s.route_id = r.id) AS student_count
@@ -11918,6 +11920,24 @@ app.put('/api/transport/service/:id', async (req, res) => {
 app.delete('/api/transport/service/:id', async (req, res) => {
   try { await db.execute('DELETE FROM transport_vehicle_service WHERE id = ?', [req.params.id]); res.json({ success: true }); }
   catch (err) { console.error('transport/service delete error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// ---- Lightweight image endpoints (thumbnails fetched lazily by lists) ----
+app.get('/api/transport/vehicle-image/:id', async (req, res) => {
+  try {
+    const [rows] = await db.execute('SELECT vehicle_image FROM transport_vehicles WHERE id = ? LIMIT 1', [req.params.id]);
+    res.json({ image: rows[0]?.vehicle_image || null });
+  } catch (err) { console.error('transport/vehicle-image error:', err); res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/transport/staff-photo/:id', async (req, res) => {
+  try {
+    const [rows] = await db.execute(
+      'SELECT u.profile_pic FROM transport_staff s JOIN users u ON u.id = s.user_id WHERE s.id = ? LIMIT 1',
+      [req.params.id]
+    );
+    res.json({ image: rows[0]?.profile_pic || null });
+  } catch (err) { console.error('transport/staff-photo error:', err); res.status(500).json({ error: err.message }); }
 });
 
 
