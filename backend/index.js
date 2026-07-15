@@ -2675,11 +2675,31 @@ app.delete('/api/admin/subjects/:id', async (req, res) => {
 
 // =====================================================================
 // === 13. ACADEMIC CALENDAR ===========================================
+//   • Rows now carry created_by_name / updated_by_name (LEFT JOIN users)
+//     and IST-formatted created_at / updated_at.
+//   • Create / update fan out a notification to every active user of the
+//     institution (type 'event', link 'academic-calendar').
+//   Requires columns (see migration note at the bottom of this section):
+//     updated_by INT NULL, updated_at TIMESTAMP NULL
 // =====================================================================
+
 app.get('/api/admin/calendar/:instId', async (req, res) => {
     try {
         const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
-        const [rows] = await db.execute('SELECT * FROM calendar_events WHERE institutionId = ? ORDER BY event_date ASC', [instId]);
+        const [rows] = await db.execute(
+            `SELECT ce.id, ce.institutionId, ce.name, ce.event_date, ce.time, ce.description,
+                    ce.type, ce.created_by, ce.updated_by,
+                    cu.name AS created_by_name,
+                    uu.name AS updated_by_name,
+                    DATE_FORMAT(CONVERT_TZ(ce.created_at, '+00:00', '+05:30'), '%d %b %Y, %h:%i %p') AS created_at_ist,
+                    DATE_FORMAT(CONVERT_TZ(ce.updated_at, '+00:00', '+05:30'), '%d %b %Y, %h:%i %p') AS updated_at_ist
+               FROM calendar_events ce
+               LEFT JOIN users cu ON cu.id = ce.created_by
+               LEFT JOIN users uu ON uu.id = ce.updated_by
+              WHERE ce.institutionId = ?
+              ORDER BY ce.event_date ASC`,
+            [instId]
+        );
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -2688,20 +2708,63 @@ app.post('/api/admin/calendar', async (req, res) => {
     const { name, event_date, time, description, type, adminId } = req.body;
     const institutionId = req.auth.institutionId;
     try {
-        await db.execute('INSERT INTO calendar_events (institutionId, name, event_date, time, description, type, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [institutionId, name, event_date, time || null, description || null, type, adminId]);
-        res.json({ success: true });
+        const [r] = await db.execute(
+            `INSERT INTO calendar_events
+               (institutionId, name, event_date, time, description, type, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [institutionId, name, event_date, time || null, description || null, type, adminId || req.auth.userId]
+        );
+
+        // Fan out to every active user of this institution.
+        try {
+            const recipients = await allActiveUserIds(institutionId);
+            const when = String(event_date).split('T')[0];
+            await createNotifications({
+                institutionId,
+                recipientIds: recipients,
+                type: 'event',
+                title: `New ${type}: ${name}`,
+                body: `${when}${time ? ' · ' + time : ''}${description ? ' — ' + description : ''}`,
+                link: 'academic-calendar',
+                entity_id: r.insertId,
+                actor_id: adminId || req.auth.userId
+            });
+        } catch (e) { console.error('[CALENDAR NOTIFY]', e.message); }
+
+        res.json({ success: true, id: r.insertId });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.put('/api/admin/calendar/:id', async (req, res) => {
-    const { name, event_date, time, description, type } = req.body;
+    const { name, event_date, time, description, type, adminId } = req.body;
     try {
         const [own] = await db.execute('SELECT institutionId FROM calendar_events WHERE id = ?', [req.params.id]);
         if (own.length === 0) return res.status(404).json({ error: 'Event not found.' });
         if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This event belongs to another institution.' });
-        await db.execute('UPDATE calendar_events SET name=?, event_date=?, time=?, description=?, type=? WHERE id=?',
-            [name, event_date, time || null, description || null, type, req.params.id]);
+
+        await db.execute(
+            `UPDATE calendar_events
+                SET name=?, event_date=?, time=?, description=?, type=?, updated_by=?, updated_at=UTC_TIMESTAMP()
+              WHERE id=?`,
+            [name, event_date, time || null, description || null, type, adminId || req.auth.userId, req.params.id]
+        );
+
+        try {
+            const institutionId = own[0].institutionId;
+            const recipients = await allActiveUserIds(institutionId);
+            const when = String(event_date).split('T')[0];
+            await createNotifications({
+                institutionId,
+                recipientIds: recipients,
+                type: 'event',
+                title: `Updated: ${name}`,
+                body: `${when}${time ? ' · ' + time : ''}${description ? ' — ' + description : ''}`,
+                link: 'academic-calendar',
+                entity_id: parseInt(req.params.id, 10),
+                actor_id: adminId || req.auth.userId
+            });
+        } catch (e) { console.error('[CALENDAR NOTIFY]', e.message); }
+
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -2712,6 +2775,7 @@ app.delete('/api/admin/calendar/:id', async (req, res) => {
         if (own.length === 0) return res.json({ success: true });
         if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This event belongs to another institution.' });
         await db.execute('DELETE FROM calendar_events WHERE id = ?', [req.params.id]);
+        await db.execute("DELETE FROM notifications WHERE type = 'event' AND entity_id = ?", [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
