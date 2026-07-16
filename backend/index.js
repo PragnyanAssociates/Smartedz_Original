@@ -12125,6 +12125,70 @@ app.get('/api/transport/my-duty/:userId', async (req, res) => {
 
 
 // =====================================================================
+// === 30. MENU ORDER (per-institution sidebar order) ==================
+//   Any signed-in user of the tenant may READ the order (the sidebar
+//   needs it on every load). Only Super Admin / Developer may WRITE it.
+//   Modules with no row fall back to their default order on the client.
+// =====================================================================
+
+// --- 26.1 Read this school's order (any authenticated member) --------
+app.get('/api/admin/module-order/:instId', async (req, res) => {
+    try {
+        const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+        const [rows] = await db.execute(
+            `SELECT module_name, sort_order
+               FROM module_order
+              WHERE institutionId = ?
+              ORDER BY sort_order ASC`,
+            [instId]
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 26.2 Save the order (Super Admin / Developer only) -------------
+//   Body: { institutionId?, order: ['Overview', 'Attendance', ...] }
+//   The array's index IS the sort order. Sending an empty array clears
+//   the config and puts the school back on the default order.
+app.post('/api/admin/module-order', async (req, res) => {
+    const role = String(req.auth.role || '');
+    if (role !== 'Super Admin' && role !== 'Developer') {
+        return res.status(403).json({ error: 'Only a Super Admin can change the menu order.' });
+    }
+
+    const instId = role === 'Developer' && req.body.institutionId
+        ? req.body.institutionId
+        : req.auth.institutionId;
+
+    const order = Array.isArray(req.body.order) ? req.body.order : null;
+    if (!order) return res.status(400).json({ error: 'order must be an array of module names.' });
+
+    // De-dupe, drop blanks, cap the column width.
+    const clean = [...new Set(order.map(n => String(n || '').trim()).filter(Boolean))]
+        .map(n => n.slice(0, 100));
+
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        await conn.execute('DELETE FROM module_order WHERE institutionId = ?', [instId]);
+        if (clean.length > 0) {
+            const rows = clean.map((name, i) => [instId, name, i, req.auth.userId]);
+            await conn.query(
+                'INSERT INTO module_order (institutionId, module_name, sort_order, updated_by) VALUES ?',
+                [rows]
+            );
+        }
+        await conn.commit();
+        res.json({ success: true, count: clean.length });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally { conn.release(); }
+});
+
+
+
+// =====================================================================
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
     console.log(`🚀 SmartEdz Backend Active on Port ${PORT}`);

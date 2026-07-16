@@ -1,12 +1,32 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Save, Eye, EyeOff, Edit, Trash2, ShieldAlert, ChevronDown } from 'lucide-react';
+import { Save, Eye, EyeOff, Edit, Trash2, ShieldAlert, ChevronDown, Lock } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
+
+// =====================================================================
+//  PermissionsTab
+//  • Super Admin: Read / Edit / Delete are always on and can't be
+//    unticked. The only lever is Hide — tick it to drop a module from
+//    their own sidebar. A module with no saved row counts as fully
+//    visible for this role.
+//  • Every other role: a module with no saved row counts as HIDDEN, so
+//    a freshly created role starts with nothing until it's granted here.
+//    Ticking Edit or Delete auto-enables Read; ticking Hide clears all.
+// =====================================================================
+
+const SUPER_ADMIN = 'Super Admin';
+
+// Hiding the module that hosts this very screen would lock the Super Admin
+// out of their own permissions matrix, so its Hide box stays disabled.
+const NEVER_HIDE_FOR_SUPER_ADMIN = ['Manage Logins'];
+
+const FULL   = { can_read: true,  can_edit: true,  can_delete: true,  is_hidden: false };
+const CLOSED = { can_read: false, can_edit: false, can_delete: false, is_hidden: true  };
 
 export default function PermissionsTab({ data }) {
   // Pick the Super Admin role by default. Falls back to the first role if
   // for some reason Super Admin isn't present.
   const defaultRoleId = useMemo(() => {
-    const sa = data.roles.find(r => r.role_name === 'Super Admin');
+    const sa = data.roles.find(r => r.role_name === SUPER_ADMIN);
     return sa ? String(sa.id) : (data.roles[0] ? String(data.roles[0].id) : '');
   }, [data.roles]);
 
@@ -20,21 +40,35 @@ export default function PermissionsTab({ data }) {
     if (!selectedRoleId && defaultRoleId) setSelectedRoleId(defaultRoleId);
   }, [defaultRoleId, selectedRoleId]);
 
+  const roleById   = (id) => data.roles.find(r => String(r.id) === String(id));
+  const selectedRole = roleById(selectedRoleId);
+  const isSuperAdmin = selectedRole?.role_name === SUPER_ADMIN;
+
   const loadPermissionsForRole = async (roleId) => {
     if (!roleId) { setMatrix({}); return; }
+    const superAdmin = roleById(roleId)?.role_name === SUPER_ADMIN;
     setLoadingPerms(true);
     try {
       const res = await fetch(`${API_BASE_URL}/admin/permissions/${roleId}`);
       const rows = await res.json();
       const m = {};
       data.modules.forEach(mod => {
-        const existing = rows.find(r => r.module_name === mod);
-        m[mod] = {
-          can_read:   existing ? !!existing.can_read   : false,
-          can_edit:   existing ? !!existing.can_edit   : false,
-          can_delete: existing ? !!existing.can_delete : false,
-          is_hidden:  existing ? !!existing.is_hidden  : false,
-        };
+        const existing = (rows || []).find(r => r.module_name === mod);
+        if (superAdmin) {
+          // Always full CRUD; only the stored Hide flag matters. No row = visible.
+          m[mod] = { ...FULL, is_hidden: existing ? !!existing.is_hidden : false };
+        } else {
+          // No row = hidden. That's what PermissionsContext assumes too, so a
+          // new role genuinely starts with an empty sidebar.
+          m[mod] = existing
+            ? {
+                can_read:   !!existing.can_read,
+                can_edit:   !!existing.can_edit,
+                can_delete: !!existing.can_delete,
+                is_hidden:  !!existing.is_hidden,
+              }
+            : { ...CLOSED };
+        }
       });
       setMatrix(m);
     } catch (e) {
@@ -46,11 +80,17 @@ export default function PermissionsTab({ data }) {
   useEffect(() => {
     loadPermissionsForRole(selectedRoleId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedRoleId, data.modules]);
+  }, [selectedRoleId, data.modules, data.roles]);
 
   const toggle = (mod, key) => {
     setMatrix(prev => {
       const cur = { ...prev[mod], [key]: !prev[mod][key] };
+
+      if (isSuperAdmin) {
+        // Hide is the only lever; CRUD never drops off.
+        return { ...prev, [mod]: { ...FULL, is_hidden: key === 'is_hidden' ? cur.is_hidden : false } };
+      }
+
       // "Hidden" clears everything else
       if (key === 'is_hidden' && cur.is_hidden) {
         cur.can_read = cur.can_edit = cur.can_delete = false;
@@ -59,6 +99,9 @@ export default function PermissionsTab({ data }) {
       if ((key === 'can_edit' || key === 'can_delete') && cur[key] && !cur.can_read) {
         cur.can_read = true;
       }
+      // Granting anything un-hides the module
+      if (key !== 'is_hidden' && cur[key]) cur.is_hidden = false;
+
       return { ...prev, [mod]: cur };
     });
   };
@@ -68,9 +111,11 @@ export default function PermissionsTab({ data }) {
     setSaving(true);
     const payload = {
       role_id: parseInt(selectedRoleId, 10),
-      permissions: Object.entries(matrix).map(([module_name, perms]) => ({
-        module_name, ...perms
-      }))
+      permissions: Object.entries(matrix).map(([module_name, perms]) => (
+        isSuperAdmin
+          ? { module_name, ...FULL, is_hidden: !!perms.is_hidden }
+          : { module_name, ...perms }
+      ))
     };
     try {
       const res = await fetch(`${API_BASE_URL}/admin/permissions`, {
@@ -84,12 +129,9 @@ export default function PermissionsTab({ data }) {
     setSaving(false);
   };
 
-  const selectedRole = data.roles.find(r => String(r.id) === String(selectedRoleId));
-  const isSuperAdmin = selectedRole?.role_name === 'Super Admin';
-
   return (
     <div className="space-y-6">
-      
+
       {/* Header - Fixed for Mobile */}
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-6">
         <div>
@@ -120,7 +162,7 @@ export default function PermissionsTab({ data }) {
         </div>
       ) : (
         <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden flex flex-col">
-          
+
           {/* Action Bar - Stacks gracefully on mobile */}
           <div className="px-5 py-4 bg-zinc-50/50 border-b border-zinc-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
@@ -129,19 +171,28 @@ export default function PermissionsTab({ data }) {
             </div>
             <button
               onClick={handleSave}
-              disabled={saving || isSuperAdmin}
-              title={isSuperAdmin ? 'Super Admin always has full access — no need to save.' : ''}
+              disabled={saving}
               className="w-full sm:w-auto bg-primary hover:bg-primary/90 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed text-white px-4 py-2 rounded-md text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shrink-0">
               <Save className="size-3.5 shrink-0" />
               {saving ? 'Saving...' : 'Save Permissions'}
             </button>
           </div>
 
-          {/* Super Admin Notice */}
-          {isSuperAdmin && (
+          {/* Role Notice */}
+          {isSuperAdmin ? (
             <div className="px-5 py-3 bg-accent/5 border-b border-accent/10 flex items-start sm:items-center gap-2 text-xs font-medium text-accent">
               <ShieldAlert className="size-4 shrink-0 mt-0.5 sm:mt-0" />
-              <span className="leading-relaxed">The Super Admin role automatically has full access to every module. This matrix is read-only.</span>
+              <span className="leading-relaxed">
+                Super Admin keeps full Read, Edit and Delete on every module — those can't be turned off.
+                Tick <strong className="font-semibold">Hide</strong> on anything you don't want in your own sidebar, then Save.
+              </span>
+            </div>
+          ) : (
+            <div className="px-5 py-3 bg-zinc-50 border-b border-zinc-100 flex items-start sm:items-center gap-2 text-xs font-medium text-zinc-600">
+              <EyeOff className="size-4 shrink-0 mt-0.5 sm:mt-0 text-zinc-400" />
+              <span className="leading-relaxed">
+                Every module starts hidden for a new role. Tick <strong className="font-semibold text-zinc-800">Read</strong> to grant a module, then Edit / Delete for more.
+              </span>
             </div>
           )}
 
@@ -175,33 +226,41 @@ export default function PermissionsTab({ data }) {
               </thead>
               <tbody className="divide-y divide-zinc-100">
                 {data.modules.map(mod => {
-                  // Super Admin row always renders as fully checked (read/edit/delete on, hide off)
-                  const p = isSuperAdmin
-                    ? { is_hidden: false, can_read: true, can_edit: true, can_delete: true }
-                    : (matrix[mod] || {});
+                  const p = matrix[mod] || (isSuperAdmin ? FULL : CLOSED);
                   const hidden = !!p.is_hidden;
-                  
+                  const lockedHide = isSuperAdmin && NEVER_HIDE_FOR_SUPER_ADMIN.includes(mod);
+
                   return (
                     <tr key={mod} className={`transition-colors ${hidden ? 'bg-zinc-50/50' : 'hover:bg-zinc-50/30'}`}>
-                      <td className="px-5 py-3 text-xs font-semibold text-zinc-700 whitespace-nowrap">{mod}</td>
+                      <td className="px-5 py-3 text-xs font-semibold text-zinc-700 whitespace-nowrap">
+                        <span className="inline-flex items-center gap-1.5">
+                          {mod}
+                          {lockedHide && <Lock className="size-3 text-zinc-300" />}
+                          {hidden && <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">Hidden</span>}
+                        </span>
+                      </td>
                       <td className="px-5 py-3 text-center">
-                        <input type="checkbox" checked={!!p.is_hidden}
-                          disabled={isSuperAdmin}
+                        <input type="checkbox" checked={hidden}
+                          disabled={lockedHide}
+                          title={lockedHide ? "You'd lock yourself out of this screen." : ''}
                           onChange={() => toggle(mod, 'is_hidden')}
                           className="size-3.5 accent-primary cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed rounded border-zinc-300" />
                       </td>
                       <td className="px-5 py-3 text-center">
                         <input type="checkbox" checked={!!p.can_read} disabled={hidden || isSuperAdmin}
+                          title={isSuperAdmin ? 'Super Admin always has full access.' : ''}
                           onChange={() => toggle(mod, 'can_read')}
                           className="size-3.5 accent-primary cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed rounded border-zinc-300" />
                       </td>
                       <td className="px-5 py-3 text-center">
                         <input type="checkbox" checked={!!p.can_edit} disabled={hidden || isSuperAdmin}
+                          title={isSuperAdmin ? 'Super Admin always has full access.' : ''}
                           onChange={() => toggle(mod, 'can_edit')}
                           className="size-3.5 accent-primary cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed rounded border-zinc-300" />
                       </td>
                       <td className="px-5 py-3 text-center">
                         <input type="checkbox" checked={!!p.can_delete} disabled={hidden || isSuperAdmin}
+                          title={isSuperAdmin ? 'Super Admin always has full access.' : ''}
                           onChange={() => toggle(mod, 'can_delete')}
                           className="size-3.5 accent-primary cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed rounded border-zinc-300" />
                       </td>
@@ -215,6 +274,9 @@ export default function PermissionsTab({ data }) {
           {/* Footer Guide */}
           <div className="px-5 py-4 bg-zinc-50/50 border-t border-zinc-100 text-[11px] text-zinc-500 font-medium leading-relaxed">
             <strong className="text-zinc-700 font-semibold">Rules:</strong> <em>Hide</em> removes the module from the user's sidebar entirely. <em>Read</em> lets them open the page. <em>Edit</em> and <em>Delete</em> reveal the matching row-action buttons and auto-enable Read.
+            {isSuperAdmin
+              ? ' For Super Admin only Hide applies — the rest is always granted.'
+              : ' A module left untouched stays hidden.'}
           </div>
         </div>
       )}

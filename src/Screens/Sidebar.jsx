@@ -10,16 +10,45 @@ export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMo
   const { isVisible, loading } = usePermissions();
   const [query, setQuery] = useState('');
   const [unreadCount, setUnreadCount] = useState(0);
+  const [order, setOrder] = useState(null); // module_name -> position, set by the school
+
+  // The school's own menu order (Manage Logins -> Menu Order). Until it
+  // arrives — or if the school never set one — Modules.js order stands.
+  useEffect(() => {
+    if (!user?.institutionId) return;
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/admin/module-order/${user.institutionId}`);
+        if (!res.ok) return;
+        const rows = await res.json();
+        if (!active || !Array.isArray(rows)) return;
+        const map = {};
+        rows.forEach(r => { map[r.module_name] = Number(r.sort_order); });
+        setOrder(Object.keys(map).length ? map : null);
+      } catch (e) { /* silent — fall back to the default order */ }
+    })();
+    return () => { active = false; };
+  }, [user?.institutionId]);
 
   const visibleItems = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return MODULES.filter(m => {
+    const items = MODULES.filter(m => {
       if (m.hideFromSidebar) return false;
       if (!m.alwaysVisible && !isVisible(m.module_name)) return false;
       if (q && !m.label.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [query, isVisible]);
+    if (!order) return items;
+    // Positioned modules first, in the school's order; anything the school
+    // hasn't positioned yet keeps its Modules.js slot behind them.
+    const fallback = MODULES.length;
+    return [...items].sort((a, b) => {
+      const ai = order[a.module_name] ?? (fallback + MODULES.indexOf(a));
+      const bi = order[b.module_name] ?? (fallback + MODULES.indexOf(b));
+      return ai - bi;
+    });
+  }, [query, isVisible, order]);
 
   // Poll the unread notification count for the bell badge. Re-fetches when
   // the active tab changes too, so opening Notifications updates it quickly.

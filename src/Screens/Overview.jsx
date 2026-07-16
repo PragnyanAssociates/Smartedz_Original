@@ -4,7 +4,8 @@ import { usePermissions } from './PermissionsContext';
 import { API_BASE_URL } from '../apiConfig';
 import {
   Bell, GraduationCap, Users, Clock, CalendarClock, School, ShieldCheck,
-  Settings, BarChart3, CalendarDays, Inbox, CircleDot, CheckCircle2, TrendingUp
+  Settings, BarChart3, CalendarDays, Inbox, CircleDot, CheckCircle2, TrendingUp,
+  HelpCircle, X
 } from 'lucide-react';
 import { ALL_CARD_IDS, KPI_CARDS, cardById, getPersona, normalizeIds } from './overviewCards';
 import OverviewSettingsModal from './OverviewSettingsModal';
@@ -13,7 +14,8 @@ import { buildStudentTotals } from '../components/Performance/PerfUtils';
 // =====================================================================
 // Overview — one unified dashboard for every role.
 //  • Stat boxes (incl. Live Class + Attendance/Performance gauges) in
-//    the order the Super Admin set per role.
+//    the order the Super Admin set per role. Every box — stat, live or
+//    gauge — shares one shell (Box) so they are all the same rectangle.
 //  • Performance Analytics + Events | Notifications sections.
 // Everything shows by default; trimmed/ordered per role in Settings.
 // Module permissions stay the hard gate. Bands 80 / 50.
@@ -76,6 +78,13 @@ const nowMinIST = () => {
 const todayNameIST = () => new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kolkata', weekday: 'long' }).format(new Date());
 const parseHM = (t) => { if (!t) return null; const m = String(t).slice(0, 5).match(/^(\d{1,2}):(\d{2})$/); return m ? (+m[1]) * 60 + (+m[2]) : null; };
 const fmt12 = (min) => { const h = Math.floor(min / 60), m = min % 60; const ap = h >= 12 ? 'PM' : 'AM'; const h12 = ((h + 11) % 12) + 1; return `${h12}:${String(m).padStart(2, '0')} ${ap}`; };
+// Compact range for the narrow Live Class box: "10:45 – 11:30 AM" when both
+// ends share a meridiem, "11:30 AM – 12:10 PM" only when they don't.
+const fmtRange = (s, e) => {
+  const ap = (m) => (Math.floor(m / 60) >= 12 ? 'PM' : 'AM');
+  const hm = (m) => { const h = Math.floor(m / 60), mi = m % 60; return `${((h + 11) % 12) + 1}:${String(mi).padStart(2, '0')}`; };
+  return ap(s) === ap(e) ? `${hm(s)} \u2013 ${hm(e)} ${ap(e)}` : `${hm(s)} ${ap(s)} \u2013 ${hm(e)} ${ap(e)}`;
+};
 
 // ---- small data helpers (reuse existing endpoints) ----------------
 function attendancePctFromOverview(ov, userId) {
@@ -112,6 +121,7 @@ export default function Overview() {
   const [stats, setStats]     = useState({ attendance: null, performance: null });
   const [loading, setLoading] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   const isSuperAdmin = (user?.role || '') === 'Super Admin';
 
@@ -199,19 +209,15 @@ export default function Overview() {
 
   const renderKpi = (id) => {
     const c = cardById[id];
-    if (c.render === 'live') {
-      return <LiveClassCard key={id} tt={bundle.tt} persona={persona} className="col-span-2 lg:col-span-1" />;
-    }
+    if (c.render === 'live') return <LiveClassCard key={id} id={id} tt={bundle.tt} persona={persona} />;
     if (c.render === 'gauge') {
       if (id === 'attendance_pct') {
         const v = stats.attendance;
-        return <GaugeCard key={id} Icon={CheckCircle2} label="Your total attendance of year"
-                 value={v} display={v == null ? '—' : `${v.toFixed(1)}%`} sub="Up to date" />;
+        return <GaugeCard key={id} id={id} value={v} display={v == null ? '—' : `${v.toFixed(1)}%`} sub="Up to date" />;
       }
       const p = stats.performance;
       const pct = p?.pct;
-      return <GaugeCard key={id} Icon={TrendingUp} label="Overall performance of your assigned classes"
-               value={pct} display={pct == null ? '—' : `${pct}%`}
+      return <GaugeCard key={id} id={id} value={pct} display={pct == null ? '—' : `${pct}%`}
                sub={p?.exams?.length ? `${p.exams.join(', ')} Completed` : 'No exams yet'} />;
     }
     return <KpiBox key={id} id={id} {...VALUES[id]} />;
@@ -226,15 +232,21 @@ export default function Overview() {
           <p className="text-sm text-zinc-500 max-w-[56ch]">Here is what is happening at {admin.institution?.name || 'your institution'} today.</p>
         </div>
         {isSuperAdmin && (
-          <button onClick={() => setSettingsOpen(true)}
-            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-white border border-zinc-200 text-zinc-700 text-xs font-semibold hover:bg-zinc-50 transition-colors self-start shrink-0">
-            <Settings className="size-3.5" /> Overview Settings
-          </button>
+          <div className="flex items-center gap-2 self-start shrink-0">
+            <button onClick={() => setHelpOpen(true)}
+              className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors">
+              <HelpCircle className="size-3.5" /> How to use
+            </button>
+            <button onClick={() => setSettingsOpen(true)}
+              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-white border border-zinc-200 text-zinc-700 text-xs font-semibold hover:bg-zinc-50 transition-colors">
+              <Settings className="size-3.5" /> Overview Settings
+            </button>
+          </div>
         )}
       </header>
 
       {kpiIds.length > 0 && (
-        <div className={`grid grid-cols-2 md:grid-cols-3 ${COLS_LG[cols]} gap-3 sm:gap-4 mb-6 lg:mb-8 items-stretch`}>
+        <div className={`grid grid-cols-2 md:grid-cols-3 ${COLS_LG[cols]} auto-rows-fr gap-3 sm:gap-4 mb-6 lg:mb-8 items-stretch`}>
           {kpiIds.map(renderKpi)}
         </div>
       )}
@@ -246,13 +258,54 @@ export default function Overview() {
       {settingsOpen && (
         <OverviewSettingsModal instId={user.institutionId} roles={admin.roles || []} onClose={() => setSettingsOpen(false)} />
       )}
+
+      {helpOpen && isSuperAdmin && <HelpModal onClose={() => setHelpOpen(false)} />}
     </div>
   );
 }
 
-// ---- stat box ------------------------------------------------------
+// =====================================================================
+//  How-to-use notes — only for the Super Admin, who owns Overview
+//  Settings. Same shell/style as the Transport guide.
+// =====================================================================
+const HELP_STEPS = [
+  ['1 · What this screen is', 'One dashboard for every role. The row of boxes at the top is the "Above Section", followed by Performance Analytics and the Events / Notifications sections.'],
+  ['2 · Everything is on by default', 'A role with no saved config sees every card it has permission for. You only ever trim from there — nothing is hidden until you say so.'],
+  ['3 · Choose per role', 'Overview Settings → pick a role → remove the boxes it shouldn\'t see, or add them back from "Available to add". Each box notes who it is meant for (Admins, Students, Teachers).'],
+  ['4 · Set the order', 'The position number next to each enabled box (or the up/down arrows) is the on-screen order, left to right. Push things like "Active Year" to the end.'],
+  ['5 · Sections', 'Performance Analytics, Upcoming Events and Recent Notifications are simple on/off toggles per role.'],
+  ['6 · Save per role', 'Save applies to the one role in the dropdown. Switch roles and save again — each role keeps its own layout.'],
+];
+const HELP_NOTE = 'Permissions always win: a box that needs a module (Timetable, Attendance, Performance, Academic Calendar) stays hidden for roles without view access to it, whatever is ticked here. This screen only narrows what a role sees — it never grants access.';
+
+function HelpModal({ onClose }) {
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={onClose}>
+      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg max-h-[85vh] overflow-y-auto shadow-xl" onClick={e => e.stopPropagation()}>
+        <div className="bg-primary text-white px-5 py-3 flex items-center justify-between sticky top-0">
+          <span className="text-sm font-bold flex items-center gap-2"><HelpCircle className="size-4" /> Setting up the Overview</span>
+          <button onClick={onClose} className="text-white/80 hover:text-white"><X className="size-5" /></button>
+        </div>
+        <div className="p-5 space-y-3">
+          {HELP_STEPS.map(([t, d], i) => (
+            <div key={i} className="rounded-md ring-1 ring-zinc-100 bg-zinc-50/60 p-3">
+              <p className="text-xs font-semibold text-zinc-800">{t}</p>
+              <p className="text-[11px] text-zinc-600 leading-relaxed mt-1">{d}</p>
+            </div>
+          ))}
+          <div className="rounded-md bg-blue-50/60 ring-1 ring-blue-100 p-3 flex gap-2">
+            <ShieldCheck className="size-4 text-blue-500 shrink-0 mt-0.5" />
+            <p className="text-[11px] text-blue-800 leading-relaxed">{HELP_NOTE}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- one shell for every box --------------------------------------
 const KPI_META = {
-  total_users:      { Icon: Users,          tint: 'hero' },
+  total_users:      { Icon: Users,          tint: 'primary' },
   students:         { Icon: GraduationCap,  tint: 'orange' },
   teachers_staff:   { Icon: Users,          tint: 'emerald' },
   classes:          { Icon: School,         tint: 'violet' },
@@ -261,54 +314,83 @@ const KPI_META = {
   my_class:         { Icon: GraduationCap,  tint: 'orange' },
   teaching_classes: { Icon: Users,          tint: 'orange' },
   classes_today:    { Icon: Clock,          tint: 'emerald' },
-  weekly_periods:   { Icon: CalendarClock,  tint: 'violet' }
+  weekly_periods:   { Icon: CalendarClock,  tint: 'violet' },
+  live_class:       { Icon: CircleDot,      tint: 'rose' },
+  attendance_pct:   { Icon: CheckCircle2,   tint: 'teal' },
+  performance_pct:  { Icon: TrendingUp,     tint: 'indigo' }
 };
 const TINT_CLASS = {
-  hero: 'bg-primary text-white shadow-sm ring-1 ring-primary/40',
+  primary: 'bg-white ring-1 ring-primary/40 shadow-sm',
   orange: 'bg-white ring-1 ring-orange-300 shadow-sm',
   emerald: 'bg-white ring-1 ring-emerald-300 shadow-sm',
   violet: 'bg-white ring-1 ring-violet-300 shadow-sm',
   amber: 'bg-white ring-1 ring-amber-300 shadow-sm',
-  sky: 'bg-white ring-1 ring-sky-300 shadow-sm'
+  sky: 'bg-white ring-1 ring-sky-300 shadow-sm',
+  rose: 'bg-white ring-1 ring-rose-300 shadow-sm',
+  teal: 'bg-white ring-1 ring-teal-300 shadow-sm',
+  indigo: 'bg-white ring-1 ring-indigo-300 shadow-sm',
+  plain: 'bg-white ring-1 ring-black/5 shadow-sm'
 };
-const LABEL_CLASS = { hero: 'text-white/80', orange: 'text-orange-600', emerald: 'text-emerald-600', violet: 'text-violet-600', amber: 'text-amber-600', sky: 'text-sky-600' };
+const LABEL_CLASS = {
+  primary: 'text-primary', orange: 'text-orange-600', emerald: 'text-emerald-600',
+  violet: 'text-violet-600', amber: 'text-amber-600', sky: 'text-sky-600',
+  rose: 'text-rose-600', teal: 'text-teal-600', indigo: 'text-indigo-600', plain: 'text-zinc-500'
+};
 
-function KpiBox({ id, value, sub, isText }) {
+// Every card — stat, live class and gauge — renders through this, so the
+// whole row is one uniform rectangle: label pinned top, content pinned bottom.
+function Box({ id, right, children }) {
   const meta = KPI_META[id] || { Icon: Bell, tint: 'sky' };
   const Icon = meta.Icon, tint = meta.tint;
   return (
-    <div className={`h-full p-4 rounded-md flex flex-col justify-between ${TINT_CLASS[tint]}`}>
-      <span className={`text-[10px] font-semibold uppercase tracking-wider truncate flex items-center gap-1.5 ${LABEL_CLASS[tint]}`}>
-        <Icon className="size-3.5 shrink-0" /> {cardById[id]?.label || id}
-      </span>
-      <div className="flex flex-col mt-auto pt-2">
-        <span className={`${isText ? 'text-xl' : 'text-2xl tabular-nums'} font-semibold truncate ${tint === 'hero' ? 'text-white' : 'text-zinc-900'}`} title={String(value)}>{value}</span>
-        <span className={`text-[10px] font-medium uppercase tracking-wide truncate ${tint === 'hero' ? 'text-white/70' : 'text-zinc-400'}`}>{sub}</span>
+    <div className={`h-full min-h-[124px] p-4 rounded-md flex flex-col justify-between ${TINT_CLASS[tint]}`}>
+      <div className="flex items-start justify-between gap-2">
+        <span className={`text-[10px] font-semibold uppercase tracking-wider truncate flex items-center gap-1.5 ${LABEL_CLASS[tint]}`}>
+          <Icon className="size-3.5 shrink-0" /> {cardById[id]?.label || id}
+        </span>
+        {right}
       </div>
+      <div className="mt-auto pt-2 min-w-0">{children}</div>
     </div>
   );
 }
 
-// ---- circular gauge card (attendance / performance) ---------------
-function GaugeCard({ Icon, label, value, display, sub }) {
+function KpiBox({ id, value, sub, isText }) {
+  return (
+    <Box id={id}>
+      <div className="flex flex-col">
+        <span className={`${isText ? 'text-xl' : 'text-2xl tabular-nums'} font-semibold text-zinc-900 truncate`} title={String(value)}>{value}</span>
+        <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 truncate">{sub}</span>
+      </div>
+    </Box>
+  );
+}
+
+// ---- gauge card (attendance / performance) ------------------------
+// Same rectangle as a stat box: the ring sits centred in the body with the
+// figure inside it, and the sub-line reads underneath.
+function GaugeCard({ id, value, display, sub }) {
   const pct = value == null ? 0 : Math.max(0, Math.min(100, value));
   const color = value == null ? '#cbd5e1' : barColor(value);
-  const R = 26, C = 2 * Math.PI * R, off = C * (1 - pct / 100);
+  const R = 25, C = 2 * Math.PI * R, off = C * (1 - pct / 100);
+  // "86.4%" needs a touch less room than "8%": shrink only when it's long.
+  const big = String(display).length <= 3;
   return (
-    <div className="col-span-2 sm:col-span-1 p-4 rounded-md bg-white ring-1 ring-black/5 flex items-center justify-between gap-3 h-full">
-      <div className="min-w-0">
-        <div className="size-9 rounded-md bg-zinc-50 ring-1 ring-black/5 flex items-center justify-center mb-2" style={{ color }}>
-          <Icon className="size-4" />
+    <Box id={id}>
+      <div className="flex flex-col items-center">
+        <div className="relative size-[60px] shrink-0">
+          <svg viewBox="0 0 60 60" className="size-[60px] -rotate-90">
+            <circle cx="30" cy="30" r={R} fill="none" stroke="#f1f5f9" strokeWidth="5" />
+            <circle cx="30" cy="30" r={R} fill="none" stroke={color} strokeWidth="5" strokeLinecap="round"
+              strokeDasharray={C} strokeDashoffset={off} className="transition-all duration-700 ease-out" />
+          </svg>
+          <span className={`absolute inset-0 flex items-center justify-center font-semibold text-zinc-900 tabular-nums ${big ? 'text-sm' : 'text-[13px]'}`}>
+            {display}
+          </span>
         </div>
-        <p className="text-[11px] font-medium text-zinc-500 leading-snug line-clamp-2">{label}</p>
-        <p className="text-2xl font-semibold text-zinc-900 tabular-nums mt-0.5">{display}</p>
-        <p className="text-[10px] text-zinc-400 font-medium uppercase tracking-wide truncate">{sub}</p>
+        <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 truncate w-full text-center mt-1.5" title={sub}>{sub}</span>
       </div>
-      <svg width="64" height="64" viewBox="0 0 64 64" className="shrink-0 -rotate-90">
-        <circle cx="32" cy="32" r={R} fill="none" stroke="#f1f5f9" strokeWidth="7" />
-        <circle cx="32" cy="32" r={R} fill="none" stroke={color} strokeWidth="7" strokeLinecap="round" strokeDasharray={C} strokeDashoffset={off} />
-      </svg>
-    </div>
+    </Box>
   );
 }
 
@@ -336,14 +418,10 @@ function computeLive(tt, now, persona) {
   return { state: 'none' };
 }
 
-function LiveClassCard({ tt, persona, className = '' }) {
+function LiveClassCard({ id, tt, persona }) {
   const [now, setNow] = useState(() => nowMinIST());
-  useEffect(() => { const id = setInterval(() => setNow(nowMinIST()), 30000); return () => clearInterval(id); }, []);
+  useEffect(() => { const t = setInterval(() => setNow(nowMinIST()), 30000); return () => clearInterval(t); }, []);
   const info = useMemo(() => computeLive(tt, now, persona), [tt, now, persona]);
-
-  const Shell = ({ children }) => (
-    <div className={`${className} h-full p-4 rounded-md bg-white ring-1 ring-black/5 flex flex-col justify-between min-h-[150px]`}>{children}</div>
-  );
 
   if (info.state === 'live') {
     const subject = info.e.subject_name || 'Class';
@@ -352,30 +430,29 @@ function LiveClassCard({ tt, persona, className = '' }) {
       : (info.e.className ? `${info.e.className}${info.e.section ? ' - ' + info.e.section : ''}` : '');
     const remaining = Math.max(0, info.end - info.now);
     const pct = Math.max(0, Math.min(100, ((info.now - info.start) / (info.end - info.start)) * 100));
+    const badge = (
+      <span className="inline-flex items-center gap-1 text-[9px] font-semibold text-rose-600 bg-rose-50 ring-1 ring-rose-200 px-1.5 py-0.5 rounded uppercase tracking-wider shrink-0">
+        <span className="size-1.5 rounded-full bg-rose-500 animate-pulse" /> Live
+      </span>
+    );
     return (
-      <Shell>
-        <div>
-          <div className="flex items-center justify-between">
-            <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-600 uppercase tracking-wider">
-              <CircleDot className="size-3.5" /> Current Class
+      <Box id={id} right={badge}>
+        <div className="flex flex-col">
+          <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider truncate" title={subject}>{subject}</span>
+          <span className="text-lg font-semibold text-zinc-900 leading-tight truncate" title={classText}>{classText || '—'}</span>
+          <div className="flex items-baseline justify-between gap-2 mt-1.5">
+            <span className="text-[10px] font-semibold text-zinc-700 whitespace-nowrap shrink-0">
+              <span className="tabular-nums">{remaining}</span> min left
             </span>
-            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-600 bg-rose-50 ring-1 ring-rose-200 px-2 py-0.5 rounded uppercase tracking-wider">
-              <span className="size-1.5 rounded-full bg-rose-500 animate-pulse" /> Live
+            <span className="text-[9px] text-zinc-400 font-medium tabular-nums truncate text-right" title={`${fmt12(info.start)} – ${fmt12(info.end)}`}>
+              {fmtRange(info.start, info.end)}
             </span>
           </div>
-          <p className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider mt-2 truncate">{subject}</p>
-          <p className="text-xl font-semibold text-zinc-900 leading-tight truncate">{classText || '—'}</p>
-        </div>
-        <div className="mt-3">
-          <div className="flex items-center justify-between text-[11px] mb-1">
-            <span className="font-semibold text-zinc-700"><span className="text-lg font-semibold text-zinc-900 tabular-nums">{remaining}</span> mins left</span>
-            <span className="text-zinc-400 font-medium tabular-nums">{fmt12(info.start)} – {fmt12(info.end)}</span>
-          </div>
-          <div className="w-full h-2 rounded-full bg-zinc-100 overflow-hidden">
-            <div className="h-2 rounded-full bg-emerald-500 transition-all" style={{ width: `${pct}%` }} />
+          <div className="w-full h-1.5 rounded-full bg-zinc-100 overflow-hidden mt-1">
+            <div className="h-1.5 rounded-full bg-emerald-500 transition-all" style={{ width: `${pct}%` }} />
           </div>
         </div>
-      </Shell>
+      </Box>
     );
   }
 
@@ -385,33 +462,30 @@ function LiveClassCard({ tt, persona, className = '' }) {
       ? (tt?.class_label || '')
       : (info.e.className ? `${info.e.className}${info.e.section ? ' - ' + info.e.section : ''}` : '');
     return (
-      <Shell>
-        <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
-          <Clock className="size-3.5" /> No Live Class
-        </span>
-        <div>
-          <p className="text-sm font-semibold text-zinc-900">You're free right now.</p>
-          <p className="text-xs text-zinc-500 mt-0.5 truncate">Up next: <span className="font-semibold text-zinc-700">{subject}{classText ? ` · ${classText}` : ''}</span> at {fmt12(info.start)}</p>
+      <Box id={id}>
+        <div className="flex flex-col">
+          <span className="text-sm font-semibold text-zinc-900 truncate">You're free right now.</span>
+          <span className="text-[10px] font-medium text-zinc-400 uppercase tracking-wide truncate mt-1"
+            title={`Next: ${subject}${classText ? ' · ' + classText : ''} at ${fmt12(info.start)}`}>
+            Next: {subject} · {fmt12(info.start)}
+          </span>
         </div>
-      </Shell>
+      </Box>
     );
   }
 
   // break / free / none
   return (
-    <Shell>
-      <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
-        <Clock className="size-3.5" /> {info.state === 'break' ? 'On a Break' : 'No Live Class'}
-      </span>
-      <div>
-        <p className="text-sm font-semibold text-zinc-900">
+    <Box id={id}>
+      <div className="flex flex-col">
+        <span className="text-sm font-semibold text-zinc-900 truncate">
           {info.state === 'break' ? (info.name || 'Break time') : "You're free right now."}
-        </p>
-        <p className="text-xs text-zinc-500 mt-0.5">
-          {info.state === 'break' ? `${fmt12(info.start)} – ${fmt12(info.end)}` : 'No class scheduled at the moment.'}
-        </p>
+        </span>
+        <span className="text-[10px] font-medium text-zinc-400 uppercase tracking-wide truncate mt-1">
+          {info.state === 'break' ? fmtRange(info.start, info.end) : 'No class scheduled'}
+        </span>
       </div>
-    </Shell>
+    </Box>
   );
 }
 
@@ -478,7 +552,7 @@ function BarChart({ bars }) {
           return (
             <div key={b.key} className="flex flex-col items-center w-24 sm:w-28 shrink-0">
               <span className="text-sm font-semibold text-zinc-700 mb-1.5">{b.pct}%</span>
-              
+
               {/* Outer Track Match: bg-zinc-100 and inset ring */}
               <div className="w-14 sm:w-16 bg-zinc-100 rounded-t-md flex flex-col justify-end overflow-hidden ring-1 ring-inset ring-black/5 group" style={{ height: TRACK }}>
                 {/* Inner Colored Bar */}
@@ -577,5 +651,5 @@ function NotificationsPanel({ notes }) {
         </div>
       )}
     </div>
-  );  
+  );
 }

@@ -1,16 +1,18 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Users, ShieldCheck, Calendar, Layers, CircleArrowUp, CircleCheck, BookOpen, Download, UserX } from 'lucide-react';
+import { Users, ShieldCheck, Calendar, Layers, CircleArrowUp, CircleCheck, BookOpen, Download, UserX, ListOrdered } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
 import UserTab        from './UserTab';
 import InactiveTab    from './InactiveTab';
 import Rolestab       from './Rolestab';
 import Permissionstab from './Permissionstab';
+import MenuOrderTab   from './MenuOrderTab';
 import Academicstab   from './Academicstab';
 import Classestab     from './Classestab';
 import Promotiontab   from './Promotiontab';
 import SubjectsTab    from './SubjectsTab';
 import DownloadsTab   from './DownloadsTab';
+
 export default function ManageLogin() {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState('users');
@@ -19,6 +21,11 @@ export default function ManageLogin() {
     teacherSubjects: {}, subjectClasses: {}, modules: [], institution: null
   });
   const [loading, setLoading] = useState(true);
+
+  // Menu Order rewrites the sidebar for the whole school, so it's the
+  // Super Admin's call alone — matching the backend's write check.
+  const canOrderMenu = user?.role === 'Super Admin' || user?.role === 'Developer';
+
   const fetchData = useCallback(async () => {
     if (!user?.institutionId) return;
     setLoading(true);
@@ -31,11 +38,14 @@ export default function ManageLogin() {
     }
     setLoading(false);
   }, [user]);
+
   useEffect(() => { fetchData(); }, [fetchData]);
+
   const tabs = [
     { id: 'users',       label: 'Users',          icon: Users },
     { id: 'roles',       label: 'Roles',          icon: ShieldCheck },
     { id: 'permissions', label: 'Permissions',    icon: CircleCheck },
+    ...(canOrderMenu ? [{ id: 'menu-order', label: 'Menu Order', icon: ListOrdered }] : []),
     { id: 'classes',     label: 'Classes',        icon: Layers },
     { id: 'subjects',    label: 'Subjects',       icon: BookOpen },
     { id: 'promotion',   label: 'Promotion',      icon: CircleArrowUp },
@@ -44,6 +54,7 @@ export default function ManageLogin() {
     { id: 'downloads',   label: 'Downloads',      icon: Download },
   ];
   const tabProps = { data, fetchData, user };
+
   return (
    <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-4 sm:space-y-6 animate-in fade-in duration-300">
       {/* 1. Page Header */}
@@ -83,6 +94,7 @@ export default function ManageLogin() {
             {activeTab === 'inactive'    && <InactiveTab {...tabProps} />}
             {activeTab === 'roles'       && <Rolestab {...tabProps} />}
             {activeTab === 'permissions' && <Permissionstab {...tabProps} />}
+            {activeTab === 'menu-order'  && canOrderMenu && <MenuOrderTab {...tabProps} />}
             {activeTab === 'academics'   && <Academicstab {...tabProps} />}
             {activeTab === 'classes'     && <Classestab {...tabProps} />}
             {activeTab === 'subjects'    && <SubjectsTab {...tabProps} />}
