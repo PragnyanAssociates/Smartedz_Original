@@ -11,17 +11,27 @@ const ACCENT = '#f29132';
 const PRIMARY = '#3284c7';
 const PALETTE = ['#3284c7', '#f29132', '#16a34a', '#8b5cf6', '#ec4899', '#0ea5e9', '#eab308', '#ef4444', '#14b8a6', '#64748b'];
 
-export default function ExpensesDashboard({ user }) {
+// years / activeYearId / yearsReady come from DailyExpenses (which reads
+// /admin/data -> academicYears, the Academics Year tab being the source of truth).
+export default function ExpensesDashboard({ user, years = [], activeYearId = null, yearsReady = false }) {
   const [data, setData]       = useState(null);
   const [loading, setLoading] = useState(true);
   const [head, setHead]       = useState('');
   const [range, setRange]     = useState({ from: '', to: '' });
+  const [year, setYear]       = useState('');   // '' = not decided yet, 'all' = every year
+
+  // Land on the school's active academic year; fall back to All Years if
+  // the school hasn't set one active.
+  useEffect(() => {
+    if (yearsReady && year === '') setYear(activeYearId != null ? String(activeYearId) : 'all');
+  }, [yearsReady, activeYearId, year]);
 
   const load = useCallback(async () => {
-    if (!user?.institutionId) return;
+    if (!user?.institutionId || !year) return;   // wait until the year is decided
     setLoading(true);
     try {
       const qs = new URLSearchParams();
+      if (year !== 'all') qs.set('year', year);
       if (head) qs.set('head', head);
       if (range.from) qs.set('from', range.from);
       if (range.to) qs.set('to', range.to);
@@ -33,11 +43,18 @@ export default function ExpensesDashboard({ user }) {
       setData(null);
     }
     setLoading(false);
-  }, [user, head, range]);
+  }, [user, head, range, year]);
 
   useEffect(() => { load(); }, [load]);
 
   const t = data?.totals || {};
+  const dirty = !!head || !!range.from || !!range.to ||
+    (year !== '' && year !== (activeYearId != null ? String(activeYearId) : 'all'));
+
+  const resetFilters = () => {
+    setHead(''); setRange({ from: '', to: '' });
+    setYear(activeYearId != null ? String(activeYearId) : 'all');
+  };
 
   return (
     <div className="space-y-6">
@@ -57,8 +74,9 @@ export default function ExpensesDashboard({ user }) {
         </div>
         <DateField label="From" value={range.from} onChange={v => setRange(r => ({ ...r, from: v }))} />
         <DateField label="To" value={range.to} onChange={v => setRange(r => ({ ...r, to: v }))} />
-        {(head || range.from || range.to) && (
-          <button onClick={() => { setHead(''); setRange({ from: '', to: '' }); }} className="text-[11px] font-medium text-primary hover:underline self-center">Reset</button>
+        <YearField years={years} value={year} onChange={setYear} />
+        {dirty && (
+          <button onClick={resetFilters} className="text-[11px] font-medium text-primary hover:underline self-center">Reset</button>
         )}
         <button onClick={load} className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ml-auto self-center">
           <RefreshCw className="size-3.5" /> Refresh
@@ -208,6 +226,25 @@ function MonthlyBars({ data }) {
       </div>
       <div className="flex justify-between gap-2 sm:gap-4 px-1 mt-2">
         {months.map((m, i) => <span key={i} className="flex-1 text-center text-[10px] font-medium text-zinc-400">{monthLabel(m.ym)}</span>)}
+      </div>
+    </div>
+  );
+}
+
+// Academic Year picker — options come from the Academics Year tab.
+export function YearField({ years = [], value, onChange, label = 'Academic Year' }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">{label}</span>
+      <div className="relative">
+        <select value={value} onChange={e => onChange(e.target.value)}
+          className="h-8 appearance-none rounded border border-zinc-200 bg-white pl-2 pr-7 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer">
+          <option value="all">All Years</option>
+          {years.map(y => (
+            <option key={y.id} value={String(y.id)}>{y.name}{y.isActive ? ' (current)' : ''}</option>
+          ))}
+        </select>
+        <ChevronDown className="size-3.5 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
       </div>
     </div>
   );

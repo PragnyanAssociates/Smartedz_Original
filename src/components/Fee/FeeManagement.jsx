@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { IndianRupee, Percent, Landmark, ReceiptText, BellRing, CalendarDays, Wallet, LayoutDashboard, BadgePercent } from 'lucide-react';
+import {
+  IndianRupee, Percent, Landmark, ReceiptText, BellRing, CalendarDays, Wallet,
+  LayoutDashboard, BadgePercent, HelpCircle, X, ShieldCheck
+} from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import FeeAssign   from './FeeAssign';
@@ -20,11 +23,17 @@ export default function FeeManagement() {
   const { user } = useAuth();
   const permissions = usePermissions();
   const can = permissions?.can;
+  const isAllAccess = !!permissions?.isAllAccess;
 
   const isStudent = (user?.role || '').toLowerCase().includes('student');
-  const canEdit = can ? can(MODULE_NAME, 'edit') : true;
+  const canEdit   = can ? can(MODULE_NAME, 'edit')   : true;
+  const canDelete = can ? can(MODULE_NAME, 'delete') : true;
+  // The guide is written for whoever actually runs the fee desk — read-only
+  // roles don't see it.
+  const fullAccess = isAllAccess || (canEdit && canDelete);
 
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [help, setHelp] = useState(false);
   const [data, setData] = useState({
     academic_year_id: null, classes: [], students: [], plans: [], installments: [], assignments: []
   });
@@ -70,11 +79,19 @@ export default function FeeManagement() {
             Manage the Fee payments student wise & Class wise.
           </p>
         </div>
-        {!canEdit && (
-          <span className="text-[10px] font-semibold text-accent bg-accent/10 px-2.5 py-1 rounded-full uppercase tracking-wider">
-            View only
-          </span>
-        )}
+        <div className="flex items-center gap-2 shrink-0">
+          {!canEdit && (
+            <span className="text-[10px] font-semibold text-accent bg-accent/10 px-2.5 py-1 rounded-full uppercase tracking-wider">
+              View only
+            </span>
+          )}
+          {fullAccess && (
+            <button onClick={() => setHelp(true)}
+              className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors">
+              <HelpCircle className="size-3.5" /> How to use
+            </button>
+          )}
+        </div>
       </header>
 
       <div className="flex flex-wrap items-center gap-2 mb-8 border-b border-zinc-200 pb-4">
@@ -105,6 +122,123 @@ export default function FeeManagement() {
             {activeTab === 'calendar'   && <FeeCalendar {...tabProps} />}
           </>
         )}
+      </div>
+
+      {help && fullAccess && <HelpModal tab={activeTab} onClose={() => setHelp(false)} />}
+    </div>
+  );
+}
+
+// =====================================================================
+//  How-to-use notes — the guide follows the tab you're standing on, so
+//  it always answers "what do I do on THIS screen?". Same shell as the
+//  Transport module guide.
+// =====================================================================
+const GUIDES = {
+  dashboard: {
+    title: 'Reading the fee dashboard',
+    steps: [
+      ['1 \u00b7 The four KPIs', 'Expected, Collected, Outstanding and Collection Rate % for the active academic year \u2014 where the school stands before you open anything else.'],
+      ['2 \u00b7 Filter first', 'Fee and Class narrow everything below. Without them you are looking at Academic Fee, Books, Library and the rest mixed together, which tells you very little. Pick one fee, then drill by class.'],
+      ['3 \u00b7 The donuts', 'Students Paid vs Unpaid (partial payers are noted separately) and Collection by Method \u2014 Online against Offline.'],
+      ['4 \u00b7 The trends', 'Monthly Collection is the last six months in IST. Collection by Fee and Collection by Class are collected-against-expected bars that turn green once a fee or class is fully collected.'],
+      ['5 \u00b7 Refresh', 'Re-pulls from the server \u2014 useful after approving a batch of offline payments.'],
+    ],
+    note: 'Read-only, and scoped to the active academic year. Every figure comes from Fee Assign (expected) and Payments (collected) \u2014 if a number looks wrong, one of those two is where it gets fixed.'
+  },
+  assign: {
+    title: 'Setting up fees',
+    steps: [
+      ['1 \u00b7 Start with the class', 'Pick a class, then set its fee structure. Every school runs different classes, so each one carries its own amounts.'],
+      ['2 \u00b7 Full fee and due date', 'Set the full fee for the year and the date it falls due. That date is what the Fee Calendar plots and what the Alerts rules fire against.'],
+      ['3 \u00b7 Installments are optional', 'If the class pays in parts, add installment rows \u2014 each with its own label, amount and due date. The total is checked live against the full fee, so the parts must add up.'],
+      ['4 \u00b7 Assign the plan per student', 'A structure isn\'t a bill until a student is on it. Give each student Full or Installment \u2014 two students in the same class can be on different plans.'],
+      ['5 \u00b7 Get this right first', 'Everything downstream reads from here: Expected on the Dashboard, the Paid / Unpaid roster, the Calendar and the Alerts. A student with no plan simply owes nothing.'],
+    ],
+    note: 'Fees are scoped to the active academic year. Set the new year active under Manage Logins \u2192 Academics Year before building next year\'s structure, or you\'ll overwrite the year you\'re still collecting.'
+  },
+  concession: {
+    title: 'Granting a concession',
+    steps: [
+      ['1 \u00b7 Per student, not per class', 'Filter to a class, then give the individual student their concession amount. A reason is optional but worth writing \u2014 it is the only record of why the fee was reduced.'],
+      ['2 \u00b7 The maths', 'Full Fee \u2212 Concession = Net Payable, shown on the row. Net Payable is what the student actually owes and what the Paid / Unpaid roster measures against.'],
+      ['3 \u00b7 Change or remove', 'Edit adjusts the amount; removing it puts the student back on the full fee.'],
+    ],
+    note: 'A concession lowers what is expected from that student, so it moves Expected and Outstanding on the Dashboard too. It is not a payment \u2014 it never shows in Payments.'
+  },
+  account: {
+    title: 'Payment accounts',
+    steps: [
+      ['1 \u00b7 Your school\'s own gateway', 'Online Payments (Razorpay): your display name, Key ID and Key Secret, plus the enable toggle. Every school uses its own account \u2014 the money goes straight to you.'],
+      ['2 \u00b7 Live keys move real money', 'Test keys exercise the flow but settle nothing. Switch to Live keys with your Razorpay activation done before you tell parents to pay.'],
+      ['3 \u00b7 Offline', 'Offline Payments (cash at office): the toggle plus your instructions. Whatever you write here is what the student reads before uploading their slip \u2014 be specific about where and when to pay.'],
+      ['4 \u00b7 Turning one off', 'Disabling a method removes it from the student\'s My Fee screen. Leave at least one on, or nobody can pay.'],
+    ],
+    note: 'The Key Secret is exactly that \u2014 treat this screen like your bank login and keep it to the people who genuinely run the fee desk.'
+  },
+  payments: {
+    title: 'Payments & approvals',
+    steps: [
+      ['1 \u00b7 Online needs nothing from you', 'A gateway-verified payment is recorded as Paid on the spot \u2014 the money is already confirmed, so there is nothing to approve. A student who abandons the popup mid-payment creates no row at all.'],
+      ['2 \u00b7 Offline is your job', 'The student uploads a paid slip and it lands here as Pending. Open the proof, check it against your records, then Approve \u2014 or Reject if it doesn\'t hold up.'],
+      ['3 \u00b7 Approved means collected', 'Approving turns it Paid and takes that amount off the student\'s balance immediately, across the roster, the Calendar and the Dashboard.'],
+      ['4 \u00b7 The trail', '"Approved by \u2039name\u203a" or "Rejected by \u2039name\u203a" sits under the status with the date and time in IST, so every decision has a person against it.'],
+      ['5 \u00b7 Finding one', 'Search by student or roll; the status filter starts on All. The proof is the student\'s uploaded slip for offline, and the school receipt for online.'],
+    ],
+    note: 'Approve only against a slip you can actually verify \u2014 it is the one action here that moves money in the books. Reject also clears out anything stuck in Pending.'
+  },
+  collection: {
+    title: 'Paid / Unpaid roster',
+    steps: [
+      ['1 \u00b7 Pick the fee and class', 'The roster is always one fee for one class \u2014 Academic Fee for Class 10, say. That is the list you can actually act on.'],
+      ['2 \u00b7 Unpaid', 'Who still owes, with Total due at the top. This is your follow-up list.'],
+      ['3 \u00b7 Paid', 'Who has cleared, with Total collected at the top. Cross-check it against the Dashboard for the same fee and class.'],
+      ['4 \u00b7 Download', 'Exports the full roster for that fee and class \u2014 paid and unpaid together \u2014 with Roll, Student, Class, Fee, Net Payable, Paid, Balance and status. Opens straight in Excel.'],
+    ],
+    note: 'Net Payable already has the student\'s concession taken off, so Balance is what they genuinely owe \u2014 not the class\'s headline fee.'
+  },
+  alerts: {
+    title: 'Fee reminders',
+    steps: [
+      ['1 \u00b7 Auto', 'Rules that fire on their own against the due dates from Fee Assign \u2014 before the due date, on the day, or after it. Set them once per class, or leave the class blank for the whole school.'],
+      ['2 \u00b7 Write the message', 'Placeholders fill themselves in, so one rule reads correctly for every class. Keep it short \u2014 parents read it on a phone.'],
+      ['3 \u00b7 Manual', 'Send now, to a class or to everyone, when something needs saying that no rule covers.'],
+      ['4 \u00b7 The log', 'What went out, when, to how many. Check it before chasing anyone by phone \u2014 they may have been reminded already.'],
+    ],
+    note: 'A rule fires once per due date, so it cannot spam the same parents twice in a day. Reminders follow the due dates in Fee Assign \u2014 if a date is wrong there, the reminder goes out wrong too.'
+  },
+  calendar: {
+    title: 'The fee calendar',
+    steps: [
+      ['1 \u00b7 Due dates on a month', 'Every full-fee and installment due date laid out, so the collection year reads at a glance instead of class by class.'],
+      ['2 \u00b7 Plan around it', 'Heavy dates are where your fee desk will be busy and where the Alerts rules will fire. Spot them before the month starts, not during it.'],
+      ['3 \u00b7 Where the dates come from', 'Straight from Fee Assign \u2014 the class full-fee due date and each installment\'s date. Move a date there and it moves here.'],
+    ],
+    note: 'Times shown are IST. A month with nothing on it means no due dates were set for it \u2014 which may be correct, or may be a class whose structure is still unfinished.'
+  }
+};
+
+function HelpModal({ tab, onClose }) {
+  const content = GUIDES[tab] || GUIDES.dashboard;
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={onClose}>
+      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg max-h-[85vh] overflow-y-auto shadow-xl" onClick={e => e.stopPropagation()}>
+        <div className="bg-primary text-white px-5 py-3 flex items-center justify-between sticky top-0">
+          <span className="text-sm font-bold flex items-center gap-2"><HelpCircle className="size-4" /> {content.title}</span>
+          <button onClick={onClose} className="text-white/80 hover:text-white"><X className="size-5" /></button>
+        </div>
+        <div className="p-5 space-y-3">
+          {content.steps.map(([t, d], i) => (
+            <div key={i} className="rounded-md ring-1 ring-zinc-100 bg-zinc-50/60 p-3">
+              <p className="text-xs font-semibold text-zinc-800">{t}</p>
+              <p className="text-[11px] text-zinc-600 leading-relaxed mt-1">{d}</p>
+            </div>
+          ))}
+          <div className="rounded-md bg-blue-50/60 ring-1 ring-blue-100 p-3 flex gap-2">
+            <ShieldCheck className="size-4 text-blue-500 shrink-0 mt-0.5" />
+            <p className="text-[11px] text-blue-800 leading-relaxed">{content.note}</p>
+          </div>
+        </div>
       </div>
     </div>
   );

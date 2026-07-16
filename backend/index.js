@@ -11023,6 +11023,19 @@ app.get('/api/fees/alerts/my/:studentId', async (req, res) => {
 //  SECTION 28 — DAILY EXPENSES (Debit Vouchers)
 //  Assumes `app`, `db` (mysql2/promise pool) and `resolveYearId`
 //  are already defined above this section.
+//
+//  Academic year: every voucher is stamped with academic_year_id at
+//  creation. The list + dashboard accept ?year=<id> to scope to one
+//  year; omit it (or send year=all) for every year.
+//
+//  NOTE for existing data — any voucher saved before the year stamp
+//  existed has academic_year_id = NULL and will only show under
+//  "All Years". Backfill them onto the year they belong to:
+//
+//    UPDATE expense_vouchers
+//       SET academic_year_id = (SELECT id FROM academic_years
+//                                WHERE institutionId = <instId> AND isActive = 1)
+//     WHERE institutionId = <instId> AND academic_year_id IS NULL;
 // =================================================================
 
 const EXP_HEADS = [
@@ -11104,10 +11117,12 @@ app.post('/api/expenses/voucher', async (req, res) => {
 // ---- List vouchers (no attachment payload) ----------------------
 app.get('/api/expenses/list/:institutionId', async (req, res) => {
   const { institutionId } = req.params;
-  const { search, head, from, to, limit } = req.query;
+  const { search, head, from, to, year, limit } = req.query;
   try {
     const where = ['institutionId = ?'];
     const params = [institutionId];
+    // year omitted / 'all' -> every year.
+    if (year && year !== 'all') { where.push('academic_year_id = ?'); params.push(year); }
     if (head)  { where.push('head_of_account = ?'); params.push(head); }
     if (from)  { where.push('voucher_date >= ?');   params.push(from); }
     if (to)    { where.push('voucher_date <= ?');   params.push(to); }
@@ -11119,7 +11134,7 @@ app.get('/api/expenses/list/:institutionId', async (req, res) => {
     const [rows] = await db.execute(
       `SELECT id, voucher_no, seq, voucher_date, name_title, phone_no, head_of_account, sub_head,
               account_type, total_amount, (attachment IS NOT NULL) AS has_attachment,
-              created_by_name, updated_by_name, created_at, updated_at
+              academic_year_id, created_by_name, updated_by_name, created_at, updated_at
          FROM expense_vouchers
         WHERE ${where.join(' AND ')}`,
       params
@@ -11227,13 +11242,14 @@ app.delete('/api/expenses/voucher/:id', async (req, res) => {
   }
 });
 
-// ---- Dashboard analytics (filters: head, from, to) --------------
+// ---- Dashboard analytics (filters: year, head, from, to) --------
 app.get('/api/expenses/dashboard/:institutionId', async (req, res) => {
   const { institutionId } = req.params;
-  const { head, from, to } = req.query;
+  const { head, from, to, year } = req.query;
   try {
     const where = ['institutionId = ?'];
     const params = [institutionId];
+    if (year && year !== 'all') { where.push('academic_year_id = ?'); params.push(year); }
     if (head) { where.push('head_of_account = ?'); params.push(head); }
     if (from) { where.push('voucher_date >= ?');   params.push(from); }
     if (to)   { where.push('voucher_date <= ?');   params.push(to); }

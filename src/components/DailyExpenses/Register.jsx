@@ -3,21 +3,32 @@ import { Search, ChevronDown, Eye, Pencil, Trash2, Download, Plus, ListChecks, F
 import { API_BASE_URL } from '../../apiConfig';
 import { HEAD_OF_ACCOUNT, fmtAmt } from './VoucherForm';
 import VoucherView, { fmtISTDateTime, fmtVoucherDate } from './VoucherView';
+import { YearField } from './ExpensesDashboard';
 
-export default function Register({ user, canEdit = true, refreshKey = 0, onEdit, onNew }) {
+// years / activeYearId / yearsReady come from DailyExpenses (which reads
+// /admin/data -> academicYears, the Academics Year tab being the source of truth).
+export default function Register({ user, canEdit = true, refreshKey = 0, onEdit, onNew, years = [], activeYearId = null, yearsReady = false }) {
   const [rows, setRows]       = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch]   = useState('');
   const [head, setHead]       = useState('');
   const [range, setRange]     = useState({ from: '', to: '' });
+  const [year, setYear]       = useState('');   // '' = not decided yet, 'all' = every year
   const [viewId, setViewId]   = useState(null);
   const [busyId, setBusyId]   = useState(null);
 
+  // Land on the school's active academic year; fall back to All Years if
+  // the school hasn't set one active.
+  useEffect(() => {
+    if (yearsReady && year === '') setYear(activeYearId != null ? String(activeYearId) : 'all');
+  }, [yearsReady, activeYearId, year]);
+
   const load = useCallback(async () => {
-    if (!user?.institutionId) return;
+    if (!user?.institutionId || !year) return;   // wait until the year is decided
     setLoading(true);
     try {
       const qs = new URLSearchParams();
+      if (year !== 'all') qs.set('year', year);
       if (head) qs.set('head', head);
       if (range.from) qs.set('from', range.from);
       if (range.to) qs.set('to', range.to);
@@ -29,7 +40,7 @@ export default function Register({ user, canEdit = true, refreshKey = 0, onEdit,
       setRows([]);
     }
     setLoading(false);
-  }, [user, head, range]);
+  }, [user, head, range, year]);
 
   useEffect(() => { load(); }, [load, refreshKey]);
 
@@ -45,6 +56,13 @@ export default function Register({ user, canEdit = true, refreshKey = 0, onEdit,
   }, [rows, search]);
 
   const total = useMemo(() => filtered.reduce((s, r) => s + Number(r.total_amount || 0), 0), [filtered]);
+
+  // Label for the heading + the CSV filename.
+  const yearLabel = useMemo(() => {
+    if (year === 'all') return 'All Years';
+    const y = years.find(y => String(y.id) === String(year));
+    return y ? y.name : '';
+  }, [year, years]);
 
   const del = async (id) => {
     if (!window.confirm('Delete this voucher? This cannot be undone.')) return;
@@ -69,7 +87,9 @@ export default function Register({ user, canEdit = true, refreshKey = 0, onEdit,
     const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = `daily-expenses_${new Date().toISOString().slice(0, 10)}.csv`;
+    // Name the file after the year in view, so exports don't overwrite each other.
+    const tag = (yearLabel || '').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '');
+    a.href = url; a.download = `daily-expenses${tag ? `_${tag}` : ''}_${new Date().toISOString().slice(0, 10)}.csv`;
     document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
   };
 
@@ -91,6 +111,7 @@ export default function Register({ user, canEdit = true, refreshKey = 0, onEdit,
         </div>
         <DateField label="From" value={range.from} onChange={v => setRange(r => ({ ...r, from: v }))} />
         <DateField label="To" value={range.to} onChange={v => setRange(r => ({ ...r, to: v }))} />
+        <YearField years={years} value={year} onChange={setYear} />
         <div className="flex flex-col gap-1 ml-auto">
           <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Search</span>
           <div className="relative">
@@ -109,6 +130,7 @@ export default function Register({ user, canEdit = true, refreshKey = 0, onEdit,
         <div className="p-4 border-b border-zinc-100 flex items-center justify-between gap-3 flex-wrap">
           <h3 className="text-sm font-semibold text-zinc-900 flex items-center gap-2">
             <ListChecks className="size-4 text-primary" /> Voucher Register <span className="text-zinc-400 font-normal">({filtered.length})</span>
+            {yearLabel && <span className="text-[10px] font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded-full uppercase tracking-wider">{yearLabel}</span>}
           </h3>
           <div className="flex items-center gap-4">
             <span className="text-[11px] text-zinc-500">Total: <strong className="text-zinc-900 tabular-nums">₹{fmtAmt(total)}</strong></span>

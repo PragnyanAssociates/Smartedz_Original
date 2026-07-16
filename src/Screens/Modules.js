@@ -31,7 +31,7 @@ export const MODULES = [
    {
     id: 'DailyExpenses',
     module_name: 'DailyExpenses',
-    label: 'Account Assistant',
+    label: 'Daily Expenses',
     title: 'Daily Expenses',
     imageSource: 'https://cdn-icons-png.flaticon.com/128/10758/10758868.png',
     navigateTo: '/DailyExpenses'
