@@ -128,10 +128,11 @@ function HelpModal({ view, onClose }) {
         ['2 · Create your crew', 'Users screen → add each driver / assistant with the role "Driver & Assistant". Then in Drivers & Assistants → Add, tick them and register them as a Driver or an Assistant. Use Edit to store licence no, Aadhaar and their proof images.'],
         ['3 · Build the route', 'Routes → New Route. Name it, pick the bus, driver and assistant, then add Pickup and Drop stops under their tabs. For each stop paste a Google Maps link (short links resolve automatically) or click the map to drop a pin. Save — the map draws the road route.'],
         ['4 · Assign students', 'Assign Students → pick the route → pick a class → tick students roll-wise, optionally setting their pickup/drop stop. They now appear in attendance.'],
-        ['5 · Daily running', 'The driver taps Start Trip on their screen — Google Maps opens for navigation and the bus goes live on everyone\'s map. The assistant marks Pickup and Drop attendance.'],
-        ['6 · Records', 'Vehicle Log Book → Daily Log for trips/distance/fuel per bus per day (totals roll up over any date range), and Service / Repair for costs and work done.'],
+        ['5 · Daily running', 'The driver taps Start Trip on their screen — Google Maps opens for navigation and the bus goes live on everyone\'s map. The assistant marks Pickup and Drop attendance. The Trip column on Routes is about TODAY: Live, Done today, or Not started.'],
+        ['6 · Attendance: mark vs report', 'Mark a day is the daily job — one route, one trip, one date. Summary & report is the review: any date range, per student, with pickup/drop counts and an attendance %. Download gives you it in Excel.'],
+        ['7 · Records', 'Vehicle Log Book → Daily Log for trips/distance/fuel per bus per day (totals roll up over any date range), and Service / Repair for costs and work done. Both download to Excel for exactly the period on screen.'],
       ],
-      note: 'Permissions: give a role Read to let them look, Read + Edit to let them change things, and Read + Edit + Delete for the full console like a Super Admin. Hide removes Transport from their sidebar entirely.'
+      note: 'Transport is kept by DATE, not academic year — roads and buses don\'t reset in June, and fuel or insurance has nothing to do with a school term. The year chips on the range filters simply fill the From / To dates from your Academics Year module, so a yearly view is one click and a range can still span years. Permissions: Read to look, Read + Edit to change things, Read + Edit + Delete for the full console. Hide removes Transport from their sidebar entirely.'
     },
     crew: {
       title: 'Your daily run',
@@ -139,7 +140,7 @@ function HelpModal({ view, onClose }) {
         ['Before you leave', 'Check the bus and route details at the top. If you drive more than one route, pick the right one from the dropdown.'],
         ['Start the trip', 'Tap Start Trip. Google Maps opens with the full route for navigation, and your live location is shared so students and the school can see the bus. Keep this page open while driving.'],
         ['Mark attendance', 'Assistant: open the Attendance tab, choose Pickup or Drop, then mark each student Present or Absent and Save. Marking again for the same trip just updates it.'],
-        ['End the trip', 'Tap Stop Trip when the run is finished. The bus disappears from everyone\'s map.'],
+        ['End the trip', 'Tap Complete Trip when the run is finished. The bus disappears from everyone\'s map. Each day starts fresh — yesterday\'s trip never shows as today\'s.'],
         ['Log book', 'At the end of the day, add trips, distance and fuel for your bus under Log Book → Daily Log.'],
       ],
       note: 'You only ever see your own bus, your route and your students — nothing about other routes or crew.'

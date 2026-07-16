@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { CalendarDays, ChevronLeft, ChevronRight, Plus, Pencil, Trash2, X, Save, ChevronDown, Bus, Gauge, Fuel, Route as RouteIcon, Filter } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
+import { RangePresets, DateField, DownloadXlsx, useAcademicYears, firstOfMonth, todayISO } from './TransportRange';
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const WD = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
@@ -10,8 +11,11 @@ const dkey = (v) => (v ? String(v).slice(0, 10) : null);
 const num = (n) => new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(Number(n) || 0);
 const inr = (n) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(Number(n) || 0);
 const prettyDate = (k) => { const [y, m, d] = k.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }); };
-const firstOfMonth = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-01`;
 
+// Vehicle running is dated, not academic: a bus's fuel and mileage belong to
+// the vehicle, not to a school term. The academic-year chips in RangePresets
+// simply fill From/To, so a yearly total is one click without a second filter
+// that could disagree with the dates.
 export default function DailyLog({ user, canEdit, canDelete, lockedVehicleId = null }) {
   const today = new Date();
   const [vehicles, setVehicles] = useState([]);
@@ -23,9 +27,10 @@ export default function DailyLog({ user, canEdit, canDelete, lockedVehicleId = n
   const [busyId, setBusyId]     = useState(null);
 
   // range summary
-  const [range, setRange]   = useState({ from: firstOfMonth(today), to: ymd(today) });
+  const [range, setRange]   = useState({ from: firstOfMonth(today), to: todayISO() });
   const [vehicleId, setVehicleId] = useState(lockedVehicleId ? String(lockedVehicleId) : '');
   const [summary, setSummary] = useState(null);
+  const years = useAcademicYears(user?.institutionId);
 
   const year = cursor.getFullYear(), month = cursor.getMonth();
 
@@ -56,17 +61,21 @@ export default function DailyLog({ user, canEdit, canDelete, lockedVehicleId = n
 
   useEffect(() => { loadMonth(); }, [loadMonth]);
 
+  const summaryQs = useMemo(() => {
+    const qs = new URLSearchParams();
+    if (range.from) qs.set('from', range.from);
+    if (range.to) qs.set('to', range.to);
+    if (vehicleId) qs.set('vehicle_id', vehicleId);
+    return qs.toString();
+  }, [range, vehicleId]);
+
   const loadSummary = useCallback(async () => {
     if (!user?.institutionId) return;
     try {
-      const qs = new URLSearchParams();
-      if (range.from) qs.set('from', range.from);
-      if (range.to) qs.set('to', range.to);
-      if (vehicleId) qs.set('vehicle_id', vehicleId);
-      const res = await fetch(`${API_BASE_URL}/transport/logs-summary/${user.institutionId}?${qs.toString()}`);
+      const res = await fetch(`${API_BASE_URL}/transport/logs-summary/${user.institutionId}?${summaryQs}`);
       setSummary(await res.json());
     } catch { setSummary(null); }
-  }, [user, range, vehicleId]);
+  }, [user, summaryQs]);
 
   useEffect(() => { loadSummary(); }, [loadSummary]);
 
@@ -102,27 +111,30 @@ export default function DailyLog({ user, canEdit, canDelete, lockedVehicleId = n
     <div className="space-y-5">
       {/* Range summary */}
       <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden">
-        <div className="p-4 border-b border-zinc-100 flex flex-wrap items-end gap-3">
-          <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider self-center"><Filter className="size-3.5" /> Totals for period</span>
-          <DateField label="From" value={range.from} onChange={v => setRange(r => ({ ...r, from: v }))} />
-          <DateField label="To" value={range.to} onChange={v => setRange(r => ({ ...r, to: v }))} />
-          {!lockedVehicleId && (
-          <div className="flex flex-col gap-1">
-            <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Vehicle</span>
-            <div className="relative">
-              <select value={vehicleId} onChange={e => setVehicleId(e.target.value)}
-                className="h-8 appearance-none rounded border border-zinc-200 bg-white pl-2 pr-7 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer">
-                <option value="">All vehicles</option>
-                {vehicles.map(v => <option key={v.id} value={v.id}>{v.vehicle_no}{v.vehicle_code ? ` · ${v.vehicle_code}` : ''}</option>)}
-              </select>
-              <ChevronDown className="size-3.5 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+        <div className="p-4 border-b border-zinc-100 space-y-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider self-center"><Filter className="size-3.5" /> Totals for period</span>
+            <DateField label="From" value={range.from} onChange={v => setRange(r => ({ ...r, from: v }))} />
+            <DateField label="To" value={range.to} onChange={v => setRange(r => ({ ...r, to: v }))} />
+            {!lockedVehicleId && (
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Vehicle</span>
+              <div className="relative">
+                <select value={vehicleId} onChange={e => setVehicleId(e.target.value)}
+                  className="h-8 appearance-none rounded border border-zinc-200 bg-white pl-2 pr-7 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer">
+                  <option value="">All vehicles</option>
+                  {vehicles.map(v => <option key={v.id} value={v.id}>{v.vehicle_no}{v.vehicle_code ? ` · ${v.vehicle_code}` : ''}</option>)}
+                </select>
+                <ChevronDown className="size-3.5 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
+            </div>
+            )}
+            <div className="ml-auto self-end">
+              <DownloadXlsx url={`${API_BASE_URL}/transport/logs-export/${user?.institutionId}?${summaryQs}`}
+                disabled={!summary?.vehicles?.length} title="Download every log entry in this period as Excel" />
             </div>
           </div>
-          )}
-          <div className="flex gap-2 ml-auto self-center">
-            <Quick label="This month" onClick={() => setRange({ from: firstOfMonth(today), to: ymd(today) })} />
-            <Quick label="This year" onClick={() => setRange({ from: `${today.getFullYear()}-01-01`, to: ymd(today) })} />
-          </div>
+          <RangePresets years={years} value={range} onPick={(from, to) => setRange({ from, to })} />
         </div>
 
         {summary && (
@@ -321,20 +333,8 @@ function Kpi({ icon: Icon, label, value, sub, tone }) {
     </div>
   );
 }
-function Quick({ label, onClick }) {
-  return <button onClick={onClick} className="text-[11px] font-medium text-primary hover:underline">{label}</button>;
-}
 function Legend({ cls, label }) {
   return <span className="inline-flex items-center gap-1.5 text-[10px] text-zinc-500"><span className={`size-3 rounded ring-1 ${cls}`} /> {label}</span>;
-}
-function DateField({ label, value, onChange }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">{label}</span>
-      <input type="date" value={value} onChange={e => onChange(e.target.value)}
-        className="h-8 rounded border border-zinc-200 bg-white px-2 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40" />
-    </div>
-  );
 }
 const inputCls = 'w-full rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40';
 function Field({ label, children }) { return <div className="flex flex-col"><label className="text-xs font-medium text-zinc-600 mb-1.5">{label}</label>{children}</div>; }

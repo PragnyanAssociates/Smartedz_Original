@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Wrench, Plus, Pencil, Trash2, Eye, X, Save, ChevronDown, Bus, Filter, Upload, Receipt } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
+import { RangePresets, DateField, DownloadXlsx, useAcademicYears, todayISO } from './TransportRange';
 
 const TYPES = ['Service', 'Repair', 'Insurance', 'Tyres', 'Fitness / Permit', 'Other'];
 const inr = (n) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(Number(n) || 0);
 const fmtDate = (v) => { if (!v) return '—'; const s = String(v).slice(0, 10); const [y, m, d] = s.split('-'); return d ? `${d}/${m}/${y}` : s; };
-const todayISO = () => new Date().toISOString().slice(0, 10);
 
+// Service records are dated, never academic: an insurance renewal or a tyre
+// change doesn't care when term starts. The academic-year chips only fill
+// From/To, so "what did we spend on the buses this year?" stays one click.
 export default function ServiceRepair({ user, canEdit, canDelete, lockedVehicleId = null }) {
   const [vehicles, setVehicles] = useState([]);
   const [rows, setRows]     = useState([]);
@@ -16,6 +19,7 @@ export default function ServiceRepair({ user, canEdit, canDelete, lockedVehicleI
   const [modal, setModal]   = useState(null);
   const [viewId, setViewId] = useState(null);
   const [busyId, setBusyId] = useState(null);
+  const years = useAcademicYears(user?.institutionId);
 
   useEffect(() => {
     if (!user?.institutionId) return;
@@ -28,20 +32,24 @@ export default function ServiceRepair({ user, canEdit, canDelete, lockedVehicleI
     })();
   }, [user, lockedVehicleId]);
 
+  const qs = useMemo(() => {
+    const p = new URLSearchParams();
+    if (vehicleId) p.set('vehicle_id', vehicleId);
+    if (range.from) p.set('from', range.from);
+    if (range.to) p.set('to', range.to);
+    return p.toString();
+  }, [vehicleId, range]);
+
   const load = useCallback(async () => {
     if (!user?.institutionId) return;
     setLoading(true);
     try {
-      const qs = new URLSearchParams();
-      if (vehicleId) qs.set('vehicle_id', vehicleId);
-      if (range.from) qs.set('from', range.from);
-      if (range.to) qs.set('to', range.to);
-      const res = await fetch(`${API_BASE_URL}/transport/service/${user.institutionId}?${qs.toString()}`);
+      const res = await fetch(`${API_BASE_URL}/transport/service/${user.institutionId}?${qs}`);
       const json = await res.json();
       setRows(Array.isArray(json) ? json : []);
     } catch { setRows([]); }
     setLoading(false);
-  }, [user, vehicleId, range]);
+  }, [user, qs]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -56,31 +64,36 @@ export default function ServiceRepair({ user, canEdit, canDelete, lockedVehicleI
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-end gap-3 bg-zinc-50/50 p-3 rounded-md ring-1 ring-black/5">
-        <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider self-center"><Filter className="size-3.5" /> Filters</span>
-        {!lockedVehicleId && (
-        <div className="flex flex-col gap-1">
-          <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Vehicle</span>
-          <div className="relative">
-            <select value={vehicleId} onChange={e => setVehicleId(e.target.value)}
-              className="h-8 appearance-none rounded border border-zinc-200 bg-white pl-2 pr-7 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer">
-              <option value="">All vehicles</option>
-              {vehicles.map(v => <option key={v.id} value={v.id}>{v.vehicle_no}{v.vehicle_code ? ` · ${v.vehicle_code}` : ''}</option>)}
-            </select>
-            <ChevronDown className="size-3.5 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+      <div className="bg-zinc-50/50 p-3 rounded-md ring-1 ring-black/5 space-y-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider self-center"><Filter className="size-3.5" /> Filters</span>
+          {!lockedVehicleId && (
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Vehicle</span>
+            <div className="relative">
+              <select value={vehicleId} onChange={e => setVehicleId(e.target.value)}
+                className="h-8 appearance-none rounded border border-zinc-200 bg-white pl-2 pr-7 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer">
+                <option value="">All vehicles</option>
+                {vehicles.map(v => <option key={v.id} value={v.id}>{v.vehicle_no}{v.vehicle_code ? ` · ${v.vehicle_code}` : ''}</option>)}
+              </select>
+              <ChevronDown className="size-3.5 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
           </div>
+          )}
+          <DateField label="From" value={range.from} onChange={v => setRange(r => ({ ...r, from: v }))} />
+          <DateField label="To" value={range.to} onChange={v => setRange(r => ({ ...r, to: v }))} />
+          {(vehicleId || range.from || range.to) && <button onClick={() => { setVehicleId(lockedVehicleId ? String(lockedVehicleId) : ''); setRange({ from: '', to: '' }); }} className="text-[11px] font-medium text-primary hover:underline self-center pb-2">Reset</button>}
+          <span className="text-[11px] text-zinc-500 ml-auto self-center pb-2">Total spent: <strong className="text-accent tabular-nums">{inr(total)}</strong></span>
+          <DownloadXlsx url={`${API_BASE_URL}/transport/service-export/${user?.institutionId}?${qs}`}
+            disabled={!rows.length} title="Download these records as Excel" />
+          {canEdit && (
+            <button onClick={() => setModal({ vehicle_id: lockedVehicleId || vehicles[0]?.id || '', service_date: todayISO(), service_type: 'Service', cost: '', odometer_km: '', garage: '', details: '', attachment: '' })}
+              className="inline-flex items-center gap-1.5 bg-white text-primary ring-1 ring-primary/30 px-3.5 h-8 rounded-md text-xs font-semibold hover:bg-primary/5">
+              <Plus className="size-3.5" /> Add Record
+            </button>
+          )}
         </div>
-        )}
-        <DateField label="From" value={range.from} onChange={v => setRange(r => ({ ...r, from: v }))} />
-        <DateField label="To" value={range.to} onChange={v => setRange(r => ({ ...r, to: v }))} />
-        {(vehicleId || range.from || range.to) && <button onClick={() => { setVehicleId(''); setRange({ from: '', to: '' }); }} className="text-[11px] font-medium text-primary hover:underline self-center">Reset</button>}
-        <span className="text-[11px] text-zinc-500 ml-auto self-center">Total spent: <strong className="text-accent tabular-nums">{inr(total)}</strong></span>
-        {canEdit && (
-          <button onClick={() => setModal({ vehicle_id: lockedVehicleId || vehicles[0]?.id || '', service_date: todayISO(), service_type: 'Service', cost: '', odometer_km: '', garage: '', details: '', attachment: '' })}
-            className="inline-flex items-center gap-1.5 bg-primary text-white px-3.5 h-8 rounded-md text-xs font-semibold hover:bg-primary/90 shadow-sm">
-            <Plus className="size-3.5" /> Add Record
-          </button>
-        )}
+        <RangePresets years={years} value={range} onPick={(from, to) => setRange({ from, to })} />
       </div>
 
       <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden">
@@ -121,7 +134,7 @@ export default function ServiceRepair({ user, canEdit, canDelete, lockedVehicleI
                       </div>
                     </td>
                   </tr>
-                )) : <tr><td colSpan="8" className="px-4 py-10 text-center text-xs text-zinc-500 italic">No service or repair records yet.</td></tr>}
+                )) : <tr><td colSpan="8" className="px-4 py-10 text-center text-xs text-zinc-500 italic">No service or repair records for these filters.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -277,15 +290,6 @@ function ServiceView({ id, onClose }) {
 
 function Row({ label, value }) {
   return <div className="flex items-center justify-between gap-4"><span className="text-zinc-500 text-xs shrink-0">{label}</span><span className="font-medium text-zinc-900 text-right">{value}</span></div>;
-}
-function DateField({ label, value, onChange }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">{label}</span>
-      <input type="date" value={value} onChange={e => onChange(e.target.value)}
-        className="h-8 rounded border border-zinc-200 bg-white px-2 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40" />
-    </div>
-  );
 }
 const inputCls = 'w-full rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40';
 function Field({ label, children }) { return <div className="flex flex-col"><label className="text-xs font-medium text-zinc-600 mb-1.5">{label}</label>{children}</div>; }

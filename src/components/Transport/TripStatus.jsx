@@ -26,25 +26,62 @@ export const fmtISTDateTime = (v) => {
   }).format(d);
 };
 
+// The school day is IST. en-CA gives a sortable YYYY-MM-DD.
+const istDay = (d) => new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit'
+}).format(d);
+
+/** Did this timestamp happen on today's IST date? */
+export const isTodayIST = (v) => {
+  const d = parseDbDate(v);
+  if (!d) return false;
+  return istDay(d) === istDay(new Date());
+};
+
 /**
  * The single source of truth for "is this bus actually live?".
- * A trip counts as running only while it's marked running AND the driver's
- * phone has pinged within the last 30 seconds.
+ *
+ * A trip is a TODAY thing. transport_live_location keeps ONE row per route
+ * and never clears it, so yesterday's finished run would otherwise sit on
+ * the Routes list saying "Done" forever — and a driver who forgot to tap
+ * Complete would show "No signal" indefinitely. Anything that didn't happen
+ * on today's IST date falls back to idle: the bus simply isn't out yet.
+ *
+ * The one exception is a trip that started before midnight and is still
+ * pinging — a genuinely running bus stays live no matter what the date says.
  */
 export function tripState(track) {
   if (!track) return { status: 'idle', live: false };
   const fresh = Number(track.seconds_ago) < 30;
   const running = track.trip_status === 'running' || (track.trip_status == null && !!track.is_active);
-  if (running && fresh && track.lat != null && track.lng != null) {
-    return { status: 'running', live: true, trip_type: track.trip_type, started_at: track.started_at, driver_name: track.driver_name || track.started_by_name };
+  const completed = track.trip_status === 'completed';
+
+  if (completed) {
+    // Finished today -> "Done". Finished on an earlier day -> nothing to show.
+    if (!isTodayIST(track.ended_at || track.started_at)) return { status: 'idle', live: false, oldDay: true };
+    return {
+      status: 'completed', live: false, trip_type: track.trip_type,
+      started_at: track.started_at, ended_at: track.ended_at, driver_name: track.driver_name
+    };
   }
-  if (running && !fresh) {
-    // Started but we've lost the signal (app closed / no network).
-    return { status: 'running', live: false, stale: true, trip_type: track.trip_type, started_at: track.started_at, driver_name: track.driver_name };
+
+  if (running) {
+    // Still pinging = still driving, even across midnight.
+    if (fresh && track.lat != null && track.lng != null) {
+      return {
+        status: 'running', live: true, trip_type: track.trip_type,
+        started_at: track.started_at, driver_name: track.driver_name || track.started_by_name
+      };
+    }
+    // Signal lost. Only worth flagging if the run started today — otherwise
+    // it's an abandoned row from a previous day, not a bus on the road.
+    if (!isTodayIST(track.started_at)) return { status: 'idle', live: false, oldDay: true };
+    return {
+      status: 'running', live: false, stale: true, trip_type: track.trip_type,
+      started_at: track.started_at, driver_name: track.driver_name
+    };
   }
-  if (track.trip_status === 'completed') {
-    return { status: 'completed', live: false, trip_type: track.trip_type, started_at: track.started_at, ended_at: track.ended_at, driver_name: track.driver_name };
-  }
+
   return { status: 'idle', live: false };
 }
 
@@ -60,7 +97,7 @@ export function TripPill({ track }) {
     return <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-amber-700 bg-amber-50 ring-1 ring-amber-600/20 px-2 py-0.5 rounded-full">No signal</span>;
   }
   if (t.status === 'completed') {
-    return <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500 bg-zinc-100 px-2 py-0.5 rounded-full"><CheckCircle2 className="size-3" /> Done</span>;
+    return <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500 bg-zinc-100 px-2 py-0.5 rounded-full"><CheckCircle2 className="size-3" /> Done today</span>;
   }
   return <span className="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-zinc-400 bg-zinc-50 ring-1 ring-zinc-200 px-2 py-0.5 rounded-full">Not started</span>;
 }
@@ -98,7 +135,7 @@ export default function TripStatus({ track, className = '' }) {
       <div className={`inline-flex items-center gap-2 rounded-md bg-zinc-100 ring-1 ring-zinc-200 px-3 py-1.5 ${className}`}>
         <CheckCircle2 className="size-3.5 text-zinc-500 shrink-0" />
         <span className="text-[11px] font-semibold text-zinc-700">
-          {label ? `${label} trip completed` : 'Trip completed'}
+          {label ? `${label} trip completed today` : 'Trip completed today'}
           {t.ended_at && <span className="font-normal text-zinc-500"> · {fmtISTTime(t.started_at)} → {fmtISTTime(t.ended_at)}</span>}
         </span>
       </div>

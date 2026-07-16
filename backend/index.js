@@ -12670,6 +12670,390 @@ app.get('/api/transport/my-duty/:userId', async (req, res) => {
   } catch (err) { console.error('transport/my-duty error:', err); res.status(500).json({ error: err.message }); }
 });
 
+// =================================================================
+//  SECTION 29B — TRANSPORT: reporting & exports
+//  Append AFTER section29_transport.js (needs `app`, `db`).
+//
+//  WHY THERE IS NO academic_year_id HERE:
+//  Attendance and the log book are dated records. Roads, stops and buses
+//  don't reset in June, and a bus's fuel or insurance has nothing to do
+//  with a school term. A from/to range answers every question a year
+//  could, and the UI offers each academic year as a preset that simply
+//  fills those dates (see /transport/years below) — one source of truth,
+//  no new column, and a range can still span years when a vehicle needs it.
+// =================================================================
+
+// ExcelJS resolver — this section may sit ABOVE wherever ExcelJS is
+// required in index.js, so resolve it lazily rather than assume scope.
+let _trExcelJS = null;
+function _getTrExcelJS() {
+  if (_trExcelJS) return _trExcelJS;
+  try {
+    if (typeof ExcelJS !== 'undefined' && ExcelJS) { _trExcelJS = ExcelJS; return _trExcelJS; }
+  } catch (e) { /* not declared in this scope — fall through to require */ }
+  _trExcelJS = require('exceljs');
+  return _trExcelJS;
+}
+
+const _TR_BRAND = 'FF3284C7';
+const _TR_BRAND_SOFT = 'FFE7F1FB';
+const _TR_ZEBRA = 'FFF7F8FA';
+const _TR_THIN = { style: 'thin', color: { argb: 'FFD9DEE5' } };
+const _TR_BORDERS = { top: _TR_THIN, left: _TR_THIN, bottom: _TR_THIN, right: _TR_THIN };
+
+const _trDMY = (v) => {
+  if (!v) return '';
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return '';
+  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+};
+const _trIST = (v) => {
+  if (!v) return '';
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-GB', {
+    timeZone: 'Asia/Kolkata', day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true
+  }).replace(',', '');
+};
+const _trRoll = (r) => { const n = parseInt(r, 10); return isNaN(n) ? Number.POSITIVE_INFINITY : n; };
+
+// Shared sheet scaffolding: school name, what this is, the filters, headers.
+async function _trSheet(institutionId, wsTitle, subtitle, bits, headers, widths) {
+  const [instRows] = await db.execute('SELECT name FROM institutions WHERE id = ? LIMIT 1', [institutionId]);
+  const inst = instRows[0] || { name: 'Institution' };
+  const XL = _getTrExcelJS();
+  const wb = new XL.Workbook();
+  wb.creator = 'SmartEdz';
+  wb.created = new Date();
+  const ws = wb.addWorksheet(wsTitle);
+  const LAST = headers.length;
+
+  ws.mergeCells(1, 1, 1, LAST);
+  const t1 = ws.getCell(1, 1);
+  t1.value = inst.name || 'Institution';
+  t1.font = { bold: true, size: 14, color: { argb: _TR_BRAND } };
+  ws.getRow(1).height = 20;
+
+  ws.mergeCells(2, 1, 2, LAST);
+  const t2 = ws.getCell(2, 1);
+  t2.value = subtitle;
+  t2.font = { size: 11, bold: true, color: { argb: 'FF374151' } };
+
+  ws.mergeCells(3, 1, 3, LAST);
+  const t3 = ws.getCell(3, 1);
+  t3.value = [...bits, `Generated: ${_trIST(new Date())}`].join('   ·   ');
+  t3.font = { size: 9, color: { argb: 'FF6B7280' } };
+
+  headers.forEach((h, i) => {
+    const c = ws.getCell(5, i + 1);
+    c.value = h;
+    c.font = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _TR_BRAND } };
+    c.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    c.border = _TR_BORDERS;
+  });
+  widths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+
+  return { wb, ws, inst, firstRow: 6, LAST };
+}
+
+function _trRow(ws, r, vals, i, numCols = []) {
+  vals.forEach((val, ci) => {
+    const c = ws.getCell(r, ci + 1);
+    c.value = val;
+    c.border = _TR_BORDERS;
+    c.alignment = { vertical: 'middle', horizontal: numCols.includes(ci) ? 'right' : (ci === 0 ? 'center' : 'left') };
+    if (numCols.includes(ci) && typeof val === 'number') c.numFmt = '#,##0.##';
+    if (i % 2 === 1) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _TR_ZEBRA } };
+  });
+}
+
+async function _trSend(res, wb, inst, name) {
+  const fileSafe = `${inst.name || 'school'}_${name}`.replace(/[^a-z0-9\-_ ]/gi, '_').replace(/\s+/g, '_');
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${fileSafe}.xlsx"`);
+  await wb.xlsx.write(res);
+  res.end();
+}
+
+// ---- Academic years — ONLY used to fill a from/to range in the UI ----
+app.get('/api/transport/years/:institutionId', async (req, res) => {
+  try {
+    const [rows] = await db.execute(
+      'SELECT id, name, startDate, endDate, isActive FROM academic_years WHERE institutionId = ?',
+      [req.params.institutionId]
+    );
+    rows.sort((a, b) => String(b.startDate || '').localeCompare(String(a.startDate || '')));
+    res.json(rows);
+  } catch (err) { console.error('transport/years error:', err); res.status(500).json({ error: err.message }); }
+});
+
+// =================================================================
+//  ATTENDANCE SUMMARY — one row per student over a date range
+//  ?route_id= &from= &to= &trip_type=pickup|drop  (all optional)
+// =================================================================
+async function _attendanceSummary(institutionId, q) {
+  const { route_id, from, to, trip_type } = q;
+  const where = ['a.institutionId = ?'];
+  const params = [institutionId];
+  if (route_id)  { where.push('a.route_id = ?');        params.push(route_id); }
+  if (from)      { where.push('a.attendance_date >= ?'); params.push(from); }
+  if (to)        { where.push('a.attendance_date <= ?'); params.push(to); }
+  if (trip_type) { where.push('a.trip_type = ?');        params.push(trip_type); }
+
+  const [rows] = await db.execute(
+    `SELECT a.student_id, a.trip_type, a.attendance_date, a.status,
+            u.name, u.roll_no, u.class_id, c.className, c.section,
+            r.route_name, r.route_code
+       FROM transport_attendance a
+       JOIN users u ON u.id = a.student_id
+       LEFT JOIN classes c ON c.id = u.class_id
+       LEFT JOIN transport_routes r ON r.id = a.route_id
+      WHERE ${where.join(' AND ')}`,
+    params
+  );
+
+  const byStudent = {};
+  const dates = new Set();
+  rows.forEach(x => {
+    const k = x.student_id;
+    byStudent[k] = byStudent[k] || {
+      student_id: k, name: x.name, roll_no: x.roll_no,
+      className: x.className ? `${x.className}${x.section ? ' - ' + x.section : ''}` : '',
+      route_name: x.route_name || '', route_code: x.route_code || '',
+      pickup_present: 0, pickup_absent: 0, drop_present: 0, drop_absent: 0, days: new Set()
+    };
+    const s = byStudent[k];
+    const present = x.status === 'present';
+    if (x.trip_type === 'drop') present ? s.drop_present++ : s.drop_absent++;
+    else present ? s.pickup_present++ : s.pickup_absent++;
+    const d = String(x.attendance_date).slice(0, 10);
+    s.days.add(d); dates.add(d);
+  });
+
+  const students = Object.values(byStudent).map(s => {
+    const present = s.pickup_present + s.drop_present;
+    const marked = present + s.pickup_absent + s.drop_absent;
+    return {
+      ...s, days: s.days.size, marked, present,
+      absent: s.pickup_absent + s.drop_absent,
+      pct: marked > 0 ? Math.round((present / marked) * 1000) / 10 : null
+    };
+  }).sort((a, b) => _trRoll(a.roll_no) - _trRoll(b.roll_no) || (a.name || '').localeCompare(b.name || ''));
+
+  return { students, days_recorded: dates.size, records: rows.length };
+}
+
+app.get('/api/transport/attendance-summary/:institutionId', async (req, res) => {
+  try {
+    res.json(await _attendanceSummary(req.params.institutionId, req.query));
+  } catch (err) { console.error('transport/attendance-summary error:', err); res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/transport/attendance-export/:institutionId', async (req, res) => {
+  const { route_id, from, to, trip_type } = req.query;
+  try {
+    const { students, days_recorded } = await _attendanceSummary(req.params.institutionId, req.query);
+
+    let routeLabel = 'All routes';
+    if (route_id) {
+      const [r] = await db.execute('SELECT route_name, route_code FROM transport_routes WHERE id = ? LIMIT 1', [route_id]);
+      if (r.length) routeLabel = `${r[0].route_name}${r[0].route_code ? ` (${r[0].route_code})` : ''}`;
+    }
+
+    const headers = ['#', 'Roll', 'Student', 'Class', 'Route', 'Pickup Present', 'Pickup Absent',
+                     'Drop Present', 'Drop Absent', 'Days', 'Present', 'Absent', 'Attendance %'];
+    const widths  = [5, 8, 26, 16, 22, 14, 14, 14, 14, 8, 10, 10, 13];
+    const bits = [
+      `Route: ${routeLabel}`,
+      `Trip: ${trip_type ? (trip_type === 'drop' ? 'Drop' : 'Pickup') : 'Pickup + Drop'}`,
+      `Period: ${from ? _trDMY(from) : 'start'} to ${to ? _trDMY(to) : 'today'}`,
+      `Days recorded: ${days_recorded}`
+    ];
+    const { wb, ws, inst, firstRow } = await _trSheet(
+      req.params.institutionId, 'Bus Attendance', 'Transport — Bus Attendance Summary', bits, headers, widths
+    );
+
+    let r = firstRow;
+    students.forEach((s, i) => {
+      _trRow(ws, r, [
+        i + 1, s.roll_no || '', s.name || '', s.className, s.route_name,
+        s.pickup_present, s.pickup_absent, s.drop_present, s.drop_absent,
+        s.days, s.present, s.absent, s.pct == null ? '' : s.pct
+      ], i, [5, 6, 7, 8, 9, 10, 11, 12]);
+      r++;
+    });
+    if (!students.length) {
+      ws.mergeCells(r, 1, r, headers.length);
+      ws.getCell(r, 1).value = 'No attendance recorded for these filters.';
+      ws.getCell(r, 1).font = { italic: true, size: 10, color: { argb: 'FF6B7280' } };
+    }
+
+    await _trSend(res, wb, inst, `bus-attendance_${from || 'start'}_${to || 'today'}`);
+  } catch (err) {
+    console.error('transport/attendance-export error:', err);
+    if (!res.headersSent) res.status(500).json({ error: err.message }); else res.end();
+  }
+});
+
+// =================================================================
+//  DAILY LOG EXPORT — every entry in the range + per-vehicle totals
+// =================================================================
+app.get('/api/transport/logs-export/:institutionId', async (req, res) => {
+  const { vehicle_id, from, to } = req.query;
+  try {
+    const where = ['l.institutionId = ?'];
+    const params = [req.params.institutionId];
+    if (vehicle_id) { where.push('l.vehicle_id = ?'); params.push(vehicle_id); }
+    if (from) { where.push('l.log_date >= ?'); params.push(from); }
+    if (to)   { where.push('l.log_date <= ?'); params.push(to); }
+    const [rows] = await db.execute(
+      `SELECT l.*, v.vehicle_no, v.vehicle_code, v.vehicle_name
+         FROM transport_vehicle_logs l
+         JOIN transport_vehicles v ON v.id = l.vehicle_id
+        WHERE ${where.join(' AND ')}`,
+      params
+    );
+    rows.sort((a, b) => String(a.log_date).localeCompare(String(b.log_date)) || (a.vehicle_no || '').localeCompare(b.vehicle_no || ''));
+
+    const headers = ['#', 'Date', 'Vehicle', 'Code', 'Model', 'Trips', 'Distance (km)',
+                     'Fuel (L)', 'Fuel Cost', 'Mileage (km/L)', 'Driver', 'Notes', 'Recorded By'];
+    const widths  = [5, 12, 14, 12, 18, 8, 13, 10, 12, 14, 18, 26, 18];
+    const bits = [
+      `Vehicle: ${vehicle_id ? (rows[0]?.vehicle_no || vehicle_id) : 'All vehicles'}`,
+      `Period: ${from ? _trDMY(from) : 'start'} to ${to ? _trDMY(to) : 'today'}`
+    ];
+    const { wb, ws, inst, firstRow } = await _trSheet(
+      req.params.institutionId, 'Daily Log', 'Transport — Vehicle Daily Log', bits, headers, widths
+    );
+
+    let r = firstRow;
+    const totals = { trips: 0, distance: 0, fuel: 0, cost: 0 };
+    rows.forEach((l, i) => {
+      const trips = Number(l.trips) || 0, dist = Number(l.distance_km) || 0;
+      const fuel = Number(l.fuel_litres) || 0, cost = Number(l.fuel_cost) || 0;
+      totals.trips += trips; totals.distance += dist; totals.fuel += fuel; totals.cost += cost;
+      _trRow(ws, r, [
+        i + 1, _trDMY(l.log_date), l.vehicle_no || '', l.vehicle_code || '', l.vehicle_name || '',
+        trips, dist, fuel, cost || '', fuel > 0 ? +(dist / fuel).toFixed(2) : '',
+        l.driver_name || '', l.notes || '', l.created_by_name || ''
+      ], i, [5, 6, 7, 8, 9]);
+      r++;
+    });
+
+    if (!rows.length) {
+      ws.mergeCells(r, 1, r, headers.length);
+      ws.getCell(r, 1).value = 'No log entries for these filters.';
+      ws.getCell(r, 1).font = { italic: true, size: 10, color: { argb: 'FF6B7280' } };
+    } else {
+      ws.mergeCells(r, 1, r, 5);
+      const lbl = ws.getCell(r, 1);
+      lbl.value = 'TOTAL';
+      lbl.font = { bold: true, size: 10 };
+      lbl.alignment = { horizontal: 'right' };
+      [1, 2, 3, 4, 5].forEach(k => { const c = ws.getCell(r, k); c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _TR_BRAND_SOFT } }; c.border = _TR_BORDERS; });
+      const vals = [totals.trips, totals.distance, totals.fuel, totals.cost || '',
+                    totals.fuel > 0 ? +(totals.distance / totals.fuel).toFixed(2) : ''];
+      vals.forEach((v, i) => {
+        const c = ws.getCell(r, 6 + i);
+        c.value = v; c.numFmt = '#,##0.##';
+        c.font = { bold: true, size: 10 };
+        c.alignment = { horizontal: 'right' };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _TR_BRAND_SOFT } };
+        c.border = _TR_BORDERS;
+      });
+      for (let k = 11; k <= headers.length; k++) {
+        const c = ws.getCell(r, k);
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _TR_BRAND_SOFT } };
+        c.border = _TR_BORDERS;
+      }
+    }
+
+    await _trSend(res, wb, inst, `vehicle-daily-log_${from || 'start'}_${to || 'today'}`);
+  } catch (err) {
+    console.error('transport/logs-export error:', err);
+    if (!res.headersSent) res.status(500).json({ error: err.message }); else res.end();
+  }
+});
+
+// =================================================================
+//  SERVICE / REPAIR EXPORT
+// =================================================================
+app.get('/api/transport/service-export/:institutionId', async (req, res) => {
+  const { vehicle_id, from, to } = req.query;
+  try {
+    const where = ['s.institutionId = ?'];
+    const params = [req.params.institutionId];
+    if (vehicle_id) { where.push('s.vehicle_id = ?'); params.push(vehicle_id); }
+    if (from) { where.push('s.service_date >= ?'); params.push(from); }
+    if (to)   { where.push('s.service_date <= ?'); params.push(to); }
+    const [rows] = await db.execute(
+      `SELECT s.id, s.service_date, s.service_type, s.cost, s.odometer_km, s.garage, s.details,
+              s.created_by_name, s.updated_by_name, s.created_at,
+              v.vehicle_no, v.vehicle_code, v.vehicle_name
+         FROM transport_vehicle_service s
+         JOIN transport_vehicles v ON v.id = s.vehicle_id
+        WHERE ${where.join(' AND ')}`,
+      params
+    );
+    rows.sort((a, b) => String(a.service_date).localeCompare(String(b.service_date)));
+
+    const headers = ['#', 'Date', 'Vehicle', 'Code', 'Model', 'Type', 'Cost',
+                     'Odometer (km)', 'Garage / Workshop', 'Details', 'Recorded By', 'Recorded On (IST)'];
+    const widths  = [5, 12, 14, 12, 18, 16, 12, 14, 22, 40, 18, 20];
+    const bits = [
+      `Vehicle: ${vehicle_id ? (rows[0]?.vehicle_no || vehicle_id) : 'All vehicles'}`,
+      `Period: ${from ? _trDMY(from) : 'start'} to ${to ? _trDMY(to) : 'today'}`
+    ];
+    const { wb, ws, inst, firstRow } = await _trSheet(
+      req.params.institutionId, 'Service & Repair', 'Transport — Service / Repair Records', bits, headers, widths
+    );
+
+    let r = firstRow, total = 0;
+    rows.forEach((s, i) => {
+      const cost = Number(s.cost) || 0;
+      total += cost;
+      _trRow(ws, r, [
+        i + 1, _trDMY(s.service_date), s.vehicle_no || '', s.vehicle_code || '', s.vehicle_name || '',
+        s.service_type || '', cost, s.odometer_km ?? '', s.garage || '', s.details || '',
+        s.created_by_name || '', _trIST(s.created_at)
+      ], i, [6, 7]);
+      r++;
+    });
+
+    if (!rows.length) {
+      ws.mergeCells(r, 1, r, headers.length);
+      ws.getCell(r, 1).value = 'No service or repair records for these filters.';
+      ws.getCell(r, 1).font = { italic: true, size: 10, color: { argb: 'FF6B7280' } };
+    } else {
+      ws.mergeCells(r, 1, r, 6);
+      const lbl = ws.getCell(r, 1);
+      lbl.value = 'TOTAL SPENT';
+      lbl.font = { bold: true, size: 10 };
+      lbl.alignment = { horizontal: 'right' };
+      lbl.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _TR_BRAND_SOFT } };
+      lbl.border = _TR_BORDERS;
+      const tot = ws.getCell(r, 7);
+      tot.value = total; tot.numFmt = '#,##0.00';
+      tot.font = { bold: true, size: 10 };
+      tot.alignment = { horizontal: 'right' };
+      tot.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _TR_BRAND_SOFT } };
+      tot.border = _TR_BORDERS;
+      for (let k = 8; k <= headers.length; k++) {
+        const c = ws.getCell(r, k);
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _TR_BRAND_SOFT } };
+        c.border = _TR_BORDERS;
+      }
+    }
+
+    await _trSend(res, wb, inst, `service-repair_${from || 'start'}_${to || 'today'}`);
+  } catch (err) {
+    console.error('transport/service-export error:', err);
+    if (!res.headersSent) res.status(500).json({ error: err.message }); else res.end();
+  }
+});
+
 
 
 // =====================================================================
