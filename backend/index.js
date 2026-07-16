@@ -11309,6 +11309,20 @@ app.get('/api/expenses/dashboard/:institutionId', async (req, res) => {
 //  year headings survive the trip into Excel. When year=all the sheet
 //  is split into a section per academic year, each with its own
 //  heading and subtotal. Requires ExcelJS (already used by Section 30).
+//  ExcelJS resolver — Section 28 may be pasted ABOVE wherever ExcelJS is
+//  required in index.js, so we don't rely on it already being in scope.
+//  Uses the existing global if there is one, otherwise requires the module
+//  itself (Node caches it, so this costs nothing after the first call).
+let _expExcelJS = null;
+function _getExcelJS() {
+  if (_expExcelJS) return _expExcelJS;
+  try {
+    if (typeof ExcelJS !== 'undefined' && ExcelJS) { _expExcelJS = ExcelJS; return _expExcelJS; }
+  } catch (e) { /* not declared in this scope — fall through to require */ }
+  _expExcelJS = require('exceljs');
+  return _expExcelJS;
+}
+
 const _EXP_BRAND = 'FF3284C7';
 const _EXP_BRAND_SOFT = 'FFE7F1FB';
 const _EXP_ZEBRA = 'FFF7F8FA';
@@ -11375,7 +11389,8 @@ app.get('/api/expenses/export/:institutionId', async (req, res) => {
     const widths  = [5, 14, 12, 22, 20, 26, 14, 16, 14, 18, 20, 18, 20];
     const LAST = headers.length;
 
-    const wb = new ExcelJS.Workbook();
+    const XL = _getExcelJS();
+    const wb = new XL.Workbook();
     wb.creator = 'SmartEdz';
     wb.created = new Date();
     const ws = wb.addWorksheet('Daily Expenses');
