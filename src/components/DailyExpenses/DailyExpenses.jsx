@@ -104,7 +104,7 @@ export default function DailyExpenses() {
       </div>
 
       {tab === 'dashboard' ? (
-        <ExpensesDashboard user={user} {...yearProps} />
+        <ExpensesDashboard user={user} school={school} {...yearProps} />
       ) : tab === 'voucher' ? (
         <VoucherForm
           key={editingId || 'new'}
@@ -140,8 +140,9 @@ const GUIDES = {
       ['3 \u00b7 Spending by Head', 'Horizontal bars per head with the amount and the voucher count, so you can see whether a big head is one large payment or fifty small ones.'],
       ['4 \u00b7 By Method', 'The donut splits spend across UPI, Bank, Cheque, Cash, Kind and Others \u2014 handy for tallying against the bank statement.'],
       ['5 \u00b7 Monthly Spending', 'A fixed six-month bar trend, so this month always reads against the months behind it.'],
+      ['6 \u00b7 Download', 'Prints the whole dashboard \u2014 KPIs and every chart \u2014 on your school letterhead, with the filters you applied noted at the top. Choose "Save as PDF" as the printer for a file, or send it straight to paper for a meeting.'],
     ],
-    note: 'Read-only. Every figure traces back to saved vouchers \u2014 if a number looks wrong, the fix is in the voucher, not here.'
+    note: 'Read-only. Every figure traces back to saved vouchers \u2014 if a number looks wrong, the fix is in the voucher, not here. If nothing opens on Download, allow pop-ups for this site.'
   },
   voucher: {
     title: 'Writing a debit voucher',
@@ -164,6 +165,7 @@ const GUIDES = {
       ['4 \u00b7 Recorded By', 'Shows who entered the voucher and when, in IST. If someone edited it later, an amber "edited \u00b7 name" line sits under it \u2014 anyone can create, so both names are kept.'],
       ['5 \u00b7 Edit', 'Edit reopens that voucher in the voucher screen. Change it, save, and you come back here with the list refreshed and your name on the edited line.'],
       ['6 \u00b7 New entry', 'New Voucher starts a blank one \u2014 same as the tab above.'],
+      ['7 \u00b7 Download', 'An Excel file of exactly what your filters show, with a heading and running total per academic year, and the Recorded By name and IST time on every row. On All Years each year gets its own section plus a grand total.'],
     ],
     note: 'Download exports exactly what the filters show, so set the year and head first. Deleting a voucher pulls that spend out of the Register, the Calendar and the Dashboard together \u2014 if the payment really happened, correct it rather than deleting it.'
   },

@@ -11304,6 +11304,219 @@ app.get('/api/expenses/dashboard/:institutionId', async (req, res) => {
 });
 
 
+// ---- Excel export (filters: year, head, from, to) ----------------
+//  A real .xlsx (not CSV) so column widths, the date format and the
+//  year headings survive the trip into Excel. When year=all the sheet
+//  is split into a section per academic year, each with its own
+//  heading and subtotal. Requires ExcelJS (already used by Section 30).
+const _EXP_BRAND = 'FF3284C7';
+const _EXP_BRAND_SOFT = 'FFE7F1FB';
+const _EXP_ZEBRA = 'FFF7F8FA';
+const _EXP_THIN = { style: 'thin', color: { argb: 'FFD9DEE5' } };
+const _EXP_BORDERS = { top: _EXP_THIN, left: _EXP_THIN, bottom: _EXP_THIN, right: _EXP_THIN };
+
+const _expDMY = (v) => {
+  if (!v) return '';
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return '';
+  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+};
+
+// Server runs UTC; schools read IST.
+const _expIST = (v) => {
+  if (!v) return '';
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-GB', {
+    timeZone: 'Asia/Kolkata', day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true
+  }).replace(',', '');
+};
+
+app.get('/api/expenses/export/:institutionId', async (req, res) => {
+  const { institutionId } = req.params;
+  const { head, from, to, year } = req.query;
+  try {
+    const where = ['v.institutionId = ?'];
+    const params = [institutionId];
+    if (year && year !== 'all') { where.push('v.academic_year_id = ?'); params.push(year); }
+    if (head) { where.push('v.head_of_account = ?'); params.push(head); }
+    if (from) { where.push('v.voucher_date >= ?');   params.push(from); }
+    if (to)   { where.push('v.voucher_date <= ?');   params.push(to); }
+
+    const [rows] = await db.execute(
+      `SELECT v.seq, v.voucher_no, v.voucher_date, v.head_of_account, v.sub_head, v.name_title,
+              v.phone_no, v.account_type, v.total_amount, v.academic_year_id,
+              v.created_by_name, v.created_at, v.updated_by_name, v.updated_at,
+              ay.name AS year_name, ay.startDate AS year_start
+         FROM expense_vouchers v
+         LEFT JOIN academic_years ay ON ay.id = v.academic_year_id
+        WHERE ${where.join(' AND ')}`,
+      params
+    );
+
+    const [instRows] = await db.execute(
+      'SELECT name, school_email, phone FROM institutions WHERE id = ?', [institutionId]
+    );
+    const inst = instRows[0] || { name: 'Institution' };
+
+    // Group by academic year. Newest year first; vouchers newest first.
+    const groups = {};
+    rows.forEach(r => {
+      const key = r.academic_year_id == null ? 'none' : String(r.academic_year_id);
+      (groups[key] = groups[key] || { name: r.year_name || 'No academic year', start: r.year_start || '', rows: [] }).rows.push(r);
+    });
+    const ordered = Object.values(groups)
+      .sort((a, b) => String(b.start || '').localeCompare(String(a.start || '')));
+    ordered.forEach(g => g.rows.sort((a, b) => (b.seq || 0) - (a.seq || 0)));
+
+    const headers = ['#', 'Voucher No', 'Date', 'Head of A/C', 'Sub Head', 'Name / Title', 'Phone',
+                     'Transfer through', 'Amount', 'Recorded By', 'Recorded On (IST)', 'Edited By', 'Edited On (IST)'];
+    const widths  = [5, 14, 12, 22, 20, 26, 14, 16, 14, 18, 20, 18, 20];
+    const LAST = headers.length;
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'SmartEdz';
+    wb.created = new Date();
+    const ws = wb.addWorksheet('Daily Expenses');
+
+    const yearLabel = (!year || year === 'all')
+      ? 'All Years'
+      : (ordered[0]?.name || 'Academic Year');
+
+    // ---- title block ----
+    ws.mergeCells(1, 1, 1, LAST);
+    const t1 = ws.getCell(1, 1);
+    t1.value = inst.name || 'Institution';
+    t1.font = { bold: true, size: 14, color: { argb: _EXP_BRAND } };
+    ws.getRow(1).height = 20;
+
+    ws.mergeCells(2, 1, 2, LAST);
+    const t2 = ws.getCell(2, 1);
+    t2.value = `Daily Expenses — Voucher Register · ${yearLabel}`;
+    t2.font = { size: 11, bold: true, color: { argb: 'FF374151' } };
+
+    ws.mergeCells(3, 1, 3, LAST);
+    const bits = [];
+    if (head) bits.push(`Head: ${head}`);
+    if (from || to) bits.push(`Period: ${from ? _expDMY(from) : 'start'} to ${to ? _expDMY(to) : 'today'}`);
+    bits.push(`Generated: ${_expIST(new Date())}`);
+    const t3 = ws.getCell(3, 1);
+    t3.value = bits.join('   ·   ');
+    t3.font = { size: 9, color: { argb: 'FF6B7280' } };
+
+    let r = 5;
+    let grand = 0;
+
+    const writeHeaderRow = () => {
+      headers.forEach((h, i) => {
+        const c = ws.getCell(r, i + 1);
+        c.value = h;
+        c.font = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _EXP_BRAND } };
+        c.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+        c.border = _EXP_BORDERS;
+      });
+      r++;
+    };
+
+    ordered.forEach(g => {
+      // Year heading — always present, so an "All Years" file reads section by section.
+      ws.mergeCells(r, 1, r, LAST);
+      const yh = ws.getCell(r, 1);
+      yh.value = `Academic Year: ${g.name}   (${g.rows.length} voucher${g.rows.length === 1 ? '' : 's'})`;
+      yh.font = { bold: true, size: 11, color: { argb: _EXP_BRAND } };
+      yh.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _EXP_BRAND_SOFT } };
+      yh.alignment = { vertical: 'middle', horizontal: 'left' };
+      ws.getRow(r).height = 18;
+      r++;
+
+      writeHeaderRow();
+
+      let subtotal = 0;
+      g.rows.forEach((v, i) => {
+        const amt = Number(v.total_amount) || 0;
+        subtotal += amt;
+        const vals = [
+          i + 1, v.voucher_no || '', _expDMY(v.voucher_date), v.head_of_account || '', v.sub_head || '',
+          v.name_title || '', v.phone_no || '', v.account_type || '', amt,
+          v.created_by_name || '', _expIST(v.created_at),
+          v.updated_at ? (v.updated_by_name || '—') : '', v.updated_at ? _expIST(v.updated_at) : ''
+        ];
+        vals.forEach((val, ci) => {
+          const c = ws.getCell(r, ci + 1);
+          c.value = val;
+          c.border = _EXP_BORDERS;
+          c.alignment = { vertical: 'middle', horizontal: (ci === 8 ? 'right' : (ci === 0 || ci === 2) ? 'center' : 'left') };
+          if (ci === 8) c.numFmt = '#,##0.00';
+          if (i % 2 === 1) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _EXP_ZEBRA } };
+        });
+        r++;
+      });
+
+      // Year subtotal
+      ws.mergeCells(r, 1, r, 8);
+      const lbl = ws.getCell(r, 1);
+      lbl.value = `Total — ${g.name}`;
+      lbl.font = { bold: true, size: 10 };
+      lbl.alignment = { horizontal: 'right' };
+      lbl.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _EXP_BRAND_SOFT } };
+      lbl.border = _EXP_BORDERS;
+      const tot = ws.getCell(r, 9);
+      tot.value = subtotal;
+      tot.numFmt = '#,##0.00';
+      tot.font = { bold: true, size: 10 };
+      tot.alignment = { horizontal: 'right' };
+      tot.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _EXP_BRAND_SOFT } };
+      tot.border = _EXP_BORDERS;
+      for (let k = 10; k <= LAST; k++) {
+        const c = ws.getCell(r, k);
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _EXP_BRAND_SOFT } };
+        c.border = _EXP_BORDERS;
+      }
+      grand += subtotal;
+      r += 2;
+    });
+
+    if (ordered.length === 0) {
+      ws.mergeCells(r, 1, r, LAST);
+      ws.getCell(r, 1).value = 'No vouchers for the selected filters.';
+      ws.getCell(r, 1).font = { italic: true, size: 10, color: { argb: 'FF6B7280' } };
+      r += 2;
+    }
+
+    // Grand total only makes sense across sections.
+    if (ordered.length > 1) {
+      ws.mergeCells(r, 1, r, 8);
+      const gl = ws.getCell(r, 1);
+      gl.value = 'GRAND TOTAL (all years shown)';
+      gl.font = { bold: true, size: 11, color: { argb: 'FFFFFFFF' } };
+      gl.alignment = { horizontal: 'right' };
+      gl.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _EXP_BRAND } };
+      const gt = ws.getCell(r, 9);
+      gt.value = grand;
+      gt.numFmt = '#,##0.00';
+      gt.font = { bold: true, size: 11, color: { argb: 'FFFFFFFF' } };
+      gt.alignment = { horizontal: 'right' };
+      gt.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _EXP_BRAND } };
+    }
+
+    widths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+
+    const fileSafe = `${inst.name || 'school'}_daily-expenses_${yearLabel}`
+      .replace(/[^a-z0-9\-_ ]/gi, '_').replace(/\s+/g, '_');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileSafe}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error('expenses/export error:', err);
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+    else res.end();
+  }
+});
+
+
 
 // =================================================================
 //  SECTION 29 — TRANSPORT

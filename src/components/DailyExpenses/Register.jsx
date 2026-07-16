@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Search, ChevronDown, Eye, Pencil, Trash2, Download, Plus, ListChecks, Filter } from 'lucide-react';
+import { Search, ChevronDown, Eye, Pencil, Trash2, Download, Plus, ListChecks, Filter, Loader2 } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
 import { HEAD_OF_ACCOUNT, fmtAmt } from './VoucherForm';
 import VoucherView, { fmtISTDateTime, fmtVoucherDate } from './VoucherView';
@@ -74,23 +74,38 @@ export default function Register({ user, canEdit = true, refreshKey = 0, onEdit,
     } finally { setBusyId(null); }
   };
 
-  const downloadCsv = () => {
-    const header = ['#', 'Voucher No', 'Date', 'Head of A/C', 'Sub Head', 'Name/Title', 'Transfer through', 'Amount'];
-    const lines = [header, ...filtered.map((r, i) => [
-      i + 1, r.voucher_no, fmtVoucherDate(r.voucher_date), r.head_of_account, r.sub_head || '',
-      r.name_title || '', r.account_type || '', Number(r.total_amount || 0)
-    ])];
-    const csv = lines.map(row => row.map(c => {
-      const s = String(c ?? '');
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    }).join(',')).join('\n');
-    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    // Name the file after the year in view, so exports don't overwrite each other.
-    const tag = (yearLabel || '').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '');
-    a.href = url; a.download = `daily-expenses${tag ? `_${tag}` : ''}_${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  // Excel, not CSV: the server builds it with real column widths (no ######
+  // date column), the year headings and the Recorded By / IST time columns.
+  const [downloading, setDownloading] = useState(false);
+  const downloadXlsx = async () => {
+    if (!user?.institutionId) return;
+    setDownloading(true);
+    try {
+      const qs = new URLSearchParams();
+      if (year && year !== 'all') qs.set('year', year);
+      if (head) qs.set('head', head);
+      if (range.from) qs.set('from', range.from);
+      if (range.to) qs.set('to', range.to);
+      const res = await fetch(`${API_BASE_URL}/expenses/export/${user.institutionId}?${qs.toString()}`);
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.error || 'Download failed.');
+      }
+      const blob = await res.blob();
+      let filename = `daily-expenses_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      const cd = res.headers.get('Content-Disposition') || '';
+      const m = cd.match(/filename="?([^"]+)"?/);
+      if (m) filename = m[1];
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert(e.message || 'Could not download the register.');
+    } finally {
+      setDownloading(false);
+    }
   };
 
   return (
@@ -120,9 +135,10 @@ export default function Register({ user, canEdit = true, refreshKey = 0, onEdit,
               className="h-8 w-52 rounded border border-zinc-200 bg-white pl-7 pr-2 text-xs text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40" />
           </div>
         </div>
-        <button onClick={downloadCsv} disabled={!filtered.length}
+        <button onClick={downloadXlsx} disabled={!rows.length || downloading} title="Download this register as an Excel file"
           className="inline-flex items-center gap-1.5 bg-primary text-white px-3.5 h-8 rounded-md text-xs font-semibold hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-50">
-          <Download className="size-3.5" /> Download
+          {downloading ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+          {downloading ? 'Preparing…' : 'Download'}
         </button>
       </div>
 

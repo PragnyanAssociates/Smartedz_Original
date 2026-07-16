@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Wallet, ReceiptText, TrendingDown, CalendarClock, PieChart, BarChart3, Landmark, CreditCard, Filter, ChevronDown, RefreshCw } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Wallet, ReceiptText, TrendingDown, CalendarClock, PieChart, BarChart3, Landmark, CreditCard, Filter, ChevronDown, RefreshCw, Download } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
 import { HEAD_OF_ACCOUNT } from './VoucherForm';
 
@@ -13,12 +13,13 @@ const PALETTE = ['#3284c7', '#f29132', '#16a34a', '#8b5cf6', '#ec4899', '#0ea5e9
 
 // years / activeYearId / yearsReady come from DailyExpenses (which reads
 // /admin/data -> academicYears, the Academics Year tab being the source of truth).
-export default function ExpensesDashboard({ user, years = [], activeYearId = null, yearsReady = false }) {
+export default function ExpensesDashboard({ user, school = {}, years = [], activeYearId = null, yearsReady = false }) {
   const [data, setData]       = useState(null);
   const [loading, setLoading] = useState(true);
   const [head, setHead]       = useState('');
   const [range, setRange]     = useState({ from: '', to: '' });
   const [year, setYear]       = useState('');   // '' = not decided yet, 'all' = every year
+  const printRef              = useRef(null);   // only the KPIs + charts go on the page
 
   // Land on the school's active academic year; fall back to All Years if
   // the school hasn't set one active.
@@ -56,6 +57,64 @@ export default function ExpensesDashboard({ user, years = [], activeYearId = nul
     setYear(activeYearId != null ? String(activeYearId) : 'all');
   };
 
+  const yearLabel = useMemo(() => {
+    if (year === 'all') return 'All Years';
+    const y = years.find(y => String(y.id) === String(year));
+    return y ? y.name : '';
+  }, [year, years]);
+
+  const dmy = (v) => (v ? v.split('-').reverse().join('/') : '');
+
+  // Print to PDF. The dashboard is charts, so we hand the browser the real
+  // rendered markup (SVG donut, CSS bars and all) plus the page's own
+  // stylesheets, and let "Save as PDF" in the print dialog do the rest —
+  // no chart library, no canvas rasteriser, and it prints at full quality.
+  const downloadPdf = () => {
+    const node = printRef.current;
+    if (!node) return;
+    const win = window.open('', '_blank', 'width=1100,height=800');
+    if (!win) { alert('Please allow pop-ups for this site to download the dashboard.'); return; }
+
+    // Carry over every stylesheet so Tailwind classes still mean something
+    // inside the new window.
+    const styles = Array.from(document.querySelectorAll('link[rel="stylesheet"], style'))
+      .map(el => el.outerHTML).join('\n');
+
+    const esc = (v) => String(v ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const bits = [`Academic Year: ${esc(yearLabel || '—')}`, `Head: ${esc(head || 'All heads')}`];
+    if (range.from || range.to) bits.push(`Period: ${dmy(range.from) || 'start'} to ${dmy(range.to) || 'today'}`);
+    bits.push(`Generated: ${new Date().toLocaleString('en-GB', { timeZone: 'Asia/Kolkata', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }).replace(',', '')} IST`);
+
+    const title = `${school.name || 'School'} — Daily Expenses Dashboard`;
+    const header = `
+      <div style="display:flex;align-items:center;gap:12px;border-bottom:2px solid #3284c7;padding-bottom:10px;margin-bottom:14px">
+        ${school.logo ? `<img src="${esc(school.logo)}" style="height:46px;width:auto" />` : ''}
+        <div style="flex:1">
+          <div style="font-size:17px;font-weight:700;color:#3284c7;line-height:1.2">${esc(school.name || 'School')}</div>
+          ${school.branch ? `<div style="font-size:11px;color:#52525b">${esc(school.branch)}</div>` : ''}
+          <div style="font-size:12px;font-weight:600;color:#3f3f46;margin-top:2px">Daily Expenses · Dashboard</div>
+        </div>
+      </div>
+      <div style="font-size:10px;color:#71717a;margin-bottom:14px">${bits.join(' &nbsp;·&nbsp; ')}</div>`;
+
+    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title>${styles}
+      <style>
+        @page { size: A4 portrait; margin: 12mm; }
+        html, body { background: #fff !important; margin: 0; padding: 0;
+                     -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+        .sheet { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+        /* keep a card from splitting across two pages */
+        .sheet .ring-1 { break-inside: avoid; page-break-inside: avoid; }
+      </style></head>
+      <body><div class="sheet">${header}${node.outerHTML}</div></body></html>`);
+    win.document.close();
+    win.focus();
+
+    const go = () => setTimeout(() => { win.print(); }, 350);  // let fonts/CSS settle
+    if (win.document.readyState === 'complete') go();
+    else win.onload = go;
+  };
+
   return (
     <div className="space-y-6">
       {/* Filters */}
@@ -81,6 +140,10 @@ export default function ExpensesDashboard({ user, years = [], activeYearId = nul
         <button onClick={load} className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ml-auto self-center">
           <RefreshCw className="size-3.5" /> Refresh
         </button>
+        <button onClick={downloadPdf} disabled={loading || !data} title="Download the dashboard as a PDF (or print it)"
+          className="inline-flex items-center gap-1.5 bg-primary text-white px-3.5 h-8 rounded-md text-xs font-semibold hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-50 self-center">
+          <Download className="size-3.5" /> Download
+        </button>
       </div>
 
       {loading ? (
@@ -88,7 +151,7 @@ export default function ExpensesDashboard({ user, years = [], activeYearId = nul
       ) : !data ? (
         <div className="h-40 flex items-center justify-center text-sm text-zinc-400">Couldn't load dashboard data.</div>
       ) : (
-        <>
+        <div ref={printRef} className="space-y-6">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <Kpi icon={TrendingDown}  tone="accent"  label="Total Spent"   value={inr(t.total)}      sub={`${t.count || 0} vouchers`} />
             <Kpi icon={ReceiptText}   tone="primary" label="Vouchers"      value={t.count || 0}      sub="in this view" />
@@ -127,7 +190,7 @@ export default function ExpensesDashboard({ user, years = [], activeYearId = nul
           <Card title="Monthly Spending" icon={BarChart3}>
             <MonthlyBars data={data.monthly || []} />
           </Card>
-        </>
+        </div>
       )}
     </div>
   );
