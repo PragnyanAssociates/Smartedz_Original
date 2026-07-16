@@ -10030,21 +10030,58 @@ app.get('/api/overview/me/:instId/:userId', async (req, res) => {
 // ============================================================
 // Section 26 — Fee Management
 // Tabs: Fee Assign, Concession, Account, Payments (+ student MyFee).
-// All routes are institution + active-academic-year scoped.
+// All routes are institution + academic-year scoped.
 // Paste this block before `const PORT`.
 //
 // INTEGRATION NOTES:
-//  • Uses the shared `resolveYearId(institutionId)` helper for the active year.
+//  • `resolveYearId(institutionId)` still gives the ACTIVE year. The new
+//    `_feeYearId(institutionId, req.query.year)` lets the management
+//    screens look at ANY year the school owns (validated against the
+//    institution, so a year id from another tenant is ignored and the
+//    active year is used instead). Omit ?year= and you get the active
+//    year exactly as before — every existing caller keeps working.
+//  • The student self-view (/fees/my) always uses the ACTIVE year: a
+//    student pays this year's fee.
 //  • Online payments use Razorpay with each school's OWN keys (stored per
 //    institution in fee_accounts). The key_secret NEVER leaves the server.
 //  • Requires Node 18+ (global fetch) and the built-in `crypto` module.
 // ============================================================
 
+// Resolve the academic year for a management request: the requested year
+// if it genuinely belongs to this institution, else the active year.
+async function _feeYearId(institutionId, requested) {
+  if (requested && requested !== 'all' && requested !== 'null') {
+    try {
+      const [r] = await db.execute(
+        'SELECT id FROM academic_years WHERE id = ? AND institutionId = ? LIMIT 1',
+        [requested, institutionId]
+      );
+      if (r.length) return r[0].id;
+    } catch (e) { /* fall through to the active year */ }
+  }
+  return await resolveYearId(institutionId);
+}
+
 // ---- GET everything the management view needs --------------------
+//  ?year=<academic_year_id>  (optional — defaults to the active year)
 app.get('/api/fees/data/:institutionId', async (req, res) => {
   const institutionId = req.params.institutionId;
   try {
-    const yearId = await resolveYearId(institutionId);
+    const yearId = await _feeYearId(institutionId, req.query.year);
+
+    // The year list drives the Academic Year picker on every fee screen.
+    const [years] = await db.execute(
+      'SELECT id, name, startDate, endDate, isActive FROM academic_years WHERE institutionId = ?',
+      [institutionId]
+    );
+    years.sort((a, b) => String(b.startDate || '').localeCompare(String(a.startDate || '')));
+    const activeYear = years.find(y => y.isActive) || null;
+
+    // Used for the school letterhead on the dashboard PDF.
+    const [instRows] = await db.execute(
+      'SELECT id, name, logo, school_email, phone FROM institutions WHERE id = ? LIMIT 1',
+      [institutionId]
+    );
 
     const [classes] = await db.execute(
       'SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY id',
@@ -10081,7 +10118,13 @@ app.get('/api/fees/data/:institutionId', async (req, res) => {
       [institutionId, yearId ?? null]
     );
 
-    res.json({ academic_year_id: yearId ?? null, classes, students, plans, installments, assignments });
+    res.json({
+      academic_year_id: yearId ?? null,
+      active_year_id: activeYear ? activeYear.id : null,
+      academic_years: years,
+      institution: instRows[0] || null,
+      classes, students, plans, installments, assignments
+    });
   } catch (err) {
     console.error('fees/data error:', err);
     res.status(500).json({ error: err.message });
@@ -10089,6 +10132,7 @@ app.get('/api/fees/data/:institutionId', async (req, res) => {
 });
 
 // ---- GET a single student's own fee (student self-view) ----------
+//  Always the ACTIVE year — a student pays this year's fee.
 app.get('/api/fees/my/:studentId', async (req, res) => {
   const studentId = req.params.studentId;
   try {
@@ -10213,6 +10257,13 @@ app.post('/api/fees/class-plan', async (req, res) => {
     return res.status(400).json({ error: 'A title is required for an Other fee.' });
   }
   try {
+    // Writes are only ever allowed into the ACTIVE year — a closed year is
+    // history and the UI locks it too, this is the server-side backstop.
+    const activeYearId = await resolveYearId(institutionId);
+    if (academic_year_id != null && String(academic_year_id) !== String(activeYearId)) {
+      return res.status(400).json({ error: 'You can only change fees for the active academic year.' });
+    }
+
     // Resolve the target plan: by id, else by (inst, year, class, title).
     let planId = plan_id || null;
     if (!planId) {
@@ -10264,6 +10315,15 @@ app.post('/api/fees/class-plan', async (req, res) => {
 // ---- Delete a fee plan (used for Other fees). Cascades installments. ----
 app.delete('/api/fees/class-plan/:id', async (req, res) => {
   try {
+    const [own] = await db.execute(
+      'SELECT institutionId, academic_year_id FROM fee_class_plans WHERE id = ? LIMIT 1', [req.params.id]
+    );
+    if (own.length) {
+      const activeYearId = await resolveYearId(own[0].institutionId);
+      if (own[0].academic_year_id != null && String(own[0].academic_year_id) !== String(activeYearId)) {
+        return res.status(400).json({ error: 'You can only change fees for the active academic year.' });
+      }
+    }
     await db.execute('DELETE FROM fee_class_plans WHERE id = ?', [req.params.id]);
     res.json({ success: true });
   } catch (err) {
@@ -10283,6 +10343,11 @@ app.post('/api/fees/assign', async (req, res) => {
   }
   const mode = payment_mode === 'installment' ? 'installment' : 'full';
   try {
+    const activeYearId = await resolveYearId(institutionId);
+    if (academic_year_id != null && String(academic_year_id) !== String(activeYearId)) {
+      return res.status(400).json({ error: 'You can only change fees for the active academic year.' });
+    }
+
     const [existing] = await db.execute(
       'SELECT id FROM student_fee_assignments WHERE institutionId = ? AND (academic_year_id <=> ?) AND student_id = ? AND (plan_id <=> ?)',
       [institutionId, academic_year_id ?? null, student_id, plan_id ?? null]
@@ -10318,6 +10383,11 @@ app.post('/api/fees/assign-class', async (req, res) => {
   }
   const mode = payment_mode === 'installment' ? 'installment' : 'full';
   try {
+    const activeYearId = await resolveYearId(institutionId);
+    if (academic_year_id != null && String(academic_year_id) !== String(activeYearId)) {
+      return res.status(400).json({ error: 'You can only change fees for the active academic year.' });
+    }
+
     for (const sid of (student_ids || [])) {
       const [existing] = await db.execute(
         'SELECT id FROM student_fee_assignments WHERE institutionId = ? AND (academic_year_id <=> ?) AND student_id = ? AND (plan_id <=> ?)',
@@ -10355,6 +10425,11 @@ app.post('/api/fees/concession', async (req, res) => {
   }
   const amt = Number(concession_amount) || 0;
   try {
+    const activeYearId = await resolveYearId(institutionId);
+    if (academic_year_id != null && String(academic_year_id) !== String(activeYearId)) {
+      return res.status(400).json({ error: 'You can only change concessions for the active academic year.' });
+    }
+
     const [existing] = await db.execute(
       'SELECT id FROM student_fee_assignments WHERE institutionId = ? AND (academic_year_id <=> ?) AND student_id = ? AND (plan_id <=> ?)',
       [institutionId, academic_year_id ?? null, student_id, plan_id ?? null]
@@ -10565,19 +10640,21 @@ app.post('/api/fees/pay/offline', async (req, res) => {
 });
 
 // Admin list of payments (no slip_image; sorted in Node to avoid sort memory).
+//  ?year=<academic_year_id>  (optional — defaults to the active year)
 app.get('/api/fees/payments/:institutionId', async (req, res) => {
   const institutionId = req.params.institutionId;
   const { status, class_id, from, to, student_id } = req.query;
   try {
+    const yearId = await _feeYearId(institutionId, req.query.year);
     let sql = `SELECT p.id, p.student_id, u.name AS student_name, u.roll_no, p.class_id,
-                      p.installment_id, p.amount, p.method, p.status, p.provider,
+                      p.plan_id, p.installment_id, p.amount, p.method, p.status, p.provider,
                       p.provider_payment_id, p.reference_no, p.note,
                       (p.slip_image IS NOT NULL) AS has_slip,
-                      p.verified_by_name, p.verified_at, p.created_at
+                      p.academic_year_id, p.verified_by_name, p.verified_at, p.created_at
                  FROM fee_payments p
                  LEFT JOIN users u ON u.id = p.student_id
-                WHERE p.institutionId = ?`;
-    const params = [institutionId];
+                WHERE p.institutionId = ? AND (p.academic_year_id <=> ?)`;
+    const params = [institutionId, yearId ?? null];
     if (status)     { sql += ' AND p.status = ?';           params.push(status); }
     if (class_id)   { sql += ' AND p.class_id = ?';         params.push(class_id); }
     if (student_id) { sql += ' AND p.student_id = ?';       params.push(student_id); }
@@ -10612,6 +10689,15 @@ app.post('/api/fees/payments/verify', async (req, res) => {
   }
   const status = action === 'verify' ? 'paid' : 'rejected';
   try {
+    const [own] = await db.execute(
+      'SELECT institutionId, academic_year_id FROM fee_payments WHERE id = ? LIMIT 1', [payment_id]
+    );
+    if (own.length) {
+      const activeYearId = await resolveYearId(own[0].institutionId);
+      if (own[0].academic_year_id != null && String(own[0].academic_year_id) !== String(activeYearId)) {
+        return res.status(400).json({ error: 'This payment belongs to a closed academic year.' });
+      }
+    }
     await db.execute(
       'UPDATE fee_payments SET status = ?, verified_by = ?, verified_by_name = ?, verified_at = NOW() WHERE id = ?',
       [status, userId ?? null, userName ?? null, payment_id]
@@ -10623,13 +10709,201 @@ app.post('/api/fees/payments/verify', async (req, res) => {
   }
 });
 
+// ---- Payments Excel export --------------------------------------
+//  A real .xlsx (not CSV) so the column widths, the IST timestamps and the
+//  approver survive into Excel. Filters mirror the Payments screen.
+//  ExcelJS resolver: this section may sit ABOVE wherever ExcelJS is
+//  required in index.js, so resolve it lazily instead of assuming scope.
+let _feeExcelJS = null;
+function _getFeeExcelJS() {
+  if (_feeExcelJS) return _feeExcelJS;
+  try {
+    if (typeof ExcelJS !== 'undefined' && ExcelJS) { _feeExcelJS = ExcelJS; return _feeExcelJS; }
+  } catch (e) { /* not declared in this scope — fall through to require */ }
+  _feeExcelJS = require('exceljs');
+  return _feeExcelJS;
+}
+
+const _FEE_BRAND = 'FF3284C7';
+const _FEE_BRAND_SOFT = 'FFE7F1FB';
+const _FEE_ZEBRA = 'FFF7F8FA';
+const _FEE_THIN = { style: 'thin', color: { argb: 'FFD9DEE5' } };
+const _FEE_BORDERS = { top: _FEE_THIN, left: _FEE_THIN, bottom: _FEE_THIN, right: _FEE_THIN };
+
+const _feeDMY = (v) => {
+  if (!v) return '';
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return '';
+  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+};
+// Server runs UTC; schools read IST.
+const _feeIST = (v) => {
+  if (!v) return '';
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-GB', {
+    timeZone: 'Asia/Kolkata', day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true
+  }).replace(',', '');
+};
+
+app.get('/api/fees/payments/export/:institutionId', async (req, res) => {
+  const institutionId = req.params.institutionId;
+  const { status, class_id, from, to } = req.query;
+  try {
+    const yearId = await _feeYearId(institutionId, req.query.year);
+
+    let sql = `SELECT p.id, u.name AS student_name, u.roll_no, p.class_id, p.plan_id,
+                      p.amount, p.method, p.status, p.provider_payment_id, p.reference_no,
+                      p.verified_by_name, p.verified_at, p.created_at
+                 FROM fee_payments p
+                 LEFT JOIN users u ON u.id = p.student_id
+                WHERE p.institutionId = ? AND (p.academic_year_id <=> ?)`;
+    const params = [institutionId, yearId ?? null];
+    if (status)   { sql += ' AND p.status = ?';            params.push(status); }
+    if (class_id) { sql += ' AND p.class_id = ?';          params.push(class_id); }
+    if (from)     { sql += ' AND DATE(p.created_at) >= ?'; params.push(from); }
+    if (to)       { sql += ' AND DATE(p.created_at) <= ?'; params.push(to); }
+    const [rows] = await db.execute(sql, params);
+    rows.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+    const [instRows] = await db.execute('SELECT name FROM institutions WHERE id = ? LIMIT 1', [institutionId]);
+    const inst = instRows[0] || { name: 'Institution' };
+    const [yRows] = await db.execute('SELECT name FROM academic_years WHERE id = ? LIMIT 1', [yearId]);
+    const yearName = yRows[0] ? yRows[0].name : '';
+    const [classesRows] = await db.execute('SELECT id, className, section FROM classes WHERE institutionId = ?', [institutionId]);
+    const clsLabel = {}; classesRows.forEach(c => { clsLabel[c.id] = `${c.className}${c.section ? ' - ' + c.section : ''}`; });
+    const [planRows] = await db.execute('SELECT id, title FROM fee_class_plans WHERE institutionId = ?', [institutionId]);
+    const planTitle = {}; planRows.forEach(p => { planTitle[p.id] = p.title || 'Fee'; });
+
+    const headers = ['#', 'Date & Time (IST)', 'Student', 'Roll', 'Class', 'Fee', 'Amount',
+                     'Method', 'Status', 'Reference', 'Approved / Rejected By', 'Actioned On (IST)'];
+    const widths  = [5, 20, 26, 8, 16, 20, 14, 12, 14, 22, 22, 20];
+    const LAST = headers.length;
+
+    const XL = _getFeeExcelJS();
+    const wb = new XL.Workbook();
+    wb.creator = 'SmartEdz';
+    wb.created = new Date();
+    const ws = wb.addWorksheet('Payments');
+
+    ws.mergeCells(1, 1, 1, LAST);
+    const t1 = ws.getCell(1, 1);
+    t1.value = inst.name || 'Institution';
+    t1.font = { bold: true, size: 14, color: { argb: _FEE_BRAND } };
+    ws.getRow(1).height = 20;
+
+    ws.mergeCells(2, 1, 2, LAST);
+    const t2 = ws.getCell(2, 1);
+    t2.value = `Fee Payments · Academic Year ${yearName || '—'}`;
+    t2.font = { size: 11, bold: true, color: { argb: 'FF374151' } };
+
+    ws.mergeCells(3, 1, 3, LAST);
+    const bits = [];
+    if (status)   bits.push(`Status: ${status}`);
+    if (class_id) bits.push(`Class: ${clsLabel[class_id] || class_id}`);
+    if (from || to) bits.push(`Period: ${from ? _feeDMY(from) : 'start'} to ${to ? _feeDMY(to) : 'today'}`);
+    bits.push(`Generated: ${_feeIST(new Date())}`);
+    const t3 = ws.getCell(3, 1);
+    t3.value = bits.join('   ·   ');
+    t3.font = { size: 9, color: { argb: 'FF6B7280' } };
+
+    let r = 5;
+    // Year heading — so a printed file always says which year it covers.
+    ws.mergeCells(r, 1, r, LAST);
+    const yh = ws.getCell(r, 1);
+    yh.value = `Academic Year: ${yearName || '—'}   (${rows.length} payment${rows.length === 1 ? '' : 's'})`;
+    yh.font = { bold: true, size: 11, color: { argb: _FEE_BRAND } };
+    yh.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _FEE_BRAND_SOFT } };
+    ws.getRow(r).height = 18;
+    r++;
+
+    headers.forEach((h, i) => {
+      const c = ws.getCell(r, i + 1);
+      c.value = h;
+      c.font = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _FEE_BRAND } };
+      c.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+      c.border = _FEE_BORDERS;
+    });
+    r++;
+
+    let collected = 0;
+    rows.forEach((p, i) => {
+      const amt = Number(p.amount) || 0;
+      if (p.status === 'paid') collected += amt;
+      const statusLabel = p.status === 'paid'
+        ? (p.method === 'offline' ? 'Approved' : 'Paid')
+        : (p.status || '');
+      const vals = [
+        i + 1, _feeIST(p.created_at), p.student_name || '', p.roll_no || '',
+        clsLabel[p.class_id] || '', planTitle[p.plan_id] || '', amt,
+        p.method || '', statusLabel,
+        p.provider_payment_id || p.reference_no || `#${p.id}`,
+        p.verified_at ? (p.verified_by_name || '—') : '',
+        p.verified_at ? _feeIST(p.verified_at) : ''
+      ];
+      vals.forEach((val, ci) => {
+        const c = ws.getCell(r, ci + 1);
+        c.value = val;
+        c.border = _FEE_BORDERS;
+        c.alignment = { vertical: 'middle', horizontal: (ci === 6 ? 'right' : (ci === 0 || ci === 3) ? 'center' : 'left') };
+        if (ci === 6) c.numFmt = '#,##0.00';
+        if (i % 2 === 1) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _FEE_ZEBRA } };
+      });
+      r++;
+    });
+
+    if (rows.length === 0) {
+      ws.mergeCells(r, 1, r, LAST);
+      ws.getCell(r, 1).value = 'No payments for the selected filters.';
+      ws.getCell(r, 1).font = { italic: true, size: 10, color: { argb: 'FF6B7280' } };
+      r++;
+    } else {
+      ws.mergeCells(r, 1, r, 6);
+      const lbl = ws.getCell(r, 1);
+      lbl.value = `Total collected — ${yearName || 'this year'} (paid only)`;
+      lbl.font = { bold: true, size: 10 };
+      lbl.alignment = { horizontal: 'right' };
+      lbl.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _FEE_BRAND_SOFT } };
+      lbl.border = _FEE_BORDERS;
+      const tot = ws.getCell(r, 7);
+      tot.value = collected;
+      tot.numFmt = '#,##0.00';
+      tot.font = { bold: true, size: 10 };
+      tot.alignment = { horizontal: 'right' };
+      tot.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _FEE_BRAND_SOFT } };
+      tot.border = _FEE_BORDERS;
+      for (let k = 8; k <= LAST; k++) {
+        const c = ws.getCell(r, k);
+        c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: _FEE_BRAND_SOFT } };
+        c.border = _FEE_BORDERS;
+      }
+    }
+
+    widths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+
+    const fileSafe = `${inst.name || 'school'}_fee-payments_${yearName || 'year'}`
+      .replace(/[^a-z0-9\-_ ]/gi, '_').replace(/\s+/g, '_');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileSafe}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error('fees/payments/export error:', err);
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+    else res.end();
+  }
+});
+
 // =================================================================
 //  COLLECTION (paid / unpaid per student, per fee + overall)
+//  ?year=<academic_year_id>  (optional — defaults to the active year)
 // =================================================================
 app.get('/api/fees/collection/:institutionId', async (req, res) => {
   const institutionId = req.params.institutionId;
   try {
-    const yearId = await resolveYearId(institutionId);
+    const yearId = await _feeYearId(institutionId, req.query.year);
 
     const [students] = await db.execute(
       `SELECT id, name, roll_no, class_id FROM users
@@ -10689,11 +10963,17 @@ app.get('/api/fees/collection/:institutionId', async (req, res) => {
 
 // =================================================================
 //  DASHBOARD — aggregated analytics for the Fee Dashboard tab
+//  ?year=<academic_year_id>  (optional — defaults to the active year)
+//
+//  One year at a time, deliberately: Expected is computed from that
+//  year's plans against each student's CURRENT class, so summing years
+//  would multiply today's class by an old year's plan and report a
+//  meaningless Expected / Collection Rate.
 // =================================================================
 app.get('/api/fees/dashboard/:institutionId', async (req, res) => {
   const institutionId = req.params.institutionId;
   try {
-    const yearId = await resolveYearId(institutionId);
+    const yearId = await _feeYearId(institutionId, req.query.year);
 
     const [students] = await db.execute(
       `SELECT id, class_id FROM users
@@ -10808,6 +11088,9 @@ app.get('/api/fees/dashboard/:institutionId', async (req, res) => {
 // Auto rules (fire automatically on due dates) + Manual sends.
 // Paste after Section 26. Uses the shared `resolveYearId` helper.
 //
+// Rules and the log are per academic year: each year has its own fees,
+// its own due dates and therefore its own reminders.
+//
 // NOTE: actual delivery is wired to the Notifications module (Section 25)
 // later — each "send" currently records a log row + recipient count. The
 // hook points are marked `// TODO: Notifications fan-out`.
@@ -10819,10 +11102,11 @@ function _fa_ymd(d) {
 }
 
 // ---- Config: auto rules + recent send log -----------------------
+//  ?year=<academic_year_id>  (optional — defaults to the active year)
 app.get('/api/fees/alerts/config/:institutionId', async (req, res) => {
   const institutionId = req.params.institutionId;
   try {
-    const yearId = await resolveYearId(institutionId);
+    const yearId = await _feeYearId(institutionId, req.query.year);
     const [rules] = await db.execute(
       'SELECT * FROM fee_auto_alerts WHERE institutionId = ? AND (academic_year_id <=> ?)',
       [institutionId, yearId ?? null]
@@ -10831,8 +11115,8 @@ app.get('/api/fees/alerts/config/:institutionId', async (req, res) => {
 
     const [log] = await db.execute(
       `SELECT id, alert_type, rule_id, class_id, audience, message, recipient_count, sent_by_name, created_at
-         FROM fee_alert_log WHERE institutionId = ?`,
-      [institutionId]
+         FROM fee_alert_log WHERE institutionId = ? AND (academic_year_id <=> ?)`,
+      [institutionId, yearId ?? null]
     );
     log.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
@@ -10854,6 +11138,11 @@ app.post('/api/fees/alerts/auto', async (req, res) => {
   const days = tt === 'on_due' ? 0 : Math.max(0, Number(days_offset) || 0);
   const active = is_active ? 1 : 0;
   try {
+    const activeYearId = await resolveYearId(institutionId);
+    if (academic_year_id != null && String(academic_year_id) !== String(activeYearId)) {
+      return res.status(400).json({ error: 'You can only change reminders for the active academic year.' });
+    }
+
     if (id) {
       await db.execute(
         'UPDATE fee_auto_alerts SET class_id = ?, trigger_type = ?, days_offset = ?, message = ?, is_active = ? WHERE id = ? AND institutionId = ?',
@@ -10905,6 +11194,11 @@ app.post('/api/fees/alerts/manual/send', async (req, res) => {
   const { institutionId, academic_year_id, class_id, message, userId, userName } = req.body;
   if (!institutionId) return res.status(400).json({ error: 'institutionId is required.' });
   try {
+    const activeYearId = await resolveYearId(institutionId);
+    if (academic_year_id != null && String(academic_year_id) !== String(activeYearId)) {
+      return res.status(400).json({ error: 'You can only send reminders for the active academic year.' });
+    }
+
     let sql = `SELECT COUNT(*) AS c FROM users
                 WHERE institutionId = ?
                   AND LOWER(role) LIKE '%student%'
@@ -10930,6 +11224,8 @@ app.post('/api/fees/alerts/manual/send', async (req, res) => {
 
 // ---- Auto processor: call daily from a scheduler ----------------
 // Body: { institutionId? } — omit to process every institution.
+// Only rules on each school's ACTIVE year fire; a closed year's rules stay
+// in the log as history but never send.
 app.post('/api/fees/alerts/run', async (req, res) => {
   const { institutionId } = req.body || {};
   try {
@@ -10939,9 +11235,17 @@ app.post('/api/fees/alerts/run', async (req, res) => {
     const [rules] = await db.execute(rsql, rparams);
 
     const today = new Date();
-    let processed = 0, logged = 0;
+    let processed = 0, logged = 0, skipped = 0;
+    const activeCache = {};
 
     for (const rule of rules) {
+      // Skip rules that belong to a year the school has closed.
+      if (activeCache[rule.institutionId] === undefined) {
+        activeCache[rule.institutionId] = await resolveYearId(rule.institutionId);
+      }
+      const activeYearId = activeCache[rule.institutionId];
+      if (rule.academic_year_id != null && String(rule.academic_year_id) !== String(activeYearId)) { skipped++; continue; }
+
       processed++;
       const target = new Date(today);
       if (rule.trigger_type === 'before_due') target.setDate(target.getDate() + (rule.days_offset || 0));
@@ -10988,7 +11292,7 @@ app.post('/api/fees/alerts/run', async (req, res) => {
       }
     }
 
-    res.json({ success: true, rules_processed: processed, alerts_logged: logged });
+    res.json({ success: true, rules_processed: processed, rules_skipped_closed_year: skipped, alerts_logged: logged });
   } catch (err) {
     console.error('alerts/run error:', err);
     res.status(500).json({ error: err.message });

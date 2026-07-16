@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { Plus, Trash2, Save, GraduationCap, ChevronDown, Info, IndianRupee, Tag, FolderPlus } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
+import { FeeYearSelect, ClosedYearNote } from './FeeYear';
 
 const inr = (n) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })
@@ -9,7 +10,9 @@ const inr = (n) =>
 const ANNUAL_TITLE = 'Academic Fee';
 const NEW = '__new__';
 
-export default function FeeAssign({ data, fetchData, user, canEdit = true }) {
+// canEdit arrives from FeeManagement with the closed-year lock already
+// folded in — a previous year is visible but never writable.
+export default function FeeAssign({ data, fetchData, user, canEdit = true, years = [], yearId, setYearId, yearName, isActiveYear = true }) {
   const classes = data.classes || [];
   const [activeClass, setActiveClass] = useState('');
   const [sub, setSub]                 = useState('annual');   // 'annual' | 'other'
@@ -86,39 +89,46 @@ export default function FeeAssign({ data, fetchData, user, canEdit = true }) {
         <p>
           Set the <strong className="text-blue-900">Academic Fee</strong> per each class & Add
           Books fee, Transport fee..etc of each class in the <strong className="text-blue-900">Other Fee</strong>. Discounts go in the <strong>Fee Concessions</strong> tab.
+          Fees belong to an <strong className="text-blue-900">academic year</strong> — students pay afresh each year.
         </p>
       </div>
 
-      {/* Class filter */}
-      {classes.length > 0 && (
-        <div className="flex items-center gap-3 flex-wrap bg-zinc-50/50 p-2.5 rounded-md ring-1 ring-black/5">
-          <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider pl-1">
-            <GraduationCap className="size-3.5 shrink-0" /> Class
-          </span>
-          {useDropdown ? (
-            <div className="relative w-full sm:w-auto">
-              <select value={activeClass} onChange={e => setActiveClass(e.target.value)}
-                className="h-8 w-full sm:w-auto appearance-none rounded border border-zinc-200 bg-white pl-2 pr-7 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer">
-                {classes.map(c => <option key={c.id} value={c.id}>{classLabel(c)}</option>)}
-              </select>
-              <ChevronDown className="size-3.5 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {classes.map(c => (
-                <button key={c.id} onClick={() => setActiveClass(String(c.id))}
-                  className={`px-2.5 py-1.5 rounded-md text-[10px] font-semibold uppercase tracking-wider transition-colors ${
-                    String(activeClass) === String(c.id)
-                      ? 'bg-primary/10 text-primary ring-1 ring-primary/20'
-                      : 'bg-white text-zinc-500 ring-1 ring-zinc-200 hover:bg-zinc-50 hover:text-zinc-700'
-                  }`}>
-                  {classLabel(c)}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+      {!isActiveYear && <ClosedYearNote yearName={yearName} />}
+
+      {/* Year + Class filter */}
+      <div className="flex items-center gap-3 flex-wrap bg-zinc-50/50 p-2.5 rounded-md ring-1 ring-black/5">
+        <FeeYearSelect years={years} value={yearId} onChange={setYearId} />
+        {classes.length > 0 && (
+          <>
+            <span className="w-px h-5 bg-zinc-200 mx-1 hidden sm:block" />
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider pl-1">
+              <GraduationCap className="size-3.5 shrink-0" /> Class
+            </span>
+            {useDropdown ? (
+              <div className="relative w-full sm:w-auto">
+                <select value={activeClass} onChange={e => setActiveClass(e.target.value)}
+                  className="h-8 w-full sm:w-auto appearance-none rounded border border-zinc-200 bg-white pl-2 pr-7 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer">
+                  {classes.map(c => <option key={c.id} value={c.id}>{classLabel(c)}</option>)}
+                </select>
+                <ChevronDown className="size-3.5 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {classes.map(c => (
+                  <button key={c.id} onClick={() => setActiveClass(String(c.id))}
+                    className={`px-2.5 py-1.5 rounded-md text-[10px] font-semibold uppercase tracking-wider transition-colors ${
+                      String(activeClass) === String(c.id)
+                        ? 'bg-primary/10 text-primary ring-1 ring-primary/20'
+                        : 'bg-white text-zinc-500 ring-1 ring-zinc-200 hover:bg-zinc-50 hover:text-zinc-700'
+                    }`}>
+                    {classLabel(c)}
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
 
       {/* Sub-tabs */}
       <div className="inline-flex items-center gap-1 bg-zinc-100 p-1 rounded-lg">
@@ -139,7 +149,7 @@ export default function FeeAssign({ data, fetchData, user, canEdit = true }) {
       ) : sub === 'annual' ? (
         <>
           <PlanEditor
-            key={`annual:${annualPlan?.id || 'new'}:${activeClass}`}
+            key={`annual:${annualPlan?.id || 'new'}:${activeClass}:${yearId}`}
             category="annual" plan={annualPlan} presetTitle={ANNUAL_TITLE} titleEditable={false}
             planInstallments={(data.installments || []).filter(i => annualPlan && i.plan_id === annualPlan.id)}
             {...editorProps}
@@ -155,7 +165,7 @@ export default function FeeAssign({ data, fetchData, user, canEdit = true }) {
             onSelect={setOtherTitle} onAdd={() => setOtherTitle(NEW)} canEdit={canEdit} compact />
 
           <PlanEditor
-            key={`other:${otherTitle}:${activeClass}`}
+            key={`other:${otherTitle}:${activeClass}:${yearId}`}
             category="other"
             plan={currentOtherPlan}
             presetTitle={otherTitle === NEW ? null : otherTitle}

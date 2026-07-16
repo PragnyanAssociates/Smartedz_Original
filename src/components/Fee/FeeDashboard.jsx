@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { IndianRupee, TrendingUp, Wallet, AlertCircle, CheckCircle2, PieChart, BarChart3, CreditCard, Landmark, Users, RefreshCw, Tag, GraduationCap, ChevronDown } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { IndianRupee, TrendingUp, Wallet, AlertCircle, CheckCircle2, PieChart, BarChart3, CreditCard, Landmark, Users, RefreshCw, Tag, GraduationCap, ChevronDown, Download } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
+import { FeeYearSelect } from './FeeYear';
 
 const inr = (n) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })
@@ -17,7 +18,9 @@ const ACCENT  = '#f29132';
 const GREEN   = '#16a34a';
 const TRACK   = '#eef2f7';
 
-export default function FeeDashboard({ user }) {
+// year / setYearId come from FeeManagement, so the whole module stays on
+// one academic year. school is the institution row for the PDF letterhead.
+export default function FeeDashboard({ user, school, years = [], yearId, setYearId, yearName }) {
   const [data, setData]       = useState(null);
   const [loading, setLoading] = useState(true);
   const [feeType, setFeeType] = useState('all');
@@ -25,12 +28,14 @@ export default function FeeDashboard({ user }) {
   // Filter options captured from the first (unfiltered) load so they always work.
   const [allFees, setAllFees]       = useState([]);
   const [allClasses, setAllClasses] = useState([]);
+  const printRef = useRef(null);   // only the KPIs + charts go on the page
 
   const load = useCallback(async () => {
-    if (!user?.institutionId) return;
+    if (!user?.institutionId || !yearId) return;
     setLoading(true);
     try {
       const qs = new URLSearchParams();
+      qs.set('year', yearId);
       if (feeType && feeType !== 'all') qs.set('fee', feeType);
       if (classId) qs.set('class_id', classId);
       const res = await fetch(`${API_BASE_URL}/fees/dashboard/${user.institutionId}?${qs.toString()}`);
@@ -46,13 +51,68 @@ export default function FeeDashboard({ user }) {
       setData(null);
     }
     setLoading(false);
-  }, [user, feeType, classId]);
+  }, [user, feeType, classId, yearId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // A different year has a different set of fees/classes — reset the drill-down.
+  useEffect(() => { setFeeType('all'); setClassId(''); setAllFees([]); setAllClasses([]); }, [yearId]);
 
   const t = data?.totals || {};
   const st = data?.students || {};
   const method = data?.byMethod || { online: 0, offline: 0 };
+  const className = allClasses.find(c => String(c.id) === String(classId))?.name;
+
+  // Print to PDF. The dashboard is charts, so we hand the browser the real
+  // rendered markup (SVG donuts, CSS bars and all) plus the page's own
+  // stylesheets, and let "Save as PDF" in the print dialog do the rest —
+  // no chart library, no canvas rasteriser, and it prints at full quality.
+  const downloadPdf = () => {
+    const node = printRef.current;
+    if (!node) return;
+    const win = window.open('', '_blank', 'width=1100,height=800');
+    if (!win) { alert('Please allow pop-ups for this site to download the dashboard.'); return; }
+
+    const styles = Array.from(document.querySelectorAll('link[rel="stylesheet"], style'))
+      .map(el => el.outerHTML).join('\n');
+
+    const esc = (v) => String(v ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const bits = [
+      `Academic Year: ${esc(yearName || '—')}`,
+      `Fee: ${esc(feeType === 'all' ? 'All fees' : feeType)}`,
+      `Class: ${esc(className || 'All classes')}`,
+      `Generated: ${new Date().toLocaleString('en-GB', { timeZone: 'Asia/Kolkata', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }).replace(',', '')} IST`
+    ];
+
+    const name = school?.name || 'School';
+    const title = `${name} — Fee Dashboard`;
+    const header = `
+      <div style="display:flex;align-items:center;gap:12px;border-bottom:2px solid #3284c7;padding-bottom:10px;margin-bottom:14px">
+        ${school?.logo ? `<img src="${esc(school.logo)}" style="height:46px;width:auto" />` : ''}
+        <div style="flex:1">
+          <div style="font-size:17px;font-weight:700;color:#3284c7;line-height:1.2">${esc(name)}</div>
+          <div style="font-size:12px;font-weight:600;color:#3f3f46;margin-top:2px">Fee Management · Dashboard</div>
+        </div>
+      </div>
+      <div style="font-size:10px;color:#71717a;margin-bottom:14px">${bits.join(' &nbsp;·&nbsp; ')}</div>`;
+
+    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title>${styles}
+      <style>
+        @page { size: A4 portrait; margin: 12mm; }
+        html, body { background: #fff !important; margin: 0; padding: 0;
+                     -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+        .sheet { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+        /* keep a card from splitting across two pages */
+        .sheet .ring-1 { break-inside: avoid; page-break-inside: avoid; }
+      </style></head>
+      <body><div class="sheet">${header}${node.outerHTML}</div></body></html>`);
+    win.document.close();
+    win.focus();
+
+    const go = () => setTimeout(() => { win.print(); }, 350);  // let fonts/CSS settle
+    if (win.document.readyState === 'complete') go();
+    else win.onload = go;
+  };
 
   return (
     <div className="space-y-6">
@@ -63,10 +123,17 @@ export default function FeeDashboard({ user }) {
             options={[{ v: 'all', l: 'All fees' }, ...[...allFees].sort((a, b) => (a === 'Academic Fee' ? -1 : b === 'Academic Fee' ? 1 : a.localeCompare(b))).map(f => ({ v: f, l: f }))]} />
           <LabeledSelect icon={GraduationCap} label="Class" value={classId} onChange={setClassId}
             options={[{ v: '', l: 'All classes' }, ...allClasses.map(c => ({ v: String(c.id), l: c.name }))]} />
+          <FeeYearSelect years={years} value={yearId} onChange={setYearId} />
         </div>
-        <button onClick={load} className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary">
-          <RefreshCw className="size-3.5" /> Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          <button onClick={load} className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary">
+            <RefreshCw className="size-3.5" /> Refresh
+          </button>
+          <button onClick={downloadPdf} disabled={loading || !data} title="Download the dashboard as a PDF (or print it)"
+            className="inline-flex items-center gap-1.5 bg-primary text-white px-3.5 h-8 rounded-md text-xs font-semibold hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-50">
+            <Download className="size-3.5" /> Download
+          </button>
+        </div>
       </div>
 
       {loading ? (
@@ -76,10 +143,11 @@ export default function FeeDashboard({ user }) {
       ) : !data ? (
         <div className="h-40 flex items-center justify-center text-sm text-zinc-400">Couldn't load dashboard data.</div>
       ) : (
-      <>
-      <p className="text-[11px] text-zinc-400 -mt-2">
+      <div ref={printRef} className="space-y-6">
+      <p className="text-[11px] text-zinc-400">
         Showing <strong className="text-zinc-600">{feeType === 'all' ? 'all fees' : feeType}</strong>
-        {classId ? <> · <strong className="text-zinc-600">{allClasses.find(c => String(c.id) === String(classId))?.name}</strong></> : ' · all classes'} for the active academic year.
+        {classId ? <> · <strong className="text-zinc-600">{className}</strong></> : ' · all classes'} for
+        <strong className="text-zinc-600"> {yearName || 'the active academic year'}</strong>.
       </p>
 
       {/* KPI cards */}
@@ -154,7 +222,7 @@ export default function FeeDashboard({ user }) {
           ) : <Empty text="No classes with fees yet." />}
         </Card>
       </div>
-      </>
+      </div>
       )}
     </div>
   );

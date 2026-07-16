@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { ReceiptText, GraduationCap, ChevronDown, Check, X, Eye, Filter, Download, Search } from 'lucide-react';
+import { ReceiptText, GraduationCap, ChevronDown, Check, X, Eye, Filter, Download, Search, Loader2, Lock } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
 import { downloadDataUrl, downloadReceipt } from './paymentProof';
+import { FeeYearSelect } from './FeeYear';
 
 const inr = (n) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })
@@ -37,13 +38,17 @@ const STATUS_STYLE = {
   failed:   'bg-zinc-100 text-zinc-500 ring-zinc-300'
 };
 
-export default function Payments({ data, user, canEdit = true }) {
+// canEdit already has the closed-year lock folded in by FeeManagement, so a
+// previous year is a read-only record: students only ever pay into the
+// active year, and re-approving a closed year would move old totals.
+export default function Payments({ data, user, canEdit = true, years = [], yearId, setYearId, yearName, isActiveYear = true }) {
   const classes = data.classes || [];
   const [filters, setFilters] = useState({ status: '', class_id: '', from: '', to: '' });
   const [search, setSearch]   = useState('');
   const [rows, setRows]       = useState([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId]   = useState(null);
+  const [downloading, setDownloading] = useState(false);
   const [proof, setProof]     = useState({ open: false, row: null, loading: false, img: null });
   const [schoolName, setSchoolName] = useState('');
 
@@ -61,10 +66,11 @@ export default function Payments({ data, user, canEdit = true }) {
   }, [user]);
 
   const load = useCallback(async () => {
-    if (!user?.institutionId) return;
+    if (!user?.institutionId || !yearId) return;
     setLoading(true);
     try {
       const qs = new URLSearchParams();
+      qs.set('year', yearId);
       if (filters.status)   qs.set('status', filters.status);
       if (filters.class_id) qs.set('class_id', filters.class_id);
       if (filters.from)     qs.set('from', filters.from);
@@ -77,7 +83,7 @@ export default function Payments({ data, user, canEdit = true }) {
       setRows([]);
     }
     setLoading(false);
-  }, [user, filters]);
+  }, [user, filters, yearId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -98,6 +104,40 @@ export default function Payments({ data, user, canEdit = true }) {
       await load();
     } finally {
       setBusyId(null);
+    }
+  };
+
+  // Excel, not CSV: the server builds it with real column widths, the IST
+  // timestamps and the approver, headed with the academic year.
+  const downloadXlsx = async () => {
+    if (!user?.institutionId || !yearId) return;
+    setDownloading(true);
+    try {
+      const qs = new URLSearchParams();
+      qs.set('year', yearId);
+      if (filters.status)   qs.set('status', filters.status);
+      if (filters.class_id) qs.set('class_id', filters.class_id);
+      if (filters.from)     qs.set('from', filters.from);
+      if (filters.to)       qs.set('to', filters.to);
+      const res = await fetch(`${API_BASE_URL}/fees/payments/export/${user.institutionId}?${qs.toString()}`);
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.error || 'Download failed.');
+      }
+      const blob = await res.blob();
+      let filename = `fee-payments_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      const cd = res.headers.get('Content-Disposition') || '';
+      const m = cd.match(/filename="?([^"]+)"?/);
+      if (m) filename = m[1];
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert(e.message || 'Could not download the payments.');
+    } finally {
+      setDownloading(false);
     }
   };
 
@@ -166,6 +206,7 @@ export default function Payments({ data, user, canEdit = true }) {
           options={[{ v: '', l: 'All classes' }, ...classes.map(c => ({ v: String(c.id), l: `${c.className}${c.section ? ` - ${c.section}` : ''}` }))]} />
         <DateField label="From" value={filters.from} onChange={v => setFilters(f => ({ ...f, from: v }))} />
         <DateField label="To" value={filters.to} onChange={v => setFilters(f => ({ ...f, to: v }))} />
+        <div className="self-end pb-0.5"><FeeYearSelect years={years} value={yearId} onChange={setYearId} /></div>
         <div className="flex flex-col gap-1 ml-auto">
           <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Search</span>
           <div className="relative">
@@ -174,9 +215,14 @@ export default function Payments({ data, user, canEdit = true }) {
               className="h-8 w-48 rounded border border-zinc-200 bg-white pl-7 pr-2 text-xs text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40" />
           </div>
         </div>
+        <button onClick={downloadXlsx} disabled={!rows.length || downloading} title="Download these payments as an Excel file"
+          className="inline-flex items-center gap-1.5 bg-primary text-white px-3.5 h-8 rounded-md text-xs font-semibold hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-50 self-end">
+          {downloading ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+          {downloading ? 'Preparing…' : 'Download'}
+        </button>
         {(filters.from || filters.to || filters.class_id || filters.status || search) && (
           <button onClick={() => { setFilters({ status: '', class_id: '', from: '', to: '' }); setSearch(''); }}
-            className="text-[11px] font-medium text-primary hover:underline self-end">Reset</button>
+            className="text-[11px] font-medium text-primary hover:underline self-end pb-2">Reset</button>
         )}
       </div>
 
@@ -184,9 +230,17 @@ export default function Payments({ data, user, canEdit = true }) {
         <div className="p-4 border-b border-zinc-100 flex items-center justify-between gap-3 flex-wrap">
           <h3 className="text-sm font-semibold text-zinc-900 flex items-center gap-2">
             <ReceiptText className="size-4 text-primary" /> Payments <span className="text-zinc-400 font-normal">({view.length})</span>
+            {yearName && <span className="text-[10px] font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded-full uppercase tracking-wider">{yearName}</span>}
           </h3>
           <span className="text-[11px] text-zinc-500">Paid in view: <strong className="text-green-700 tabular-nums">{inr(totalPaid)}</strong></span>
         </div>
+
+        {!isActiveYear && (
+          <p className="px-5 py-2.5 text-[11px] text-amber-800 bg-amber-50/70 border-b border-amber-100 flex items-center gap-2">
+            <Lock className="size-3.5 shrink-0" />
+            A closed academic year — this is the record as it finished. Students only ever pay into the active year.
+          </p>
+        )}
 
         {loading ? (
           <div className="h-48 flex items-center justify-center">

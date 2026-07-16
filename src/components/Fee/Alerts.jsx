@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { BellRing, Zap, Send, Plus, Trash2, Save, Info, ChevronDown, GraduationCap, Users, Clock } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
+import { FeeYearSelect, ClosedYearNote } from './FeeYear';
 
 const AUTO_DEFAULT   = 'Dear Parent, the school fee for {class} is due on {due_date}. Kindly pay before the due date to avoid a late reminder.';
 const MANUAL_DEFAULT = 'Dear Parent, this is a reminder regarding the pending school fee. Kindly clear the balance at the earliest.';
@@ -11,7 +12,10 @@ const TRIGGERS = [
   { v: 'after_due',  l: 'After due date' },
 ];
 
-export default function Alerts({ data, user, canEdit = true }) {
+// Reminders chase the due dates from Fee Assign, which are per academic
+// year — so rules and the log are per year too. Only the active year's
+// rules ever fire; a closed year keeps its log as history.
+export default function Alerts({ data, user, canEdit = true, years = [], yearId, setYearId, yearName, isActiveYear = true }) {
   const classes = data.classes || [];
   const students = data.students || [];
   const [sub, setSub] = useState('auto');
@@ -21,10 +25,10 @@ export default function Alerts({ data, user, canEdit = true }) {
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
-    if (!user?.institutionId) return;
+    if (!user?.institutionId || !yearId) return;
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/fees/alerts/config/${user.institutionId}`);
+      const res = await fetch(`${API_BASE_URL}/fees/alerts/config/${user.institutionId}?year=${encodeURIComponent(yearId)}`);
       const json = await res.json();
       setRules(json?.rules || []);
       setLog(json?.log || []);
@@ -32,7 +36,7 @@ export default function Alerts({ data, user, canEdit = true }) {
       console.error('Alerts config fetch error:', e);
     }
     setLoading(false);
-  }, [user]);
+  }, [user, yearId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -44,16 +48,21 @@ export default function Alerts({ data, user, canEdit = true }) {
 
   return (
     <div className="space-y-6">
-      {/* Sub-tabs */}
-      <div className="inline-flex items-center gap-1 bg-zinc-100 p-1 rounded-lg">
-        <button onClick={() => setSub('auto')}
-          className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-medium transition-colors ${sub === 'auto' ? 'bg-white text-primary shadow-sm' : 'text-zinc-600 hover:text-zinc-900'}`}>
-          <Zap className="size-3.5" /> Auto
-        </button>
-        <button onClick={() => setSub('manual')}
-          className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-medium transition-colors ${sub === 'manual' ? 'bg-white text-primary shadow-sm' : 'text-zinc-600 hover:text-zinc-900'}`}>
-          <Send className="size-3.5" /> Manual
-        </button>
+      {!isActiveYear && <ClosedYearNote yearName={yearName} />}
+
+      {/* Year + sub-tabs */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="inline-flex items-center gap-1 bg-zinc-100 p-1 rounded-lg">
+          <button onClick={() => setSub('auto')}
+            className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-medium transition-colors ${sub === 'auto' ? 'bg-white text-primary shadow-sm' : 'text-zinc-600 hover:text-zinc-900'}`}>
+            <Zap className="size-3.5" /> Auto
+          </button>
+          <button onClick={() => setSub('manual')}
+            className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-medium transition-colors ${sub === 'manual' ? 'bg-white text-primary shadow-sm' : 'text-zinc-600 hover:text-zinc-900'}`}>
+            <Send className="size-3.5" /> Manual
+          </button>
+        </div>
+        <FeeYearSelect years={years} value={yearId} onChange={setYearId} />
       </div>
 
       {loading ? (
@@ -62,10 +71,10 @@ export default function Alerts({ data, user, canEdit = true }) {
         </div>
       ) : sub === 'auto' ? (
         <AutoTab user={user} classes={classes} rules={rules} reload={load} canEdit={canEdit}
-                 academic_year_id={data.academic_year_id} classLabel={classLabel} />
+                 academic_year_id={data.academic_year_id} classLabel={classLabel} yearName={yearName} />
       ) : (
         <ManualTab user={user} classes={classes} students={students} log={log} reload={load} canEdit={canEdit}
-                   academic_year_id={data.academic_year_id} classLabel={classLabel} />
+                   academic_year_id={data.academic_year_id} classLabel={classLabel} yearName={yearName} />
       )}
     </div>
   );
@@ -74,13 +83,16 @@ export default function Alerts({ data, user, canEdit = true }) {
 // =================================================================
 //  AUTO
 // =================================================================
-function AutoTab({ user, classes, rules, reload, canEdit, academic_year_id, classLabel }) {
+function AutoTab({ user, classes, rules, reload, canEdit, academic_year_id, classLabel, yearName }) {
   const blank = { id: null, class_id: '', trigger_type: 'before_due', days_offset: 3, message: AUTO_DEFAULT, is_active: true };
   const [form, setForm] = useState(blank);
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState(null);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  // A different year is a different rule set — drop any half-typed rule.
+  useEffect(() => { setForm(blank); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [academic_year_id]);
 
   const edit = (r) => setForm({
     id: r.id, class_id: r.class_id ?? '', trigger_type: r.trigger_type,
@@ -144,6 +156,7 @@ function AutoTab({ user, classes, rules, reload, canEdit, academic_year_id, clas
           <strong> all classes</strong> or one class. Use tokens <code className="bg-white/60 px-1 rounded">{'{class}'}</code>,
           <code className="bg-white/60 px-1 rounded">{'{amount}'}</code>, <code className="bg-white/60 px-1 rounded">{'{due_date}'}</code>,
           <code className="bg-white/60 px-1 rounded">{'{student}'}</code> in the message.
+          Rules belong to <strong>{yearName || 'the selected academic year'}</strong> — each new year needs its own.
         </p>
       </div>
 
@@ -152,6 +165,7 @@ function AutoTab({ user, classes, rules, reload, canEdit, academic_year_id, clas
         <div className="ring-1 ring-black/5 rounded-lg bg-white p-5 sm:p-6 space-y-4">
           <h3 className="text-sm font-semibold text-zinc-900 flex items-center gap-2">
             <Zap className="size-4 text-primary" /> {form.id ? 'Edit Rule' : 'New Auto Rule'}
+            {yearName && <span className="text-[10px] font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded-full uppercase tracking-wider">{yearName}</span>}
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <LabeledSelect label="Applies to" value={String(form.class_id)} onChange={v => set('class_id', v)}
@@ -217,13 +231,16 @@ function AutoTab({ user, classes, rules, reload, canEdit, academic_year_id, clas
               )}
             </div>
           )) : (
-            <p className="px-5 py-8 text-center text-xs text-zinc-500 italic">No auto rules yet. Add one above.</p>
+            <p className="px-5 py-8 text-center text-xs text-zinc-500 italic">
+              No auto rules for {yearName || 'this year'}{canEdit ? '. Add one above.' : '.'}
+            </p>
           )}
         </div>
       </div>
 
       <p className="text-[11px] text-zinc-400">
         Auto rules are evaluated by a scheduled daily job that hits <code className="bg-zinc-100 px-1 rounded">POST /api/fees/alerts/run</code>.
+        Only rules on the active academic year fire.
       </p>
     </div>
   );
@@ -232,7 +249,7 @@ function AutoTab({ user, classes, rules, reload, canEdit, academic_year_id, clas
 // =================================================================
 //  MANUAL
 // =================================================================
-function ManualTab({ user, classes, students, log, reload, canEdit, academic_year_id, classLabel }) {
+function ManualTab({ user, classes, students, log, reload, canEdit, academic_year_id, classLabel, yearName }) {
   const [classId, setClassId] = useState('');   // '' = all classes
   const [message, setMessage] = useState(MANUAL_DEFAULT);
   const [sending, setSending] = useState(false);
@@ -277,7 +294,10 @@ function ManualTab({ user, classes, students, log, reload, canEdit, academic_yea
       </div>
 
       <div className="ring-1 ring-black/5 rounded-lg bg-white p-5 sm:p-6 space-y-4">
-        <h3 className="text-sm font-semibold text-zinc-900 flex items-center gap-2"><Send className="size-4 text-primary" /> Send Manual Alert</h3>
+        <h3 className="text-sm font-semibold text-zinc-900 flex items-center gap-2">
+          <Send className="size-4 text-primary" /> Send Manual Alert
+          {yearName && <span className="text-[10px] font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded-full uppercase tracking-wider">{yearName}</span>}
+        </h3>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <LabeledSelect label="Filter" value={classId} onChange={setClassId}
@@ -310,7 +330,7 @@ function ManualTab({ user, classes, students, log, reload, canEdit, academic_yea
       {/* Recent sends */}
       <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden">
         <div className="p-4 border-b border-zinc-100">
-          <h3 className="text-sm font-semibold text-zinc-900">Recent Alerts</h3>
+          <h3 className="text-sm font-semibold text-zinc-900">Recent Alerts <span className="text-zinc-400 font-normal">· {yearName || 'selected year'}</span></h3>
         </div>
         <div className="divide-y divide-zinc-100">
           {log.length > 0 ? log.map(l => (
@@ -328,7 +348,7 @@ function ManualTab({ user, classes, students, log, reload, canEdit, academic_yea
               <span className="text-[11px] text-zinc-400 shrink-0">{fmtDate(l.created_at)}</span>
             </div>
           )) : (
-            <p className="px-5 py-8 text-center text-xs text-zinc-500 italic">No alerts sent yet.</p>
+            <p className="px-5 py-8 text-center text-xs text-zinc-500 italic">No alerts sent in {yearName || 'this year'} yet.</p>
           )}
         </div>
       </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import {
   IndianRupee, Percent, Landmark, ReceiptText, BellRing, CalendarDays, Wallet,
@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
 import { usePermissions } from '../../Screens/PermissionsContext';
+import { ClosedYearBadge } from './FeeYear';
 import FeeAssign   from './FeeAssign';
 import Concession  from './Concession';
 import Account     from './Account';
@@ -19,6 +20,18 @@ import MyFee       from './MyFee';
 // Must match the module_name used in Modules.js / the Permissions matrix.
 const MODULE_NAME = 'FeeManagement';
 
+// =====================================================================
+//  FeeManagement
+//  Owns the ACADEMIC YEAR for the whole module. Fee Assign, Concessions,
+//  Paid/Unpaid and Alerts all read the one /fees/data payload, so the
+//  year has to live here — each tab renders the picker in its own filter
+//  row and they all move together.
+//
+//  Selecting a year that isn't the active one puts the module in
+//  read-only mode: a closed year is history, and editing it would
+//  rewrite what you already collected and reported. The server enforces
+//  the same rule, so this isn't just a UI courtesy.
+// =====================================================================
 export default function FeeManagement() {
   const { user } = useAuth();
   const permissions = usePermissions();
@@ -34,8 +47,10 @@ export default function FeeManagement() {
 
   const [activeTab, setActiveTab] = useState('dashboard');
   const [help, setHelp] = useState(false);
+  const [yearId, setYearId] = useState('');   // '' until /fees/data reports the active year
   const [data, setData] = useState({
-    academic_year_id: null, classes: [], students: [], plans: [], installments: [], assignments: []
+    academic_year_id: null, active_year_id: null, academic_years: [], institution: null,
+    classes: [], students: [], plans: [], installments: [], assignments: []
   });
   const [loading, setLoading] = useState(true);
 
@@ -43,19 +58,35 @@ export default function FeeManagement() {
     if (!user?.institutionId || isStudent) return;
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/fees/data/${user.institutionId}`);
+      const qs = yearId ? `?year=${encodeURIComponent(yearId)}` : '';
+      const res = await fetch(`${API_BASE_URL}/fees/data/${user.institutionId}${qs}`);
       const json = await res.json();
       setData(json || {});
+      // First load: the server answers with the active year — adopt it.
+      if (!yearId && json?.academic_year_id) setYearId(String(json.academic_year_id));
     } catch (e) {
       console.error('Fee data fetch error:', e);
     }
     setLoading(false);
-  }, [user, isStudent]);
+  }, [user, isStudent, yearId]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  const years        = data.academic_years || [];
+  const activeYearId = data.active_year_id ?? null;
+  const isActiveYear = yearId !== '' && String(yearId) === String(activeYearId);
+  const yearName     = useMemo(
+    () => (years.find(y => String(y.id) === String(yearId)) || {}).name || '',
+    [years, yearId]
+  );
+
   // ---- Student self-view ----
   if (isStudent) return <MyFee user={user} />;
+
+  // Writes are only allowed on the active year — server enforces this too.
+  const effectiveCanEdit = canEdit && isActiveYear;
+
+  const yearProps = { years, yearId, setYearId, isActiveYear, yearName, activeYearId };
 
   // ---- Management view (admin / permitted staff) ----
   const tabs = [
@@ -68,7 +99,7 @@ export default function FeeManagement() {
     { id: 'alerts',     label: 'Alerts',        icon: BellRing },
     { id: 'calendar',   label: 'Fee Calendar',  icon: CalendarDays },
   ];
-  const tabProps = { data, fetchData, user, canEdit };
+  const tabProps = { data, fetchData, user, canEdit: effectiveCanEdit, ...yearProps };
 
   return (
     <div className="p-8 max-w-[1440px] w-full mx-auto animate-in fade-in duration-700">
@@ -85,6 +116,7 @@ export default function FeeManagement() {
               View only
             </span>
           )}
+          {canEdit && !isActiveYear && yearId !== '' && <ClosedYearBadge yearName={yearName} />}
           {fullAccess && (
             <button onClick={() => setHelp(true)}
               className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors">
@@ -112,7 +144,7 @@ export default function FeeManagement() {
           </div>
         ) : (
           <>
-            {activeTab === 'dashboard'  && <FeeDashboard user={user} />}
+            {activeTab === 'dashboard'  && <FeeDashboard user={user} school={data.institution} {...yearProps} />}
             {activeTab === 'assign'     && <FeeAssign {...tabProps} />}
             {activeTab === 'concession' && <Concession {...tabProps} />}
             {activeTab === 'account'    && <Account user={user} canEdit={canEdit} />}
@@ -138,31 +170,34 @@ const GUIDES = {
   dashboard: {
     title: 'Reading the fee dashboard',
     steps: [
-      ['1 \u00b7 The four KPIs', 'Expected, Collected, Outstanding and Collection Rate % for the active academic year \u2014 where the school stands before you open anything else.'],
-      ['2 \u00b7 Filter first', 'Fee and Class narrow everything below. Without them you are looking at Academic Fee, Books, Library and the rest mixed together, which tells you very little. Pick one fee, then drill by class.'],
-      ['3 \u00b7 The donuts', 'Students Paid vs Unpaid (partial payers are noted separately) and Collection by Method \u2014 Online against Offline.'],
-      ['4 \u00b7 The trends', 'Monthly Collection is the last six months in IST. Collection by Fee and Collection by Class are collected-against-expected bars that turn green once a fee or class is fully collected.'],
-      ['5 \u00b7 Refresh', 'Re-pulls from the server \u2014 useful after approving a batch of offline payments.'],
+      ['1 \u00b7 The four KPIs', 'Expected, Collected, Outstanding and Collection Rate % \u2014 where the school stands before you open anything else.'],
+      ['2 \u00b7 Academic Year', 'Opens on your active year. Switch it to look back at a previous year \u2014 every tab in Fee Management follows, so you stay on one year throughout. There is no "all years": Expected is built from a year\'s plans against each student\'s current class, so mixing years would report a meaningless total.'],
+      ['3 \u00b7 Fee and Class', 'Narrow further. Without them you are looking at Academic Fee, Books, Library and the rest mixed together. Pick one fee, then drill by class.'],
+      ['4 \u00b7 The donuts', 'Students Paid vs Unpaid (partial payers are noted separately) and Collection by Method \u2014 Online against Offline.'],
+      ['5 \u00b7 The trends', 'Monthly Collection is the last six months in IST. Collection by Fee and Collection by Class are collected-against-expected bars that turn green once a fee or class is fully collected.'],
+      ['6 \u00b7 Download', 'Prints the whole dashboard \u2014 KPIs and every chart \u2014 on your school letterhead, with the year and filters noted at the top. Choose "Save as PDF" as the printer for a file, or send it straight to paper for a meeting.'],
     ],
-    note: 'Read-only, and scoped to the active academic year. Every figure comes from Fee Assign (expected) and Payments (collected) \u2014 if a number looks wrong, one of those two is where it gets fixed.'
+    note: 'Read-only. Every figure comes from Fee Assign (expected) and Payments (collected) \u2014 if a number looks wrong, one of those two is where it gets fixed. If nothing opens on Download, allow pop-ups for this site.'
   },
   assign: {
     title: 'Setting up fees',
     steps: [
-      ['1 \u00b7 Start with the class', 'Pick a class, then set its fee structure. Every school runs different classes, so each one carries its own amounts.'],
-      ['2 \u00b7 Full fee and due date', 'Set the full fee for the year and the date it falls due. That date is what the Fee Calendar plots and what the Alerts rules fire against.'],
-      ['3 \u00b7 Installments are optional', 'If the class pays in parts, add installment rows \u2014 each with its own label, amount and due date. The total is checked live against the full fee, so the parts must add up.'],
-      ['4 \u00b7 Assign the plan per student', 'A structure isn\'t a bill until a student is on it. Give each student Full or Installment \u2014 two students in the same class can be on different plans.'],
-      ['5 \u00b7 Get this right first', 'Everything downstream reads from here: Expected on the Dashboard, the Paid / Unpaid roster, the Calendar and the Alerts. A student with no plan simply owes nothing.'],
+      ['1 \u00b7 Check the year first', 'Fees belong to an academic year \u2014 students pay afresh each year. The picker opens on your active year, and only the active year can be edited. A previous year shows for reference but is locked.'],
+      ['2 \u00b7 Start with the class', 'Pick a class, then set its fee structure. Every school runs different classes, so each one carries its own amounts.'],
+      ['3 \u00b7 Full fee and due date', 'Set the full fee for the year and the date it falls due. That date is what the Fee Calendar plots and what the Alerts rules fire against.'],
+      ['4 \u00b7 Installments are optional', 'If the class pays in parts, add installment rows \u2014 each with its own label, amount and due date. The total is checked live against the full fee, so the parts must add up.'],
+      ['5 \u00b7 Assign the plan per student', 'A structure isn\'t a bill until a student is on it. Give each student Full or Installment \u2014 two students in the same class can be on different plans.'],
+      ['6 \u00b7 Get this right first', 'Everything downstream reads from here: Expected on the Dashboard, the Paid / Unpaid roster, the Calendar and the Alerts. A student with no plan simply owes nothing.'],
     ],
-    note: 'Fees are scoped to the active academic year. Set the new year active under Manage Logins \u2192 Academics Year before building next year\'s structure, or you\'ll overwrite the year you\'re still collecting.'
+    note: 'Rolling into a new year: set it active in Manage Logins \u2192 Academics Year, then build the new structure. Last year\'s fees, payments and concessions stay exactly as they were \u2014 nothing is overwritten.'
   },
   concession: {
     title: 'Granting a concession',
     steps: [
-      ['1 \u00b7 Per student, not per class', 'Filter to a class, then give the individual student their concession amount. A reason is optional but worth writing \u2014 it is the only record of why the fee was reduced.'],
-      ['2 \u00b7 The maths', 'Full Fee \u2212 Concession = Net Payable, shown on the row. Net Payable is what the student actually owes and what the Paid / Unpaid roster measures against.'],
-      ['3 \u00b7 Change or remove', 'Edit adjusts the amount; removing it puts the student back on the full fee.'],
+      ['1 \u00b7 One year at a time', 'A concession applies to the selected academic year only. Next year the student starts on the full fee again unless you grant it afresh.'],
+      ['2 \u00b7 Per student, not per class', 'Filter to a class, then give the individual student their concession amount. A reason is optional but worth writing \u2014 it is the only record of why the fee was reduced.'],
+      ['3 \u00b7 The maths', 'Full Fee \u2212 Concession = Net Payable, shown on the row. Net Payable is what the student actually owes and what the Paid / Unpaid roster measures against.'],
+      ['4 \u00b7 Change or remove', 'Edit the amount and Save; set it to 0 to put the student back on the full fee.'],
     ],
     note: 'A concession lowers what is expected from that student, so it moves Expected and Outstanding on the Dashboard too. It is not a payment \u2014 it never shows in Payments.'
   },
@@ -174,7 +209,7 @@ const GUIDES = {
       ['3 \u00b7 Offline', 'Offline Payments (cash at office): the toggle plus your instructions. Whatever you write here is what the student reads before uploading their slip \u2014 be specific about where and when to pay.'],
       ['4 \u00b7 Turning one off', 'Disabling a method removes it from the student\'s My Fee screen. Leave at least one on, or nobody can pay.'],
     ],
-    note: 'The Key Secret is exactly that \u2014 treat this screen like your bank login and keep it to the people who genuinely run the fee desk.'
+    note: 'This screen has no academic year \u2014 your gateway and office instructions carry across years. The Key Secret is exactly that: treat this screen like your bank login.'
   },
   payments: {
     title: 'Payments & approvals',
@@ -183,27 +218,29 @@ const GUIDES = {
       ['2 \u00b7 Offline is your job', 'The student uploads a paid slip and it lands here as Pending. Open the proof, check it against your records, then Approve \u2014 or Reject if it doesn\'t hold up.'],
       ['3 \u00b7 Approved means collected', 'Approving turns it Paid and takes that amount off the student\'s balance immediately, across the roster, the Calendar and the Dashboard.'],
       ['4 \u00b7 The trail', '"Approved by \u2039name\u203a" or "Rejected by \u2039name\u203a" sits under the status with the date and time in IST, so every decision has a person against it.'],
-      ['5 \u00b7 Finding one', 'Search by student or roll; the status filter starts on All. The proof is the student\'s uploaded slip for offline, and the school receipt for online.'],
+      ['5 \u00b7 Finding one', 'The year picker opens on your active year; students only ever pay into the active year, so a previous year is a closed record and its rows can\'t be actioned. Then filter by status, class or date, or search by student or roll.'],
+      ['6 \u00b7 Download', 'An Excel file of exactly what your filters show \u2014 IST date and time, student, class, fee, amount, method, status, reference, and who approved or rejected it. Headed with the academic year and totalled at the bottom.'],
     ],
     note: 'Approve only against a slip you can actually verify \u2014 it is the one action here that moves money in the books. Reject also clears out anything stuck in Pending.'
   },
   collection: {
     title: 'Paid / Unpaid roster',
     steps: [
-      ['1 \u00b7 Pick the fee and class', 'The roster is always one fee for one class \u2014 Academic Fee for Class 10, say. That is the list you can actually act on.'],
+      ['1 \u00b7 Year, fee, class', 'The roster is always one fee for one class in one academic year \u2014 Academic Fee for Class 10, this year. That is the list you can actually act on.'],
       ['2 \u00b7 Unpaid', 'Who still owes, with Total due at the top. This is your follow-up list.'],
-      ['3 \u00b7 Paid', 'Who has cleared, with Total collected at the top. Cross-check it against the Dashboard for the same fee and class.'],
+      ['3 \u00b7 Paid', 'Who has cleared, with Total collected at the top. Cross-check it against the Dashboard for the same year, fee and class.'],
       ['4 \u00b7 Download', 'Exports the full roster for that fee and class \u2014 paid and unpaid together \u2014 with Roll, Student, Class, Fee, Net Payable, Paid, Balance and status. Opens straight in Excel.'],
     ],
-    note: 'Net Payable already has the student\'s concession taken off, so Balance is what they genuinely owe \u2014 not the class\'s headline fee.'
+    note: 'Net Payable already has the student\'s concession taken off, so Balance is what they genuinely owe \u2014 not the class\'s headline fee. A previous year shows that year\'s roster as it finished.'
   },
   alerts: {
     title: 'Fee reminders',
     steps: [
-      ['1 \u00b7 Auto', 'Rules that fire on their own against the due dates from Fee Assign \u2014 before the due date, on the day, or after it. Set them once per class, or leave the class blank for the whole school.'],
-      ['2 \u00b7 Write the message', 'Placeholders fill themselves in, so one rule reads correctly for every class. Keep it short \u2014 parents read it on a phone.'],
-      ['3 \u00b7 Manual', 'Send now, to a class or to everyone, when something needs saying that no rule covers.'],
-      ['4 \u00b7 The log', 'What went out, when, to how many. Check it before chasing anyone by phone \u2014 they may have been reminded already.'],
+      ['1 \u00b7 Rules live in a year', 'Reminders fire against the due dates from Fee Assign, which are per academic year \u2014 so the rules are too. Each new year needs its own rules; a closed year\'s rules stay as history and never send.'],
+      ['2 \u00b7 Auto', 'Rules that fire on their own \u2014 before the due date, on the day, or after it. Set them once per class, or leave the class blank for the whole school.'],
+      ['3 \u00b7 Write the message', 'Placeholders fill themselves in, so one rule reads correctly for every class. Keep it short \u2014 parents read it on a phone.'],
+      ['4 \u00b7 Manual', 'Send now, to a class or to everyone, when something needs saying that no rule covers.'],
+      ['5 \u00b7 The log', 'What went out, when, to how many. Check it before chasing anyone by phone \u2014 they may have been reminded already.'],
     ],
     note: 'A rule fires once per due date, so it cannot spam the same parents twice in a day. Reminders follow the due dates in Fee Assign \u2014 if a date is wrong there, the reminder goes out wrong too.'
   },

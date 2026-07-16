@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Wallet, CheckCircle2, AlertCircle, GraduationCap, ChevronDown, Tag, Download } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
+import { FeeYearSelect } from './FeeYear';
 
 const inr = (n) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })
     .format(Number(n) || 0);
 
-export default function Collection({ data, user }) {
+// The roster is always one fee × one class × one academic year.
+export default function Collection({ data, user, years = [], yearId, setYearId, yearName }) {
   const classes = data.classes || [];
   const [view, setView]       = useState('unpaid'); // 'paid' | 'unpaid'
   const [classId, setClassId] = useState('');
@@ -15,10 +17,10 @@ export default function Collection({ data, user }) {
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
-    if (!user?.institutionId) return;
+    if (!user?.institutionId || !yearId) return;
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/fees/collection/${user.institutionId}`);
+      const res = await fetch(`${API_BASE_URL}/fees/collection/${user.institutionId}?year=${encodeURIComponent(yearId)}`);
       const json = await res.json();
       setRows(Array.isArray(json?.students) ? json.students : []);
     } catch (e) {
@@ -26,7 +28,7 @@ export default function Collection({ data, user }) {
       setRows([]);
     }
     setLoading(false);
-  }, [user]);
+  }, [user, yearId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -36,6 +38,7 @@ export default function Collection({ data, user }) {
   };
 
   // Fee-type options from the plans we already have (Academic first).
+  // data.plans is already scoped to the selected year by the parent.
   const feeTypes = useMemo(() => {
     const set = new Set();
     (data.plans || []).forEach(p => { if (p.title) set.add(p.title); });
@@ -45,6 +48,7 @@ export default function Collection({ data, user }) {
   // Default to a specific fee + class (no "All" options).
   useEffect(() => {
     if (feeTypes.length && !feeTypes.includes(feeType)) setFeeType(feeTypes[0]);
+    if (!feeTypes.length) setFeeType('');
   }, [feeTypes, feeType]);
   useEffect(() => {
     if (classes.length && !classes.some(c => String(c.id) === String(classId))) setClassId(String(classes[0].id));
@@ -83,9 +87,9 @@ export default function Collection({ data, user }) {
   const downloadList = () => {
     const rollVal = (u) => { const n = parseInt(u.roll_no, 10); return isNaN(n) ? Infinity : n; };
     const rows = [...inScope].sort((a, b) => (rollVal(a) - rollVal(b)) || (a.name || '').localeCompare(b.name || ''));
-    const header = ['Roll', 'Student', 'Class', 'Fee', 'Net Payable', 'Paid', 'Balance', 'Status'];
+    const header = ['Academic Year', 'Roll', 'Student', 'Class', 'Fee', 'Net Payable', 'Paid', 'Balance', 'Status'];
     const lines = [header, ...rows.map(r => [
-      r.roll_no || '', r.name || '', classLabel(r.class_id), feeType,
+      yearName || '', r.roll_no || '', r.name || '', classLabel(r.class_id), feeType,
       Number(r.net || 0), Number(r.paid || 0), Number(r.balance || 0),
       r.status === 'paid' ? 'Paid' : 'Unpaid'
     ])];
@@ -96,8 +100,9 @@ export default function Collection({ data, user }) {
     const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
+    // The year is in the filename so exports from different years don't collide.
+    a.download = `${feeType || 'fee'}_${classLabel(classId)}_${yearName || ''}_collection.csv`.replace(/\s+/g, '-');
     a.href = url;
-    a.download = `${feeType || 'fee'}_${classLabel(classId)}_collection.csv`.replace(/\s+/g, '-');
     document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(url);
   };
@@ -118,8 +123,9 @@ export default function Collection({ data, user }) {
         </div>
 
         <div className="flex items-center gap-4 flex-wrap">
+          <FeeYearSelect years={years} value={yearId} onChange={setYearId} />
           <LabeledSelect icon={Tag} label="Fee" value={feeType} onChange={setFeeType}
-            options={feeTypes.map(t => ({ v: t, l: t }))} />
+            options={feeTypes.length ? feeTypes.map(t => ({ v: t, l: t })) : [{ v: '', l: 'No fees set' }]} />
           <LabeledSelect icon={GraduationCap} label="Class" value={classId} onChange={setClassId}
             options={classes.map(c => ({ v: String(c.id), l: `${c.className}${c.section ? ` - ${c.section}` : ''}` }))} />
           <button onClick={downloadList} disabled={inScope.length === 0}
@@ -134,6 +140,7 @@ export default function Collection({ data, user }) {
           <h3 className="text-sm font-semibold text-zinc-900 flex items-center gap-2">
             <Wallet className="size-4 text-primary" /> {view === 'paid' ? 'Fully Paid' : 'Outstanding'}
             <span className="text-zinc-400 font-normal">· {feeType || '—'} ({filtered.length})</span>
+            {yearName && <span className="text-[10px] font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded-full uppercase tracking-wider">{yearName}</span>}
           </h3>
           {view === 'unpaid'
             ? <span className="text-[11px] text-zinc-500">Total due: <strong className="text-accent tabular-nums">{inr(totalUnpaidBalance)}</strong></span>
@@ -170,7 +177,7 @@ export default function Collection({ data, user }) {
                     </td>
                   </tr>
                 )) : (
-                  <tr><td colSpan="7" className="px-5 py-8 text-center text-xs text-zinc-500 italic">No {view} students for {feeType === 'all' ? 'this scope' : feeType}.</td></tr>
+                  <tr><td colSpan="7" className="px-5 py-8 text-center text-xs text-zinc-500 italic">No {view} students for {feeType || 'this scope'}.</td></tr>
                 )}
               </tbody>
             </table>
@@ -179,7 +186,8 @@ export default function Collection({ data, user }) {
       </div>
 
       <p className="text-[11px] text-zinc-400">
-        Showing who has and hasn't paid the selected fee for the selected class. Students whose class doesn't have this fee aren't listed.
+        Showing who has and hasn't paid the selected fee for the selected class in {yearName || 'the selected academic year'}.
+        Students whose class doesn't have this fee aren't listed.
       </p>
     </div>
   );
