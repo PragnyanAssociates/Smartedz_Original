@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import { API_BASE_URL } from '../../apiConfig';
-import { CalendarDays, Clock, LayoutGrid, Plus, Trash2, Save, Coffee, AlertCircle, ChevronDown, Users, Search, GraduationCap, CalendarRange } from 'lucide-react';
+import { CalendarDays, Clock, LayoutGrid, Plus, Trash2, Save, Coffee, AlertCircle, ChevronDown, Users, Search, GraduationCap, CalendarRange, HelpCircle, X, ShieldCheck } from 'lucide-react';
 
 // =====================================================================
 //  HOW THIS MODULE WORKS
@@ -125,7 +125,7 @@ function useActiveYearName(user) {
 // =====================================================================
 export default function Timetable() {
   const { user } = useAuth();
-  const { can, loading: permsLoading } = usePermissions();
+  const { can, loading: permsLoading, isAllAccess } = usePermissions();
 
   const role = (user?.role || '').toLowerCase();
   const isStudent = role.includes('student');
@@ -135,6 +135,8 @@ export default function Timetable() {
   const canRead   = can('Timetable', 'read');
 
   const isManager = canEdit || canDelete;   // edit OR delete => can configure
+  // The setup guide is written for whoever actually builds the timetable.
+  const fullAccess = !!isAllAccess || (canEdit && canDelete);
 
   if (permsLoading) {
     return (
@@ -162,13 +164,13 @@ export default function Timetable() {
     );
   }
 
-  return <AdminTimetable user={user} canEdit={canEdit} canDelete={canDelete} isManager={isManager} />;
+  return <AdminTimetable user={user} canEdit={canEdit} canDelete={canDelete} isManager={isManager} fullAccess={fullAccess} />;
 }
 
 // =====================================================================
 //  ADMIN / MANAGER + READ-ONLY VIEWER VIEW
 // =====================================================================
-function AdminTimetable({ user, canEdit, canDelete, isManager }) {
+function AdminTimetable({ user, canEdit, canDelete, isManager, fullAccess }) {
   const [data, setData] = useState({
     academic_year_id: null,
     days: [], periods: [], entries: [],
@@ -179,6 +181,7 @@ function AdminTimetable({ user, canEdit, canDelete, isManager }) {
 
   // Class Timetable is the default tab for everyone (managers included).
   const [activeTab, setActiveTab] = useState('grid');
+  const [help, setHelp] = useState(false);
   // Active academic year name — shown as a read-only badge (like Attendance).
   const activeYearName = useActiveYearName(user);
 
@@ -241,7 +244,15 @@ function AdminTimetable({ user, canEdit, canDelete, isManager }) {
             Configure the school's weekly schedule once, then fill in each class's grid.
           </p>
         </div>
-        <YearBadge name={activeYearName} />
+        <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+          {fullAccess && (
+            <button onClick={() => setHelp(true)}
+              className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors">
+              <HelpCircle className="size-3.5" /> How to use
+            </button>
+          )}
+          <YearBadge name={activeYearName} />
+        </div>
       </header>
 
       {/* Segmented Tabs - Horizontally Scrollable on Mobile */}
@@ -266,6 +277,8 @@ function AdminTimetable({ user, canEdit, canDelete, isManager }) {
         {current === 'grid'     &&              <GridTab     {...tabProps} />}
         {current === 'teachers' && isManager && <TeachersTimetableTab {...tabProps} />}
       </div>
+
+      {help && fullAccess && <HelpModal tab={current} onClose={() => setHelp(false)} />}
     </div>
   );
 }
@@ -1144,6 +1157,7 @@ function TeachersTimetableTab({ data, fetchData, user, canEdit }) {
 function PersonalTimetable({ user, mode }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [help, setHelp] = useState(false);
   const activeYearName = useActiveYearName(user);
 
   const fetchMine = useCallback(async () => {
@@ -1237,7 +1251,13 @@ function PersonalTimetable({ user, mode }) {
             </div>
           )}
         </div>
-        <YearBadge name={activeYearName} />
+        <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+          <button onClick={() => setHelp(true)}
+            className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors">
+            <HelpCircle className="size-3.5" /> How to use
+          </button>
+          <YearBadge name={activeYearName} />
+        </div>
       </header>
 
       <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-x-auto custom-scrollbar flex flex-col">
@@ -1305,6 +1325,94 @@ function PersonalTimetable({ user, mode }) {
             ))}
           </tbody>
         </table>
+      </div>
+
+      {help && <HelpModal tab={mode === 'student' ? 'my-student' : 'my-teacher'} onClose={() => setHelp(false)} />}
+    </div>
+  );
+}
+
+// =====================================================================
+//  How-to-use notes — the guide follows the tab you're standing on, so
+//  it always answers "what do I do on THIS screen?". Same shell as the
+//  Transport module guide.
+// =====================================================================
+const GUIDES = {
+  setup: {
+    title: 'Days & periods',
+    steps: [
+      ['1 \u00b7 Do this first', 'Nothing else works until the bell schedule exists — the Class and Teachers grids stay locked until there is at least one working day and one period.'],
+      ['2 \u00b7 Working days', 'Tick the days your school runs. Only ticked days become rows on every grid, so a school that runs Monday to Saturday just ticks Saturday too.'],
+      ['3 \u00b7 Periods & breaks', 'Add Period for a teaching slot, Add Break for lunch or interval. Breaks show as an amber "Break" cell on every grid and can never be filled with a subject.'],
+      ['4 \u00b7 Typing the times', 'Type the time as HH:MM (e.g. 09:00) and pick AM or PM — there is no clock picker, so it is quick on a keyboard. End must be after start, or the save stops and tells you which period is wrong.'],
+      ['5 \u00b7 One Save for both', 'Save Days & Periods writes the working days AND the bell schedule together, then reads them back from the server, so a refresh keeps them.'],
+      ['6 \u00b7 The warning is real', 'Changing the period list clears any timetable entry that no longer matches it. Set the schedule before you fill the grids, and change it as rarely as you can mid-year.'],
+    ],
+    note: 'This schedule is global: every class in the school shares the same bell times. It belongs to the ACTIVE academic year — switching the active year under Manage Logins \u2192 Academics Year switches the whole timetable everyone sees.'
+  },
+  grid: {
+    title: 'Class timetable',
+    steps: [
+      ['1 \u00b7 Pick the class', 'Target Class chooses whose grid you are filling. Days come from your working days, columns from the bell schedule.'],
+      ['2 \u00b7 Subject first, then teacher', 'Choose the subject and the teacher list narrows to teachers actually assigned to it in Manage Logins \u2192 Subjects. If a teacher shows "No teacher", nobody is mapped to that subject yet.'],
+      ['3 \u00b7 Watch for the red note', 'If the teacher already has another class in that period, a red warning names the clashing class. Change teacher, or move the other class.'],
+      ['4 \u00b7 Room is optional', 'Fill it when your school rotates rooms; students and teachers see it on their own timetable.'],
+      ['5 \u00b7 Save', 'Save Timetable writes the whole grid for that class at once. The line under Target Class records who created it and who last edited it, in IST.'],
+    ],
+    note: 'The Class and Teachers grids are two views of the SAME timetable — fill it wherever suits you and the other updates. Breaks can\'t be filled in; change them under Days & Periods.'
+  },
+  teachers: {
+    title: 'Teachers timetable',
+    steps: [
+      ['1 \u00b7 When to use this', 'Same timetable as the Class tab, entered from the other direction. Use it when you think in terms of "what does this teacher do all week?" rather than "what does Class 10 do?".'],
+      ['2 \u00b7 Pick the teacher', 'Search by name or email on the left. The grid fills with everything already assigned to them.'],
+      ['3 \u00b7 Fill the week', 'Per period, choose the class they take — leave it on "Free / No Class" for a free period. Then the subject, narrowed to what they are qualified for, and a room if needed.'],
+      ['4 \u00b7 Clashes block the save', 'If a class period already belongs to another teacher, a red note names them and Save is refused until you resolve it. The server checks again on save, so two admins working at once can\'t double-book a class.'],
+      ['5 \u00b7 Save', 'Save Teacher Timetable writes their whole week. The Class Timetable tab shows the same entries immediately.'],
+    ],
+    note: 'A teacher\'s subjects come from Manage Logins \u2192 Subjects. If the subject list looks wrong or too long, that mapping is where to fix it \u2014 with no mapping at all, every subject is offered.'
+  },
+  'my-student': {
+    title: 'Your timetable',
+    steps: [
+      ['Your week', 'Every working day down the side, every period across the top, with the times each one starts and ends.'],
+      ['Each period', 'The subject in bold with your teacher underneath, and the room number when your school uses one.'],
+      ['Breaks', 'Amber "Break" cells are your lunch or interval. A dash means no class is scheduled in that slot.'],
+    ],
+    note: 'This is set by your school and is read-only. If something looks wrong, tell your class teacher or the office.'
+  },
+  'my-teacher': {
+    title: 'Your teaching schedule',
+    steps: [
+      ['Your week', 'Every working day down the side, every period across the top, across all the classes you take.'],
+      ['Each period', 'The class in bold with the subject underneath, and the room number when your school uses one.'],
+      ['Free periods', 'A dash means you have nothing scheduled. Amber "Break" cells are the school\'s lunch or interval.'],
+    ],
+    note: 'This is set by your school and is read-only. If a period looks wrong, ask the office to check it under Timetable \u2192 Teachers Timetable.'
+  }
+};
+
+function HelpModal({ tab, onClose }) {
+  const content = GUIDES[tab] || GUIDES.grid;
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={onClose}>
+      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg max-h-[85vh] overflow-y-auto shadow-xl" onClick={e => e.stopPropagation()}>
+        <div className="bg-primary text-white px-5 py-3 flex items-center justify-between sticky top-0">
+          <span className="text-sm font-bold flex items-center gap-2"><HelpCircle className="size-4" /> {content.title}</span>
+          <button onClick={onClose} className="text-white/80 hover:text-white"><X className="size-5" /></button>
+        </div>
+        <div className="p-5 space-y-3">
+          {content.steps.map(([t, d], i) => (
+            <div key={i} className="rounded-md ring-1 ring-zinc-100 bg-zinc-50/60 p-3">
+              <p className="text-xs font-semibold text-zinc-800">{t}</p>
+              <p className="text-[11px] text-zinc-600 leading-relaxed mt-1">{d}</p>
+            </div>
+          ))}
+          <div className="rounded-md bg-blue-50/60 ring-1 ring-blue-100 p-3 flex gap-2">
+            <ShieldCheck className="size-4 text-blue-500 shrink-0 mt-0.5" />
+            <p className="text-[11px] text-blue-800 leading-relaxed">{content.note}</p>
+          </div>
+        </div>
       </div>
     </div>
   );
