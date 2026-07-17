@@ -12,9 +12,6 @@ const TRIGGERS = [
   { v: 'after_due',  l: 'After due date' },
 ];
 
-// Reminders chase the due dates from Fee Assign, which are per academic
-// year — so rules and the log are per year too. Only the active year's
-// rules ever fire; a closed year keeps its log as history.
 export default function Alerts({ data, user, canEdit = true, years = [], yearId, setYearId, yearName, isActiveYear = true }) {
   const classes = data.classes || [];
   const students = data.students || [];
@@ -50,7 +47,6 @@ export default function Alerts({ data, user, canEdit = true, years = [], yearId,
     <div className="space-y-6">
       {!isActiveYear && <ClosedYearNote yearName={yearName} />}
 
-      {/* Year + sub-tabs */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="inline-flex items-center gap-1 bg-zinc-100 p-1 rounded-lg">
           <button onClick={() => setSub('auto')}
@@ -91,7 +87,6 @@ function AutoTab({ user, classes, rules, reload, canEdit, academic_year_id, clas
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  // A different year is a different rule set — drop any half-typed rule.
   useEffect(() => { setForm(blank); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [academic_year_id]);
 
   const edit = (r) => setForm({
@@ -149,23 +144,22 @@ function AutoTab({ user, classes, rules, reload, canEdit, academic_year_id, clas
 
   return (
     <div className="space-y-6">
-      <div className="bg-blue-50/60 border border-blue-100 rounded-md p-4 flex gap-3 text-[11px] text-blue-800 leading-relaxed">
+      <div className="bg-blue-50/60 border border-blue-100 rounded-md p-4 flex items-start gap-3 text-[11px] text-blue-800 leading-relaxed">
         <Info className="size-4 shrink-0 text-blue-500 mt-0.5" />
         <p>
           Auto alerts fire on their own based on each fee's due date. Set a rule (e.g. <em>3 days before due date</em>) for
           <strong> all classes</strong> or one class. Use tokens <code className="bg-white/60 px-1 rounded">{'{class}'}</code>,
           <code className="bg-white/60 px-1 rounded">{'{amount}'}</code>, <code className="bg-white/60 px-1 rounded">{'{due_date}'}</code>,
           <code className="bg-white/60 px-1 rounded">{'{student}'}</code> in the message.
-          Rules belong to <strong>{yearName || 'the selected academic year'}</strong> — each new year needs its own.
+          Rules belong to <strong>{yearName || 'the selected academic year'}</strong> - each new year needs its own.
         </p>
       </div>
 
-      {/* Rule editor */}
       {canEdit && (
-        <div className="ring-1 ring-black/5 rounded-lg bg-white p-5 sm:p-6 space-y-4">
+        <div className="ring-1 ring-black/5 shadow-sm rounded-lg bg-white p-5 sm:p-6 space-y-4">
           <h3 className="text-sm font-semibold text-zinc-900 flex items-center gap-2">
             <Zap className="size-4 text-primary" /> {form.id ? 'Edit Rule' : 'New Auto Rule'}
-            {yearName && <span className="text-[10px] font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded-full uppercase tracking-wider">{yearName}</span>}
+            {yearName && <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 ring-1 ring-inset ring-blue-600/20 px-2 py-0.5 rounded-full uppercase tracking-wider">{yearName}</span>}
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <LabeledSelect label="Applies to" value={String(form.class_id)} onChange={v => set('class_id', v)}
@@ -177,42 +171,43 @@ function AutoTab({ user, classes, rules, reload, canEdit, academic_year_id, clas
                 <label className="text-xs font-medium text-zinc-600 mb-1.5">Days {form.trigger_type === 'before_due' ? 'before' : 'after'}</label>
                 <input type="number" min="0" value={form.days_offset}
                   onChange={e => set('days_offset', e.target.value)}
-                  className="w-full rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40" />
+                  className="w-full rounded-md border border-zinc-200 shadow-sm bg-white px-3 h-9 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40" />
               </div>
             )}
           </div>
           <div className="flex flex-col">
             <label className="text-xs font-medium text-zinc-600 mb-1.5">Message</label>
             <textarea rows={3} value={form.message} onChange={e => set('message', e.target.value)}
-              className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 resize-none" />
+              className="w-full rounded-md border border-zinc-200 shadow-sm bg-white px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 resize-none" />
           </div>
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <Toggle checked={form.is_active} onChange={v => set('is_active', v)} label="Active" />
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {form.id && (
                 <button onClick={() => setForm(blank)}
-                  className="text-zinc-600 px-3 py-2 border border-zinc-200 rounded-md text-xs font-medium hover:bg-zinc-50">Cancel</button>
+                  className="w-full sm:w-auto h-9 px-6 min-w-[120px] bg-white text-zinc-600 border border-zinc-200 shadow-sm rounded-md text-xs font-medium hover:bg-zinc-50 flex items-center justify-center transition-colors">
+                  Cancel
+                </button>
               )}
               <button onClick={save} disabled={saving}
-                className="bg-primary text-white px-4 py-2 rounded-md text-xs font-medium hover:bg-primary/90 flex items-center gap-1.5 disabled:opacity-60">
-                {form.id ? <Save className="size-3.5" /> : <Plus className="size-3.5" />} {saving ? 'Saving…' : form.id ? 'Update Rule' : 'Add Rule'}
+                className="w-full sm:w-auto h-9 px-6 min-w-[120px] bg-primary text-white rounded-md text-xs font-medium hover:bg-primary/90 flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-60 transition-colors">
+                {form.id ? <Save className="size-3.5 shrink-0" /> : <Plus className="size-3.5 shrink-0" />} {saving ? 'Saving...' : form.id ? 'Update Rule' : 'Add Rule'}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Rules list */}
-      <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden">
+      <div className="ring-1 ring-black/5 shadow-sm rounded-lg bg-white overflow-hidden">
         <div className="p-4 border-b border-zinc-100">
-          <h3 className="text-sm font-semibold text-zinc-900">Rules <span className="text-zinc-400 font-normal">({rules.length})</span></h3>
+          <h3 className="text-sm font-semibold text-zinc-900">Rules <span className="text-zinc-500 font-normal">({rules.length})</span></h3>
         </div>
         <div className="divide-y divide-zinc-100">
           {rules.length > 0 ? rules.map(r => (
             <div key={r.id} className="flex items-start justify-between gap-3 px-5 py-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-primary/10 text-primary ring-1 ring-primary/20">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-600/20">
                     <GraduationCap className="size-3" /> {classLabel(r.class_id)}
                   </span>
                   <span className="inline-flex items-center gap-1 text-[11px] font-medium text-zinc-600">
@@ -223,10 +218,14 @@ function AutoTab({ user, classes, rules, reload, canEdit, academic_year_id, clas
                 {r.message && <p className="text-[11px] text-zinc-500 mt-1 line-clamp-2 max-w-xl">{r.message}</p>}
               </div>
               {canEdit && (
-                <div className="flex items-center gap-1 shrink-0">
+                <div className="flex items-center gap-2 shrink-0">
                   <Toggle checked={!!r.is_active} disabled={busyId === r.id} onChange={() => toggle(r)} />
-                  <button onClick={() => edit(r)} className="p-1.5 text-zinc-400 hover:text-primary rounded transition-colors"><Save className="size-4" /></button>
-                  <button onClick={() => remove(r)} disabled={busyId === r.id} className="p-1.5 text-zinc-400 hover:text-accent rounded transition-colors"><Trash2 className="size-4" /></button>
+                  <button onClick={() => edit(r)} className="flex items-center justify-center size-8 bg-white text-zinc-600 border border-zinc-200 shadow-sm rounded-md hover:text-primary hover:bg-zinc-50 transition-colors disabled:opacity-50">
+                    <Save className="size-4" />
+                  </button>
+                  <button onClick={() => remove(r)} disabled={busyId === r.id} className="flex items-center justify-center size-8 bg-white text-zinc-600 border border-zinc-200 shadow-sm rounded-md hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50">
+                    <Trash2 className="size-4" />
+                  </button>
                 </div>
               )}
             </div>
@@ -288,25 +287,25 @@ function ManualTab({ user, classes, students, log, reload, canEdit, academic_yea
 
   return (
     <div className="space-y-6">
-      <div className="bg-blue-50/60 border border-blue-100 rounded-md p-4 flex gap-3 text-[11px] text-blue-800 leading-relaxed">
+      <div className="bg-blue-50/60 border border-blue-100 rounded-md p-4 flex items-start gap-3 text-[11px] text-blue-800 leading-relaxed">
         <Info className="size-4 shrink-0 text-blue-500 mt-0.5" />
         <p>Send a fee reminder right now to <strong>all classes</strong> or a specific class. Same idea as an auto alert, but you control exactly when it goes out.</p>
       </div>
 
-      <div className="ring-1 ring-black/5 rounded-lg bg-white p-5 sm:p-6 space-y-4">
+      <div className="ring-1 ring-black/5 shadow-sm rounded-lg bg-white p-5 sm:p-6 space-y-4">
         <h3 className="text-sm font-semibold text-zinc-900 flex items-center gap-2">
           <Send className="size-4 text-primary" /> Send Manual Alert
-          {yearName && <span className="text-[10px] font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded-full uppercase tracking-wider">{yearName}</span>}
+          {yearName && <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 ring-1 ring-inset ring-blue-600/20 px-2 py-0.5 rounded-full uppercase tracking-wider">{yearName}</span>}
         </h3>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <LabeledSelect label="Filter" value={classId} onChange={setClassId}
             options={[{ v: '', l: 'All classes' }, ...classes.map(c => ({ v: String(c.id), l: `${c.className}${c.section ? ` - ${c.section}` : ''}` }))]} />
           <div className="flex flex-col justify-end">
-            <div className="inline-flex items-center gap-2 text-xs text-zinc-600 bg-zinc-50 ring-1 ring-black/5 rounded-md px-3 h-9">
+            <div className="inline-flex items-center gap-2 text-xs text-zinc-600 bg-zinc-50 ring-1 ring-black/5 shadow-sm rounded-md px-3 h-9">
               <Users className="size-4 text-primary" />
               Recipients: <strong className="text-zinc-900 tabular-nums">{recipients}</strong>
-              <span className="text-zinc-400">· {classLabel(classId)}</span>
+              <span className="text-zinc-400">- {classLabel(classId)}</span>
             </div>
           </div>
         </div>
@@ -314,34 +313,34 @@ function ManualTab({ user, classes, students, log, reload, canEdit, academic_yea
         <div className="flex flex-col">
           <label className="text-xs font-medium text-zinc-600 mb-1.5">Message</label>
           <textarea rows={4} value={message} onChange={e => setMessage(e.target.value)} disabled={!canEdit}
-            className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 resize-none disabled:bg-zinc-50 disabled:text-zinc-400" />
+            className="w-full rounded-md border border-zinc-200 shadow-sm bg-white px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 resize-none disabled:bg-zinc-50 disabled:text-zinc-400" />
         </div>
 
         {canEdit && (
           <div className="flex justify-end">
             <button onClick={send} disabled={sending || recipients === 0}
-              className="bg-primary text-white px-5 py-2 rounded-md text-xs font-medium hover:bg-primary/90 flex items-center gap-1.5 disabled:opacity-50">
-              <Send className="size-3.5" /> {sending ? 'Sending…' : `Send to ${recipients}`}
+              className="w-full sm:w-auto h-9 px-6 min-w-[120px] bg-primary text-white rounded-md text-xs font-semibold hover:bg-primary/90 flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50 transition-colors">
+              <Send className="size-3.5 shrink-0" /> {sending ? 'Sending...' : `Send to ${recipients}`}
             </button>
           </div>
         )}
       </div>
 
       {/* Recent sends */}
-      <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden">
+      <div className="ring-1 ring-black/5 shadow-sm rounded-lg bg-white overflow-hidden">
         <div className="p-4 border-b border-zinc-100">
-          <h3 className="text-sm font-semibold text-zinc-900">Recent Alerts <span className="text-zinc-400 font-normal">· {yearName || 'selected year'}</span></h3>
+          <h3 className="text-sm font-semibold text-zinc-900">Recent Alerts <span className="text-zinc-500 font-normal">- {yearName || 'selected year'}</span></h3>
         </div>
         <div className="divide-y divide-zinc-100">
           {log.length > 0 ? log.map(l => (
             <div key={l.id} className="flex items-start justify-between gap-3 px-5 py-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ring-1 ${l.alert_type === 'auto' ? 'bg-primary/10 text-primary ring-primary/20' : 'bg-accent/10 text-accent ring-accent/20'}`}>
+                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ring-1 ring-inset ${l.alert_type === 'auto' ? 'bg-blue-50 text-blue-700 ring-blue-600/20' : 'bg-amber-50 text-amber-700 ring-amber-600/20'}`}>
                     {l.alert_type === 'auto' ? <Zap className="size-3" /> : <Send className="size-3" />} {l.alert_type}
                   </span>
                   <span className="text-[11px] font-medium text-zinc-600">{classLabel(l.class_id)}</span>
-                  <span className="text-[11px] text-zinc-400">· {l.recipient_count} recipient{l.recipient_count === 1 ? '' : 's'}</span>
+                  <span className="text-[11px] text-zinc-400">- {l.recipient_count} recipient{l.recipient_count === 1 ? '' : 's'}</span>
                 </div>
                 {l.message && <p className="text-[11px] text-zinc-500 mt-1 line-clamp-1 max-w-xl">{l.message}</p>}
               </div>
@@ -363,7 +362,7 @@ function LabeledSelect({ label, value, onChange, options }) {
       <label className="text-xs font-medium text-zinc-600 mb-1.5">{label}</label>
       <div className="relative">
         <select value={value} onChange={e => onChange(e.target.value)}
-          className="h-9 w-full appearance-none rounded-md border border-zinc-200 bg-white pl-3 pr-8 text-sm font-medium text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer">
+          className="h-9 w-full appearance-none rounded-md border border-zinc-200 shadow-sm bg-white pl-3 pr-8 text-sm font-medium text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer">
           {options.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
         </select>
         <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -371,6 +370,7 @@ function LabeledSelect({ label, value, onChange, options }) {
     </div>
   );
 }
+
 function Toggle({ checked, onChange, disabled, label }) {
   return (
     <button type="button" onClick={() => !disabled && onChange(!checked)} disabled={disabled}

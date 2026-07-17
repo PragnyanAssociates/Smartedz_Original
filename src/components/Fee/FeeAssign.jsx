@@ -10,13 +10,11 @@ const inr = (n) =>
 const ANNUAL_TITLE = 'Academic Fee';
 const NEW = '__new__';
 
-// canEdit arrives from FeeManagement with the closed-year lock already
-// folded in — a previous year is visible but never writable.
 export default function FeeAssign({ data, fetchData, user, canEdit = true, years = [], yearId, setYearId, yearName, isActiveYear = true }) {
   const classes = data.classes || [];
   const [activeClass, setActiveClass] = useState('');
-  const [sub, setSub]                 = useState('annual');   // 'annual' | 'other'
-  const [otherTitle, setOtherTitle]   = useState(null);       // selected Other-fee title, or NEW, or null
+  const [sub, setSub]                 = useState('annual');
+  const [otherTitle, setOtherTitle]   = useState(null);
 
   useEffect(() => {
     if (classes.length === 0) return;
@@ -29,7 +27,6 @@ export default function FeeAssign({ data, fetchData, user, canEdit = true, years
     [classes, activeClass]
   );
 
-  // Plans for the currently selected class.
   const classPlans = useMemo(
     () => (data.plans || []).filter(p => String(p.class_id) === String(activeClass)),
     [data.plans, activeClass]
@@ -39,23 +36,18 @@ export default function FeeAssign({ data, fetchData, user, canEdit = true, years
     [classPlans]
   );
 
-  // Other-fee TITLES are shared across the whole institution/year — a title
-  // shows for every class, but each class sets its own amount (a class with
-  // no plan row for that title simply isn't charged it).
   const otherTitles = useMemo(() => {
     const set = new Set();
     (data.plans || []).forEach(p => { if (p.fee_category === 'other' && p.title) set.add(p.title); });
     return [...set].sort((a, b) => a.localeCompare(b));
   }, [data.plans]);
 
-  // Default-select one Other fee (keep valid selection across class changes).
   useEffect(() => {
     if (sub !== 'other') return;
     const valid = otherTitle === NEW || otherTitles.includes(otherTitle);
     if (!valid) setOtherTitle(otherTitles[0] ?? null);
   }, [sub, otherTitles, otherTitle]);
 
-  // The plan for (selected class + selected other title), if this class has one.
   const currentOtherPlan = useMemo(() => {
     if (sub !== 'other' || !otherTitle || otherTitle === NEW) return null;
     return classPlans.find(p => p.fee_category === 'other' && p.title === otherTitle) || null;
@@ -72,7 +64,6 @@ export default function FeeAssign({ data, fetchData, user, canEdit = true, years
   const useDropdown = classes.length > 6;
   const classLabel  = (c) => `${c.className}${c.section ? ` - ${c.section}` : ''}`;
 
-  // amount set for a given other-title in the active class (for chip hints)
   const amountFor = (title) => {
     const p = classPlans.find(pl => pl.fee_category === 'other' && pl.title === title);
     return p ? Number(p.full_fee) || 0 : null;
@@ -84,19 +75,18 @@ export default function FeeAssign({ data, fetchData, user, canEdit = true, years
 
   return (
     <div className="space-y-6">
-      <div className="bg-blue-50/60 border border-blue-100 rounded-md p-4 flex gap-3 text-[11px] text-blue-800 leading-relaxed">
+      <div className="bg-blue-50/60 border border-blue-100 rounded-md p-4 flex items-start gap-3 text-[11px] text-blue-800 leading-relaxed">
         <Info className="size-4 shrink-0 text-blue-500 mt-0.5" />
         <p>
           Set the <strong className="text-blue-900">Academic Fee</strong> per each class & Add
           Books fee, Transport fee..etc of each class in the <strong className="text-blue-900">Other Fee</strong>. Discounts go in the <strong>Fee Concessions</strong> tab.
-          Fees belong to an <strong className="text-blue-900">academic year</strong> — students pay afresh each year.
+          Fees belong to an <strong className="text-blue-900">academic year</strong> - students pay afresh each year.
         </p>
       </div>
 
       {!isActiveYear && <ClosedYearNote yearName={yearName} />}
 
-      {/* Year + Class filter */}
-      <div className="flex items-center gap-3 flex-wrap bg-zinc-50/50 p-2.5 rounded-md ring-1 ring-black/5">
+      <div className="flex items-center gap-3 flex-wrap bg-zinc-50/50 p-2.5 rounded-md ring-1 ring-black/5 shadow-sm">
         <FeeYearSelect years={years} value={yearId} onChange={setYearId} />
         {classes.length > 0 && (
           <>
@@ -107,7 +97,7 @@ export default function FeeAssign({ data, fetchData, user, canEdit = true, years
             {useDropdown ? (
               <div className="relative w-full sm:w-auto">
                 <select value={activeClass} onChange={e => setActiveClass(e.target.value)}
-                  className="h-8 w-full sm:w-auto appearance-none rounded border border-zinc-200 bg-white pl-2 pr-7 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer">
+                  className="h-9 w-full sm:w-auto appearance-none rounded border border-zinc-200 shadow-sm bg-white pl-2 pr-7 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer">
                   {classes.map(c => <option key={c.id} value={c.id}>{classLabel(c)}</option>)}
                 </select>
                 <ChevronDown className="size-3.5 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -118,8 +108,8 @@ export default function FeeAssign({ data, fetchData, user, canEdit = true, years
                   <button key={c.id} onClick={() => setActiveClass(String(c.id))}
                     className={`px-2.5 py-1.5 rounded-md text-[10px] font-semibold uppercase tracking-wider transition-colors ${
                       String(activeClass) === String(c.id)
-                        ? 'bg-primary/10 text-primary ring-1 ring-primary/20'
-                        : 'bg-white text-zinc-500 ring-1 ring-zinc-200 hover:bg-zinc-50 hover:text-zinc-700'
+                        ? 'bg-primary/10 text-primary ring-1 ring-inset ring-primary/20 shadow-sm'
+                        : 'bg-white text-zinc-500 ring-1 ring-zinc-200 shadow-sm hover:bg-zinc-50 hover:text-zinc-700'
                     }`}>
                     {classLabel(c)}
                   </button>
@@ -130,7 +120,6 @@ export default function FeeAssign({ data, fetchData, user, canEdit = true, years
         )}
       </div>
 
-      {/* Sub-tabs */}
       <div className="inline-flex items-center gap-1 bg-zinc-100 p-1 rounded-lg">
         <button onClick={() => setSub('annual')}
           className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-medium transition-colors ${sub === 'annual' ? 'bg-white text-primary shadow-sm' : 'text-zinc-600 hover:text-zinc-900'}`}>
@@ -183,10 +172,9 @@ export default function FeeAssign({ data, fetchData, user, canEdit = true, years
   );
 }
 
-// ---- Other-fee picker (shared titles as chips) ----
 function OtherFeePicker({ titles, amountFor, activeTitle, onSelect, onAdd, canEdit, compact }) {
   return (
-    <div className="bg-white ring-1 ring-black/5 rounded-lg p-4">
+    <div className="bg-white ring-1 ring-black/5 shadow-sm rounded-lg p-4">
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mr-1">Other Fees</span>
         {titles.map(t => {
@@ -195,35 +183,34 @@ function OtherFeePicker({ titles, amountFor, activeTitle, onSelect, onAdd, canEd
           return (
             <button key={t} onClick={() => onSelect(t)}
               className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                active ? 'bg-primary text-white' : 'bg-white text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-50'
+                active ? 'bg-primary text-white shadow-sm' : 'bg-white text-zinc-600 ring-1 ring-zinc-200 shadow-sm hover:bg-zinc-50'
               }`}>
-              {t}{' '}
+              {t} 
               <span className={active ? 'opacity-80' : (amt == null ? 'text-zinc-300' : 'text-zinc-400')}>
-                · {amt == null ? 'not set' : inr(amt)}
+                {' '}- {amt == null ? 'not set' : inr(amt)}
               </span>
             </button>
           );
         })}
         {canEdit && (
           <button onClick={onAdd}
-            className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
-              activeTitle === NEW ? 'bg-primary text-white' : 'text-primary ring-1 ring-primary/30 hover:bg-primary/5'
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
+              activeTitle === NEW ? 'bg-primary text-white shadow-sm' : 'text-primary ring-1 ring-primary/30 shadow-sm hover:bg-primary/5'
             }`}>
             <FolderPlus className="size-3.5" /> Add fee
           </button>
         )}
       </div>
       {!compact && titles.length === 0 && (
-        <p className="text-[11px] text-zinc-400 italic mt-3">No other fees yet. Click “Add fee” to create one (e.g. Books Fee).</p>
+        <p className="text-[11px] text-zinc-400 italic mt-3">No other fees yet. Click "Add fee" to create one (e.g. Books Fee).</p>
       )}
       {compact && activeTitle && activeTitle !== NEW && amountFor(activeTitle) == null && (
-        <p className="text-[11px] text-accent mt-3">This fee has no amount for this class yet — set an amount below to apply it here.</p>
+        <p className="text-[11px] text-accent mt-3">This fee has no amount for this class yet - set an amount below to apply it here.</p>
       )}
     </div>
   );
 }
 
-// ---- Plan editor (title + full fee + due date + installments) ----
 function PlanEditor({ category, plan, presetTitle, titleEditable, planInstallments, selectedClass, classLabel, data, user, canEdit, fetchData, onSaved, onDeleted }) {
   const isOther = category === 'other';
   const [form, setForm] = useState({ title: '', full_fee: '', full_due_date: '', installments: [] });
@@ -280,7 +267,7 @@ function PlanEditor({ category, plan, presetTitle, titleEditable, planInstallmen
 
   const remove = async () => {
     if (!canEdit || !plan) return;
-    if (!window.confirm(`Remove “${plan.title}” for ${classLabel(selectedClass)}? (Other classes keep theirs.)`)) return;
+    if (!window.confirm(`Remove "${plan.title}" for ${classLabel(selectedClass)}? (Other classes keep theirs.)`)) return;
     setDeleting(true);
     try {
       await fetch(`${API_BASE_URL}/fees/class-plan/${plan.id}`, { method: 'DELETE' });
@@ -292,84 +279,84 @@ function PlanEditor({ category, plan, presetTitle, titleEditable, planInstallmen
   const titleDisabled = !canEdit || !titleEditable;
 
   return (
-    <div className="ring-1 ring-black/5 rounded-lg bg-white p-5 sm:p-6 space-y-5">
+    <div className="ring-1 ring-black/5 shadow-sm rounded-lg bg-white p-5 sm:p-6 space-y-5">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div className="flex-1 max-w-md">
-          <label className="text-xs font-medium text-zinc-600 mb-1.5 flex items-center gap-1.5"><Tag className="size-3.5 text-primary" /> Title</label>
+          <label className="text-xs font-semibold text-zinc-900 mb-1.5 flex items-center gap-1.5"><Tag className="size-3.5 text-primary" /> Title</label>
           <input value={form.title} disabled={titleDisabled}
             onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
             placeholder={isOther ? 'e.g. Books Fee, Library Fee' : ANNUAL_TITLE}
-            className="w-full rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm font-medium text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:bg-zinc-50 disabled:text-zinc-500" />
+            className="w-full rounded-md border border-zinc-200 shadow-sm bg-white px-3 h-9 text-sm font-medium text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:bg-zinc-50 disabled:text-zinc-500" />
           {!isOther && <p className="text-[10px] text-zinc-400 mt-1">The academic fee title is fixed.</p>}
-          {isOther && !titleEditable && <p className="text-[10px] text-zinc-400 mt-1">Shared title — set this class's amount below.</p>}
+          {isOther && !titleEditable && <p className="text-[10px] text-zinc-400 mt-1">Shared title - set this class's amount below.</p>}
         </div>
         <div className="flex items-center gap-2">
           {isOther && plan && canEdit && (
             <button onClick={remove} disabled={deleting}
-              className="inline-flex items-center gap-1.5 text-red-600 ring-1 ring-red-200 px-3 py-2 rounded-md text-xs font-medium hover:bg-red-50 transition-colors disabled:opacity-50">
-              <Trash2 className="size-3.5" /> {deleting ? 'Removing…' : 'Remove'}
+              className="inline-flex items-center justify-center gap-1.5 h-9 px-4 shrink-0 text-xs font-medium text-red-600 bg-white ring-1 ring-red-200 shadow-sm rounded-md hover:bg-red-50 hover:text-red-700 transition-colors disabled:opacity-50">
+              <Trash2 className="size-3.5" /> {deleting ? 'Removing...' : 'Remove'}
             </button>
           )}
           <button onClick={save} disabled={saving || !canEdit}
-            className="bg-primary text-white px-4 py-2 rounded-md text-xs font-medium hover:bg-primary/90 transition-colors flex items-center gap-1.5 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">
-            <Save className="size-3.5" /> {saving ? 'Saving…' : 'Save Structure'}
+            className="w-full sm:w-auto h-9 px-6 min-w-[120px] bg-primary text-white rounded-md text-xs font-medium hover:bg-primary/90 transition-colors flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">
+            <Save className="size-3.5" /> {saving ? 'Saving...' : 'Save Structure'}
           </button>
         </div>
       </div>
 
       <div className="border-t border-zinc-100 pt-5">
         <h3 className="text-sm font-semibold text-zinc-900 flex items-center gap-2 mb-4">
-          <IndianRupee className="size-4 text-primary" /> {form.title || (isOther ? 'New Fee' : ANNUAL_TITLE)} — {classLabel(selectedClass)}
+          <IndianRupee className="size-4 text-primary" /> {form.title || (isOther ? 'New Fee' : ANNUAL_TITLE)} - {classLabel(selectedClass)}
         </h3>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="flex flex-col">
-            <label className="text-xs font-medium text-zinc-600 mb-1.5">{isOther ? 'Fee Amount (this class)' : 'Full Fee (Academic)'}</label>
+            <label className="text-xs font-semibold text-zinc-900 mb-1.5">{isOther ? 'Fee Amount (this class)' : 'Full Fee (Academic)'}</label>
             <input type="number" min="0" value={form.full_fee} disabled={!canEdit}
               onChange={e => setForm(f => ({ ...f, full_fee: e.target.value }))} placeholder="e.g. 45000"
-              className="w-full rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:bg-zinc-50 disabled:text-zinc-400" />
+              className="w-full rounded-md border border-zinc-200 shadow-sm bg-white px-3 h-9 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:bg-zinc-50 disabled:text-zinc-400" />
             <p className="text-[10px] text-zinc-400 mt-1">The total if paid in a single payment.</p>
           </div>
           <div className="flex flex-col">
-            <label className="text-xs font-medium text-zinc-600 mb-1.5">Full Payment Due Date</label>
+            <label className="text-xs font-semibold text-zinc-900 mb-1.5">Full Payment Due Date</label>
             <input type="date" value={form.full_due_date} disabled={!canEdit}
               onChange={e => setForm(f => ({ ...f, full_due_date: e.target.value }))}
-              className="w-full rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:bg-zinc-50 disabled:text-zinc-400" />
+              className="w-full rounded-md border border-zinc-200 shadow-sm bg-white px-3 h-9 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:bg-zinc-50 disabled:text-zinc-400" />
             <p className="text-[10px] text-zinc-400 mt-1">Shown to students; turns red once overdue.</p>
           </div>
         </div>
 
         <div className="mt-5">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-xs font-medium text-zinc-600">Installments (optional)</p>
+            <p className="text-xs font-semibold text-zinc-900">Installments (optional)</p>
             {canEdit && (
-              <button onClick={addInstallment} className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline">
+              <button onClick={addInstallment} className="inline-flex items-center gap-1.5 text-[11px] font-medium text-primary hover:underline">
                 <Plus className="size-3.5" /> Add installment
               </button>
             )}
           </div>
           {form.installments.length === 0 ? (
-            <p className="text-[11px] text-zinc-400 italic">No installments. Add terms like “Term 1”, “Term 2”… to let students pay in parts.</p>
+            <p className="text-[11px] text-zinc-400 italic">No installments. Add terms like "Term 1", "Term 2"... to let students pay in parts.</p>
           ) : (
             <div className="space-y-2">
               {form.installments.map((it, idx) => (
                 <div key={idx} className="flex flex-col sm:flex-row sm:items-center gap-2">
                   <input value={it.label} disabled={!canEdit} onChange={e => updateInstallment(idx, 'label', e.target.value)} placeholder={`Installment ${idx + 1}`}
-                    className="flex-1 rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:bg-zinc-50 disabled:text-zinc-400" />
+                    className="flex-1 rounded-md border border-zinc-200 shadow-sm bg-white px-3 h-9 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:bg-zinc-50 disabled:text-zinc-400" />
                   <input type="number" min="0" value={it.amount} disabled={!canEdit} onChange={e => updateInstallment(idx, 'amount', e.target.value)} placeholder="Amount"
-                    className="w-full sm:w-36 rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:bg-zinc-50 disabled:text-zinc-400" />
+                    className="w-full sm:w-36 rounded-md border border-zinc-200 shadow-sm bg-white px-3 h-9 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:bg-zinc-50 disabled:text-zinc-400" />
                   <input type="date" value={it.due_date} disabled={!canEdit} onChange={e => updateInstallment(idx, 'due_date', e.target.value)}
-                    className="w-full sm:w-44 rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:bg-zinc-50 disabled:text-zinc-400" />
+                    className="w-full sm:w-44 rounded-md border border-zinc-200 shadow-sm bg-white px-3 h-9 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:bg-zinc-50 disabled:text-zinc-400" />
                   {canEdit && (
-                    <button onClick={() => removeInstallment(idx)} className="p-1.5 text-zinc-400 hover:text-accent rounded transition-colors self-end sm:self-auto">
+                    <button onClick={() => removeInstallment(idx)} className="flex items-center justify-center size-8 sm:size-9 shrink-0 bg-white text-zinc-600 border border-zinc-200 rounded-md hover:text-red-600 hover:bg-red-50 transition-colors shadow-sm self-end sm:self-auto">
                       <Trash2 className="size-4" />
                     </button>
                   )}
                 </div>
               ))}
-              <div className={`text-[11px] mt-1 ${installTotal === fullFeeNum ? 'text-green-600' : 'text-accent'}`}>
+              <div className={`text-[11px] mt-1 ${installTotal === fullFeeNum ? 'text-emerald-600' : 'text-amber-600'}`}>
                 Installments total: {inr(installTotal)}
-                {fullFeeNum > 0 && installTotal !== fullFeeNum && ` — does not match ${inr(fullFeeNum)}`}
+                {fullFeeNum > 0 && installTotal !== fullFeeNum && ` - does not match ${inr(fullFeeNum)}`}
               </div>
             </div>
           )}
@@ -379,11 +366,10 @@ function PlanEditor({ category, plan, presetTitle, titleEditable, planInstallmen
   );
 }
 
-// ---- Assign to students (per plan) ----
 function AssignTable({ plan, category = 'annual', students, data, user, canEdit, fetchData, selectedClass }) {
   const [savingId, setSavingId] = useState(null);
   const fullFeeNum = plan ? Number(plan.full_fee) || 0 : 0;
-  const showConcession = category === 'annual'; // concession applies to Annual fee only
+  const showConcession = category === 'annual';
 
   const assignmentOf = useCallback(
     (sid) => (data.assignments || []).find(a => String(a.student_id) === String(sid) && String(a.plan_id) === String(plan?.id)) || null,
@@ -425,18 +411,18 @@ function AssignTable({ plan, category = 'annual', students, data, user, canEdit,
   };
 
   return (
-    <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden">
+    <div className="ring-1 ring-black/5 shadow-sm rounded-lg bg-white overflow-hidden">
       <div className="flex items-center justify-between gap-3 flex-wrap p-4 border-b border-zinc-100">
         <h3 className="text-sm font-semibold text-zinc-900">
-          Assign to Students <span className="text-zinc-400 font-normal">({students.length})</span>
+          Assign to Students <span className="text-zinc-500 font-normal">({students.length})</span>
         </h3>
         {canEdit && plan && (
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Assign all as</span>
+            <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Assign all as</span>
             <button onClick={() => assignWholeClass('full')} disabled={savingId === 'all'}
-              className="px-2.5 py-1.5 rounded-md text-[10px] font-semibold uppercase tracking-wider bg-white text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-50 disabled:opacity-50">Full</button>
+              className="px-2.5 py-1.5 rounded-md text-[10px] font-semibold uppercase tracking-wider bg-white text-zinc-600 border border-zinc-200 shadow-sm hover:bg-zinc-50 disabled:opacity-50">Full</button>
             <button onClick={() => assignWholeClass('installment')} disabled={savingId === 'all'}
-              className="px-2.5 py-1.5 rounded-md text-[10px] font-semibold uppercase tracking-wider bg-white text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-50 disabled:opacity-50">Installment</button>
+              className="px-2.5 py-1.5 rounded-md text-[10px] font-semibold uppercase tracking-wider bg-white text-zinc-600 border border-zinc-200 shadow-sm hover:bg-zinc-50 disabled:opacity-50">Installment</button>
           </div>
         )}
       </div>
@@ -458,13 +444,13 @@ function AssignTable({ plan, category = 'annual', students, data, user, canEdit,
               const mode = a ? a.payment_mode : '';
               return (
                 <tr key={s.id} className="hover:bg-zinc-50/60 transition-colors">
-                  <td className="px-5 py-3 text-xs font-semibold text-zinc-400 tabular-nums">{s.roll_no || '—'}</td>
+                  <td className="px-5 py-3 text-xs font-medium text-zinc-400 tabular-nums">{s.roll_no || '-'}</td>
                   <td className="px-5 py-3 text-sm font-medium text-zinc-900">{s.name}</td>
                   <td className="px-5 py-3">
                     <div className="relative w-36">
                       <select value={mode} disabled={savingId === s.id || !plan || !canEdit} onChange={e => setMode(s, e.target.value)}
-                        className="h-8 w-full appearance-none rounded border border-zinc-200 bg-white pl-2 pr-7 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer disabled:bg-zinc-50 disabled:text-zinc-400">
-                        <option value="">— not set —</option>
+                        className="h-9 w-full appearance-none rounded border border-zinc-200 shadow-sm bg-white pl-2 pr-7 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer disabled:bg-zinc-50 disabled:text-zinc-400">
+                        <option value="">- not set -</option>
                         <option value="full">Full Fee</option>
                         <option value="installment">Installment</option>
                       </select>
@@ -474,7 +460,7 @@ function AssignTable({ plan, category = 'annual', students, data, user, canEdit,
                   <td className="px-5 py-3 text-xs text-zinc-700 tabular-nums">{inr(fullFeeNum)}</td>
                   {showConcession && (
                     <td className="px-5 py-3 text-xs tabular-nums">
-                      {concession > 0 ? <span className="text-accent">− {inr(concession)}</span> : <span className="text-zinc-300">—</span>}
+                      {concession > 0 ? <span className="text-amber-600">- {inr(concession)}</span> : <span className="text-zinc-300">-</span>}
                     </td>
                   )}
                   <td className="px-5 py-3 text-xs font-semibold text-zinc-900 tabular-nums">{inr(net)}</td>
@@ -488,7 +474,7 @@ function AssignTable({ plan, category = 'annual', students, data, user, canEdit,
       </div>
 
       {!plan && students.length > 0 && (
-        <p className="px-5 py-3 text-[11px] text-accent bg-accent/5 border-t border-accent/10">
+        <p className="px-5 py-3 text-[11px] font-medium text-amber-800 bg-amber-50/50 border-t border-amber-100">
           Save the fee structure above (set an amount for this class) before assigning a payment mode.
         </p>
       )}

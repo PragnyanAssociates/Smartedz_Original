@@ -7,7 +7,7 @@ const inr = (n) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })
     .format(Number(n) || 0);
 
-// The roster is always one fee × one class × one academic year.
+// The roster is always one fee x one class x one academic year.
 export default function Collection({ data, user, years = [], yearId, setYearId, yearName }) {
   const classes = data.classes || [];
   const [view, setView]       = useState('unpaid'); // 'paid' | 'unpaid'
@@ -34,7 +34,7 @@ export default function Collection({ data, user, years = [], yearId, setYearId, 
 
   const classLabel = (cid) => {
     const c = classes.find(c => String(c.id) === String(cid));
-    return c ? `${c.className}${c.section ? ` - ${c.section}` : ''}` : '—';
+    return c ? `${c.className}${c.section ? ` - ${c.section}` : ''}` : '-';
   };
 
   // Fee-type options from the plans we already have (Academic first).
@@ -113,7 +113,7 @@ export default function Collection({ data, user, years = [], yearId, setYearId, 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="inline-flex items-center gap-1 bg-zinc-100 p-1 rounded-lg">
           <button onClick={() => setView('paid')}
-            className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-medium transition-colors ${view === 'paid' ? 'bg-white text-green-700 shadow-sm' : 'text-zinc-600 hover:text-zinc-900'}`}>
+            className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-medium transition-colors ${view === 'paid' ? 'bg-white text-emerald-700 shadow-sm' : 'text-zinc-600 hover:text-zinc-900'}`}>
             <CheckCircle2 className="size-3.5" /> Paid <span className="text-zinc-400">({counts.paid})</span>
           </button>
           <button onClick={() => setView('unpaid')}
@@ -129,22 +129,22 @@ export default function Collection({ data, user, years = [], yearId, setYearId, 
           <LabeledSelect icon={GraduationCap} label="Class" value={classId} onChange={setClassId}
             options={classes.map(c => ({ v: String(c.id), l: `${c.className}${c.section ? ` - ${c.section}` : ''}` }))} />
           <button onClick={downloadList} disabled={inScope.length === 0}
-            className="inline-flex items-center gap-1.5 bg-primary text-white px-3.5 h-8 rounded-md text-xs font-semibold hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-50">
+            className="inline-flex items-center justify-center gap-1.5 h-9 px-4 shrink-0 bg-primary text-white rounded-md text-xs font-semibold hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-50">
             <Download className="size-3.5" /> Download
           </button>
         </div>
       </div>
 
-      <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden">
+      <div className="ring-1 ring-black/5 shadow-sm rounded-lg bg-white overflow-hidden">
         <div className="p-4 border-b border-zinc-100 flex items-center justify-between gap-3 flex-wrap">
           <h3 className="text-sm font-semibold text-zinc-900 flex items-center gap-2">
             <Wallet className="size-4 text-primary" /> {view === 'paid' ? 'Fully Paid' : 'Outstanding'}
-            <span className="text-zinc-400 font-normal">· {feeType || '—'} ({filtered.length})</span>
-            {yearName && <span className="text-[10px] font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded-full uppercase tracking-wider">{yearName}</span>}
+            <span className="text-zinc-400 font-normal">- {feeType || '-'} ({filtered.length})</span>
+            {yearName && <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 ring-1 ring-inset ring-blue-600/20 px-2 py-0.5 rounded-full uppercase tracking-wider">{yearName}</span>}
           </h3>
           {view === 'unpaid'
             ? <span className="text-[11px] text-zinc-500">Total due: <strong className="text-accent tabular-nums">{inr(totalUnpaidBalance)}</strong></span>
-            : <span className="text-[11px] text-zinc-500">Total collected: <strong className="text-green-700 tabular-nums">{inr(totalPaidCollected)}</strong></span>}
+            : <span className="text-[11px] text-zinc-500">Total collected: <strong className="text-emerald-700 tabular-nums">{inr(totalPaidCollected)}</strong></span>}
         </div>
 
         {loading ? (
@@ -162,18 +162,18 @@ export default function Collection({ data, user, years = [], yearId, setYearId, 
               <tbody className="divide-y divide-zinc-100">
                 {filtered.length > 0 ? filtered.map(r => (
                   <tr key={r.student_id} className="hover:bg-zinc-50/60 transition-colors">
-                    <td className="px-5 py-3 text-xs font-semibold text-zinc-400 tabular-nums">{r.roll_no || '—'}</td>
+                    <td className="px-5 py-3 text-xs font-semibold text-zinc-400 tabular-nums">{r.roll_no || '-'}</td>
                     <td className="px-5 py-3 text-sm font-medium text-zinc-900">{r.name}</td>
                     <td className="px-5 py-3 text-xs text-zinc-700">{classLabel(r.class_id)}</td>
                     <td className="px-5 py-3 text-xs text-zinc-700 tabular-nums">{inr(r.net)}</td>
-                    <td className="px-5 py-3 text-xs text-green-700 tabular-nums">{inr(r.paid)}</td>
+                    <td className="px-5 py-3 text-xs text-emerald-700 tabular-nums">{inr(r.paid)}</td>
                     <td className="px-5 py-3 text-xs font-semibold tabular-nums">
-                      {r.balance > 0 ? <span className="text-accent">{inr(r.balance)}</span> : <span className="text-green-700">{inr(0)}</span>}
+                      {r.balance > 0 ? <span className="text-accent">{inr(r.balance)}</span> : <span className="text-emerald-700">{inr(0)}</span>}
                     </td>
                     <td className="px-5 py-3">
                       {r.status === 'paid'
-                        ? <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium ring-1 bg-green-50 text-green-700 ring-green-600/20"><CheckCircle2 className="size-3" /> Paid</span>
-                        : <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium ring-1 bg-amber-50 text-amber-700 ring-amber-600/20"><AlertCircle className="size-3" /> Unpaid</span>}
+                        ? <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20"><CheckCircle2 className="size-3" /> Paid</span>
+                        : <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-600/20"><AlertCircle className="size-3" /> Unpaid</span>}
                     </td>
                   </tr>
                 )) : (
@@ -201,7 +201,7 @@ function LabeledSelect({ icon: Icon, label, value, onChange, options }) {
       </span>
       <div className="relative">
         <select value={value} onChange={e => onChange(e.target.value)}
-          className="h-8 appearance-none rounded border border-zinc-200 bg-white pl-2 pr-7 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer">
+          className="h-9 appearance-none rounded border border-zinc-200 shadow-sm bg-white pl-2 pr-7 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer">
           {options.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
         </select>
         <ChevronDown className="size-3.5 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />

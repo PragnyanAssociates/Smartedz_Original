@@ -57,7 +57,6 @@ export default function Account({ user, canEdit = true }) {
         offline_instructions: form.offline_instructions,
         userId: user?.id ?? null, userName: user?.name ?? null
       };
-      // Only send the secret if the admin typed a new one.
       if (form.razorpay_key_secret) body.razorpay_key_secret = form.razorpay_key_secret;
       const res = await fetch(`${API_BASE_URL}/fees/account`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
@@ -79,11 +78,11 @@ export default function Account({ user, canEdit = true }) {
 
   return (
     <div className="space-y-6">
-      <div className="bg-blue-50/60 border border-blue-100 rounded-md p-4 flex gap-3 text-[11px] text-blue-800 leading-relaxed">
+      <div className="bg-blue-50/60 border border-blue-100 rounded-md p-4 flex items-start gap-3 text-[11px] text-blue-800 leading-relaxed">
         <Info className="size-4 shrink-0 text-blue-500 mt-0.5" />
         <p>
           Two ways to collect fees. <strong>Online</strong> uses your own Razorpay account (which covers UPI, cards, netbanking, wallets),
-          and payments are confirmed automatically. <strong>Offline</strong> is for cash paid at the school office — the student uploads
+          and payments are confirmed automatically. <strong>Offline</strong> is for cash paid at the school office - the student uploads
           the receipt and an admin approves it. Your Key Secret is stored securely and never shown again after saving.
         </p>
       </div>
@@ -91,7 +90,7 @@ export default function Account({ user, canEdit = true }) {
       {/* Online */}
       <Card title="Online Payments (Razorpay)" icon={KeyRound}>
         <div className="flex items-center justify-between mb-4">
-          <p className="text-[11px] text-zinc-500 max-w-md">Enter your Razorpay API keys from the Razorpay Dashboard → Settings → API Keys.</p>
+          <p className="text-[11px] text-zinc-500 max-w-md">Enter your Razorpay API keys from the Razorpay Dashboard {"->"} Settings {"->"} API Keys.</p>
           <Toggle checked={form.online_enabled} disabled={!canEdit} onChange={v => set('online_enabled', v)} label="Enabled" />
         </div>
         <Grid>
@@ -102,13 +101,13 @@ export default function Account({ user, canEdit = true }) {
             onChange={v => set('razorpay_key_id', v.trim())} placeholder="rzp_live_xxxxxxxx" />
           <Field label="Razorpay Key Secret" value={form.razorpay_key_secret} disabled={!canEdit}
             onChange={v => set('razorpay_key_secret', v.trim())}
-            placeholder={secretSet ? '•••••••• (leave blank to keep current)' : 'Enter key secret'}
+            placeholder={secretSet ? '******** (leave blank to keep current)' : 'Enter key secret'}
             hint={secretSet ? 'A secret is already saved. Leave blank to keep it.' : null} />
         </Grid>
-        <p className="text-[11px] text-zinc-500 mt-3">
+       <p className="text-[11px] text-zinc-500 mt-3">
           Which methods appear at checkout (UPI, cards, netbanking, wallets) is decided by your Razorpay account. If UPI is missing,
-          enable it in <strong>Razorpay Dashboard → Settings → Configuration / Payment Methods</strong> and complete account activation (KYC).
-          Online payments are confirmed by the gateway — they don't need admin approval.
+          enable it in <strong>Razorpay Dashboard {"->"} Settings {"->"} Configuration / Payment Methods</strong> and complete account activation (KYC).
+          Online payments are confirmed by the gateway - they don't need admin approval.
         </p>
       </Card>
 
@@ -123,15 +122,15 @@ export default function Account({ user, canEdit = true }) {
           <textarea value={form.offline_instructions} disabled={!canEdit} rows={3}
             onChange={e => set('offline_instructions', e.target.value)}
             placeholder="e.g. Pay cash at the school fee counter, collect the receipt, and upload a photo of it here."
-            className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 resize-none disabled:bg-zinc-50 disabled:text-zinc-400" />
+            className="w-full rounded-md border border-zinc-200 shadow-sm bg-white px-3 py-2 text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 resize-none disabled:bg-zinc-50 disabled:text-zinc-400" />
         </div>
       </Card>
 
       {canEdit && (
         <div className="flex justify-end">
           <button onClick={save} disabled={saving}
-            className="bg-primary text-white px-6 py-2 rounded-md text-xs font-medium hover:bg-primary/90 transition-colors flex items-center gap-1.5 shadow-sm disabled:opacity-60">
-            <Save className="size-3.5" /> {saving ? 'Saving…' : 'Save Settings'}
+            className="w-full sm:w-auto h-9 px-6 min-w-[120px] bg-primary text-white rounded-md text-xs font-medium hover:bg-primary/90 transition-colors flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-60">
+            <Save className="size-3.5" /> {saving ? 'Saving...' : 'Save Settings'}
           </button>
         </div>
       )}
@@ -141,7 +140,7 @@ export default function Account({ user, canEdit = true }) {
 
 function Card({ title, icon: Icon, children }) {
   return (
-    <div className="ring-1 ring-black/5 rounded-lg bg-white p-5 sm:p-6">
+    <div className="ring-1 ring-black/5 shadow-sm rounded-lg bg-white p-5 sm:p-6">
       <h3 className="text-sm font-semibold text-zinc-900 flex items-center gap-2 mb-4">
         {Icon && <Icon className="size-4 text-primary" />} {title}
       </h3>
@@ -149,20 +148,23 @@ function Card({ title, icon: Icon, children }) {
     </div>
   );
 }
+
 function Grid({ children }) {
   return <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{children}</div>;
 }
+
 function Field({ label, value, onChange, type = 'text', placeholder, hint, disabled }) {
   return (
     <div className="flex flex-col">
       <label className="text-xs font-medium text-zinc-600 mb-1.5">{label}</label>
       <input type={type} value={value || ''} disabled={disabled}
         onChange={e => onChange(e.target.value)} placeholder={placeholder}
-        className="w-full rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:bg-zinc-50 disabled:text-zinc-400" />
+        className="w-full rounded-md border border-zinc-200 shadow-sm bg-white px-3 h-9 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:bg-zinc-50 disabled:text-zinc-400" />
       {hint && <p className="text-[10px] text-zinc-400 mt-1">{hint}</p>}
     </div>
   );
 }
+
 function Toggle({ checked, onChange, disabled, label }) {
   return (
     <button type="button" onClick={() => !disabled && onChange(!checked)} disabled={disabled}
