@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { fmtDate, fileToBase64, statusStyle } from './HwUtils';
 import FileViewer from './FileViewer';
+import HomeworkHelp from './HwHelp';
 
 // Compact date + time for when a homework was created, e.g. "15 Jul 2026,
 // 9:30 am", always shown in IST. The backend (Railway) stores created_at in
@@ -151,6 +152,7 @@ export default function StudentHomework() {
           </h1>
           <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">View and submit your class assignments.</p>
         </header>
+        <HomeworkHelp topic="student" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 flex-1 items-start">

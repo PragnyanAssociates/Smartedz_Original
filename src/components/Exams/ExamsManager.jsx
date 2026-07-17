@@ -1,9 +1,9 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   Plus, Edit, Trash2, X, Eye, Loader2, ArrowLeft, FileText,
-  Save, BookOpen, HelpCircle, CheckCircle2, Clock, Search, User
+  Save, BookOpen, HelpCircle, CheckCircle2, Clock, Search, User, ChevronDown
 } from 'lucide-react';
 import ExamEditor from './ExamEditor';
 import GradingView from './GradingView';
@@ -42,6 +42,12 @@ export default function ExamsManager({ canManage }) {
   const [exams, setExams]     = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // List filters. '' = All. Both are client-side over the loaded exams —
+  // /admin/exams/teacher already returns class_id + subject_id on every row,
+  // so there's nothing to refetch.
+  const [classFilter, setClassFilter]     = useState('');
+  const [subjectFilter, setSubjectFilter] = useState('');
+
   // -----------------------------------------------------------------
   const loadExams = useCallback(async () => {
     if (!user?.id) return;
@@ -55,6 +61,55 @@ export default function ExamsManager({ canManage }) {
   }, [user]);
 
   useEffect(() => { if (view === 'list') loadExams(); }, [view, loadExams]);
+
+  // Options come from the exams themselves rather than /admin/data, so the
+  // dropdowns only ever offer combinations that actually exist — no picking a
+  // class or subject and landing on an empty table.
+  const classOptions = useMemo(() => {
+    const map = new Map();
+    exams.forEach(e => {
+      if (e.class_id == null) return;
+      const key = String(e.class_id);
+      if (!map.has(key)) map.set(key, e.className || `Class ${e.class_id}`);
+    });
+    return [...map.entries()]
+      .map(([id, label]) => ({ id, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
+  }, [exams]);
+
+  // Subjects narrow to the selected class.
+  const subjectOptions = useMemo(() => {
+    const map = new Map();
+    exams.forEach(e => {
+      if (e.subject_id == null) return;
+      if (classFilter && String(e.class_id) !== String(classFilter)) return;
+      const key = String(e.subject_id);
+      if (!map.has(key)) map.set(key, e.subject_name || `Subject ${e.subject_id}`);
+    });
+    return [...map.entries()]
+      .map(([id, label]) => ({ id, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [exams, classFilter]);
+
+  // Changing the class clears the subject only when that subject has no exam
+  // in the newly-chosen class.
+  const onClassFilterChange = (v) => {
+    setClassFilter(v);
+    if (v && subjectFilter) {
+      const stillValid = exams.some(e =>
+        String(e.class_id) === String(v) && String(e.subject_id) === String(subjectFilter));
+      if (!stillValid) setSubjectFilter('');
+    }
+  };
+
+  const filtered = useMemo(() => {
+    let list = exams;
+    if (classFilter)   list = list.filter(e => String(e.class_id) === String(classFilter));
+    if (subjectFilter) list = list.filter(e => String(e.subject_id) === String(subjectFilter));
+    return list;
+  }, [exams, classFilter, subjectFilter]);
+
+  const hasActiveFilter = Boolean(classFilter || subjectFilter);
 
   // -----------------------------------------------------------------
   const handleDelete = async (exam) => {
@@ -100,13 +155,44 @@ export default function ExamsManager({ canManage }) {
   // ---- List view ---------------------------------------------------
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
-      {/* Header Actions */}
-      {canManage && (
-        <div className="flex flex-col sm:flex-row justify-end gap-4 mb-4">
-          <button onClick={() => { setEditingExam(null); setView('create'); }}
-            className="h-9 bg-primary hover:bg-primary/90 text-white px-4 rounded-md text-xs font-semibold flex items-center justify-center gap-2 shadow-sm transition-colors w-full sm:w-auto">
-            <Plus className="size-4" /> Create Online Exam
-          </button>
+
+      {/* Filters + Create */}
+      {(exams.length > 0 || canManage) && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+          {exams.length > 0 ? (
+            <div className="grid grid-cols-2 sm:flex sm:flex-row gap-3 w-full sm:w-auto">
+              <div className="relative w-full sm:w-44">
+                <select value={classFilter} onChange={e => onClassFilterChange(e.target.value)}
+                  className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm font-medium text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
+                  <option value="">All classes</option>
+                  {classOptions.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+                </select>
+                <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
+              <div className="relative w-full sm:w-44">
+                <select value={subjectFilter} onChange={e => setSubjectFilter(e.target.value)}
+                  className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm font-medium text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors disabled:bg-zinc-50 disabled:text-zinc-400"
+                  disabled={subjectOptions.length === 0}>
+                  <option value="">All subjects</option>
+                  {subjectOptions.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+                </select>
+                <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
+              {hasActiveFilter && (
+                <button onClick={() => { setClassFilter(''); setSubjectFilter(''); }}
+                  className="text-[11px] font-medium text-primary hover:underline self-center whitespace-nowrap col-span-2 sm:col-auto">
+                  Reset
+                </button>
+              )}
+            </div>
+          ) : <span />}
+
+          {canManage && (
+            <button onClick={() => { setEditingExam(null); setView('create'); }}
+              className="h-9 bg-primary hover:bg-primary/90 text-white px-4 rounded-md text-xs font-semibold flex items-center justify-center gap-2 shadow-sm transition-colors w-full sm:w-auto shrink-0">
+              <Plus className="size-4" /> Create Online Exam
+            </button>
+          )}
         </div>
       )}
 
@@ -114,11 +200,20 @@ export default function ExamsManager({ canManage }) {
         <div className="h-64 flex items-center justify-center">
           <Loader2 className="animate-spin size-8 text-primary" />
         </div>
-      ) : exams.length === 0 ? (
+      ) : filtered.length === 0 ? (
         <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
           <FileText className="size-10 text-zinc-300 mb-3" />
-          <p className="text-zinc-500 text-sm font-medium">No exams created yet.</p>
-          {canManage && <p className="text-xs text-zinc-400 mt-1">Click "Create Online Exam" to start.</p>}
+          <p className="text-zinc-500 text-sm font-medium">
+            {hasActiveFilter ? 'No exams match these filters.' : 'No exams created yet.'}
+          </p>
+          {hasActiveFilter ? (
+            <button onClick={() => { setClassFilter(''); setSubjectFilter(''); }}
+              className="text-xs font-semibold text-primary hover:underline mt-2">
+              Clear filters
+            </button>
+          ) : (
+            canManage && <p className="text-xs text-zinc-400 mt-1">Click "Create Online Exam" to start.</p>
+          )}
         </div>
       ) : (
         <div className="bg-white rounded-lg ring-1 ring-black/5 overflow-x-auto custom-scrollbar">
@@ -134,7 +229,7 @@ export default function ExamsManager({ canManage }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100">
-              {exams.map(e => (
+              {filtered.map(e => (
                 <tr key={e.id} className="hover:bg-zinc-50/60 transition-colors group">
                   <td className="px-5 py-4 min-w-[180px]">
                     <div className="font-medium text-zinc-900 text-sm truncate">{e.title}</div>
@@ -314,7 +409,6 @@ function SubmissionsView({ exam, onBack, onGrade }) {
 // -----------------------------------------------------------------
 // Subcomponents
 // -----------------------------------------------------------------
-
 function Pill({ icon: Icon, color, label }) {
   const map = {
     primary: 'bg-primary/10 text-primary ring-primary/20',

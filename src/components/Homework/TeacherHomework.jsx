@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { fmtDate, isoDate, fileToBase64 } from './HwUtils';
 import FileViewer from './FileViewer';
+import HomeworkHelp from './HwHelp';
 
 // Numeric roll for ordering (non-numeric / missing rolls sort last)
 const rollNum = (s) => {
@@ -61,6 +62,8 @@ export default function TeacherHomework({ canManage = true }) {
             Create assignments, then review and grade student submissions.
           </p>
         </header>
+        {/* The guide follows the view you're on: creating vs grading. */}
+        <HomeworkHelp topic={view === 'list' ? 'list' : 'submissions'} canManage={canManage} />
       </div>
 
       {view === 'list' ? (

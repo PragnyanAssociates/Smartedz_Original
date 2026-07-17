@@ -6,6 +6,7 @@ import SchedulesManager from './SchedulesManager';
 import ExamsManager from './ExamsManager';
 import StudentExamsView from './StudentExamsView';
 import StudentSchedulesView from './StudentSchedulesView';
+import ExamsHelp from './ExamsHelp';
 
 // =====================================================================
 //  Exams — top-level container
@@ -21,6 +22,10 @@ import StudentSchedulesView from './StudentSchedulesView';
 //  No academic-year scoping: exams & schedules are plain per-institution
 //  records. The old "Academic Year" badge and active-year fetch were
 //  removed — schedules carry a free-text subtitle instead.
+//
+//  The How-to-use guide lives here in the header rather than inside the
+//  managers, so it stays put across their sub-views (schedule detail,
+//  submissions, grading) and follows the active tab + role.
 // =====================================================================
 
 export default function Exams() {
@@ -39,6 +44,10 @@ export default function Exams() {
     { id: 'exams',     label: 'Online Exams',   icon: PenLine }
   ]), []);
 
+  const helpTopic = isStudent
+    ? (tab === 'schedules' ? 'student-schedules' : 'student-exams')
+    : (tab === 'schedules' ? 'schedules' : 'exams');
+
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-6 animate-in fade-in duration-500">
 
@@ -52,6 +61,7 @@ export default function Exams() {
               : 'Publish schedules and create online assessments.'}
           </p>
         </div>
+        <ExamsHelp topic={helpTopic} canManage={isStudent ? false : canManage} className="self-center sm:self-start" />
       </header>
 
       {/* Navigation Controls Wrapper */}
