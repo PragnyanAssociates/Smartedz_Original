@@ -40,7 +40,7 @@ export default function VoucherForm({ user, canEdit = true, editingId = null, sc
   const isEdit = !!editingId;
   const [loading, setLoading]   = useState(isEdit);
   const [saving, setSaving]     = useState(false);
-  const [voucherNo, setVoucherNo] = useState(isEdit ? '' : 'Loading…');
+  const [voucherNo, setVoucherNo] = useState(isEdit ? '' : 'Loading...');
 
   const [form, setForm] = useState({
     voucher_date: todayISO(),
@@ -148,26 +148,26 @@ export default function VoucherForm({ user, canEdit = true, editingId = null, sc
   const proofShown = attachment || (existingProof && !removeProof);
 
   return (
-    <div className="w-full ring-1 ring-black/5 rounded-lg bg-white overflow-hidden">
+    <div className="w-full ring-1 ring-black/5 shadow-sm rounded-lg bg-white overflow-hidden">
       {/* School header */}
       <div className="bg-primary/5 border-b border-zinc-100 px-6 py-4 flex items-center gap-3">
         {school?.logo
           ? <img src={school.logo} alt="logo" className="h-10 w-auto object-contain" />
-          : <div className="size-10 rounded bg-primary/10 text-primary flex items-center justify-center font-bold">{schoolName.charAt(0).toUpperCase()}</div>}
+          : <div className="size-10 rounded bg-primary/10 text-primary flex items-center justify-center font-semibold">{schoolName.charAt(0).toUpperCase()}</div>}
         <div className="min-w-0">
-          <h2 className="text-base font-bold text-zinc-900 uppercase tracking-tight truncate">{schoolName}</h2>
-          <p className="text-[11px] text-zinc-500">{school?.branch ? `${school.branch} Branch · ` : ''}Debit Voucher</p>
+          <h2 className="text-base font-semibold text-zinc-900 uppercase tracking-tight truncate">{schoolName}</h2>
+          <p className="text-[11px] font-medium text-zinc-500">{school?.branch ? `${school.branch} Branch - ` : ''}Debit Voucher</p>
         </div>
       </div>
 
       <div className="p-6 space-y-5">
         {/* No + date */}
-        <div className="flex items-center justify-between bg-zinc-50 rounded-md px-4 py-2.5 text-sm">
-          <span className="font-semibold text-zinc-700 flex items-center gap-1.5"><Receipt className="size-4 text-primary" /> {voucherNo || '—'}</span>
+        <div className="flex items-center justify-between bg-zinc-50 rounded-md px-4 py-2.5 text-sm ring-1 ring-inset ring-black/5">
+          <span className="font-semibold text-zinc-700 flex items-center gap-1.5"><Receipt className="size-4 text-primary" /> {voucherNo || '-'}</span>
           <div className="flex items-center gap-2">
-            <span className="text-[11px] text-zinc-500">Date</span>
+            <span className="text-[11px] font-semibold text-zinc-500">Date</span>
             <input type="date" value={form.voucher_date} disabled={!canEdit} onChange={e => set('voucher_date', e.target.value)}
-              className="rounded border border-zinc-200 bg-white px-2 h-8 text-xs text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40" />
+              className="rounded border border-zinc-200 shadow-sm bg-white px-2 h-9 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40" />
           </div>
         </div>
 
@@ -208,28 +208,28 @@ export default function VoucherForm({ user, canEdit = true, editingId = null, sc
         {/* Particulars */}
         <div>
           <div className="flex items-center justify-between mb-2">
-            <p className="text-xs font-semibold text-zinc-600">Particulars</p>
+            <p className="text-xs font-semibold text-zinc-900">Particulars</p>
             {canEdit && (
-              <button onClick={addRow} className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline">
+              <button onClick={addRow} className="inline-flex items-center gap-1.5 text-[11px] font-medium text-primary hover:underline">
                 <Plus className="size-3.5" /> Add row
               </button>
             )}
           </div>
-          <div className="ring-1 ring-zinc-200 rounded-md overflow-hidden">
+          <div className="ring-1 ring-zinc-200 shadow-sm rounded-md overflow-hidden">
             <div className="flex items-center bg-zinc-50 border-b border-zinc-200 px-3 py-2 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
               <span className="flex-1">Description</span>
-              <span className="w-32 text-right">Amount</span>
+              <span className="w-32 text-right pr-2">Amount</span>
               {canEdit && <span className="w-8" />}
             </div>
             {rows.map((row, i) => (
               <div key={i} className="flex items-center gap-2 px-3 py-2 border-b border-zinc-100 last:border-0">
                 <input value={row.description} disabled={!canEdit} onChange={e => updateRow(i, 'description', e.target.value)} placeholder="Description"
-                  className="flex-1 h-9 px-2 text-sm outline-none bg-transparent" />
+                  className="flex-1 h-9 px-2 text-sm font-medium text-zinc-900 outline-none bg-transparent placeholder:text-zinc-400" />
                 <input value={row.amount} disabled={!canEdit} onChange={e => updateRow(i, 'amount', e.target.value.replace(/[^\d.]/g, ''))} placeholder="0.00" inputMode="decimal"
-                  className="w-32 h-9 px-2 text-sm text-right tabular-nums outline-none bg-transparent" />
+                  className="w-32 h-9 px-2 text-sm font-medium text-zinc-900 text-right tabular-nums outline-none bg-transparent placeholder:text-zinc-400" />
                 {canEdit && (
                   <button onClick={() => removeRow(i)} disabled={rows.length === 1}
-                    className="w-8 flex justify-center text-zinc-300 hover:text-accent disabled:opacity-30">
+                    className="flex items-center justify-center size-8 shrink-0 text-zinc-400 hover:bg-red-50 hover:text-red-600 rounded-md transition-colors disabled:opacity-30">
                     <Trash2 className="size-4" />
                   </button>
                 )}
@@ -237,41 +237,45 @@ export default function VoucherForm({ user, canEdit = true, editingId = null, sc
             ))}
             <div className="flex items-center bg-zinc-50 border-t border-zinc-200 px-3 py-2.5">
               <span className="flex-1 text-sm font-semibold text-zinc-700">Total</span>
-              <span className="w-32 text-right text-sm font-bold text-primary tabular-nums pr-2">₹{fmtAmt(total)}</span>
+              <span className="w-32 text-right text-sm font-semibold text-primary tabular-nums pr-2">INR {fmtAmt(total)}</span>
               {canEdit && <span className="w-8" />}
             </div>
           </div>
-          <p className="text-[11px] text-zinc-500 mt-2"><span className="font-medium text-zinc-600">In words:</span> {words}</p>
+          <p className="text-[11px] font-medium text-zinc-500 mt-2"><span className="font-semibold text-zinc-700">In words:</span> {words}</p>
         </div>
 
         {/* Proof */}
         <Field label="Payment Proof">
           <div className="flex items-center gap-3">
             {canEdit && (
-              <label className="cursor-pointer inline-flex items-center gap-1.5 text-primary ring-1 ring-primary/30 px-3 py-2 rounded-md text-xs font-medium hover:bg-primary/5 transition-colors">
+              <label className="cursor-pointer inline-flex items-center justify-center gap-1.5 h-9 px-4 bg-white text-zinc-700 border border-zinc-200 shadow-sm rounded-md text-xs font-semibold hover:bg-zinc-50 transition-colors w-fit">
                 <Upload className="size-3.5" /> {proofShown ? 'Change image' : 'Upload proof'}
                 <input type="file" accept="image/*" onChange={onFile} className="hidden" />
               </label>
             )}
             {proofShown && (
               <button onClick={() => { setAttachment(''); setExistingProof(false); setRemoveProof(true); }}
-                className="inline-flex items-center gap-1 text-[11px] text-accent hover:underline">
+                className="inline-flex items-center justify-center gap-1.5 h-9 px-4 text-red-600 bg-white border border-red-200 shadow-sm rounded-md text-xs font-semibold hover:bg-red-50 transition-colors w-fit">
                 <X className="size-3.5" /> Remove
               </button>
             )}
           </div>
-          {attachment && <img src={attachment} alt="proof" className="mt-2 max-h-44 rounded-md ring-1 ring-black/5" />}
+          {attachment && <img src={attachment} alt="proof" className="mt-2 max-h-44 rounded-md border border-zinc-200 shadow-sm" />}
           {!attachment && existingProof && !removeProof && (
             <img src={`${API_BASE_URL}/expenses/attachment/${editingId}`} alt="" className="hidden" />
           )}
           {!attachment && existingProof && !removeProof && <ExistingProof id={editingId} />}
         </Field>
 
-        <div className="flex justify-end gap-2 pt-2 border-t border-zinc-100">
-          {onCancel && <button onClick={onCancel} className="px-4 py-2 rounded-md text-xs font-medium text-zinc-700 ring-1 ring-zinc-200 hover:bg-zinc-50">Cancel</button>}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-end gap-3 pt-4 border-t border-zinc-100">
+          {onCancel && (
+            <button onClick={onCancel} className="w-full sm:w-auto h-9 px-6 min-w-[120px] flex items-center justify-center bg-white text-zinc-600 border border-zinc-200 shadow-sm rounded-md text-xs font-semibold hover:bg-zinc-50 transition-colors">
+              Cancel
+            </button>
+          )}
           <button onClick={save} disabled={saving || !canEdit}
-            className="inline-flex items-center gap-1.5 bg-green-600 text-white px-5 py-2 rounded-md text-xs font-semibold hover:bg-green-700 transition-colors shadow-sm disabled:opacity-60">
-            {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />} {saving ? 'Saving…' : (isEdit ? 'Update Voucher' : 'Save Voucher')}
+            className="w-full sm:w-auto h-9 px-6 min-w-[120px] flex items-center justify-center gap-1.5 bg-primary text-white rounded-md text-xs font-semibold hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-60">
+            {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4 shrink-0" />} {saving ? 'Saving...' : (isEdit ? 'Update Voucher' : 'Save Voucher')}
           </button>
         </div>
       </div>
@@ -293,19 +297,20 @@ function ExistingProof({ id }) {
     return () => { alive = false; };
   }, [id]);
   if (!img) return null;
-  return <img src={img} alt="proof" className="mt-2 max-h-44 rounded-md ring-1 ring-black/5" />;
+  return <img src={img} alt="proof" className="mt-2 max-h-44 rounded-md border border-zinc-200 shadow-sm" />;
 }
 
-const inputCls = 'w-full rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:bg-zinc-50 disabled:text-zinc-400';
+const inputCls = 'w-full rounded-md border border-zinc-200 shadow-sm bg-white px-3 h-9 text-sm font-medium text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 disabled:bg-zinc-50 disabled:text-zinc-400';
 
 function Field({ label, required, children }) {
   return (
     <div className="flex flex-col">
-      <label className="text-xs font-medium text-zinc-600 mb-1.5">{label}{required && <span className="text-accent"> *</span>}</label>
+      <label className="text-xs font-semibold text-zinc-900 mb-1.5">{label}{required && <span className="text-accent ml-1">*</span>}</label>
       {children}
     </div>
   );
 }
+
 function Chevron() {
   return (
     <svg className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -313,4 +318,5 @@ function Chevron() {
     </svg>
   );
 }
+
 export { fmtAmt, fmtDate };

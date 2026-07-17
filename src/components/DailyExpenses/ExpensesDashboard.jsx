@@ -28,7 +28,7 @@ export default function ExpensesDashboard({ user, school = {}, years = [], activ
   }, [yearsReady, activeYearId, year]);
 
   const load = useCallback(async () => {
-    if (!user?.institutionId || !year) return;   // wait until the year is decided
+    if (!user?.institutionId || !year) return;  // wait until the year is decided
     setLoading(true);
     try {
       const qs = new URLSearchParams();
@@ -65,37 +65,31 @@ export default function ExpensesDashboard({ user, school = {}, years = [], activ
 
   const dmy = (v) => (v ? v.split('-').reverse().join('/') : '');
 
-  // Print to PDF. The dashboard is charts, so we hand the browser the real
-  // rendered markup (SVG donut, CSS bars and all) plus the page's own
-  // stylesheets, and let "Save as PDF" in the print dialog do the rest —
-  // no chart library, no canvas rasteriser, and it prints at full quality.
   const downloadPdf = () => {
     const node = printRef.current;
     if (!node) return;
     const win = window.open('', '_blank', 'width=1100,height=800');
     if (!win) { alert('Please allow pop-ups for this site to download the dashboard.'); return; }
 
-    // Carry over every stylesheet so Tailwind classes still mean something
-    // inside the new window.
     const styles = Array.from(document.querySelectorAll('link[rel="stylesheet"], style'))
       .map(el => el.outerHTML).join('\n');
 
     const esc = (v) => String(v ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-    const bits = [`Academic Year: ${esc(yearLabel || '—')}`, `Head: ${esc(head || 'All heads')}`];
+    const bits = [`Academic Year: ${esc(yearLabel || '-')}`, `Head: ${esc(head || 'All heads')}`];
     if (range.from || range.to) bits.push(`Period: ${dmy(range.from) || 'start'} to ${dmy(range.to) || 'today'}`);
     bits.push(`Generated: ${new Date().toLocaleString('en-GB', { timeZone: 'Asia/Kolkata', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }).replace(',', '')} IST`);
 
-    const title = `${school.name || 'School'} — Daily Expenses Dashboard`;
+    const title = `${school.name || 'School'} - Daily Expenses Dashboard`;
     const header = `
       <div style="display:flex;align-items:center;gap:12px;border-bottom:2px solid #3284c7;padding-bottom:10px;margin-bottom:14px">
         ${school.logo ? `<img src="${esc(school.logo)}" style="height:46px;width:auto" />` : ''}
         <div style="flex:1">
-          <div style="font-size:17px;font-weight:700;color:#3284c7;line-height:1.2">${esc(school.name || 'School')}</div>
+          <div style="font-size:17px;font-weight:600;color:#3284c7;line-height:1.2">${esc(school.name || 'School')}</div>
           ${school.branch ? `<div style="font-size:11px;color:#52525b">${esc(school.branch)}</div>` : ''}
-          <div style="font-size:12px;font-weight:600;color:#3f3f46;margin-top:2px">Daily Expenses · Dashboard</div>
+          <div style="font-size:12px;font-weight:600;color:#3f3f46;margin-top:2px">Daily Expenses - Dashboard</div>
         </div>
       </div>
-      <div style="font-size:10px;color:#71717a;margin-bottom:14px">${bits.join(' &nbsp;·&nbsp; ')}</div>`;
+      <div style="font-size:10px;color:#71717a;margin-bottom:14px">${bits.join(' &nbsp;-&nbsp; ')}</div>`;
 
     win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title>${styles}
       <style>
@@ -103,14 +97,13 @@ export default function ExpensesDashboard({ user, school = {}, years = [], activ
         html, body { background: #fff !important; margin: 0; padding: 0;
                      -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
         .sheet { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
-        /* keep a card from splitting across two pages */
         .sheet .ring-1 { break-inside: avoid; page-break-inside: avoid; }
       </style></head>
       <body><div class="sheet">${header}${node.outerHTML}</div></body></html>`);
     win.document.close();
     win.focus();
 
-    const go = () => setTimeout(() => { win.print(); }, 350);  // let fonts/CSS settle
+    const go = () => setTimeout(() => { win.print(); }, 350);
     if (win.document.readyState === 'complete') go();
     else win.onload = go;
   };
@@ -118,13 +111,13 @@ export default function ExpensesDashboard({ user, school = {}, years = [], activ
   return (
     <div className="space-y-6">
       {/* Filters */}
-      <div className="flex flex-wrap items-end gap-3 bg-zinc-50/50 p-3 rounded-md ring-1 ring-black/5">
+      <div className="flex flex-wrap items-end gap-3 bg-zinc-50/50 p-3 rounded-md ring-1 ring-black/5 shadow-sm">
         <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider self-center"><Filter className="size-3.5" /> Filters</span>
         <div className="flex flex-col gap-1">
           <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Head</span>
           <div className="relative">
             <select value={head} onChange={e => setHead(e.target.value)}
-              className="h-8 appearance-none rounded border border-zinc-200 bg-white pl-2 pr-7 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer">
+              className="h-9 appearance-none rounded border border-zinc-200 shadow-sm bg-white pl-2 pr-7 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer">
               <option value="">All heads</option>
               {HEAD_OF_ACCOUNT.map(h => <option key={h} value={h}>{h}</option>)}
             </select>
@@ -137,11 +130,12 @@ export default function ExpensesDashboard({ user, school = {}, years = [], activ
         {dirty && (
           <button onClick={resetFilters} className="text-[11px] font-medium text-primary hover:underline self-center">Reset</button>
         )}
-        <button onClick={load} className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ml-auto self-center">
+        <button onClick={load} 
+          className="inline-flex items-center justify-center gap-1.5 h-9 px-4 shrink-0 text-xs font-medium text-zinc-600 bg-white border border-zinc-200 rounded-md hover:bg-zinc-50 hover:text-primary transition-colors shadow-sm ml-auto self-center">
           <RefreshCw className="size-3.5" /> Refresh
         </button>
         <button onClick={downloadPdf} disabled={loading || !data} title="Download the dashboard as a PDF (or print it)"
-          className="inline-flex items-center gap-1.5 bg-primary text-white px-3.5 h-8 rounded-md text-xs font-semibold hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-50 self-center">
+          className="inline-flex items-center justify-center gap-1.5 h-9 px-4 shrink-0 bg-primary text-white rounded-md text-xs font-semibold hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-50 self-center">
           <Download className="size-3.5" /> Download
         </button>
       </div>
@@ -198,24 +192,31 @@ export default function ExpensesDashboard({ user, school = {}, years = [], activ
 
 // ---------- pieces ----------
 function Kpi({ icon: Icon, label, value, sub, tone }) {
-  const tones = { zinc: 'bg-zinc-100 text-zinc-600', green: 'bg-green-50 text-green-600', accent: 'bg-accent/10 text-accent', primary: 'bg-primary/10 text-primary' };
+  const tones = { 
+    zinc: 'bg-zinc-50 text-zinc-700 ring-1 ring-inset ring-zinc-600/20', 
+    green: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20', 
+    accent: 'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-600/20', 
+    primary: 'bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-600/20' 
+  };
   return (
-    <div className="ring-1 ring-black/5 rounded-lg bg-white p-4">
+    <div className="ring-1 ring-black/5 shadow-sm rounded-lg bg-white p-4">
       <span className={`size-9 rounded-lg flex items-center justify-center mb-3 ${tones[tone] || tones.zinc}`}><Icon className="size-4.5" /></span>
-      <p className="text-xl font-bold text-zinc-900 tabular-nums leading-tight">{value}</p>
+      <p className="text-xl font-semibold text-zinc-900 tabular-nums leading-tight">{value}</p>
       <p className="text-xs font-medium text-zinc-600 mt-0.5">{label}</p>
       {sub && <p className="text-[10px] text-zinc-400 mt-0.5">{sub}</p>}
     </div>
   );
 }
+
 function Card({ title, icon: Icon, children, className = '' }) {
   return (
-    <div className={`ring-1 ring-black/5 rounded-lg bg-white overflow-hidden ${className}`}>
+    <div className={`ring-1 ring-black/5 shadow-sm rounded-lg bg-white overflow-hidden ${className}`}>
       <div className="p-4 border-b border-zinc-100 flex items-center gap-2">{Icon && <Icon className="size-4 text-primary" />}<h3 className="text-sm font-semibold text-zinc-900">{title}</h3></div>
       <div className="p-5">{children}</div>
     </div>
   );
 }
+
 function Empty({ text }) { return <p className="text-xs text-zinc-400 italic text-center py-8">{text}</p>; }
 
 function BarList({ items, max }) {
@@ -226,7 +227,7 @@ function BarList({ items, max }) {
         return (
           <div key={i}>
             <div className="flex items-center justify-between text-xs mb-1.5">
-              <span className="font-medium text-zinc-700 truncate pr-2">{it.label} {it.sub && <span className="text-zinc-400 font-normal">· {it.sub}</span>}</span>
+              <span className="font-medium text-zinc-700 truncate pr-2">{it.label} {it.sub && <span className="text-zinc-400 font-normal">- {it.sub}</span>}</span>
               <span className="text-zinc-900 font-semibold tabular-nums shrink-0">{inr(it.value)}</span>
             </div>
             <div className="h-2.5 rounded-full bg-zinc-100 overflow-hidden">
@@ -254,7 +255,7 @@ function Donut({ segments, size = 150, thickness = 22, centerLabel, centerSub })
           offset += len; return el;
         })}
       </g>
-      {centerLabel != null && <text x="50%" y="48%" textAnchor="middle" dominantBaseline="middle" fill="#18181b" style={{ fontSize: 20, fontWeight: 700 }}>{centerLabel}</text>}
+      {centerLabel != null && <text x="50%" y="48%" textAnchor="middle" dominantBaseline="middle" fill="#18181b" style={{ fontSize: 20, fontWeight: 600 }}>{centerLabel}</text>}
       {centerSub && <text x="50%" y="63%" textAnchor="middle" dominantBaseline="middle" fill="#a1a1aa" style={{ fontSize: 10 }}>{centerSub}</text>}
     </svg>
   );
@@ -281,7 +282,7 @@ function MonthlyBars({ data }) {
             return (
               <div key={i} className="flex-1 h-full flex flex-col justify-end items-center">
                 {m.amount > 0 && <span className="text-[9px] font-semibold text-zinc-500 tabular-nums mb-1 whitespace-nowrap">{compact(m.amount)}</span>}
-                <div className="w-6 sm:w-9 rounded-md bg-gradient-to-t from-accent to-accent/70 hover:to-accent transition-colors" style={{ height: `${h}%` }} title={`${monthLabel(m.ym)} · ${inr(m.amount)}`} />
+                <div className="w-6 sm:w-9 rounded-md bg-gradient-to-t from-accent to-accent/70 hover:to-accent transition-colors" style={{ height: `${h}%` }} title={`${monthLabel(m.ym)} - ${inr(m.amount)}`} />
               </div>
             );
           })}
@@ -294,14 +295,14 @@ function MonthlyBars({ data }) {
   );
 }
 
-// Academic Year picker — options come from the Academics Year tab.
+// Academic Year picker - options come from the Academics Year tab.
 export function YearField({ years = [], value, onChange, label = 'Academic Year' }) {
   return (
     <div className="flex flex-col gap-1">
       <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">{label}</span>
       <div className="relative">
         <select value={value} onChange={e => onChange(e.target.value)}
-          className="h-8 appearance-none rounded border border-zinc-200 bg-white pl-2 pr-7 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer">
+          className="h-9 appearance-none rounded border border-zinc-200 shadow-sm bg-white pl-2 pr-7 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer">
           <option value="all">All Years</option>
           {years.map(y => (
             <option key={y.id} value={String(y.id)}>{y.name}{y.isActive ? ' (current)' : ''}</option>
@@ -318,7 +319,7 @@ function DateField({ label, value, onChange }) {
     <div className="flex flex-col gap-1">
       <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">{label}</span>
       <input type="date" value={value} onChange={e => onChange(e.target.value)}
-        className="h-8 rounded border border-zinc-200 bg-white px-2 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40" />
+        className="h-9 rounded border border-zinc-200 shadow-sm bg-white px-2 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40" />
     </div>
   );
 }
