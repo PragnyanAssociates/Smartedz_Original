@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   GraduationCap, Users as UsersIcon, UserCog, ClipboardCheck, History,
   Search, ChevronLeft, ChevronDown, BarChart3, CalendarCheck, CalendarX,
-  CalendarRange, List, PieChart
+  CalendarRange, List, PieChart, HelpCircle, X, ShieldCheck
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
@@ -29,6 +29,7 @@ export default function Attendance() {
 
   // ---- Active academic year (for the badge only) ---------------------
   const [activeYearName, setActiveYearName] = useState('');
+  const [help, setHelp] = useState(false);
 
   useEffect(() => {
     if (!user?.institutionId) return;
@@ -74,15 +75,26 @@ export default function Attendance() {
     ) : null
   );
 
+  const HelpButton = () => (
+    <button onClick={() => setHelp(true)}
+      className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors shrink-0">
+      <HelpCircle className="size-3.5" /> How to use
+    </button>
+  );
+
   // -----------------------------------------------------------------
   if (forceSelfHistory) {
     return (
       <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-500">
         <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
           <Header subtitle="Your attendance history" />
-          <YearBadge />
+          <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+            <HelpButton />
+            <YearBadge />
+          </div>
         </div>
         <AttendanceHistory userId={user.id} userName={user.name} selfOnly yearName={activeYearName} />
+        {help && <HelpModal topic="self" onClose={() => setHelp(false)} />}
       </div>
     );
   }
@@ -91,7 +103,10 @@ export default function Attendance() {
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-3 sm:space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <Header subtitle="Mark and review daily attendance" />
-        <YearBadge />
+        <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+          <HelpButton />
+          <YearBadge />
+        </div>
       </div>
 
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -139,6 +154,8 @@ export default function Attendance() {
       ) : (
         <HistoryPicker category={category} yearName={activeYearName} />
       )}
+
+      {help && <HelpModal topic={mode === 'mark' ? 'mark' : 'history'} onClose={() => setHelp(false)} />}
     </div>
   );
 }
@@ -149,6 +166,71 @@ function Header({ subtitle }) {
       <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Attendance</h1>
       <p className="text-sm text-zinc-500 mt-0.5 max-w-[56ch]">{subtitle}</p>
     </header>
+  );
+}
+
+// =====================================================================
+//  How-to-use notes — the guide follows what you're doing right now
+//  (marking, reviewing, or reading your own record). Same shell as the
+//  Transport module guide.
+// =====================================================================
+const GUIDES = {
+  mark: {
+    title: 'Marking attendance',
+    steps: [
+      ['1 \u00b7 Pick who', 'The tabs decide who you are marking \u2014 Students, Teachers, or Other staff. Teachers see Students and Teachers; a Super Admin sees all three.'],
+      ['2 \u00b7 Then the class and the date', 'For students, choose the class. Teachers only ever see their own classes here. Check the date before you mark \u2014 it is the one thing people get wrong.'],
+      ['3 \u00b7 Present or Absent', 'Those are the only two options \u2014 there is no Late. If your school used to mark Late, those days now count as Present.'],
+      ['4 \u00b7 Mark and save', 'Set everyone, then save. Marking the same class and date again simply updates it, so a mistake is fixed by re-marking, not by deleting anything.'],
+      ['5 \u00b7 Then check History', 'Switch to History to see what the marking adds up to \u2014 per person, per month, or across the whole year.'],
+    ],
+    note: 'Attendance is stamped with the ACTIVE academic year shown in the badge. Marking against the wrong active year puts the day in the wrong year\u2019s records \u2014 if the badge looks wrong, fix it in Manage Logins \u2192 Academics Year before you mark.'
+  },
+  history: {
+    title: 'Reviewing attendance',
+    steps: [
+      ['1 \u00b7 Choose the period', 'Daily for one date, Monthly for a month, Yearly for the whole active academic year, or Custom for any two dates.'],
+      ['2 \u00b7 Read the top bar', 'Working Days is how many days were actually marked \u2014 not calendar days, so an unmarked day never counts against anyone. On Daily, Present and Absent are head counts; on Monthly, Yearly and Custom they are percentages of everything marked.'],
+      ['3 \u00b7 The list', 'Total / Present per person for the period. Click any row to open that person\u2019s full history \u2014 their calendar, their summary and their chart.'],
+      ['4 \u00b7 Analysis', 'Flips the list into a bar per person, sorted High \u2192 Low, Low \u2192 High, or by roll number. Green is 80% and above, blue 50\u201380%, red below 50% \u2014 the same bands as the Performance screens.'],
+      ['5 \u00b7 Finding someone', 'Search by name, username or roll number.'],
+    ],
+    note: 'Read-only \u2014 nothing here changes a mark; that\u2019s the Mark tab. To export attendance, use Manage Logins \u2192 Downloads, which pulls a full academic year to Excel.'
+  },
+  self: {
+    title: 'Your attendance',
+    steps: [
+      ['Your record', 'Everything marked for you this academic year \u2014 your percentage, your days present and your days absent.'],
+      ['The calendar', 'Green days are present, red are absent. A blank day means nothing was marked \u2014 a holiday, a weekend, or a day your school didn\u2019t take attendance.'],
+      ['How the % works', 'It counts only the days that were actually marked, so days the school never took attendance can\u2019t count against you.'],
+    ],
+    note: 'This is your own record and is read-only. If a day looks wrong, ask your class teacher or the office to check it \u2014 they can re-mark the day and it updates here.'
+  }
+};
+
+function HelpModal({ topic, onClose }) {
+  const content = GUIDES[topic] || GUIDES.history;
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={onClose}>
+      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg max-h-[85vh] overflow-y-auto shadow-xl" onClick={e => e.stopPropagation()}>
+        <div className="bg-primary text-white px-5 py-3 flex items-center justify-between sticky top-0">
+          <span className="text-sm font-bold flex items-center gap-2"><HelpCircle className="size-4" /> {content.title}</span>
+          <button onClick={onClose} className="text-white/80 hover:text-white"><X className="size-5" /></button>
+        </div>
+        <div className="p-5 space-y-3">
+          {content.steps.map(([t, d], i) => (
+            <div key={i} className="rounded-md ring-1 ring-zinc-100 bg-zinc-50/60 p-3">
+              <p className="text-xs font-semibold text-zinc-800">{t}</p>
+              <p className="text-[11px] text-zinc-600 leading-relaxed mt-1">{d}</p>
+            </div>
+          ))}
+          <div className="rounded-md bg-blue-50/60 ring-1 ring-blue-100 p-3 flex gap-2">
+            <ShieldCheck className="size-4 text-blue-500 shrink-0 mt-0.5" />
+            <p className="text-[11px] text-blue-800 leading-relaxed">{content.note}</p>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
