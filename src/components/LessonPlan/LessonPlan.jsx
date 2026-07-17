@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Upload, Loader2, Image as ImageIcon, RefreshCw, 
-  X, Maximize, Minimize, ZoomIn, ZoomOut 
+  X, Maximize, Minimize, ZoomIn, ZoomOut, HelpCircle, ShieldCheck 
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
@@ -16,6 +16,7 @@ export default function LessonPlan() {
   const [uploading, setUploading] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [preview, setPreview] = useState(null);
+  const [help, setHelp] = useState(false);
 
   // Viewing States
   const [scale, setScale] = useState(1);
@@ -87,6 +88,8 @@ export default function LessonPlan() {
     return <div className="p-10 text-center text-zinc-500 font-medium italic">Access Denied.</div>;
   }
 
+  const canEdit = can('LessonPlan', 'edit');
+
   return (
     <div className={`flex flex-col gap-4 sm:gap-6 animate-in fade-in duration-300 ${
       isFullscreen 
@@ -106,6 +109,16 @@ export default function LessonPlan() {
         </div>
         
         <div className="flex items-center gap-3 w-full md:w-auto shrink-0">
+            {/* How to use — restyled on the dark fullscreen backdrop */}
+            <button onClick={() => setHelp(true)}
+              className={`inline-flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1.5 rounded-md ring-1 transition-colors shrink-0 ${
+                isFullscreen
+                  ? 'text-zinc-400 ring-zinc-700 hover:text-white hover:bg-zinc-800'
+                  : 'text-zinc-500 ring-zinc-200 hover:text-primary hover:bg-zinc-50'
+              }`}>
+              <HelpCircle className="size-3.5" /> How to use
+            </button>
+
             {/* View Controls */}
             {plan && (
                 <div className={`flex items-center h-9 rounded-md ring-1 shrink-0 ${isFullscreen ? 'bg-zinc-800 ring-zinc-700' : 'bg-white ring-black/5 shadow-sm'}`}>
@@ -124,7 +137,7 @@ export default function LessonPlan() {
                 </div>
             )}
 
-            {can('LessonPlan', 'edit') && (
+            {canEdit && (
             <button 
                 onClick={() => setIsModalOpen(true)}
                 className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shadow-sm shrink-0"
@@ -215,6 +228,63 @@ export default function LessonPlan() {
           </div>
         </div>
       )}
+
+      {help && <HelpModal canEdit={canEdit} onClose={() => setHelp(false)} />}
+    </div>
+  );
+}
+
+// =====================================================================
+//  How-to-use notes — tailored to what the person can actually do.
+//  z-[120] so it clears the fullscreen layer (z-100) and the upload
+//  modal (z-110). Same shell as the Transport module guide.
+// =====================================================================
+const GUIDES = {
+  editor: {
+    title: 'Publishing the guidelines',
+    steps: [
+      ['1 \u00b7 One template, one school', 'This is a single image \u2014 the lesson plan format every academic staff member follows. There is one live template at a time, so everyone is always looking at the same thing.'],
+      ['2 \u00b7 Upload it', 'Update \u2192 Select Template Image \u2192 Update Template. PNG or JPG, up to 5 MB.'],
+      ['3 \u00b7 Upload it big enough to read', 'Staff zoom in on this, so send the sharpest export you have \u2014 a small or blurry scan is unreadable at 200%. Export from Word or Excel rather than photographing a printout.'],
+      ['4 \u00b7 Update replaces, it doesn\u2019t add', 'A new upload overwrites the current template. There is no version history and no undo, so keep your own copy of the original file before you replace it.'],
+      ['5 \u00b7 People get told', 'Publishing sends out a notification that the template changed \u2014 you don\u2019t get one for your own upload. Only publish when the template is final; every upload notifies again.'],
+      ['6 \u00b7 Reading it', 'Zoom in and out, click the percentage to snap back to 100%, and use fullscreen for the whole screen.'],
+    ],
+    note: 'Permissions: Read lets a role open and read the template, Read + Edit lets them replace it. Hide removes Lesson Plan from their sidebar entirely. Give Edit only to whoever owns the academic format \u2014 there is no way back to the previous image once it is replaced.'
+  },
+  viewer: {
+    title: 'Using the guidelines',
+    steps: [
+      ['What this is', 'The lesson plan format your school expects you to follow. Everyone sees the same template, so if you match this, your plans are in the right shape.'],
+      ['Read it closely', 'Zoom in and out for the fine print, and click the percentage to snap back to 100%.'],
+      ['Fullscreen', 'The expand button fills the screen \u2014 the easiest way to read it before you start planning.'],
+    ],
+    note: 'This is set by your school and is read-only. When it changes you\u2019ll get a notification, so the version on screen is always the current one \u2014 if something looks wrong or out of date, contact your academic in-charge.'
+  }
+};
+
+function HelpModal({ canEdit, onClose }) {
+  const content = canEdit ? GUIDES.editor : GUIDES.viewer;
+  return (
+    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={onClose}>
+      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg max-h-[85vh] overflow-y-auto shadow-xl" onClick={e => e.stopPropagation()}>
+        <div className="bg-primary text-white px-5 py-3 flex items-center justify-between sticky top-0">
+          <span className="text-sm font-bold flex items-center gap-2"><HelpCircle className="size-4" /> {content.title}</span>
+          <button onClick={onClose} className="text-white/80 hover:text-white"><X className="size-5" /></button>
+        </div>
+        <div className="p-5 space-y-3">
+          {content.steps.map(([t, d], i) => (
+            <div key={i} className="rounded-md ring-1 ring-zinc-100 bg-zinc-50/60 p-3">
+              <p className="text-xs font-semibold text-zinc-800">{t}</p>
+              <p className="text-[11px] text-zinc-600 leading-relaxed mt-1">{d}</p>
+            </div>
+          ))}
+          <div className="rounded-md bg-blue-50/60 ring-1 ring-blue-100 p-3 flex gap-2">
+            <ShieldCheck className="size-4 text-blue-500 shrink-0 mt-0.5" />
+            <p className="text-[11px] text-blue-800 leading-relaxed">{content.note}</p>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
