@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   GraduationCap, Users as UsersIcon, UserCog, ClipboardCheck, History,
   Search, ChevronLeft, ChevronDown, BarChart3, CalendarCheck, CalendarX,
-  CalendarRange, List, PieChart, HelpCircle, X, ShieldCheck
+  CalendarRange, List, PieChart, HelpCircle, X, ShieldCheck, AlertTriangle
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
@@ -29,6 +29,7 @@ export default function Attendance() {
 
   // ---- Active academic year (for the badge only) ---------------------
   const [activeYearName, setActiveYearName] = useState('');
+  const [yearKnown, setYearKnown] = useState(false);
   const [help, setHelp] = useState(false);
 
   useEffect(() => {
@@ -38,9 +39,13 @@ export default function Attendance() {
         const res = await fetch(`${API_BASE_URL}/admin/data/${user.institutionId}`);
         const data = await res.json();
         const list = data.academicYears || [];
-        const active = list.find(y => y.isActive) || list[0];
-        if (active) setActiveYearName(active.name || '');
+        // ACTIVE only — no fallback to list[0]. Attendance is stamped with
+        // whatever the backend resolves as active; if that's nothing, the
+        // badge must not claim a year.
+        const active = list.find(y => y.isActive);
+        setActiveYearName(active ? (active.name || '') : '');
       } catch (e) { console.error('academic year load:', e); }
+      setYearKnown(true);
     })();
   }, [user]);
 
@@ -67,13 +72,22 @@ export default function Attendance() {
     other:    { label: 'Other',    icon: UserCog }
   };
 
-  const YearBadge = () => (
-    activeYearName ? (
+  const YearBadge = () => {
+    if (!yearKnown) return null;
+    if (!activeYearName) {
+      return (
+        <div className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-red-50 ring-1 ring-red-500/20 text-red-700 text-xs font-semibold whitespace-nowrap self-start sm:self-auto"
+          title="Set a year active under Manage Logins → Academics Year">
+          <AlertTriangle className="size-3.5" /> No active academic year
+        </div>
+      );
+    }
+    return (
       <div className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-primary/5 ring-1 ring-primary/15 text-primary text-xs font-semibold whitespace-nowrap self-start sm:self-auto">
         <CalendarRange className="size-3.5" /> Academic Year: {activeYearName}
       </div>
-    ) : null
-  );
+    );
+  };
 
   const HelpButton = () => (
     <button onClick={() => setHelp(true)}

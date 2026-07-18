@@ -93,8 +93,18 @@ const join24 = (t12, ap) => {
 // =====================================================================
 //  ACTIVE-YEAR BADGE — read-only context chip, identical to Attendance.
 // =====================================================================
-function YearBadge({ name }) {
-  if (!name) return null;
+function YearBadge({ name, known }) {
+  if (!known) return null;
+  // No active year: say so. Naming a year the timetable isn't actually
+  // stored against would be worse than showing nothing.
+  if (!name) {
+    return (
+      <div className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-red-50 ring-1 ring-red-500/20 text-red-700 text-xs font-semibold whitespace-nowrap self-start sm:self-auto"
+        title="Set a year active under Manage Logins → Academics Year">
+        <AlertCircle className="size-3.5" /> No active academic year
+      </div>
+    );
+  }
   return (
     <div className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-primary/5 ring-1 ring-primary/15 text-primary text-xs font-semibold whitespace-nowrap self-start sm:self-auto">
       <CalendarRange className="size-3.5" /> Academic Year: {name}
@@ -105,6 +115,7 @@ function YearBadge({ name }) {
 // Shared hook: fetch the institution's ACTIVE academic year name (for the badge).
 function useActiveYearName(user) {
   const [activeYearName, setActiveYearName] = useState('');
+  const [known, setKnown] = useState(false);
   useEffect(() => {
     if (!user?.institutionId) return;
     (async () => {
@@ -112,12 +123,14 @@ function useActiveYearName(user) {
         const res = await fetch(`${API_BASE_URL}/admin/data/${user.institutionId}`);
         const data = await res.json();
         const list = data.academicYears || [];
-        const active = list.find(y => y.isActive) || list[0];
-        if (active) setActiveYearName(active.name || '');
+        // ACTIVE only — no fallback to list[0].
+        const active = list.find(y => y.isActive);
+        setActiveYearName(active ? (active.name || '') : '');
       } catch (e) { console.error('academic year load:', e); }
+      setKnown(true);
     })();
   }, [user]);
-  return activeYearName;
+  return { activeYearName, known };
 }
 
 // =====================================================================
@@ -183,7 +196,7 @@ function AdminTimetable({ user, canEdit, canDelete, isManager, fullAccess }) {
   const [activeTab, setActiveTab] = useState('grid');
   const [help, setHelp] = useState(false);
   // Active academic year name — shown as a read-only badge (like Attendance).
-  const activeYearName = useActiveYearName(user);
+  const { activeYearName, known: yearKnown } = useActiveYearName(user);
 
   const fetchData = useCallback(async () => {
     if (!user?.institutionId) return;
@@ -251,7 +264,7 @@ function AdminTimetable({ user, canEdit, canDelete, isManager, fullAccess }) {
               <HelpCircle className="size-3.5" /> How to use
             </button>
           )}
-          <YearBadge name={activeYearName} />
+          <YearBadge name={activeYearName} known={yearKnown} />
         </div>
       </header>
 
@@ -1158,7 +1171,7 @@ function PersonalTimetable({ user, mode }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [help, setHelp] = useState(false);
-  const activeYearName = useActiveYearName(user);
+  const { activeYearName, known: yearKnown } = useActiveYearName(user);
 
   const fetchMine = useCallback(async () => {
     if (!user?.id) return;
@@ -1256,7 +1269,7 @@ function PersonalTimetable({ user, mode }) {
             className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors">
             <HelpCircle className="size-3.5" /> How to use
           </button>
-          <YearBadge name={activeYearName} />
+          <YearBadge name={activeYearName} known={yearKnown} />
         </div>
       </header>
 

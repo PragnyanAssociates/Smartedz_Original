@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Settings2, ClipboardList, FileText, CalendarRange } from 'lucide-react';
+import { Settings2, ClipboardList, FileText, CalendarRange, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import { API_BASE_URL } from '../../apiConfig';
 import ExamSetup from './ExamSetup';
 import ClassList from './ClassList';
 import StudentReportCard from './StudentReportCard';
+import ReportsHelp from './ReportsHelp';
 
 // =====================================================================
 //  Reports - offline exams, marks entry & report cards
@@ -19,6 +20,10 @@ import StudentReportCard from './StudentReportCard';
 //
 //  A read-only "Academic Year" badge shows the active year. All marks,
 //  summaries and report cards are scoped to it (set under Academics).
+//
+//  The How-to-use guide sits in the header beside the badge and follows
+//  the active tab, so it stays put across the class list and every
+//  sub-view without the child screens needing to know about it.
 // =====================================================================
 
 export default function Reports() {
@@ -32,8 +37,11 @@ export default function Reports() {
 
   const [tab, setTab] = useState('marks');
   const [yearName, setYearName] = useState('');
+  const [yearKnown, setYearKnown] = useState(false);   // the fetch has answered
 
-  // Fetch the active academic year name for the header badge
+  // Fetch the ACTIVE academic year name for the header badge.
+  // No fallback to years[0]: if nothing is active the badge must say so
+  // rather than name a year the marks aren't actually being stamped with.
   useEffect(() => {
     if (!user?.institutionId) return;
     let cancelled = false;
@@ -42,21 +50,32 @@ export default function Reports() {
       .then(d => {
         if (cancelled) return;
         const years = d.academicYears || [];
-        const active = years.find(y => y.isActive) || years[0];
-        if (active) setYearName(active.name);
+        const active = years.find(y => y.isActive);
+        setYearName(active ? active.name : '');
+        setYearKnown(true);
       })
-      .catch(() => {});
+      .catch(() => { if (!cancelled) setYearKnown(true); });
     return () => { cancelled = true; };
   }, [user]);
 
-  const YearBadge = () => (
-    yearName ? (
+  const YearBadge = () => {
+    if (!yearKnown) return null;
+    if (!yearName) {
+      return (
+        <div className="inline-flex items-center gap-2 bg-red-50 text-red-700 ring-1 ring-red-500/20 rounded-md px-3 h-9 text-xs font-semibold shrink-0"
+          title="Set a year active under Manage Logins → Academics Year">
+          <AlertTriangle className="size-4" />
+          <span>No active academic year</span>
+        </div>
+      );
+    }
+    return (
       <div className="inline-flex items-center gap-2 bg-primary/5 text-primary ring-1 ring-primary/20 rounded-md px-3 h-9 text-xs font-semibold shrink-0">
         <CalendarRange className="size-4" />
         <span>Academic Year: {yearName}</span>
       </div>
-    ) : null
-  );
+    );
+  };
 
   if (isStudent) {
     return (
@@ -66,7 +85,10 @@ export default function Reports() {
             <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">My Report Card</h1>
             <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">Your academic progress</p>
           </div>
-          <YearBadge />
+          <div className="flex items-center gap-2 shrink-0">
+            <ReportsHelp topic="student" />
+            <YearBadge />
+          </div>
         </header>
         <StudentReportCard />
       </div>
@@ -92,7 +114,10 @@ export default function Reports() {
             Offline exams, marks entry and report cards
           </p>
         </div>
-        <YearBadge />
+        <div className="flex items-center gap-2 shrink-0">
+          <ReportsHelp topic={tab} />
+          <YearBadge />
+        </div>
       </header>
 
       {/* Tab Switcher */}

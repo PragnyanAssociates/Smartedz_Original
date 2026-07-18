@@ -4245,6 +4245,78 @@ app.delete('/api/admin/exam-types/:id', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+app.get('/api/admin/exam-types/:id/impact', async (req, res) => {
+    try {
+        const [own] = await db.execute(
+            'SELECT id, name, institutionId FROM exam_types WHERE id = ?',
+            [req.params.id]
+        );
+        if (own.length === 0) return res.status(404).json({ error: 'Exam type not found.' });
+        if (!sameTenant(req, own[0].institutionId)) {
+            return res.status(403).json({ error: 'This exam type belongs to another institution.' });
+        }
+ 
+        const instId = own[0].institutionId;
+        const activeYearId = await resolveYearId(instId);
+ 
+        // Marks that would be deleted, grouped by the year they belong to.
+        // academic_year_id can be NULL on rows written before year scoping —
+        // they're surfaced as "Unassigned" rather than hidden.
+        const [rows] = await db.execute(
+            `SELECT sm.academic_year_id,
+                    ay.name      AS year_name,
+                    ay.isActive  AS is_active,
+                    ay.startDate AS start_date,
+                    COUNT(*)     AS marks
+               FROM student_marks sm
+               LEFT JOIN academic_years ay ON ay.id = sm.academic_year_id
+              WHERE sm.exam_type_id = ?
+              GROUP BY sm.academic_year_id, ay.name, ay.isActive, ay.startDate`,
+            [req.params.id]
+        );
+ 
+        // Newest year first; unassigned rows last.
+        const years = rows
+            .map(r => ({
+                academic_year_id: r.academic_year_id,
+                name: r.year_name || 'Unassigned (no academic year)',
+                isActive: !!r.is_active,
+                is_active_year: r.academic_year_id != null && String(r.academic_year_id) === String(activeYearId),
+                marks: Number(r.marks) || 0,
+                _start: r.start_date || ''
+            }))
+            .sort((a, b) => {
+                if (a.academic_year_id == null) return 1;
+                if (b.academic_year_id == null) return -1;
+                return String(b._start).localeCompare(String(a._start));
+            })
+            .map(({ _start, ...y }) => y);
+ 
+        const [[mm]] = await db.execute(
+            'SELECT COUNT(*) AS c FROM exam_max_marks WHERE exam_type_id = ?',
+            [req.params.id]
+        );
+ 
+        const total_marks = years.reduce((s, y) => s + y.marks, 0);
+        const other_year_marks = years
+            .filter(y => !y.is_active_year)
+            .reduce((s, y) => s + y.marks, 0);
+ 
+        res.json({
+            exam_type: { id: own[0].id, name: own[0].name },
+            active_year_id: activeYearId ?? null,
+            total_marks,
+            other_year_marks,          // the number that should give you pause
+            max_marks_rows: Number(mm.c) || 0,
+            years
+        });
+    } catch (err) {
+        console.error('exam-types/impact error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
 
 // =====================================================================
 // === 17.B MAX MARKS (per exam-type + class + subject) ================

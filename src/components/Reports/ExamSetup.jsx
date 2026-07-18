@@ -3,7 +3,8 @@ import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   Plus, Edit, Trash2, X, Loader2, Save, GripVertical,
-  ListChecks, Grid3x3, UserCog, Check, ChevronDown, BookOpen, Layers
+  ListChecks, Grid3x3, UserCog, Check, ChevronDown, BookOpen, Layers,
+  AlertTriangle, ShieldAlert, CalendarRange
 } from 'lucide-react';
 
 // =====================================================================
@@ -12,6 +13,12 @@ import {
 //    2. Max Marks      - per class: an "All Subjects" default OR
 //                        per-subject values (mutually exclusive), per exam
 //    3. Teacher Assign - per class, map each subject to a teacher
+//
+//  NOTE ON ACADEMIC YEARS: everything here is SHARED CONFIG, reused by
+//  every academic year — unlike marks, which are stamped with the active
+//  year. That makes deletion here cross-year: removing an exam type takes
+//  its marks from EVERY year with it, not just the active one. Hence the
+//  guarded delete flow below, which shows the real damage per year first.
 // =====================================================================
 
 export default function ExamSetup() {
@@ -53,7 +60,6 @@ export default function ExamSetup() {
   );
 }
 
-
 // =====================================================================
 //  1. Exam Types
 // =====================================================================
@@ -65,6 +71,7 @@ function ExamTypesPanel() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ name: '', exam_order: 0 });
   const [saving, setSaving] = useState(false);
+  const [deletingType, setDeletingType] = useState(null);   // exam type pending deletion
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -83,6 +90,7 @@ function ExamTypesPanel() {
     setForm({ name: '', exam_order: types.length });
     setShowModal(true);
   };
+
   const openEdit = (t) => {
     setEditing(t);
     setForm({ name: t.name, exam_order: t.exam_order });
@@ -114,15 +122,6 @@ function ExamTypesPanel() {
     setSaving(false);
   };
 
-  const handleDelete = async (t) => {
-    if (!window.confirm(`Delete "${t.name}"? All max-marks and entered marks for this exam will be removed.`)) return;
-    try {
-      const res = await fetch(`${API_BASE_URL}/admin/exam-types/${t.id}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error('Delete failed');
-      load();
-    } catch (e) { alert(e.message); }
-  };
-
   return (
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -136,6 +135,16 @@ function ExamTypesPanel() {
           className="h-9 w-full sm:w-auto bg-primary hover:bg-primary/90 text-white px-4 rounded-md font-semibold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-colors shrink-0">
           <Plus className="size-3.5" /> Add Exam Type
         </button>
+      </div>
+
+      {/* Exam types are shared across years — worth saying once, up front. */}
+      <div className="rounded-md bg-blue-50/60 ring-1 ring-inset ring-blue-500/15 px-4 py-3 flex items-start gap-2.5">
+        <CalendarRange className="size-4 text-blue-600 shrink-0 mt-0.5" />
+        <p className="text-[11px] text-blue-800 leading-relaxed">
+          <span className="font-semibold">These carry across every academic year.</span> Unlike marks, exam types aren't tied to
+          a year — the same list is reused each year, which is why you never have to rebuild it. The trade-off: deleting one
+          removes its marks from <strong>every year</strong>, not just the active one. You'll see exactly what's at stake before it happens.
+        </p>
       </div>
 
       {loading ? (
@@ -170,7 +179,7 @@ function ExamTypesPanel() {
                         className="p-1.5 text-zinc-400 hover:text-amber-600 hover:bg-amber-50 rounded-md transition-colors" title="Edit">
                         <Edit className="size-4" />
                       </button>
-                      <button onClick={() => handleDelete(t)}
+                      <button onClick={() => setDeletingType(t)}
                         className="p-1.5 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors" title="Delete">
                         <Trash2 className="size-4" />
                       </button>
@@ -220,10 +229,206 @@ function ExamTypesPanel() {
           </div>
         </div>
       )}
+
+      {/* Guarded, year-aware delete */}
+      {deletingType && (
+        <DeleteExamTypeModal
+          examType={deletingType}
+          onClose={() => setDeletingType(null)}
+          onDeleted={() => { setDeletingType(null); load(); }}
+        />
+      )}
     </div>
   );
 }
 
+// =====================================================================
+//  DeleteExamTypeModal — deletion with the real damage on screen.
+//
+//  Exam types are shared config but student_marks carry BOTH
+//  exam_type_id and academic_year_id, so deleting one reaches into
+//  EVERY year. A window.confirm saying "marks will be removed" hides
+//  that: it reads like "this year's marks". So we ask the backend what
+//  would actually go (/impact), list it per year, and only arm the
+//  delete once the Super Admin has acknowledged closed-year losses.
+// =====================================================================
+function DeleteExamTypeModal({ examType, onClose, onDeleted }) {
+  const [impact, setImpact]   = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [acknowledged, setAck] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError]     = useState(null);
+
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await fetch(`${API_BASE_URL}/admin/exam-types/${examType.id}/impact`);
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.error || 'Could not check what this would delete.');
+        if (!cancel) setImpact(d);
+      } catch (e) {
+        if (!cancel) setError(e.message);
+      }
+      if (!cancel) setLoading(false);
+    })();
+    return () => { cancel = true; };
+  }, [examType.id]);
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/exam-types/${examType.id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || 'Delete failed');
+      }
+      onDeleted();
+    } catch (e) {
+      setError(e.message);
+      setDeleting(false);
+    }
+  };
+
+  const totalMarks  = impact?.total_marks ?? 0;
+  const otherYears  = impact?.other_year_marks ?? 0;
+  const needsAck    = totalMarks > 0;
+  const canDelete   = !loading && !deleting && !error && (!needsAck || acknowledged);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4">
+      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg shadow-xl relative max-h-[90vh] overflow-y-auto custom-scrollbar">
+
+        {/* Header */}
+        <div className="flex items-start justify-between p-5 border-b border-zinc-100">
+          <div className="flex items-center gap-3">
+            <div className="size-10 rounded-md bg-red-100 text-red-600 flex items-center justify-center shrink-0">
+              <Trash2 className="size-5" />
+            </div>
+            <div>
+              <h2 className="text-base font-semibold text-zinc-900">Delete &ldquo;{examType.name}&rdquo;</h2>
+              <p className="text-[11px] text-zinc-500 mt-0.5">Checking what this would remove&hellip;</p>
+            </div>
+          </div>
+          <button onClick={onClose} disabled={deleting} className="text-zinc-400 hover:text-zinc-700 transition-colors p-1 disabled:opacity-50">
+            <X className="size-5" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          {loading ? (
+            <div className="h-32 flex items-center justify-center">
+              <Loader2 className="animate-spin size-7 text-primary" />
+            </div>
+          ) : error && !impact ? (
+            <div className="rounded-md bg-red-50 ring-1 ring-inset ring-red-500/20 px-4 py-3 text-xs text-red-700 flex items-start gap-2">
+              <AlertTriangle className="size-4 shrink-0 mt-px" /> {error}
+            </div>
+          ) : totalMarks === 0 ? (
+            <>
+              <div className="rounded-md bg-emerald-50 ring-1 ring-inset ring-emerald-600/20 px-4 py-3 flex items-start gap-2.5">
+                <Check className="size-4 text-emerald-600 shrink-0 mt-0.5" />
+                <p className="text-xs text-emerald-800 leading-relaxed">
+                  <strong>No marks have been entered against this exam type</strong> in any academic year. Nothing will be lost.
+                  {impact?.max_marks_rows > 0 && (
+                    <> Its max-marks settings ({impact.max_marks_rows} {impact.max_marks_rows === 1 ? 'row' : 'rows'}) will be removed with it.</>
+                  )}
+                </p>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* The headline: what actually happens */}
+              <div className="rounded-md bg-red-50 ring-1 ring-inset ring-red-500/20 px-4 py-3 flex items-start gap-2.5">
+                <ShieldAlert className="size-4 text-red-600 shrink-0 mt-0.5" />
+                <div className="text-xs text-red-700 leading-relaxed">
+                  Deleting <strong>{examType.name}</strong> permanently removes <strong>{totalMarks}</strong> entered
+                  {totalMarks === 1 ? ' mark' : ' marks'}
+                  {otherYears > 0 && (
+                    <> — <strong>including {otherYears} from academic {otherYears === 1 ? 'year' : 'years'} you are no longer working in</strong></>
+                  )}.
+                  Report cards for those years will change. <strong>This cannot be undone.</strong>
+                </div>
+              </div>
+
+              {/* Per-year breakdown */}
+              <div className="rounded-md ring-1 ring-black/5 overflow-hidden">
+                <div className="px-4 py-2.5 bg-zinc-50/80 border-b border-zinc-100">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Marks that would be deleted</p>
+                </div>
+                <div className="divide-y divide-zinc-100">
+                  {(impact?.years || []).map((y, i) => (
+                    <div key={i} className="px-4 py-2.5 flex items-center justify-between gap-3">
+                      <span className="text-xs font-semibold text-zinc-800 flex items-center gap-2 min-w-0">
+                        <span className="truncate">{y.name}</span>
+                        {y.is_active_year ? (
+                          <span className="text-[9px] font-semibold uppercase tracking-wider bg-primary/10 text-primary ring-1 ring-primary/20 px-1.5 py-0.5 rounded shrink-0">
+                            Active year
+                          </span>
+                        ) : (
+                          <span className="text-[9px] font-semibold uppercase tracking-wider bg-red-50 text-red-700 ring-1 ring-red-600/20 px-1.5 py-0.5 rounded shrink-0">
+                            Closed year
+                          </span>
+                        )}
+                      </span>
+                      <span className="text-xs font-bold text-zinc-900 tabular-nums shrink-0">
+                        {y.marks} {y.marks === 1 ? 'mark' : 'marks'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {otherYears > 0 && (
+                <div className="rounded-md bg-amber-50 ring-1 ring-inset ring-amber-500/20 px-4 py-3 flex items-start gap-2.5">
+                  <AlertTriangle className="size-4 text-amber-600 shrink-0 mt-0.5" />
+                  <p className="text-[11px] text-amber-800 leading-relaxed">
+                    <strong>Back up the closed years first.</strong> Download their archives from
+                    <strong> Manage Logins &rarr; Academics Year</strong> (or the <strong>Downloads</strong> tab) before you delete —
+                    once these marks are gone they cannot be recovered from the app, and a past year's report cards will no longer match
+                    what you already issued.
+                  </p>
+                </div>
+              )}
+
+              {/* Acknowledgement */}
+              <label className="flex items-start gap-2 rounded-md ring-1 ring-black/5 p-4 cursor-pointer">
+                <input type="checkbox" checked={acknowledged} onChange={e => setAck(e.target.checked)}
+                  className="mt-0.5 size-4 rounded border-zinc-300 text-primary focus:ring-2 focus:ring-primary/30" />
+                <span className="text-[11px] text-zinc-600 leading-relaxed">
+                  I understand this permanently deletes <strong>{totalMarks}</strong> {totalMarks === 1 ? 'mark' : 'marks'}
+                  {otherYears > 0 && <> across <strong>{(impact?.years || []).length}</strong> academic years, including closed ones</>},
+                  that affected report cards will change, and that it cannot be recovered from the app.
+                </span>
+              </label>
+
+              {error && (
+                <div className="rounded-md bg-red-50 ring-1 ring-inset ring-red-500/20 px-3 py-2 text-xs text-red-700 flex items-start gap-2">
+                  <AlertTriangle className="size-4 shrink-0 mt-px" /> {error}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex justify-end gap-3 p-5 border-t border-zinc-100">
+          <button onClick={onClose} disabled={deleting}
+            className="text-zinc-700 px-4 py-2 border border-zinc-200 rounded-md text-xs font-medium hover:bg-zinc-50 transition-colors disabled:opacity-50">
+            Cancel
+          </button>
+          <button onClick={handleDelete} disabled={!canDelete}
+            className="px-5 py-2 bg-red-600 hover:bg-red-700 disabled:bg-zinc-200 disabled:text-zinc-400 text-white rounded-md text-xs font-semibold inline-flex items-center gap-2 transition-colors disabled:cursor-not-allowed">
+            {deleting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+            {deleting ? 'Deleting…' : 'Delete Exam Type'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // =====================================================================
 //  2. Max Marks — per class, per exam, with subjects.
@@ -261,11 +466,13 @@ function MaxMarksPanel() {
       const tData = await tRes.json();
       const aggData = await aggRes.json();
       const mData = await mRes.json();
+
       const cls = aggData.classes || [];
       setTypes(Array.isArray(tData) ? tData : []);
       setClasses(cls);
       setSubjects(aggData.subjects || []);
       setSubjectClasses(aggData.subjectClasses || {});
+
       const g = {};
       (Array.isArray(mData) ? mData : []).forEach(r => {
         const sid = (r.subject_id === undefined || r.subject_id === null) ? 0 : r.subject_id;
@@ -355,6 +562,7 @@ function MaxMarksPanel() {
           }
         });
       });
+
       const res = await fetch(`${API_BASE_URL}/admin/exam-max-marks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -411,6 +619,16 @@ function MaxMarksPanel() {
           </select>
           <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
         </div>
+      </div>
+
+      {/* Max marks are shared config too — changing one re-bases history. */}
+      <div className="rounded-md bg-amber-50/70 ring-1 ring-inset ring-amber-500/20 px-4 py-3 flex items-start gap-2.5">
+        <AlertTriangle className="size-4 text-amber-600 shrink-0 mt-0.5" />
+        <p className="text-[11px] text-amber-800 leading-relaxed">
+          <span className="font-semibold">Max marks apply to every academic year, not just the active one.</span> Changing a value
+          re-calculates the percentage on report cards that are already issued — past years included. Set these at the start and
+          leave them; if a paper's total genuinely changes, add a new exam type instead of editing an old one.
+        </p>
       </div>
 
       {!pickedClass ? (
@@ -512,7 +730,6 @@ function MaxMarksPanel() {
     </div>
   );
 }
-
 
 // =====================================================================
 //  3. Teacher Assignment
@@ -676,7 +893,6 @@ function TeacherAssignPanel() {
     </div>
   );
 }
-
 
 // -----------------------------------------------------------------
 const inputCls = 'h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm';
