@@ -3,11 +3,13 @@ import { API_BASE_URL } from '../../apiConfig';
 import {
   ArrowLeft, Loader2, Eye, Printer, Search, FileText
 } from 'lucide-react';
-import ReportCardView from './ReportCardView';
+import ReportCardView, { LastPrintedStamp } from './ReportCardView';
 
 // =====================================================================
 //  ReportCards - for one class, list students and open their report
-//  card. Printing uses the browser's print dialog scoped to the card.
+//  card. Printing uses the browser's print dialog scoped to the card;
+//  the print stylesheet (one-page landscape) lives in ReportCardView,
+//  so this screen no longer carries its own @media print block.
 //  Students are listed roll-wise (numeric) by default.
 // =====================================================================
 
@@ -80,26 +82,18 @@ export default function ReportCards({ classInfo, onBack }) {
             className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors w-fit">
             <ArrowLeft className="size-4" /> Back to students
           </button>
-          <button onClick={handlePrint}
-            className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors w-full sm:w-auto shrink-0">
-            <Printer className="size-4" /> Print
-          </button>
+          <div className="flex items-center justify-end gap-3 w-full sm:w-auto">
+            <LastPrintedStamp studentId={card.student?.id} />
+            <button onClick={handlePrint}
+              className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors shrink-0">
+              <Printer className="size-4" /> Print
+            </button>
+          </div>
         </div>
 
         <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden print:ring-0 print:shadow-none print:rounded-none">
           <ReportCardView card={card} />
         </div>
-
-        {/* Print CSS - only the report card shows on paper */}
-        <style>{`
-          @media print {
-            body * { visibility: hidden; }
-            #report-card-printable, #report-card-printable * { visibility: visible; }
-            #report-card-printable {
-              position: absolute; left: 0; top: 0; width: 100%;
-            }
-          }
-        `}</style>
       </div>
     );
   }

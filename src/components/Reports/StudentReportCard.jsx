@@ -2,11 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import { Loader2, Printer, AlertCircle } from 'lucide-react';
-import ReportCardView from './ReportCardView';
+import ReportCardView, { LastPrintedStamp } from './ReportCardView';
 
 // =====================================================================
 //  StudentReportCard - the logged-in student's own report card.
-//  Read-only. Reuses the shared ReportCardView + print CSS.
+//  Read-only. Reuses the shared ReportCardView, which carries the
+//  one-page print stylesheet. The last-printed stamp sits beside the
+//  Print button here.
 // =====================================================================
 
 export default function StudentReportCard() {
@@ -53,10 +55,11 @@ export default function StudentReportCard() {
 
   return (
     <div className="space-y-4 sm:space-y-6 animate-in fade-in duration-300">
-      
-      <div className="flex justify-end print:hidden">
+
+      <div className="flex items-center justify-end gap-3 print:hidden">
+        <LastPrintedStamp studentId={card.student?.id} />
         <button onClick={handlePrint}
-          className="h-9 px-6 bg-primary hover:bg-primary/90 text-white rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors w-full sm:w-auto shrink-0">
+          className="h-9 px-6 bg-primary hover:bg-primary/90 text-white rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors shrink-0">
           <Printer className="size-4 shrink-0" /> Print
         </button>
       </div>
@@ -65,16 +68,6 @@ export default function StudentReportCard() {
         <ReportCardView card={card} />
       </div>
 
-      <style>{`
-        @media print {
-          body * { visibility: hidden; }
-          #report-card-printable, #report-card-printable * { visibility: visible; }
-          #report-card-printable {
-            position: absolute; left: 0; top: 0; width: 100%;
-          }
-        }
-      `}</style>
-      
     </div>
   );
 }
