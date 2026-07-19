@@ -28,7 +28,7 @@ export default function MyTransport({ user }) {
 
   const routeId = data?.route?.id;
 
-  // Live bus position — only while the driver has a trip running.
+  // Live bus position - only while the driver has a trip running.
   useEffect(() => {
     if (!routeId) return;
     let alive = true;
@@ -53,7 +53,7 @@ export default function MyTransport({ user }) {
 
   if (!data?.route) {
     return (
-      <div className="ring-1 ring-black/5 rounded-lg bg-white p-10 text-center">
+      <div className="ring-1 ring-black/5 shadow-sm rounded-lg bg-white p-10 text-center">
         <Bus className="size-6 text-zinc-300 mx-auto mb-3" />
         <p className="text-sm font-medium text-zinc-700">You're not assigned to a transport route yet.</p>
         <p className="text-xs text-zinc-500 mt-1">Please contact your school's transport in-charge.</p>
@@ -71,16 +71,16 @@ export default function MyTransport({ user }) {
   return (
     <div className="space-y-5">
       {/* Route + crew card */}
-      <div className="ring-1 ring-black/5 rounded-lg bg-white p-5">
-        <h3 className="text-base font-bold text-zinc-900 flex items-center gap-2">
+      <div className="ring-1 ring-black/5 shadow-sm rounded-lg bg-white p-5">
+        <h3 className="text-base font-semibold text-zinc-900 flex items-center gap-2">
           <MapPinned className="size-4 text-primary" /> {r.route_name}
           {r.route_code && <span className="text-[11px] font-normal text-zinc-400">{r.route_code}</span>}
           <TripPill track={track} />
         </h3>
         <div className="mt-3"><TripStatus track={track} /></div>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
-          <Info2 icon={Bus} label="Bus Number" value={r.vehicle_no || '—'} />
-          <Info2 icon={Bus} label="Bus Name" value={r.vehicle_name || '—'} />
+          <Info2 icon={Bus} label="Bus Number" value={r.vehicle_no || '-'} />
+          <Info2 icon={Bus} label="Bus Name" value={r.vehicle_name || '-'} />
           <Crew icon={User} label="Driver" name={r.driver_name} phone={r.driver_phone} />
           <Crew icon={Users} label="Assistant" name={r.assistant_name} phone={r.assistant_phone} />
         </div>
@@ -108,8 +108,8 @@ export default function MyTransport({ user }) {
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
-          {/* Left — stops with Pickup / Drop tabs */}
-          <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden">
+          {/* Left - stops with Pickup / Drop tabs */}
+          <div className="ring-1 ring-black/5 shadow-sm rounded-lg bg-white overflow-hidden">
             <div className="p-4 border-b border-zinc-100 flex items-center justify-between gap-2">
               <div className="inline-flex items-center gap-1 bg-zinc-100 p-1 rounded-lg">
                 {['pickup', 'drop'].map(t => (
@@ -126,11 +126,11 @@ export default function MyTransport({ user }) {
                 const mine = String(p.id) === String(myPointId);
                 return (
                   <div key={p.id} className={`flex items-center gap-2.5 rounded-md px-3 py-2.5 ring-1 ${mine ? 'ring-primary/40 bg-primary/5' : 'ring-zinc-200'}`}>
-                    <span className="size-6 shrink-0 rounded-full text-white text-[10px] font-bold flex items-center justify-center" style={{ backgroundColor: color }}>{i + 1}</span>
+                    <span className="size-6 shrink-0 rounded-full text-white text-[10px] font-semibold flex items-center justify-center" style={{ backgroundColor: color }}>{i + 1}</span>
                     <div className="min-w-0 flex-1">
                       <p className="text-sm text-zinc-900 truncate">
                         {p.title}
-                        {mine && <span className="ml-2 text-[9px] font-bold uppercase tracking-wider text-primary bg-primary/10 px-1.5 py-0.5 rounded-full">My stop</span>}
+                        {mine && <span className="ml-2 text-[9px] font-semibold uppercase tracking-wider text-primary bg-primary/10 ring-1 ring-inset ring-primary/20 px-1.5 py-0.5 rounded-full">My stop</span>}
                       </p>
                       {p.arrival_time && <p className="text-[11px] text-zinc-400 flex items-center gap-1"><MapPin className="size-3" /> {p.arrival_time}</p>}
                     </div>
@@ -144,14 +144,16 @@ export default function MyTransport({ user }) {
             </div>
           </div>
 
-          {/* Right — live map */}
+          {/* Right - live map */}
           <div className="lg:sticky lg:top-4">
-            <div className="ring-1 ring-black/5 rounded-lg bg-white p-3">
+            <div className="ring-1 ring-black/5 shadow-sm rounded-lg bg-white p-3">
               <div className="flex items-center gap-3 mb-2 px-1">
                 <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-700"><MapPinned className="size-4 text-primary" /> Live Bus</span>
                 <span className="inline-flex items-center gap-1 text-[10px] text-zinc-500"><span className="size-2.5 rounded-full bg-primary" /> Pickup</span>
                 <span className="inline-flex items-center gap-1 text-[10px] text-zinc-500"><span className="size-2.5 rounded-full bg-accent" /> Drop</span>
-                {busAt ? <span className="text-[10px] text-green-700 font-medium ml-auto">🚌 On the way</span> : <span className="text-[10px] text-zinc-400 ml-auto">Bus not running now</span>}
+                {busAt
+                  ? <span className="inline-flex items-center gap-1 text-[10px] text-emerald-700 font-medium ml-auto"><Bus className="size-3" /> On the way</span>
+                  : <span className="text-[10px] text-zinc-400 ml-auto">Bus not running now</span>}
               </div>
               <LeafletMap points={allPoints} routed liveLocation={busAt} height={520} />
               <p className="text-[10px] text-zinc-400 mt-1.5">The route is always shown. The bus appears only once your driver starts the trip, and disappears when the trip is completed.</p>
@@ -175,7 +177,7 @@ function Crew({ icon: Icon, label, name, phone }) {
   return (
     <div className="rounded-md bg-zinc-50 ring-1 ring-zinc-100 p-2.5">
       <p className="text-[10px] text-zinc-400 uppercase tracking-wider flex items-center gap-1"><Icon className="size-3" /> {label}</p>
-      <p className="text-sm font-medium text-zinc-900 truncate mt-0.5">{name || '—'}</p>
+      <p className="text-sm font-medium text-zinc-900 truncate mt-0.5">{name || '-'}</p>
       {phone
         ? <a href={`tel:${phone}`} className="text-[11px] text-primary hover:underline inline-flex items-center gap-1 mt-0.5"><Phone className="size-3" /> {phone}</a>
         : <span className="text-[11px] text-zinc-400">No phone</span>}

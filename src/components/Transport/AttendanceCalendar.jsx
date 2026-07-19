@@ -27,7 +27,7 @@ export default function AttendanceCalendar({ records = [], compact = false }) {
     const d = byDate[k];
     if (!d) return null;
     if (d.present > 0 && d.absent > 0) return 'yellow';
-    if (d.present > 0) return 'green';
+    if (d.present > 0) return 'emerald'; // Updated to use the emerald success color
     if (d.absent > 0) return 'red';
     return null;
   };
@@ -39,10 +39,11 @@ export default function AttendanceCalendar({ records = [], compact = false }) {
   for (let i = 0; i < firstWeekday; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
 
+  // Semantic Status Pills applied to calendar cells
   const cls = {
-    green:  'bg-green-100 text-green-800',
-    red:    'bg-red-100 text-red-700',
-    yellow: 'bg-amber-100 text-amber-800',
+    emerald: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20',
+    red:     'bg-red-50 text-red-700 ring-1 ring-inset ring-red-600/20',
+    yellow:  'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-600/20',
   };
 
   // month summary
@@ -51,22 +52,31 @@ export default function AttendanceCalendar({ records = [], compact = false }) {
     Object.keys(byDate).forEach(k => {
       if (!k.startsWith(`${year}-${pad(month + 1)}`)) return;
       const c = dayColor(k);
-      if (c === 'green') g++; else if (c === 'red') r++; else if (c === 'yellow') y++;
+      if (c === 'emerald') g++; else if (c === 'red') r++; else if (c === 'yellow') y++;
     });
     return { g, r, y };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [byDate, year, month]);
 
   return (
-    <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden">
-      <div className="flex items-center justify-between px-3 py-2.5 border-b border-zinc-100">
-        <button onClick={() => setCursor(new Date(year, month - 1, 1))} className="p-1.5 text-zinc-500 hover:text-primary hover:bg-zinc-50 rounded-md"><ChevronLeft className="size-4" /></button>
-        <h3 className="text-xs font-semibold text-zinc-900 flex items-center gap-1.5"><CalendarDays className="size-3.5 text-primary" /> {MONTHS[month]} {year}</h3>
-        <button onClick={() => setCursor(new Date(year, month + 1, 1))} className="p-1.5 text-zinc-500 hover:text-primary hover:bg-zinc-50 rounded-md"><ChevronRight className="size-4" /></button>
+    <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden shadow-sm">
+      <div className="flex items-center justify-between px-3 py-3 border-b border-zinc-100">
+        <button onClick={() => setCursor(new Date(year, month - 1, 1))} 
+          className="flex items-center justify-center size-7 bg-white text-zinc-600 border border-zinc-200 hover:text-primary hover:bg-zinc-50 transition-colors rounded-md shadow-sm">
+          <ChevronLeft className="size-4" />
+        </button>
+        <h3 className="text-sm font-semibold text-zinc-900 flex items-center gap-1.5">
+          <CalendarDays className="size-4 text-primary" /> {MONTHS[month]} {year}
+        </h3>
+        <button onClick={() => setCursor(new Date(year, month + 1, 1))} 
+          className="flex items-center justify-center size-7 bg-white text-zinc-600 border border-zinc-200 hover:text-primary hover:bg-zinc-50 transition-colors rounded-md shadow-sm">
+          <ChevronRight className="size-4" />
+        </button>
       </div>
       <div className="p-3">
-        <div className="grid grid-cols-7 gap-1 mb-1">
-          {WD.map(w => <div key={w} className="text-center text-[9px] font-semibold text-zinc-400 uppercase py-1">{w}</div>)}
+        <div className="grid grid-cols-7 gap-1 mb-2">
+          {/* Micro-labels applied to weekday headers */}
+          {WD.map(w => <div key={w} className="text-center text-[10px] font-semibold text-zinc-500 uppercase tracking-wider py-1">{w}</div>)}
         </div>
         <div className="grid grid-cols-7 gap-1">
           {cells.map((d, i) => {
@@ -75,17 +85,17 @@ export default function AttendanceCalendar({ records = [], compact = false }) {
             const color = dayColor(k);
             const isToday = ymd(today) === k;
             return (
-              <div key={k} title={color ? `${byDate[k].present} present · ${byDate[k].absent} absent` : ''}
-                className={`aspect-square rounded-md text-xs flex items-center justify-center ${color ? cls[color] + ' font-semibold' : 'text-zinc-600'} ${isToday ? 'ring-1 ring-primary/50' : ''}`}>
+              <div key={k} title={color ? `${byDate[k].present} present - ${byDate[k].absent} absent` : ''}
+                className={`aspect-square rounded-md text-xs flex items-center justify-center transition-colors ${color ? cls[color] + ' font-semibold' : 'text-zinc-600 hover:bg-zinc-50'} ${isToday && !color ? 'ring-1 ring-inset ring-primary/50 text-primary font-semibold' : ''} ${isToday && color ? 'ring-2 ring-primary ring-offset-1' : ''}`}>
                 {d}
               </div>
             );
           })}
         </div>
-        <div className="flex items-center flex-wrap gap-x-4 gap-y-1.5 mt-3 px-1">
-          <Legend cls="bg-green-100" label={`Present (${summary.g})`} />
-          <Legend cls="bg-amber-100" label={`Half (${summary.y})`} />
-          <Legend cls="bg-red-100" label={`Absent (${summary.r})`} />
+        <div className="flex items-center flex-wrap gap-x-4 gap-y-2 mt-4 px-1">
+          <Legend cls="bg-emerald-50 ring-1 ring-inset ring-emerald-600/20" label={`Present (${summary.g})`} />
+          <Legend cls="bg-amber-50 ring-1 ring-inset ring-amber-600/20" label={`Half (${summary.y})`} />
+          <Legend cls="bg-red-50 ring-1 ring-inset ring-red-600/20" label={`Absent (${summary.r})`} />
         </div>
       </div>
     </div>
@@ -93,5 +103,9 @@ export default function AttendanceCalendar({ records = [], compact = false }) {
 }
 
 function Legend({ cls, label }) {
-  return <span className="inline-flex items-center gap-1.5 text-[10px] text-zinc-500"><span className={`size-3 rounded ${cls}`} /> {label}</span>;
+  return (
+    <span className="inline-flex items-center gap-1.5 text-[11px] text-zinc-500">
+      <span className={`size-3 rounded-full ${cls}`} /> {label}
+    </span>
+  );
 }

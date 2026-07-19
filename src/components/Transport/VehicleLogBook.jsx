@@ -8,7 +8,7 @@ export default function VehicleLogBook({ user, canEdit, canDelete, lockedVehicle
   const props = { user, canEdit, canDelete, lockedVehicleId };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <div className="inline-flex items-center gap-1 bg-zinc-100 p-1 rounded-lg">
         <button onClick={() => setTab('daily')}
           className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-medium transition-colors ${tab === 'daily' ? 'bg-white text-primary shadow-sm' : 'text-zinc-600 hover:text-zinc-900'}`}>

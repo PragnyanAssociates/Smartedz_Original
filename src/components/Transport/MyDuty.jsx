@@ -130,7 +130,7 @@ export default function MyDuty({ user }) {
 
   if (!duty?.routes?.length) {
     return (
-      <div className="ring-1 ring-black/5 rounded-lg bg-white p-10 text-center">
+      <div className="ring-1 ring-black/5 shadow-sm rounded-lg bg-white p-10 text-center">
         <Bus className="size-6 text-zinc-300 mx-auto mb-3" />
         <p className="text-sm font-medium text-zinc-700">No route is assigned to you yet.</p>
         <p className="text-xs text-zinc-500 mt-1">Your transport in-charge will assign you to a bus route.</p>
@@ -148,18 +148,17 @@ export default function MyDuty({ user }) {
   return (
     <div className="space-y-5">
       {/* Duty header */}
-      <div className="ring-1 ring-black/5 rounded-lg bg-white p-5">
+      <div className="ring-1 ring-black/5 shadow-sm rounded-lg bg-white p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <Thumb endpoint={`/transport/vehicle-image/${route?.vehicle_id}`} has={route?.vehicle_has_image} alt={route?.vehicle_no} icon={Bus}
               className="size-14" onEnlarge={(src, alt) => setZoom({ src, alt })} />
             <div className="min-w-0">
-              <h3 className="text-base font-bold text-zinc-900 flex items-center gap-2 flex-wrap">
+              <h3 className="text-base font-semibold text-zinc-900 flex items-center gap-2 flex-wrap">
                 {route?.route_name}
-                <span className="text-[10px] font-bold uppercase tracking-wider text-primary bg-primary/10 px-2 py-0.5 rounded-full">You are the {route?.my_role}</span>
-
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-primary bg-primary/10 ring-1 ring-inset ring-primary/20 px-2 py-0.5 rounded-full">You are the {route?.my_role}</span>
               </h3>
-              <p className="text-[11px] text-zinc-500 mt-0.5">{route?.vehicle_no || 'No bus'}{route?.vehicle_code ? ` · ${route.vehicle_code}` : ''}{route?.vehicle_name ? ` · ${route.vehicle_name}` : ''}{route?.capacity ? ` · ${route.capacity} seats` : ''}</p>
+              <p className="text-[11px] text-zinc-500 mt-0.5">{route?.vehicle_no || 'No bus'}{route?.vehicle_code ? ` - ${route.vehicle_code}` : ''}{route?.vehicle_name ? ` - ${route.vehicle_name}` : ''}{route?.capacity ? ` - ${route.capacity} seats` : ''}</p>
             </div>
           </div>
 
@@ -168,21 +167,21 @@ export default function MyDuty({ user }) {
               <div className="relative">
                 <select value={routeId} disabled={tracking} onChange={e => setRouteId(e.target.value)}
                   title={tracking ? 'Complete the current trip before switching routes' : ''}
-                  className="h-9 appearance-none rounded-md border border-zinc-200 bg-white pl-3 pr-8 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer">
+                  className="h-9 appearance-none rounded-md border border-zinc-200 bg-white pl-3 pr-8 text-xs font-medium text-zinc-700 shadow-sm outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer">
                   {duty.routes.map(r => <option key={r.id} value={r.id}>{r.route_name}</option>)}
                 </select>
                 <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
             )}
             {running
-              ? <button onClick={completeTrip} className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-red-600 px-4 py-2 rounded-md hover:bg-red-700 shadow-sm"><CheckCircle2 className="size-3.5" /> Complete Trip</button>
-              : <button onClick={startTrip} className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-green-600 px-4 py-2 rounded-md hover:bg-green-700 shadow-sm"><Play className="size-3.5" /> Start {stopTab === 'drop' ? 'Drop' : 'Pickup'} Trip</button>}
+              ? <button onClick={completeTrip} className="inline-flex items-center justify-center gap-1.5 h-9 px-4 shrink-0 text-xs font-semibold text-white bg-red-600 rounded-md hover:bg-red-700 shadow-sm"><CheckCircle2 className="size-3.5" /> Complete Trip</button>
+              : <button onClick={startTrip} className="inline-flex items-center justify-center gap-1.5 h-9 px-4 shrink-0 text-xs font-semibold text-white bg-emerald-600 rounded-md hover:bg-emerald-700 shadow-sm"><Play className="size-3.5" /> Start {stopTab === 'drop' ? 'Drop' : 'Pickup'} Trip</button>}
           </div>
         </div>
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
           <Meta icon={RouteIcon} label="Students" value={route?.student_count ?? 0} />
-          <Meta icon={MapPin} label="Stops" value={`${pickups.length} pickup · ${drops.length} drop`} />
+          <Meta icon={MapPin} label="Stops" value={`${pickups.length} pickup - ${drops.length} drop`} />
           <Crew icon={User} label="Driver" name={route?.driver_name} phone={route?.driver_phone} me={route?.my_role === 'Driver'} />
           <Crew icon={Users} label="Assistant" name={route?.assistant_name} phone={route?.assistant_phone} me={route?.my_role === 'Assistant'} />
         </div>
@@ -193,7 +192,7 @@ export default function MyDuty({ user }) {
             <Info className="size-3.5 shrink-0 mt-px" />
             {running
               ? 'Keep this page open while driving so your location keeps updating. Tap Complete Trip when the run is finished.'
-              : `Pick the ${stopTab === 'drop' ? 'Drop' : 'Pickup'} tab below, then Start Trip — Google Maps opens for navigation and the bus goes live for students.`}
+              : `Pick the ${stopTab === 'drop' ? 'Drop' : 'Pickup'} tab below, then Start Trip - Google Maps opens for navigation and the bus goes live for students.`}
           </p>
         </div>
       </div>
@@ -207,7 +206,7 @@ export default function MyDuty({ user }) {
 
       {tab === 'route' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
-          <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden">
+          <div className="ring-1 ring-black/5 shadow-sm rounded-lg bg-white overflow-hidden">
             <div className="p-4 border-b border-zinc-100 flex items-center justify-between gap-2 flex-wrap">
               <div className="inline-flex items-center gap-1 bg-zinc-100 p-1 rounded-lg">
                 {['pickup', 'drop'].map(t => (
@@ -225,7 +224,7 @@ export default function MyDuty({ user }) {
             <div className="p-4 space-y-2">
               {shown.length ? shown.map((p, i) => (
                 <div key={p.id} className="flex items-center gap-2.5 rounded-md px-3 py-2.5 ring-1 ring-zinc-200">
-                  <span className="size-6 shrink-0 rounded-full text-white text-[10px] font-bold flex items-center justify-center" style={{ backgroundColor: color }}>{i + 1}</span>
+                  <span className="size-6 shrink-0 rounded-full text-white text-[10px] font-semibold flex items-center justify-center" style={{ backgroundColor: color }}>{i + 1}</span>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm text-zinc-900 truncate">{p.title}</p>
                     {p.arrival_time && <p className="text-[11px] text-zinc-400">{p.arrival_time}</p>}
@@ -240,12 +239,14 @@ export default function MyDuty({ user }) {
           </div>
 
           <div className="lg:sticky lg:top-4">
-            <div className="ring-1 ring-black/5 rounded-lg bg-white p-3">
+            <div className="ring-1 ring-black/5 shadow-sm rounded-lg bg-white p-3">
               <div className="flex items-center gap-3 mb-2 px-1">
                 <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-700"><MapPinned className="size-4 text-primary" /> Route Map</span>
                 <span className="inline-flex items-center gap-1 text-[10px] text-zinc-500"><span className="size-2.5 rounded-full bg-primary" /> Pickup</span>
                 <span className="inline-flex items-center gap-1 text-[10px] text-zinc-500"><span className="size-2.5 rounded-full bg-accent" /> Drop</span>
-                {busAt ? <span className="text-[10px] text-green-700 font-medium ml-auto">🚌 Live</span> : <span className="text-[10px] text-zinc-400 ml-auto">Bus hidden until trip starts</span>}
+                {busAt
+                  ? <span className="inline-flex items-center gap-1 text-[10px] text-emerald-700 font-medium ml-auto"><Bus className="size-3" /> Live</span>
+                  : <span className="text-[10px] text-zinc-400 ml-auto">Bus hidden until trip starts</span>}
               </div>
               <LeafletMap points={points} routed liveLocation={busAt} height={520} />
             </div>
@@ -260,7 +261,7 @@ export default function MyDuty({ user }) {
       {tab === 'logbook' && (
         route?.vehicle_id
           ? <VehicleLogBook user={user} canEdit canDelete={false} lockedVehicleId={route.vehicle_id} />
-          : <div className="ring-1 ring-black/5 rounded-lg bg-white p-10 text-center text-sm text-zinc-500">No bus is assigned to this route yet.</div>
+          : <div className="ring-1 ring-black/5 shadow-sm rounded-lg bg-white p-10 text-center text-sm text-zinc-500">No bus is assigned to this route yet.</div>
       )}
 
       {zoom && <Lightbox src={zoom.src} alt={zoom.alt} onClose={() => setZoom(null)} />}
@@ -287,8 +288,8 @@ function Meta({ icon: Icon, label, value }) {
 function Crew({ icon: Icon, label, name, phone, me }) {
   return (
     <div className={`rounded-md p-2.5 ring-1 ${me ? 'bg-primary/5 ring-primary/20' : 'bg-zinc-50 ring-zinc-100'}`}>
-      <p className="text-[10px] text-zinc-400 uppercase tracking-wider flex items-center gap-1"><Icon className="size-3" /> {label}{me && <span className="text-primary font-bold">· you</span>}</p>
-      <p className="text-sm font-medium text-zinc-900 truncate mt-0.5">{name || '—'}</p>
+      <p className="text-[10px] text-zinc-400 uppercase tracking-wider flex items-center gap-1"><Icon className="size-3" /> {label}{me && <span className="text-primary font-medium"> - you</span>}</p>
+      <p className="text-sm font-medium text-zinc-900 truncate mt-0.5">{name || '-'}</p>
       {phone
         ? <a href={`tel:${phone}`} className="text-[11px] text-primary hover:underline inline-flex items-center gap-1 mt-0.5"><Phone className="size-3" /> {phone}</a>
         : <span className="text-[11px] text-zinc-400">No phone</span>}

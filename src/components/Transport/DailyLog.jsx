@@ -110,22 +110,22 @@ export default function DailyLog({ user, canEdit, canDelete, lockedVehicleId = n
   return (
     <div className="space-y-5">
       {/* Range summary */}
-      <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden">
+      <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden shadow-sm">
         <div className="p-4 border-b border-zinc-100 space-y-3">
           <div className="flex flex-wrap items-end gap-3">
             <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider self-center"><Filter className="size-3.5" /> Totals for period</span>
             <DateField label="From" value={range.from} onChange={v => setRange(r => ({ ...r, from: v }))} />
             <DateField label="To" value={range.to} onChange={v => setRange(r => ({ ...r, to: v }))} />
             {!lockedVehicleId && (
-            <div className="flex flex-col gap-1">
-              <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Vehicle</span>
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Vehicle</span>
               <div className="relative">
                 <select value={vehicleId} onChange={e => setVehicleId(e.target.value)}
-                  className="h-8 appearance-none rounded border border-zinc-200 bg-white pl-2 pr-7 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer">
+                  className="h-9 appearance-none rounded-md border border-zinc-200 bg-white pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer shadow-sm">
                   <option value="">All vehicles</option>
-                  {vehicles.map(v => <option key={v.id} value={v.id}>{v.vehicle_no}{v.vehicle_code ? ` · ${v.vehicle_code}` : ''}</option>)}
+                  {vehicles.map(v => <option key={v.id} value={v.id}>{v.vehicle_no}{v.vehicle_code ? ` - ${v.vehicle_code}` : ''}</option>)}
                 </select>
-                <ChevronDown className="size-3.5 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
             </div>
             )}
@@ -141,9 +141,9 @@ export default function DailyLog({ user, canEdit, canDelete, lockedVehicleId = n
           <>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 p-4">
               <Kpi icon={RouteIcon} label="Total Trips" value={num(summary.totals?.trips)} tone="primary" />
-              <Kpi icon={Gauge} label="Total Distance" value={`${num(summary.totals?.distance)} km`} tone="green" />
+              <Kpi icon={Gauge} label="Total Distance" value={`${num(summary.totals?.distance)} km`} tone="emerald" />
               <Kpi icon={Fuel} label="Total Fuel" value={`${num(summary.totals?.fuel)} L`} tone="accent" />
-              <Kpi icon={Bus} label="Avg Mileage" value={summary.totals?.mileage ? `${summary.totals.mileage} km/L` : '—'} sub={summary.totals?.cost ? inr(summary.totals.cost) + ' fuel cost' : ''} tone="zinc" />
+              <Kpi icon={Bus} label="Avg Mileage" value={summary.totals?.mileage ? `${summary.totals.mileage} km/L` : '-'} sub={summary.totals?.cost ? inr(summary.totals.cost) + ' fuel cost' : ''} tone="zinc" />
             </div>
             <div className="overflow-x-auto custom-scrollbar border-t border-zinc-100">
               <table className="w-full text-left border-collapse min-w-[720px]">
@@ -156,14 +156,14 @@ export default function DailyLog({ user, canEdit, canDelete, lockedVehicleId = n
                 </thead>
                 <tbody className="divide-y divide-zinc-100">
                   {summary.vehicles?.length ? summary.vehicles.map(v => (
-                    <tr key={v.vehicle_id} className="hover:bg-zinc-50/60">
-                      <td className="px-4 py-2.5 text-sm font-semibold text-zinc-900">{v.vehicle_no}<span className="text-zinc-400 font-normal">{v.vehicle_name ? ` · ${v.vehicle_name}` : ''}</span></td>
-                      <td className="px-4 py-2.5 text-xs text-zinc-600">{v.vehicle_code || '—'}</td>
+                    <tr key={v.vehicle_id} className="hover:bg-zinc-50/60 transition-colors">
+                      <td className="px-4 py-2.5 text-sm font-semibold text-zinc-900">{v.vehicle_no}<span className="text-zinc-400 font-normal">{v.vehicle_name ? ` - ${v.vehicle_name}` : ''}</span></td>
+                      <td className="px-4 py-2.5 text-xs text-zinc-600">{v.vehicle_code || '-'}</td>
                       <td className="px-4 py-2.5 text-xs text-zinc-600 tabular-nums">{v.days}</td>
-                      <td className="px-4 py-2.5 text-xs text-zinc-900 tabular-nums font-medium">{num(v.trips)}</td>
-                      <td className="px-4 py-2.5 text-xs text-zinc-900 tabular-nums font-medium">{num(v.distance)} km</td>
-                      <td className="px-4 py-2.5 text-xs text-zinc-900 tabular-nums font-medium">{num(v.fuel)} L</td>
-                      <td className="px-4 py-2.5 text-xs text-zinc-600 tabular-nums">{v.mileage ? `${v.mileage} km/L` : '—'}</td>
+                      <td className="px-4 py-2.5 text-xs text-zinc-900 tabular-nums font-semibold">{num(v.trips)}</td>
+                      <td className="px-4 py-2.5 text-xs text-zinc-900 tabular-nums font-semibold">{num(v.distance)} km</td>
+                      <td className="px-4 py-2.5 text-xs text-zinc-900 tabular-nums font-semibold">{num(v.fuel)} L</td>
+                      <td className="px-4 py-2.5 text-xs text-zinc-600 tabular-nums">{v.mileage ? `${v.mileage} km/L` : '-'}</td>
                     </tr>
                   )) : <tr><td colSpan="7" className="px-4 py-8 text-center text-xs text-zinc-500 italic">No entries in this period.</td></tr>}
                 </tbody>
@@ -173,17 +173,23 @@ export default function DailyLog({ user, canEdit, canDelete, lockedVehicleId = n
         )}
       </div>
 
-      {/* Calendar left · entries right */}
+      {/* Calendar left - entries right */}
       <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-5 items-start">
-        <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden">
-          <div className="flex items-center justify-between px-3 py-2.5 border-b border-zinc-100">
-            <button onClick={() => setCursor(new Date(year, month - 1, 1))} className="p-1.5 text-zinc-500 hover:text-primary hover:bg-zinc-50 rounded-md"><ChevronLeft className="size-4" /></button>
-            <h3 className="text-xs font-semibold text-zinc-900 flex items-center gap-1.5"><CalendarDays className="size-3.5 text-primary" /> {MONTHS[month]} {year}</h3>
-            <button onClick={() => setCursor(new Date(year, month + 1, 1))} className="p-1.5 text-zinc-500 hover:text-primary hover:bg-zinc-50 rounded-md"><ChevronRight className="size-4" /></button>
+        <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden shadow-sm">
+          <div className="flex items-center justify-between px-3 py-3 border-b border-zinc-100">
+            <button onClick={() => setCursor(new Date(year, month - 1, 1))} 
+              className="flex items-center justify-center size-7 bg-white text-zinc-600 border border-zinc-200 hover:text-primary hover:bg-zinc-50 transition-colors rounded-md shadow-sm">
+              <ChevronLeft className="size-4" />
+            </button>
+            <h3 className="text-sm font-semibold text-zinc-900 flex items-center gap-1.5"><CalendarDays className="size-4 text-primary" /> {MONTHS[month]} {year}</h3>
+            <button onClick={() => setCursor(new Date(year, month + 1, 1))} 
+              className="flex items-center justify-center size-7 bg-white text-zinc-600 border border-zinc-200 hover:text-primary hover:bg-zinc-50 transition-colors rounded-md shadow-sm">
+              <ChevronRight className="size-4" />
+            </button>
           </div>
-          <div className="p-2.5">
-            <div className="grid grid-cols-7 gap-1 mb-1">
-              {WD.map(w => <div key={w} className="text-center text-[9px] font-semibold text-zinc-400 uppercase py-1">{w}</div>)}
+          <div className="p-3">
+            <div className="grid grid-cols-7 gap-1 mb-2">
+              {WD.map(w => <div key={w} className="text-center text-[10px] font-semibold text-zinc-500 uppercase tracking-wider py-1">{w}</div>)}
             </div>
             <div className="grid grid-cols-7 gap-1">
               {cells.map((d, i) => {
@@ -195,32 +201,32 @@ export default function DailyLog({ user, canEdit, canDelete, lockedVehicleId = n
                 return (
                   <button key={k} onClick={() => setSelected(k)}
                     className={`relative aspect-square rounded-md text-xs flex items-center justify-center transition-colors
-                      ${isSel ? 'bg-primary text-white font-semibold' : has ? 'bg-green-100 text-green-800 font-medium hover:bg-green-200' : 'text-zinc-700 hover:bg-zinc-50'}
+                      ${isSel ? 'bg-primary text-white font-semibold shadow-sm' : has ? 'bg-emerald-50 text-emerald-700 font-semibold ring-1 ring-inset ring-emerald-600/20 hover:bg-emerald-100' : 'text-zinc-600 hover:bg-zinc-50'}
                       ${isToday && !isSel ? 'ring-1 ring-primary/40' : ''}`}>
                     {d}
-                    {has && !isSel && <span className="absolute bottom-0.5 size-1 rounded-full bg-green-500" />}
+                    {has && !isSel && <span className="absolute bottom-1 size-1 rounded-full bg-emerald-600" />}
                   </button>
                 );
               })}
             </div>
-            <div className="flex flex-col gap-1.5 mt-3 px-1">
-              <Legend cls="bg-green-100 ring-green-600/20" label="Log recorded" />
+            <div className="flex flex-col gap-2 mt-4 px-1">
+              <Legend cls="bg-emerald-50 ring-emerald-600/20" label="Log recorded" />
               <Legend cls="bg-white ring-zinc-200" label="No entry" />
-              {loading && <span className="text-[10px] text-zinc-400">Loading…</span>}
+              {loading && <span className="text-[10px] text-zinc-400">Loading...</span>}
             </div>
           </div>
         </div>
 
-        <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden">
+        <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden shadow-sm">
           <div className="p-4 border-b border-zinc-100 flex items-center justify-between gap-3 flex-wrap">
             <div>
               <h3 className="text-sm font-semibold text-zinc-900">{prettyDate(selected)} <span className="text-zinc-400 font-normal">({dayEntries.length})</span></h3>
-              <p className="text-[11px] text-zinc-500 mt-0.5">{num(dayTotals.trips)} trips · {num(dayTotals.distance)} km · {num(dayTotals.fuel)} L</p>
+              <p className="text-[11px] text-zinc-500 mt-1">{num(dayTotals.trips)} trips - {num(dayTotals.distance)} km - {num(dayTotals.fuel)} L</p>
             </div>
             {canEdit && (
               <button onClick={() => setModal({ vehicle_id: lockedVehicleId || vehicles[0]?.id || '', log_date: selected, trips: '', distance_km: '', fuel_litres: '', fuel_cost: '', driver_name: '', notes: '' })}
-                className="inline-flex items-center gap-1.5 bg-primary text-white px-3.5 h-8 rounded-md text-xs font-semibold hover:bg-primary/90 shadow-sm">
-                <Plus className="size-3.5" /> Add Log
+                className="inline-flex items-center justify-center gap-1.5 bg-primary text-white px-4 h-9 rounded-md text-xs font-semibold hover:bg-primary/90 shadow-sm transition-colors">
+                <Plus className="size-4" /> Add Log
               </button>
             )}
           </div>
@@ -237,17 +243,25 @@ export default function DailyLog({ user, canEdit, canDelete, lockedVehicleId = n
                 </thead>
                 <tbody className="divide-y divide-zinc-100">
                   {dayEntries.map(l => (
-                    <tr key={l.id} className="hover:bg-zinc-50/60">
-                      <td className="px-4 py-2.5 text-sm font-semibold text-zinc-900 flex items-center gap-2"><Bus className="size-4 text-primary" /> {l.vehicle_no}<span className="text-zinc-400 font-normal">{l.vehicle_name ? ` · ${l.vehicle_name}` : ''}</span></td>
-                      <td className="px-4 py-2.5 text-xs text-zinc-600">{l.vehicle_code || '—'}</td>
-                      <td className="px-4 py-2.5 text-xs text-zinc-900 tabular-nums">{num(l.trips)}</td>
-                      <td className="px-4 py-2.5 text-xs text-zinc-900 tabular-nums">{num(l.distance_km)} km</td>
-                      <td className="px-4 py-2.5 text-xs text-zinc-900 tabular-nums">{num(l.fuel_litres)} L</td>
-                      <td className="px-4 py-2.5 text-xs text-zinc-600">{l.driver_name || '—'}</td>
+                    <tr key={l.id} className="hover:bg-zinc-50/60 transition-colors">
+                      <td className="px-4 py-2.5 text-sm font-semibold text-zinc-900 flex items-center gap-2"><Bus className="size-4 text-primary" /> {l.vehicle_no}<span className="text-zinc-400 font-normal">{l.vehicle_name ? ` - ${l.vehicle_name}` : ''}</span></td>
+                      <td className="px-4 py-2.5 text-xs text-zinc-600">{l.vehicle_code || '-'}</td>
+                      <td className="px-4 py-2.5 text-xs text-zinc-900 tabular-nums font-semibold">{num(l.trips)}</td>
+                      <td className="px-4 py-2.5 text-xs text-zinc-900 tabular-nums font-semibold">{num(l.distance_km)} km</td>
+                      <td className="px-4 py-2.5 text-xs text-zinc-900 tabular-nums font-semibold">{num(l.fuel_litres)} L</td>
+                      <td className="px-4 py-2.5 text-xs text-zinc-600">{l.driver_name || '-'}</td>
                       <td className="px-4 py-2.5">
-                        <div className="flex items-center justify-end gap-1">
-                          {canEdit && <button onClick={() => setModal({ id: l.id, vehicle_id: l.vehicle_id, log_date: dkey(l.log_date), trips: l.trips ?? '', distance_km: l.distance_km ?? '', fuel_litres: l.fuel_litres ?? '', fuel_cost: l.fuel_cost ?? '', driver_name: l.driver_name || '', notes: l.notes || '' })} className="p-1.5 text-zinc-400 hover:text-primary rounded" title="Edit"><Pencil className="size-4" /></button>}
-                          {canDelete && <button onClick={() => del(l.id)} disabled={busyId === l.id} className="p-1.5 text-zinc-400 hover:text-accent rounded disabled:opacity-40" title="Delete"><Trash2 className="size-4" /></button>}
+                        <div className="flex items-center justify-end gap-2">
+                          {canEdit && (
+                            <button onClick={() => setModal({ id: l.id, vehicle_id: l.vehicle_id, log_date: dkey(l.log_date), trips: l.trips ?? '', distance_km: l.distance_km ?? '', fuel_litres: l.fuel_litres ?? '', fuel_cost: l.fuel_cost ?? '', driver_name: l.driver_name || '', notes: l.notes || '' })} className="flex items-center justify-center size-7 rounded bg-white text-zinc-600 border border-zinc-200 hover:text-primary hover:bg-zinc-50 transition-colors shadow-sm" title="Edit">
+                              <Pencil className="size-3.5" />
+                            </button>
+                          )}
+                          {canDelete && (
+                            <button onClick={() => del(l.id)} disabled={busyId === l.id} className="flex items-center justify-center size-7 rounded bg-white text-zinc-600 border border-zinc-200 hover:text-red-600 hover:bg-red-50 transition-colors shadow-sm disabled:opacity-40" title="Delete">
+                              <Trash2 className="size-3.5" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -256,7 +270,7 @@ export default function DailyLog({ user, canEdit, canDelete, lockedVehicleId = n
               </table>
             </div>
           ) : (
-            <p className="px-5 py-10 text-center text-xs text-zinc-500 italic">No log for this day{canEdit ? ' — use “Add Log” to record one.' : '.'}</p>
+            <p className="px-5 py-10 text-center text-xs text-zinc-500 italic">No log for this day {canEdit ? '- use "Add Log" to record one.' : '.'}</p>
           )}
         </div>
       </div>
@@ -286,19 +300,21 @@ function LogModal({ user, vehicles, value, onClose, onSaved, locked = false }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={onClose}>
-      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-md p-5 shadow-xl" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-4">
+      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-md p-5 shadow-xl flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-5">
           <h4 className="text-sm font-semibold text-zinc-900">{f.id ? 'Edit Daily Log' : 'Add Daily Log'}</h4>
-          <button onClick={onClose} className="text-zinc-400 hover:text-zinc-700"><X className="size-5" /></button>
+          <button onClick={onClose} className="flex items-center justify-center size-8 rounded-md bg-white text-zinc-600 border border-zinc-200 hover:text-zinc-900 hover:bg-zinc-50 transition-colors shadow-sm">
+            <X className="size-4" />
+          </button>
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-4">
           <div className="col-span-2">
             <Field label="Vehicle *">
               <div className="relative">
                 <select value={f.vehicle_id} onChange={e => set('vehicle_id', e.target.value)} disabled={locked}
                   className={`${inputCls} appearance-none pr-8 cursor-pointer disabled:bg-zinc-50 disabled:text-zinc-500`}>
-                  <option value="">Select vehicle…</option>
-                  {vehicles.map(v => <option key={v.id} value={v.id}>{v.vehicle_no}{v.vehicle_code ? ` · ${v.vehicle_code}` : ''}{v.vehicle_name ? ` · ${v.vehicle_name}` : ''}</option>)}
+                  <option value="">Select vehicle...</option>
+                  {vehicles.map(v => <option key={v.id} value={v.id}>{v.vehicle_no}{v.vehicle_code ? ` - ${v.vehicle_code}` : ''}{v.vehicle_name ? ` - ${v.vehicle_name}` : ''}</option>)}
                 </select>
                 <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
@@ -308,14 +324,18 @@ function LogModal({ user, vehicles, value, onClose, onSaved, locked = false }) {
           <Field label="Trips"><input value={f.trips} onChange={e => set('trips', e.target.value.replace(/\D/g, ''))} inputMode="numeric" placeholder="e.g. 2" className={inputCls} /></Field>
           <Field label="Distance (km)"><input value={f.distance_km} onChange={e => set('distance_km', e.target.value.replace(/[^\d.]/g, ''))} inputMode="decimal" placeholder="e.g. 42.5" className={inputCls} /></Field>
           <Field label="Fuel (litres)"><input value={f.fuel_litres} onChange={e => set('fuel_litres', e.target.value.replace(/[^\d.]/g, ''))} inputMode="decimal" placeholder="e.g. 12" className={inputCls} /></Field>
-          <Field label="Fuel cost (₹)"><input value={f.fuel_cost} onChange={e => set('fuel_cost', e.target.value.replace(/[^\d.]/g, ''))} inputMode="decimal" placeholder="Optional" className={inputCls} /></Field>
+          <Field label="Fuel cost (INR)"><input value={f.fuel_cost} onChange={e => set('fuel_cost', e.target.value.replace(/[^\d.]/g, ''))} inputMode="decimal" placeholder="Optional" className={inputCls} /></Field>
           <Field label="Driver"><input value={f.driver_name} onChange={e => set('driver_name', e.target.value)} placeholder="Optional" className={inputCls} /></Field>
           <div className="col-span-2"><Field label="Notes"><input value={f.notes} onChange={e => set('notes', e.target.value)} className={inputCls} /></Field></div>
         </div>
-        <p className="text-[10px] text-zinc-400 mt-2">One entry per vehicle per day — saving again for the same day updates it. Totals roll up automatically into the period above.</p>
-        <div className="flex justify-end gap-2 mt-4">
-          <button onClick={onClose} className="px-4 py-2 rounded-md text-xs font-medium text-zinc-700 ring-1 ring-zinc-200 hover:bg-zinc-50">Cancel</button>
-          <button onClick={save} disabled={saving} className="inline-flex items-center gap-1.5 bg-primary text-white px-4 py-2 rounded-md text-xs font-semibold hover:bg-primary/90 disabled:opacity-60"><Save className="size-3.5" /> {saving ? 'Saving…' : 'Save'}</button>
+        <p className="text-[11px] text-zinc-400 mt-4 leading-relaxed">One entry per vehicle per day - saving again for the same day updates it. Totals roll up automatically into the period above.</p>
+        <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 mt-6">
+          <button onClick={onClose} className="flex items-center justify-center gap-1.5 h-9 px-6 min-w-[120px] w-full sm:w-auto bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-50 transition-colors rounded-md text-xs font-semibold shadow-sm">
+            Cancel
+          </button>
+          <button onClick={save} disabled={saving} className="inline-flex items-center justify-center gap-1.5 bg-primary text-white h-9 px-6 min-w-[120px] w-full sm:w-auto rounded-md text-xs font-semibold hover:bg-primary/90 shadow-sm transition-colors disabled:opacity-60">
+            <Save className="size-4" /> {saving ? 'Saving...' : 'Save'}
+          </button>
         </div>
       </div>
     </div>
@@ -323,18 +343,33 @@ function LogModal({ user, vehicles, value, onClose, onSaved, locked = false }) {
 }
 
 function Kpi({ icon: Icon, label, value, sub, tone }) {
-  const tones = { zinc: 'bg-zinc-100 text-zinc-600', green: 'bg-green-50 text-green-600', accent: 'bg-accent/10 text-accent', primary: 'bg-primary/10 text-primary' };
+  const tones = { zinc: 'bg-zinc-50 text-zinc-600 ring-zinc-600/20', emerald: 'bg-emerald-50 text-emerald-600 ring-emerald-600/20', accent: 'bg-accent/10 text-accent ring-accent/20', primary: 'bg-primary/10 text-primary ring-primary/20' };
   return (
-    <div className="ring-1 ring-black/5 rounded-lg bg-white p-3.5">
-      <span className={`size-8 rounded-lg flex items-center justify-center mb-2 ${tones[tone] || tones.zinc}`}><Icon className="size-4" /></span>
-      <p className="text-lg font-bold text-zinc-900 tabular-nums leading-tight">{value}</p>
-      <p className="text-[11px] font-medium text-zinc-600 mt-0.5">{label}</p>
+    <div className="border border-zinc-200 rounded-lg bg-white p-4 shadow-sm">
+      <span className={`size-8 rounded-lg flex items-center justify-center mb-3 ring-1 ring-inset ${tones[tone] || tones.zinc}`}><Icon className="size-4" /></span>
+      <p className="text-lg font-semibold text-zinc-900 tabular-nums leading-tight">{value}</p>
+      <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mt-1.5">{label}</p>
       {sub && <p className="text-[10px] text-zinc-400 mt-0.5">{sub}</p>}
     </div>
   );
 }
+
 function Legend({ cls, label }) {
-  return <span className="inline-flex items-center gap-1.5 text-[10px] text-zinc-500"><span className={`size-3 rounded ring-1 ${cls}`} /> {label}</span>;
+  return (
+    <span className="inline-flex items-center gap-1.5 text-[11px] text-zinc-500">
+      <span className={`size-3 rounded ring-1 ring-inset ${cls}`} /> {label}
+    </span>
+  );
 }
-const inputCls = 'w-full rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40';
-function Field({ label, children }) { return <div className="flex flex-col"><label className="text-xs font-medium text-zinc-600 mb-1.5">{label}</label>{children}</div>; }
+
+const inputCls = 'w-full rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-shadow';
+
+// Form Fields updated strictly to use Micro-labels
+function Field({ label, children }) { 
+  return (
+    <div className="flex flex-col">
+      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1.5">{label}</label>
+      {children}
+    </div>
+  ); 
+}

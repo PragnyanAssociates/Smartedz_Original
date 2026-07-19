@@ -73,8 +73,8 @@ export default function AssignStudents({ user, canEdit, canDelete }) {
   const points = route?.points || [];
   const pickupOpts = points.filter(p => p.point_type === 'pickup');
   const dropOpts   = points.filter(p => p.point_type === 'drop');
-  const pointTitle = (id) => points.find(p => String(p.id) === String(id))?.title || '—';
-  const classLabel = (cid) => { const c = classes.find(c => String(c.id) === String(cid)); return c ? `${c.className}${c.section ? ` - ${c.section}` : ''}` : '—'; };
+  const pointTitle = (id) => points.find(p => String(p.id) === String(id))?.title || '-';
+  const classLabel = (cid) => { const c = classes.find(c => String(c.id) === String(cid)); return c ? `${c.className}${c.section ? ` - ${c.section}` : ''}` : '-'; };
 
   const toggle = (id) => setPicked(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const filteredStudents = students.filter(s => !search.trim() || (s.name || '').toLowerCase().includes(search.trim().toLowerCase()) || String(s.roll_no || '').includes(search.trim()));
@@ -107,8 +107,8 @@ export default function AssignStudents({ user, canEdit, canDelete }) {
     <div className="space-y-5">
       {/* Route picker (only when routes exist) */}
       {routes.length > 0 && (
-        <div className="ring-1 ring-black/5 rounded-lg bg-white p-4 flex flex-wrap items-center gap-3">
-          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-700"><RouteIcon className="size-4 text-primary" /> Route</span>
+        <div className="ring-1 ring-black/5 rounded-lg bg-white p-4 flex flex-wrap items-center gap-3 shadow-sm">
+          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-900"><RouteIcon className="size-4 text-primary" /> Route</span>
           <div className="relative">
             <select value={routeId} onChange={e => setRouteId(e.target.value)} className={`${inputCls} appearance-none pr-8 cursor-pointer min-w-[240px]`}>
               {routes.map(r => <option key={r.id} value={r.id}>{r.route_name}{r.route_code ? ` (${r.route_code})` : ''}</option>)}
@@ -120,9 +120,9 @@ export default function AssignStudents({ user, canEdit, canDelete }) {
       )}
 
       {!routeId ? (
-        <div className="ring-1 ring-black/5 rounded-lg bg-white p-10 text-center">
+        <div className="ring-1 ring-black/5 rounded-lg bg-white p-10 text-center shadow-sm">
           <UserCheck className="size-6 text-zinc-300 mx-auto mb-3" />
-          <p className="text-sm font-medium text-zinc-700">No routes yet.</p>
+          <p className="text-sm text-zinc-900">No routes yet.</p>
           <p className="text-xs text-zinc-500 mt-1">Create a route in the Routes tab first, then assign students here.</p>
         </div>
       ) : loadingRoute ? (
@@ -131,13 +131,16 @@ export default function AssignStudents({ user, canEdit, canDelete }) {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
           {/* Add panel */}
           {canEdit && (
-            <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden">
-              <div className="p-4 border-b border-zinc-100 flex items-center gap-2"><Plus className="size-4 text-primary" /><h3 className="text-sm font-semibold text-zinc-900">Add Students</h3></div>
+            <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden shadow-sm">
+              <div className="p-4 border-b border-zinc-100 flex items-center gap-2">
+                <Plus className="size-4 text-primary" />
+                <h3 className="text-sm font-semibold text-zinc-900">Add Students</h3>
+              </div>
               <div className="p-4 space-y-3">
-                <Field label="1 · Select class">
+                <Field label="1 - Select class">
                   <div className="relative">
                     <select value={classId} onChange={e => setClassId(e.target.value)} className={`${inputCls} appearance-none pl-8 pr-8 cursor-pointer`}>
-                      <option value="">Choose class…</option>
+                      <option value="">Choose class...</option>
                       {classes.map(c => <option key={c.id} value={c.id}>{classLabel(c.id)}</option>)}
                     </select>
                     <GraduationCap className="size-4 text-zinc-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -148,14 +151,14 @@ export default function AssignStudents({ user, canEdit, canDelete }) {
                 {classId && (
                   <div>
                     <div className="flex items-center justify-between mb-1.5">
-                      <label className="text-xs font-medium text-zinc-600">2 · Select students ({picked.size} chosen)</label>
-                      <button onClick={selectableAll} className="text-[11px] text-primary hover:underline">Select all</button>
+                      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">2 - Select students ({picked.size} chosen)</label>
+                      <button onClick={selectableAll} className="text-[11px] font-semibold text-primary hover:underline transition-colors">Select all</button>
                     </div>
                     <div className="relative mb-2">
-                      <Search className="size-3.5 text-zinc-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                      <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name or roll…" className={`${inputCls} pl-8`} />
+                      <Search className="size-4 text-zinc-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name or roll..." className={`${inputCls} pl-8`} />
                     </div>
-                    <div className="ring-1 ring-zinc-200 rounded-md max-h-64 overflow-y-auto divide-y divide-zinc-100">
+                    <div className="ring-1 ring-zinc-200 rounded-md max-h-64 overflow-y-auto divide-y divide-zinc-100 shadow-sm">
                       {loadingStudents ? (
                         <div className="h-24 flex items-center justify-center"><div className="size-6 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" /></div>
                       ) : filteredStudents.length ? filteredStudents.map(s => {
@@ -164,8 +167,8 @@ export default function AssignStudents({ user, canEdit, canDelete }) {
                         return (
                           <button key={s.id} onClick={() => !already && toggle(s.id)} disabled={already}
                             className={`w-full flex items-center gap-3 px-3 py-2 text-left transition-colors ${already ? 'opacity-50 cursor-not-allowed' : 'hover:bg-zinc-50'}`}>
-                            <span className={`size-4 rounded border flex items-center justify-center shrink-0 ${on ? 'bg-primary border-primary' : 'border-zinc-300'}`}>{on && <Check className="size-3 text-white" />}</span>
-                            <span className="text-[11px] font-semibold text-zinc-400 w-8 tabular-nums">{s.roll_no || '—'}</span>
+                            <span className={`size-4 rounded border flex items-center justify-center shrink-0 transition-colors ${on ? 'bg-primary border-primary' : 'border-zinc-300 bg-white'}`}>{on && <Check className="size-3 text-white" />}</span>
+                            <span className="text-[11px] font-semibold text-zinc-400 w-8 tabular-nums">{s.roll_no || '-'}</span>
                             <span className="text-sm text-zinc-800 flex-1">{s.name}</span>
                             {already && <span className="text-[10px] text-zinc-400">assigned</span>}
                           </button>
@@ -177,7 +180,7 @@ export default function AssignStudents({ user, canEdit, canDelete }) {
                       <Field label="Pickup point (optional)">
                         <div className="relative">
                           <select value={pickupPt} onChange={e => setPickupPt(e.target.value)} className={`${inputCls} appearance-none pr-8 cursor-pointer text-xs`}>
-                            <option value="">—</option>
+                            <option value="">-</option>
                             {pickupOpts.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
                           </select>
                           <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -186,7 +189,7 @@ export default function AssignStudents({ user, canEdit, canDelete }) {
                       <Field label="Drop point (optional)">
                         <div className="relative">
                           <select value={dropPt} onChange={e => setDropPt(e.target.value)} className={`${inputCls} appearance-none pr-8 cursor-pointer text-xs`}>
-                            <option value="">—</option>
+                            <option value="">-</option>
                             {dropOpts.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
                           </select>
                           <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -194,8 +197,8 @@ export default function AssignStudents({ user, canEdit, canDelete }) {
                       </Field>
                     </div>
 
-                    <button onClick={assign} disabled={saving || !picked.size} className="w-full mt-3 inline-flex items-center justify-center gap-1.5 bg-primary text-white px-4 py-2.5 rounded-md text-xs font-semibold hover:bg-primary/90 disabled:opacity-60">
-                      <Plus className="size-4" /> {saving ? 'Assigning…' : `Assign ${picked.size || ''} to route`}
+                    <button onClick={assign} disabled={saving || !picked.size} className="w-full mt-4 inline-flex items-center justify-center gap-1.5 bg-primary text-white h-9 px-6 rounded-md text-xs font-semibold hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-60">
+                      <Plus className="size-4" /> {saving ? 'Assigning...' : `Assign ${picked.size || ''} to route`}
                     </button>
                   </div>
                 )}
@@ -204,8 +207,11 @@ export default function AssignStudents({ user, canEdit, canDelete }) {
           )}
 
           {/* Assigned list */}
-          <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden">
-            <div className="p-4 border-b border-zinc-100 flex items-center gap-2"><Users className="size-4 text-primary" /><h3 className="text-sm font-semibold text-zinc-900">Assigned Students <span className="text-zinc-400 font-normal">({assigned.length})</span></h3></div>
+          <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden shadow-sm">
+            <div className="p-4 border-b border-zinc-100 flex items-center gap-2">
+              <Users className="size-4 text-primary" />
+              <h3 className="text-sm font-semibold text-zinc-900">Assigned Students <span className="text-zinc-400 font-normal">({assigned.length})</span></h3>
+            </div>
             {assigned.length ? (
               <div className="overflow-x-auto custom-scrollbar">
                 <table className="w-full text-left border-collapse min-w-[520px]">
@@ -219,14 +225,18 @@ export default function AssignStudents({ user, canEdit, canDelete }) {
                   <tbody className="divide-y divide-zinc-100">
                     {assigned.map(a => (
                       <tr key={a.id} className="hover:bg-zinc-50/60 transition-colors">
-                        <td className="px-4 py-2.5 text-[11px] font-semibold text-zinc-400 tabular-nums">{a.roll_no || '—'}</td>
+                        <td className="px-4 py-2.5 text-[11px] font-semibold text-zinc-400 tabular-nums">{a.roll_no || '-'}</td>
                         <td className="px-4 py-2.5 text-sm text-zinc-900">{a.name}</td>
                         <td className="px-4 py-2.5 text-xs text-zinc-600">{classLabel(a.class_id)}</td>
-                        <td className="px-4 py-2.5 text-xs text-zinc-600">{a.pickup_point_id ? pointTitle(a.pickup_point_id) : '—'}</td>
-                        <td className="px-4 py-2.5 text-xs text-zinc-600">{a.drop_point_id ? pointTitle(a.drop_point_id) : '—'}</td>
+                        <td className="px-4 py-2.5 text-xs text-zinc-600">{a.pickup_point_id ? pointTitle(a.pickup_point_id) : '-'}</td>
+                        <td className="px-4 py-2.5 text-xs text-zinc-600">{a.drop_point_id ? pointTitle(a.drop_point_id) : '-'}</td>
                         <td className="px-4 py-2.5">
                           <div className="flex justify-end">
-                            {canDelete && <button onClick={() => unassign(a.id)} disabled={busyId === a.id} className="p-1.5 text-zinc-400 hover:text-accent rounded disabled:opacity-40" title="Remove"><Trash2 className="size-4" /></button>}
+                            {canDelete && (
+                              <button onClick={() => unassign(a.id)} disabled={busyId === a.id} className="flex items-center justify-center size-7 rounded bg-white text-zinc-600 border border-zinc-200 hover:text-red-600 hover:bg-red-50 transition-colors shadow-sm disabled:opacity-40" title="Remove">
+                                <Trash2 className="size-3.5" />
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -242,5 +252,14 @@ export default function AssignStudents({ user, canEdit, canDelete }) {
   );
 }
 
-const inputCls = 'w-full rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40';
-function Field({ label, children }) { return <div className="flex flex-col"><label className="text-xs font-medium text-zinc-600 mb-1.5">{label}</label>{children}</div>; }
+const inputCls = 'w-full rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-shadow';
+
+// Form Fields updated strictly to use Micro-labels
+function Field({ label, children }) { 
+  return (
+    <div className="flex flex-col">
+      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1.5">{label}</label>
+      {children}
+    </div>
+  ); 
+}

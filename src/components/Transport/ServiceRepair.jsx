@@ -5,7 +5,7 @@ import { RangePresets, DateField, DownloadXlsx, useAcademicYears, todayISO } fro
 
 const TYPES = ['Service', 'Repair', 'Insurance', 'Tyres', 'Fitness / Permit', 'Other'];
 const inr = (n) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(Number(n) || 0);
-const fmtDate = (v) => { if (!v) return '—'; const s = String(v).slice(0, 10); const [y, m, d] = s.split('-'); return d ? `${d}/${m}/${y}` : s; };
+const fmtDate = (v) => { if (!v) return '-'; const s = String(v).slice(0, 10); const [y, m, d] = s.split('-'); return d ? `${d}/${m}/${y}` : s; };
 
 // Service records are dated, never academic: an insurance renewal or a tyre
 // change doesn't care when term starts. The academic-year chips only fill
@@ -64,42 +64,46 @@ export default function ServiceRepair({ user, canEdit, canDelete, lockedVehicleI
 
   return (
     <div className="space-y-5">
-      <div className="bg-zinc-50/50 p-3 rounded-md ring-1 ring-black/5 space-y-3">
-        <div className="flex flex-wrap items-end gap-3">
-          <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider self-center"><Filter className="size-3.5" /> Filters</span>
-          {!lockedVehicleId && (
-          <div className="flex flex-col gap-1">
-            <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Vehicle</span>
-            <div className="relative">
-              <select value={vehicleId} onChange={e => setVehicleId(e.target.value)}
-                className="h-8 appearance-none rounded border border-zinc-200 bg-white pl-2 pr-7 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer">
-                <option value="">All vehicles</option>
-                {vehicles.map(v => <option key={v.id} value={v.id}>{v.vehicle_no}{v.vehicle_code ? ` · ${v.vehicle_code}` : ''}</option>)}
-              </select>
-              <ChevronDown className="size-3.5 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+      <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden shadow-sm">
+        <div className="p-4 border-b border-zinc-100 space-y-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider self-center"><Filter className="size-3.5" /> Filters</span>
+            {!lockedVehicleId && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Vehicle</span>
+              <div className="relative">
+                <select value={vehicleId} onChange={e => setVehicleId(e.target.value)}
+                  className="h-9 appearance-none rounded-md border border-zinc-200 bg-white pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer shadow-sm">
+                  <option value="">All vehicles</option>
+                  {vehicles.map(v => <option key={v.id} value={v.id}>{v.vehicle_no}{v.vehicle_code ? ` - ${v.vehicle_code}` : ''}</option>)}
+                </select>
+                <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
+            </div>
+            )}
+            <DateField label="From" value={range.from} onChange={v => setRange(r => ({ ...r, from: v }))} />
+            <DateField label="To" value={range.to} onChange={v => setRange(r => ({ ...r, to: v }))} />
+            {(vehicleId || range.from || range.to) && <button onClick={() => { setVehicleId(lockedVehicleId ? String(lockedVehicleId) : ''); setRange({ from: '', to: '' }); }} className="text-[11px] font-semibold text-primary hover:underline self-center pb-2.5 transition-colors">Reset</button>}
+            
+            <div className="ml-auto flex items-center gap-4 self-end">
+              <span className="text-[11px] text-zinc-500 pb-2.5">Total spent: <strong className="text-accent tabular-nums text-sm">{inr(total)}</strong></span>
+              <DownloadXlsx url={`${API_BASE_URL}/transport/service-export/${user?.institutionId}?${qs}`} disabled={!rows.length} title="Download these records as Excel" />
+              {canEdit && (
+                <button onClick={() => setModal({ vehicle_id: lockedVehicleId || vehicles[0]?.id || '', service_date: todayISO(), service_type: 'Service', cost: '', odometer_km: '', garage: '', details: '', attachment: '' })}
+                  className="inline-flex items-center justify-center gap-1.5 bg-primary text-white h-9 px-4 shrink-0 rounded-md text-xs font-semibold hover:bg-primary/90 shadow-sm transition-colors">
+                  <Plus className="size-4" /> Add Record
+                </button>
+              )}
             </div>
           </div>
-          )}
-          <DateField label="From" value={range.from} onChange={v => setRange(r => ({ ...r, from: v }))} />
-          <DateField label="To" value={range.to} onChange={v => setRange(r => ({ ...r, to: v }))} />
-          {(vehicleId || range.from || range.to) && <button onClick={() => { setVehicleId(lockedVehicleId ? String(lockedVehicleId) : ''); setRange({ from: '', to: '' }); }} className="text-[11px] font-medium text-primary hover:underline self-center pb-2">Reset</button>}
-          <span className="text-[11px] text-zinc-500 ml-auto self-center pb-2">Total spent: <strong className="text-accent tabular-nums">{inr(total)}</strong></span>
-          <DownloadXlsx url={`${API_BASE_URL}/transport/service-export/${user?.institutionId}?${qs}`}
-            disabled={!rows.length} title="Download these records as Excel" />
-          {canEdit && (
-            <button onClick={() => setModal({ vehicle_id: lockedVehicleId || vehicles[0]?.id || '', service_date: todayISO(), service_type: 'Service', cost: '', odometer_km: '', garage: '', details: '', attachment: '' })}
-              className="inline-flex items-center gap-1.5 bg-white text-primary ring-1 ring-primary/30 px-3.5 h-8 rounded-md text-xs font-semibold hover:bg-primary/5">
-              <Plus className="size-3.5" /> Add Record
-            </button>
-          )}
+          <RangePresets years={years} value={range} onPick={(from, to) => setRange({ from, to })} />
         </div>
-        <RangePresets years={years} value={range} onPick={(from, to) => setRange({ from, to })} />
       </div>
 
-      <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden">
+      <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden shadow-sm">
         <div className="p-4 border-b border-zinc-100 flex items-center gap-2">
           <Wrench className="size-4 text-primary" />
-          <h3 className="text-sm font-semibold text-zinc-900">Service &amp; Repair <span className="text-zinc-400 font-normal">({rows.length})</span></h3>
+          <h3 className="text-sm font-semibold text-zinc-900">Service & Repair <span className="text-zinc-400 font-normal">({rows.length})</span></h3>
         </div>
         {loading ? (
           <div className="h-40 flex items-center justify-center"><div className="size-7 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" /></div>
@@ -117,20 +121,34 @@ export default function ServiceRepair({ user, canEdit, canDelete, lockedVehicleI
                 {rows.length ? rows.map(r => (
                   <tr key={r.id} className="hover:bg-zinc-50/60 transition-colors">
                     <td className="px-4 py-3 text-sm font-semibold text-zinc-900 flex items-center gap-2"><Bus className="size-4 text-primary" /> {r.vehicle_no}</td>
-                    <td className="px-4 py-3 text-xs text-zinc-700">{r.vehicle_name || '—'}</td>
-                    <td className="px-4 py-3 text-xs text-zinc-600">{r.vehicle_code || '—'}</td>
+                    <td className="px-4 py-3 text-xs text-zinc-700">{r.vehicle_name || '-'}</td>
+                    <td className="px-4 py-3 text-xs text-zinc-600">{r.vehicle_code || '-'}</td>
                     <td className="px-4 py-3 text-xs text-zinc-600 whitespace-nowrap">{fmtDate(r.service_date)}</td>
-                    <td className="px-4 py-3"><span className="inline-flex px-2 py-0.5 rounded text-[10px] font-medium bg-zinc-100 text-zinc-700">{r.service_type || '—'}</span></td>
-                    <td className="px-4 py-3 text-sm font-semibold text-zinc-900 tabular-nums whitespace-nowrap">{inr(r.cost)}</td>
-                    <td className="px-4 py-3 text-xs text-zinc-600 max-w-[240px] truncate">{r.details || '—'}</td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-1">
-                        <button onClick={() => setViewId(r.id)} className="p-1.5 text-zinc-400 hover:text-primary rounded" title="View"><Eye className="size-4" /></button>
-                        {canEdit && <button onClick={async () => {
-                          const d = await fetch(`${API_BASE_URL}/transport/service-details/${r.id}`).then(x => x.json());
-                          setModal({ id: d.id, vehicle_id: d.vehicle_id, service_date: String(d.service_date).slice(0, 10), service_type: d.service_type || 'Service', cost: d.cost ?? '', odometer_km: d.odometer_km ?? '', garage: d.garage || '', details: d.details || '', attachment: '', hadAttachment: !!d.attachment });
-                        }} className="p-1.5 text-zinc-400 hover:text-primary rounded" title="Edit"><Pencil className="size-4" /></button>}
-                        {canDelete && <button onClick={() => del(r.id)} disabled={busyId === r.id} className="p-1.5 text-zinc-400 hover:text-accent rounded disabled:opacity-40" title="Delete"><Trash2 className="size-4" /></button>}
+                      <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-zinc-50 text-zinc-700 ring-1 ring-inset ring-zinc-600/20">
+                        {r.service_type || '-'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-sm font-semibold text-zinc-900 tabular-nums whitespace-nowrap">{inr(r.cost)}</td>
+                    <td className="px-4 py-3 text-xs text-zinc-600 max-w-[240px] truncate">{r.details || '-'}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-2">
+                        <button onClick={() => setViewId(r.id)} className="flex items-center justify-center size-7 rounded bg-white text-zinc-600 border border-zinc-200 hover:text-primary hover:bg-zinc-50 transition-colors shadow-sm" title="View">
+                          <Eye className="size-3.5" />
+                        </button>
+                        {canEdit && (
+                          <button onClick={async () => {
+                            const d = await fetch(`${API_BASE_URL}/transport/service-details/${r.id}`).then(x => x.json());
+                            setModal({ id: d.id, vehicle_id: d.vehicle_id, service_date: String(d.service_date).slice(0, 10), service_type: d.service_type || 'Service', cost: d.cost ?? '', odometer_km: d.odometer_km ?? '', garage: d.garage || '', details: d.details || '', attachment: '', hadAttachment: !!d.attachment });
+                          }} className="flex items-center justify-center size-7 rounded bg-white text-zinc-600 border border-zinc-200 hover:text-primary hover:bg-zinc-50 transition-colors shadow-sm" title="Edit">
+                            <Pencil className="size-3.5" />
+                          </button>
+                        )}
+                        {canDelete && (
+                          <button onClick={() => del(r.id)} disabled={busyId === r.id} className="flex items-center justify-center size-7 rounded bg-white text-zinc-600 border border-zinc-200 hover:text-red-600 hover:bg-red-50 transition-colors shadow-sm disabled:opacity-40" title="Delete">
+                            <Trash2 className="size-3.5" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -178,18 +196,20 @@ function ServiceModal({ user, vehicles, value, onClose, onSaved }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={onClose}>
-      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg max-h-[90vh] overflow-y-auto p-5 shadow-xl" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-4">
+      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg max-h-[90vh] overflow-y-auto p-5 shadow-xl flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-5">
           <h4 className="text-sm font-semibold text-zinc-900">{f.id ? 'Edit Service / Repair' : 'Add Service / Repair'}</h4>
-          <button onClick={onClose} className="text-zinc-400 hover:text-zinc-700"><X className="size-5" /></button>
+          <button onClick={onClose} className="flex items-center justify-center size-8 rounded-md bg-white text-zinc-600 border border-zinc-200 hover:text-zinc-900 hover:bg-zinc-50 transition-colors shadow-sm">
+            <X className="size-4" />
+          </button>
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-4">
           <div className="col-span-2">
             <Field label="Vehicle *">
               <div className="relative">
                 <select value={f.vehicle_id} onChange={e => set('vehicle_id', e.target.value)} className={`${inputCls} appearance-none pr-8 cursor-pointer`}>
-                  <option value="">Select vehicle…</option>
-                  {vehicles.map(v => <option key={v.id} value={v.id}>{v.vehicle_no}{v.vehicle_code ? ` · ${v.vehicle_code}` : ''}{v.vehicle_name ? ` · ${v.vehicle_name}` : ''}</option>)}
+                  <option value="">Select vehicle...</option>
+                  {vehicles.map(v => <option key={v.id} value={v.id}>{v.vehicle_no}{v.vehicle_code ? ` - ${v.vehicle_code}` : ''}{v.vehicle_name ? ` - ${v.vehicle_name}` : ''}</option>)}
                 </select>
                 <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
@@ -204,33 +224,39 @@ function ServiceModal({ user, vehicles, value, onClose, onSaved }) {
               <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
           </Field>
-          <Field label="Cost (₹) *"><input value={f.cost} onChange={e => set('cost', e.target.value.replace(/[^\d.]/g, ''))} inputMode="decimal" placeholder="e.g. 4500" className={inputCls} /></Field>
+          <Field label="Cost (INR) *"><input value={f.cost} onChange={e => set('cost', e.target.value.replace(/[^\d.]/g, ''))} inputMode="decimal" placeholder="e.g. 4500" className={inputCls} /></Field>
           <Field label="Odometer (km)"><input value={f.odometer_km} onChange={e => set('odometer_km', e.target.value.replace(/[^\d.]/g, ''))} inputMode="decimal" placeholder="Optional" className={inputCls} /></Field>
           <div className="col-span-2"><Field label="Garage / Workshop"><input value={f.garage} onChange={e => set('garage', e.target.value)} placeholder="Optional" className={inputCls} /></Field></div>
           <div className="col-span-2">
             <Field label="Service details">
-              <textarea value={f.details} onChange={e => set('details', e.target.value)} rows={4} placeholder="Explain the work done — parts replaced, issue found, etc."
-                className={`${inputCls} h-auto py-2 resize-none`} />
+              <textarea value={f.details} onChange={e => set('details', e.target.value)} rows={4} placeholder="Explain the work done - parts replaced, issue found, etc."
+                className={`${inputCls} h-auto py-2.5 resize-none`} />
             </Field>
           </div>
           <div className="col-span-2">
             <Field label="Bill / Invoice">
               <div className="flex items-center gap-3">
-                <label className="cursor-pointer inline-flex items-center gap-1.5 text-primary ring-1 ring-primary/30 px-3 py-2 rounded-md text-xs font-medium hover:bg-primary/5">
+                <label className="cursor-pointer inline-flex items-center justify-center gap-1.5 bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-50 h-9 px-4 shrink-0 rounded-md text-xs font-semibold transition-colors shadow-sm">
                   <Upload className="size-3.5" /> {f.attachment || (f.hadAttachment && !removeAtt) ? 'Change image' : 'Upload image'}
                   <input type="file" accept="image/*" onChange={onFile} className="hidden" />
                 </label>
                 {(f.attachment || (f.hadAttachment && !removeAtt)) && (
-                  <button onClick={() => { set('attachment', ''); setRemoveAtt(true); }} className="inline-flex items-center gap-1 text-[11px] text-accent hover:underline"><X className="size-3.5" /> Remove</button>
+                  <button onClick={() => { set('attachment', ''); setRemoveAtt(true); }} className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-red-600 hover:underline transition-colors">
+                    <X className="size-3.5" /> Remove
+                  </button>
                 )}
               </div>
-              {f.attachment && <img src={f.attachment} alt="bill" className="mt-2 max-h-40 rounded-md ring-1 ring-black/5" />}
+              {f.attachment && <img src={f.attachment} alt="bill" className="mt-3 max-h-40 rounded-md ring-1 ring-black/5 shadow-sm" />}
             </Field>
           </div>
         </div>
-        <div className="flex justify-end gap-2 mt-4">
-          <button onClick={onClose} className="px-4 py-2 rounded-md text-xs font-medium text-zinc-700 ring-1 ring-zinc-200 hover:bg-zinc-50">Cancel</button>
-          <button onClick={save} disabled={saving} className="inline-flex items-center gap-1.5 bg-primary text-white px-4 py-2 rounded-md text-xs font-semibold hover:bg-primary/90 disabled:opacity-60"><Save className="size-3.5" /> {saving ? 'Saving…' : 'Save'}</button>
+        <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 mt-6 pt-5 border-t border-zinc-100">
+          <button onClick={onClose} className="flex items-center justify-center gap-1.5 h-9 px-6 min-w-[120px] w-full sm:w-auto bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-50 transition-colors rounded-md text-xs font-semibold shadow-sm">
+            Cancel
+          </button>
+          <button onClick={save} disabled={saving} className="inline-flex items-center justify-center gap-1.5 bg-primary text-white h-9 px-6 min-w-[120px] w-full sm:w-auto rounded-md text-xs font-semibold hover:bg-primary/90 shadow-sm transition-colors disabled:opacity-60">
+            <Save className="size-4" /> {saving ? 'Saving...' : 'Save'}
+          </button>
         </div>
       </div>
     </div>
@@ -240,6 +266,7 @@ function ServiceModal({ user, vehicles, value, onClose, onSaved }) {
 function ServiceView({ id, onClose }) {
   const [d, setD] = useState(null);
   const [loading, setLoading] = useState(true);
+  
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -252,35 +279,37 @@ function ServiceView({ id, onClose }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={onClose}>
-      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-md max-h-[90vh] overflow-y-auto shadow-xl" onClick={e => e.stopPropagation()}>
-        <div className="bg-primary text-white px-5 py-3 flex items-center justify-between sticky top-0">
-          <span className="text-sm font-bold flex items-center gap-2"><Wrench className="size-4" /> {d?.vehicle_no || 'Record'}</span>
-          <button onClick={onClose} className="text-white/80 hover:text-white"><X className="size-5" /></button>
+      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-md max-h-[90vh] overflow-y-auto shadow-xl flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="bg-white border-b border-zinc-100 px-5 py-4 flex items-center justify-between sticky top-0 z-10">
+          <span className="text-sm font-semibold text-zinc-900 flex items-center gap-2"><Wrench className="size-4 text-primary" /> {d?.vehicle_no || 'Record'}</span>
+          <button onClick={onClose} className="flex items-center justify-center size-8 rounded-md bg-white text-zinc-600 border border-zinc-200 hover:text-zinc-900 hover:bg-zinc-50 transition-colors shadow-sm">
+            <X className="size-4" />
+          </button>
         </div>
         {loading || !d ? (
           <div className="h-40 flex items-center justify-center"><div className="size-6 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" /></div>
         ) : (
-          <div className="p-5 space-y-2.5 text-sm">
-            <Row label="Model" value={d.vehicle_name || '—'} />
-            <Row label="Code" value={d.vehicle_code || '—'} />
+          <div className="p-5 space-y-4 text-sm">
+            <Row label="Model" value={d.vehicle_name || '-'} />
+            <Row label="Code" value={d.vehicle_code || '-'} />
             <Row label="Service date" value={fmtDate(d.service_date)} />
-            <Row label="Type" value={d.service_type || '—'} />
+            <Row label="Type" value={d.service_type || '-'} />
             <Row label="Cost" value={inr(d.cost)} />
             {d.odometer_km != null && <Row label="Odometer" value={`${d.odometer_km} km`} />}
             {d.garage && <Row label="Garage" value={d.garage} />}
             {d.details && (
-              <div className="pt-1">
-                <p className="text-zinc-500 text-xs mb-1">Service details</p>
-                <p className="text-sm text-zinc-800 whitespace-pre-wrap rounded-md bg-zinc-50 ring-1 ring-zinc-100 p-3">{d.details}</p>
+              <div className="pt-2">
+                <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1.5">Service details</p>
+                <p className="text-sm text-zinc-800 whitespace-pre-wrap rounded-md bg-zinc-50 ring-1 ring-zinc-200 p-3 shadow-sm">{d.details}</p>
               </div>
             )}
             {d.attachment && (
-              <div className="pt-1">
-                <p className="text-zinc-500 text-xs mb-1 flex items-center gap-1"><Receipt className="size-3.5" /> Bill / Invoice</p>
-                <img src={d.attachment} alt="bill" className="w-full rounded-md ring-1 ring-black/5" />
+              <div className="pt-2">
+                <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5"><Receipt className="size-3.5" /> Bill / Invoice</p>
+                <img src={d.attachment} alt="bill" className="w-full rounded-md ring-1 ring-black/5 shadow-sm" />
               </div>
             )}
-            {d.created_by_name && <p className="text-[11px] text-zinc-400 pt-2 border-t border-zinc-100">Added by {d.created_by_name}{d.updated_by_name ? ` · edited by ${d.updated_by_name}` : ''}</p>}
+            {d.created_by_name && <p className="text-[10px] text-zinc-400 pt-3 border-t border-zinc-100">Added by {d.created_by_name}{d.updated_by_name ? ` - edited by ${d.updated_by_name}` : ''}</p>}
           </div>
         )}
       </div>
@@ -289,7 +318,22 @@ function ServiceView({ id, onClose }) {
 }
 
 function Row({ label, value }) {
-  return <div className="flex items-center justify-between gap-4"><span className="text-zinc-500 text-xs shrink-0">{label}</span><span className="font-medium text-zinc-900 text-right">{value}</span></div>;
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mt-0.5 shrink-0">{label}</span>
+      <span className="font-semibold text-zinc-900 text-right">{value}</span>
+    </div>
+  );
 }
-const inputCls = 'w-full rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40';
-function Field({ label, children }) { return <div className="flex flex-col"><label className="text-xs font-medium text-zinc-600 mb-1.5">{label}</label>{children}</div>; }
+
+const inputCls = 'w-full rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-shadow';
+
+// Form Fields updated strictly to use Micro-labels
+function Field({ label, children }) { 
+  return (
+    <div className="flex flex-col">
+      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1.5">{label}</label>
+      {children}
+    </div>
+  ); 
+}

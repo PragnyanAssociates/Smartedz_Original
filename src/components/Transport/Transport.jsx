@@ -43,10 +43,10 @@ export default function Transport() {
 
   if (!canView) {
     return (
-      <div className="p-8 max-w-[1440px] w-full mx-auto">
-        <div className="ring-1 ring-black/5 rounded-lg bg-white p-12 text-center">
+      <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
+        <div className="ring-1 ring-black/5 rounded-lg bg-white p-12 text-center shadow-sm">
           <Lock className="size-7 text-zinc-300 mx-auto mb-3" />
-          <p className="text-sm font-medium text-zinc-700">You don't have access to Transport.</p>
+          <p className="text-sm text-zinc-700">You don't have access to Transport.</p>
           <p className="text-xs text-zinc-500 mt-1">Ask your Super Admin to grant access in Permissions.</p>
         </div>
       </div>
@@ -69,18 +69,20 @@ export default function Transport() {
     : 'Manage vehicles, drivers & assistants, routes with pickup/drop points, student assignments, attendance and the log book.';
 
   return (
-    <div className="p-8 max-w-[1440px] w-full mx-auto animate-in fade-in duration-700">
-      <header className="mb-6 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
+      <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Transport</h1>
           <p className="text-sm text-zinc-500 mt-1 max-w-[62ch]">{subtitle}</p>
         </div>
         <div className="flex items-center gap-2">
           {view === 'admin' && !canEdit && (
-            <span className="text-[10px] font-semibold text-accent bg-accent/10 px-2.5 py-1 rounded-full uppercase tracking-wider">View only</span>
+            <span className="text-[10px] font-semibold bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-600/20 px-2.5 py-1 rounded-full uppercase tracking-wider">
+              View only
+            </span>
           )}
           <button onClick={() => setHelp(true)}
-            className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50">
+            className="inline-flex items-center gap-1.5 text-[11px] text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors">
             <HelpCircle className="size-3.5" /> How to use
           </button>
         </div>
@@ -91,11 +93,11 @@ export default function Transport() {
 
       {view === 'admin' && (
         <>
-          <div className="flex flex-wrap items-center gap-2 mb-8 border-b border-zinc-200 pb-4">
+          <div className="flex flex-wrap items-center gap-2 border-b border-zinc-200 pb-4">
             {tabs.map(t => (
               <button key={t.id} onClick={() => setTab(t.id)}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                  tab === t.id ? 'bg-primary text-white' : 'text-zinc-600 hover:bg-zinc-50 border border-zinc-200'
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs transition-colors ${
+                  tab === t.id ? 'bg-primary text-white font-semibold' : 'text-zinc-600 hover:bg-zinc-50 border border-zinc-200'
                 }`}>
                 <t.icon className="size-3.5 shrink-0" /> {t.label}
               </button>
@@ -117,22 +119,22 @@ export default function Transport() {
 }
 
 // =====================================================================
-//  How-to-use notes — tailored to what the person can actually do.
+//  How-to-use notes - tailored to what the person can actually do.
 // =====================================================================
 function HelpModal({ view, onClose }) {
   const content = {
     admin: {
       title: 'Setting up Transport',
       steps: [
-        ['1 · Add your buses', 'Vehicles tab → Add Vehicle. Fill the number, code (e.g. VPSB1), model, capacity, registration date and a photo. The code and photo show up across Routes and the Log Book.'],
-        ['2 · Create your crew', 'Users screen → add each driver / assistant with the role "Driver & Assistant". Then in Drivers & Assistants → Add, tick them and register them as a Driver or an Assistant. Use Edit to store licence no, Aadhaar and their proof images.'],
-        ['3 · Build the route', 'Routes → New Route. Name it, pick the bus, driver and assistant, then add Pickup and Drop stops under their tabs. For each stop paste a Google Maps link (short links resolve automatically) or click the map to drop a pin. Save — the map draws the road route.'],
-        ['4 · Assign students', 'Assign Students → pick the route → pick a class → tick students roll-wise, optionally setting their pickup/drop stop. They now appear in attendance.'],
-        ['5 · Daily running', 'The driver taps Start Trip on their screen — Google Maps opens for navigation and the bus goes live on everyone\'s map. The assistant marks Pickup and Drop attendance. The Trip column on Routes is about TODAY: Live, Done today, or Not started.'],
-        ['6 · Attendance: mark vs report', 'Mark a day is the daily job — one route, one trip, one date. Summary & report is the review: any date range, per student, with pickup/drop counts and an attendance %. Download gives you it in Excel.'],
-        ['7 · Records', 'Vehicle Log Book → Daily Log for trips/distance/fuel per bus per day (totals roll up over any date range), and Service / Repair for costs and work done. Both download to Excel for exactly the period on screen.'],
+        ['1 - Add your buses', 'Vehicles tab > Add Vehicle. Fill the number, code (e.g. VPSB1), model, capacity, registration date and a photo. The code and photo show up across Routes and the Log Book.'],
+        ['2 - Create your crew', 'Users screen > add each driver / assistant with the role "Driver & Assistant". Then in Drivers & Assistants > Add, tick them and register them as a Driver or an Assistant. Use Edit to store licence no, ID details and their proof images.'],
+        ['3 - Build the route', 'Routes > New Route. Name it, pick the bus, driver and assistant, then add Pickup and Drop stops under their tabs. For each stop paste a Google Maps link (short links resolve automatically) or click the map to drop a pin. Save - the map draws the road route.'],
+        ['4 - Assign students', 'Assign Students > pick the route > pick a class > tick students roll-wise, optionally setting their pickup/drop stop. They now appear in attendance.'],
+        ['5 - Daily running', 'The driver taps Start Trip on their screen - Google Maps opens for navigation and the bus goes live on everyone\'s map. The assistant marks Pickup and Drop attendance. The Trip column on Routes is about TODAY: Live, Done today, or Not started.'],
+        ['6 - Attendance: mark vs report', 'Mark a day is the daily job - one route, one trip, one date. Summary & report is the review: any date range, per student, with pickup/drop counts and an attendance %. Download gives you it in Excel.'],
+        ['7 - Records', 'Vehicle Log Book > Daily Log for trips/distance/fuel per bus per day (totals roll up over any date range), and Service / Repair for costs and work done. Both download to Excel for exactly the period on screen.'],
       ],
-      note: 'Transport is kept by DATE, not academic year — roads and buses don\'t reset in June, and fuel or insurance has nothing to do with a school term. The year chips on the range filters simply fill the From / To dates from your Academics Year module, so a yearly view is one click and a range can still span years. Permissions: Read to look, Read + Edit to change things, Read + Edit + Delete for the full console. Hide removes Transport from their sidebar entirely.'
+      note: 'Transport is kept by DATE, not academic year - roads and buses don\'t reset in June, and fuel or insurance has nothing to do with a school term. The year chips on the range filters simply fill the From / To dates from your Academics Year module, so a yearly view is one click and a range can still span years. Permissions: Read to look, Read + Edit to change things, Read + Edit + Delete for the full console. Hide removes Transport from their sidebar entirely.'
     },
     crew: {
       title: 'Your daily run',
@@ -140,15 +142,15 @@ function HelpModal({ view, onClose }) {
         ['Before you leave', 'Check the bus and route details at the top. If you drive more than one route, pick the right one from the dropdown.'],
         ['Start the trip', 'Tap Start Trip. Google Maps opens with the full route for navigation, and your live location is shared so students and the school can see the bus. Keep this page open while driving.'],
         ['Mark attendance', 'Assistant: open the Attendance tab, choose Pickup or Drop, then mark each student Present or Absent and Save. Marking again for the same trip just updates it.'],
-        ['End the trip', 'Tap Complete Trip when the run is finished. The bus disappears from everyone\'s map. Each day starts fresh — yesterday\'s trip never shows as today\'s.'],
-        ['Log book', 'At the end of the day, add trips, distance and fuel for your bus under Log Book → Daily Log.'],
+        ['End the trip', 'Tap Complete Trip when the run is finished. The bus disappears from everyone\'s map. Each day starts fresh - yesterday\'s trip never shows as today\'s.'],
+        ['Log book', 'At the end of the day, add trips, distance and fuel for your bus under Log Book > Daily Log.'],
       ],
-      note: 'You only ever see your own bus, your route and your students — nothing about other routes or crew.'
+      note: 'You only ever see your own bus, your route and your students - nothing about other routes or crew.'
     },
     student: {
       title: 'Your school bus',
       steps: [
-        ['Route & bus', 'The card at the top shows your route, bus number and name, plus your driver and assistant with their phone numbers — tap a number to call.'],
+        ['Route & bus', 'The card at the top shows your route, bus number and name, plus your driver and assistant with their phone numbers - tap a number to call.'],
         ['Stops', 'Under My Route, switch between Pickup and Drop to see every stop in order. Your own stop is highlighted.'],
         ['Live tracking', 'When your driver starts the trip, the bus appears on the map and moves in real time, so you can see how close it is to your stop.'],
         ['Attendance', 'My Attendance shows your calendar. Green = present both trips, yellow = present on one, red = absent.'],
@@ -158,20 +160,24 @@ function HelpModal({ view, onClose }) {
   }[view];
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={onClose}>
-      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg max-h-[85vh] overflow-y-auto shadow-xl" onClick={e => e.stopPropagation()}>
-        <div className="bg-primary text-white px-5 py-3 flex items-center justify-between sticky top-0">
-          <span className="text-sm font-bold flex items-center gap-2"><HelpCircle className="size-4" /> {content.title}</span>
-          <button onClick={onClose} className="text-white/80 hover:text-white"><X className="size-5" /></button>
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={onClose}>
+      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg max-h-[85vh] flex flex-col shadow-sm" onClick={e => e.stopPropagation()}>
+        <div className="bg-primary text-white px-5 py-3 flex items-center justify-between shrink-0 rounded-t-lg">
+          <span className="text-sm font-semibold flex items-center gap-2">
+            <HelpCircle className="size-4" /> {content.title}
+          </span>
+          <button onClick={onClose} className="text-white/80 hover:text-white flex items-center justify-center size-8 rounded-md hover:bg-white/10 transition-colors">
+            <X className="size-5" />
+          </button>
         </div>
-        <div className="p-5 space-y-3">
+        <div className="p-5 space-y-3 overflow-y-auto">
           {content.steps.map(([t, d], i) => (
-            <div key={i} className="rounded-md ring-1 ring-zinc-100 bg-zinc-50/60 p-3">
-              <p className="text-xs font-semibold text-zinc-800">{t}</p>
+            <div key={i} className="rounded-md ring-1 ring-zinc-200 bg-zinc-50/60 p-3 shadow-sm">
+              <p className="text-xs font-semibold text-zinc-900">{t}</p>
               <p className="text-[11px] text-zinc-600 leading-relaxed mt-1">{d}</p>
             </div>
           ))}
-          <div className="rounded-md bg-blue-50/60 ring-1 ring-blue-100 p-3 flex gap-2">
+          <div className="rounded-md bg-blue-50/60 ring-1 ring-blue-200 p-3 flex gap-3 mt-4 items-start shadow-sm">
             <ShieldCheck className="size-4 text-blue-500 shrink-0 mt-0.5" />
             <p className="text-[11px] text-blue-800 leading-relaxed">{content.note}</p>
           </div>

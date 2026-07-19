@@ -66,13 +66,13 @@ export default function Routes({ user, canEdit, canDelete }) {
       <div className="flex items-center justify-between">
         <p className="text-[11px] text-zinc-400">{rows.length} route{rows.length === 1 ? '' : 's'}</p>
         {canEdit && (
-          <button onClick={() => { setEditingId(null); setMode('edit'); }} className="inline-flex items-center gap-1.5 bg-primary text-white px-3.5 h-9 rounded-md text-xs font-semibold hover:bg-primary/90 shadow-sm">
+          <button onClick={() => { setEditingId(null); setMode('edit'); }} className="inline-flex items-center justify-center gap-1.5 bg-primary text-white h-9 px-4 shrink-0 rounded-md text-xs font-semibold hover:bg-primary/90 shadow-sm transition-colors">
             <Plus className="size-4" /> New Route
           </button>
         )}
       </div>
 
-      <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden">
+      <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden shadow-sm">
         {loading ? (
           <div className="h-40 flex items-center justify-center"><div className="size-7 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" /></div>
         ) : (
@@ -89,8 +89,13 @@ export default function Routes({ user, canEdit, canDelete }) {
                 {rows.length ? rows.map(r => (
                   <tr key={r.id} className="hover:bg-zinc-50/60 transition-colors">
                     <td className="px-5 py-3">
-                      <div className="text-sm font-semibold text-zinc-900 flex items-center gap-2"><RouteIcon className="size-4 text-primary" /> {r.route_name}</div>
-                      {r.route_code && <div className="text-[11px] text-zinc-400 ml-6">{r.route_code}</div>}
+                      <div className="flex items-start gap-2">
+                        <RouteIcon className="size-4 text-primary mt-0.5 shrink-0" />
+                        <div className="flex flex-col">
+                          <span className="text-sm font-semibold text-zinc-900">{r.route_name}</span>
+                          {r.route_code && <span className="text-[11px] text-zinc-400">{r.route_code}</span>}
+                        </div>
+                      </div>
                     </td>
                     <td className="px-5 py-3">
                       {r.vehicle_no ? (
@@ -99,21 +104,31 @@ export default function Routes({ user, canEdit, canDelete }) {
                             className="size-10" onEnlarge={(src, alt) => setZoom({ src, alt })} />
                           <div className="min-w-0">
                             <p className="text-xs font-semibold text-zinc-900 truncate">{r.vehicle_no}</p>
-                            <p className="text-[10px] text-zinc-400 truncate">{r.vehicle_code ? r.vehicle_code : ''}{r.vehicle_code && r.vehicle_name ? ' · ' : ''}{r.vehicle_name || ''}</p>
+                            <p className="text-[10px] text-zinc-400 truncate">{r.vehicle_code ? r.vehicle_code : ''}{r.vehicle_code && r.vehicle_name ? ' - ' : ''}{r.vehicle_name || ''}</p>
                           </div>
                         </div>
-                      ) : <span className="text-xs text-zinc-400">—</span>}
+                      ) : <span className="text-xs text-zinc-400">-</span>}
                     </td>
-                    <td className="px-5 py-3 text-xs text-zinc-700">{r.driver_name || '—'}</td>
-                    <td className="px-5 py-3 text-xs text-zinc-700">{r.assistant_name || '—'}</td>
+                    <td className="px-5 py-3 text-xs text-zinc-700">{r.driver_name || '-'}</td>
+                    <td className="px-5 py-3 text-xs text-zinc-700">{r.assistant_name || '-'}</td>
                     <td className="px-5 py-3 text-xs text-zinc-600 tabular-nums">{r.point_count}</td>
                     <td className="px-5 py-3 text-xs text-zinc-600 tabular-nums">{r.student_count}</td>
                     <td className="px-5 py-3"><TripPill track={live[r.id]} /></td>
                     <td className="px-5 py-3">
-                      <div className="flex items-center justify-end gap-1">
-                        <button onClick={() => { setViewingId(r.id); setMode('view'); }} className="p-1.5 text-zinc-400 hover:text-primary rounded" title="View"><Eye className="size-4" /></button>
-                        {canEdit && <button onClick={() => { setEditingId(r.id); setMode('edit'); }} className="p-1.5 text-zinc-400 hover:text-primary rounded" title="Edit"><Pencil className="size-4" /></button>}
-                        {canDelete && <button onClick={() => del(r.id)} disabled={busyId === r.id} className="p-1.5 text-zinc-400 hover:text-accent rounded disabled:opacity-40" title="Delete"><Trash2 className="size-4" /></button>}
+                      <div className="flex items-center justify-end gap-2">
+                        <button onClick={() => { setViewingId(r.id); setMode('view'); }} className="flex items-center justify-center size-7 rounded bg-white text-zinc-600 border border-zinc-200 hover:text-primary hover:bg-zinc-50 transition-colors shadow-sm" title="View">
+                          <Eye className="size-3.5" />
+                        </button>
+                        {canEdit && (
+                          <button onClick={() => { setEditingId(r.id); setMode('edit'); }} className="flex items-center justify-center size-7 rounded bg-white text-zinc-600 border border-zinc-200 hover:text-primary hover:bg-zinc-50 transition-colors shadow-sm" title="Edit">
+                            <Pencil className="size-3.5" />
+                          </button>
+                        )}
+                        {canDelete && (
+                          <button onClick={() => del(r.id)} disabled={busyId === r.id} className="flex items-center justify-center size-7 rounded bg-white text-zinc-600 border border-zinc-200 hover:text-red-600 hover:bg-red-50 transition-colors shadow-sm disabled:opacity-40" title="Delete">
+                            <Trash2 className="size-3.5" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -264,37 +279,39 @@ function RouteEditor({ user, canEdit, editingId, onBack, onSaved }) {
 
   return (
     <div className="space-y-4">
-      <button onClick={onBack} className="inline-flex items-center gap-1.5 text-xs font-medium text-zinc-500 hover:text-primary">
+      <button onClick={onBack} className="inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-primary transition-colors">
         <ChevronLeft className="size-4" /> Back to routes
       </button>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
-        {/* LEFT — form */}
+        {/* LEFT - form */}
         <div className="space-y-5">
-          <div className="ring-1 ring-black/5 rounded-lg bg-white p-5 space-y-4">
+          <div className="ring-1 ring-black/5 rounded-lg bg-white p-5 space-y-4 shadow-sm">
             <h3 className="text-sm font-semibold text-zinc-900 flex items-center gap-2"><RouteIcon className="size-4 text-primary" /> Route Details</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Field label="Route Name *"><input value={form.route_name} onChange={e => set('route_name', e.target.value)} className={inputCls} placeholder="e.g. Route 1 — City Center" /></Field>
+              <Field label="Route Name *"><input value={form.route_name} onChange={e => set('route_name', e.target.value)} className={inputCls} placeholder="e.g. Route 1 - City Center" /></Field>
               <Field label="Route Code"><input value={form.route_code} onChange={e => set('route_code', e.target.value)} className={inputCls} placeholder="R-01" /></Field>
-              <Field label="Vehicle"><Select value={form.vehicle_id} onChange={v => set('vehicle_id', v)} options={[{ v: '', l: 'Unassigned' }, ...vehicles.map(x => ({ v: x.id, l: `${x.vehicle_no}${x.vehicle_name ? ` · ${x.vehicle_name}` : ''}` }))]} icon={Bus} /></Field>
-              <Field label="Driver"><Select value={form.driver_id} onChange={v => set('driver_id', v)} options={[{ v: '', l: 'Unassigned' }, ...drivers.map(x => ({ v: x.user_id, l: x.name }))]} icon={User} empty="No drivers — add them in Drivers & Assistants" /></Field>
-              <Field label="Assistant"><Select value={form.assistant_id} onChange={v => set('assistant_id', v)} options={[{ v: '', l: 'Unassigned' }, ...assistants.map(x => ({ v: x.user_id, l: x.name }))]} icon={Users} empty="No assistants — add them in Drivers & Assistants" /></Field>
+              <Field label="Vehicle"><Select value={form.vehicle_id} onChange={v => set('vehicle_id', v)} options={[{ v: '', l: 'Unassigned' }, ...vehicles.map(x => ({ v: x.id, l: `${x.vehicle_no}${x.vehicle_name ? ` - ${x.vehicle_name}` : ''}` }))]} icon={Bus} /></Field>
+              <Field label="Driver"><Select value={form.driver_id} onChange={v => set('driver_id', v)} options={[{ v: '', l: 'Unassigned' }, ...drivers.map(x => ({ v: x.user_id, l: x.name }))]} icon={User} empty="No drivers - add them in Drivers & Assistants" /></Field>
+              <Field label="Assistant"><Select value={form.assistant_id} onChange={v => set('assistant_id', v)} options={[{ v: '', l: 'Unassigned' }, ...assistants.map(x => ({ v: x.user_id, l: x.name }))]} icon={Users} empty="No assistants - add them in Drivers & Assistants" /></Field>
               <div className="sm:col-span-2"><Field label="Notes"><input value={form.notes} onChange={e => set('notes', e.target.value)} className={inputCls} /></Field></div>
             </div>
           </div>
 
           {/* Points */}
-          <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden">
+          <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden shadow-sm">
             <div className="p-4 border-b border-zinc-100 flex items-center justify-between">
               <div className="inline-flex items-center gap-1 bg-zinc-100 p-1 rounded-lg">
                 {['pickup', 'drop'].map(t => (
                   <button key={t} onClick={() => setPointTab(t)}
-                    className={`px-3 py-1.5 rounded-md text-xs font-medium capitalize transition-colors ${pointTab === t ? (t === 'pickup' ? 'bg-white text-primary shadow-sm' : 'bg-white text-accent shadow-sm') : 'text-zinc-600 hover:text-zinc-900'}`}>
-                    {t === 'pickup' ? 'Pickup' : 'Drop'} <span className="text-zinc-400">({t === 'pickup' ? pickupPts.length : dropPts.length})</span>
+                    className={`px-3 py-1.5 rounded-md text-xs font-semibold capitalize transition-colors ${pointTab === t ? (t === 'pickup' ? 'bg-white text-primary shadow-sm' : 'bg-white text-accent shadow-sm') : 'text-zinc-600 hover:text-zinc-900'}`}>
+                    {t === 'pickup' ? 'Pickup' : 'Drop'} <span className="text-zinc-400 font-normal">({t === 'pickup' ? pickupPts.length : dropPts.length})</span>
                   </button>
                 ))}
               </div>
-              <button onClick={() => addPoint()} className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"><Plus className="size-3.5" /> Add point</button>
+              <button onClick={() => addPoint()} className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline bg-primary/5 px-3 py-1.5 rounded-md">
+                <Plus className="size-3.5" /> Add point
+              </button>
             </div>
             <div className="p-4 space-y-3">
               {cur.length === 0 && <p className="text-xs text-zinc-400 italic text-center py-4">No {pointTab} points yet. Add a row or click the map.</p>}
@@ -302,12 +319,19 @@ function RouteEditor({ user, canEdit, editingId, onBack, onSaved }) {
                 const pinned = p.lat != null && p.lng != null;
                 const isResolving = resolving.has(`${pointTab}-${i}`);
                 return (
-                  <div key={i} className="ring-1 ring-zinc-200 rounded-md p-3 space-y-2">
+                  <div key={i} className="ring-1 ring-zinc-200 rounded-md p-3 space-y-2 shadow-sm">
                     <div className="flex items-center gap-2">
-                      <span className={`size-6 shrink-0 rounded-full text-white text-[10px] font-bold flex items-center justify-center ${pointTab === 'pickup' ? 'bg-primary' : 'bg-accent'}`}>{i + 1}</span>
+                      <span className={`size-6 shrink-0 rounded-full text-white text-[10px] font-semibold flex items-center justify-center ${pointTab === 'pickup' ? 'bg-primary' : 'bg-accent'}`}>{i + 1}</span>
                       <input value={p.title} onChange={e => updatePoint(i, 'title', e.target.value)} placeholder="Point title (e.g. Main Gate)" className="flex-1 h-8 px-2 text-sm outline-none bg-transparent border-b border-transparent focus:border-primary/40" />
-                      <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${isResolving ? 'text-blue-600 bg-blue-50' : pinned ? 'text-green-700 bg-green-50' : 'text-zinc-400 bg-zinc-100'}`}>{isResolving ? 'resolving…' : pinned ? 'pinned' : 'not pinned'}</span>
-                      <button onClick={() => removePoint(i)} className="text-zinc-300 hover:text-accent"><Trash2 className="size-4" /></button>
+                      
+                      {/* Semantic Status Pills */}
+                      <span className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full ring-1 ring-inset ${isResolving ? 'text-blue-700 bg-blue-50 ring-blue-600/20' : pinned ? 'text-emerald-700 bg-emerald-50 ring-emerald-600/20' : 'text-zinc-700 bg-zinc-50 ring-zinc-600/20'}`}>
+                        {isResolving ? 'resolving...' : pinned ? 'pinned' : 'not pinned'}
+                      </span>
+                      
+                      <button onClick={() => removePoint(i)} className="flex items-center justify-center size-7 rounded bg-white text-zinc-600 border border-zinc-200 hover:text-red-600 hover:bg-red-50 transition-colors shadow-sm ml-1">
+                        <Trash2 className="size-3.5" />
+                      </button>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2">
                       <input value={p.location_link} onChange={e => updatePoint(i, 'location_link', e.target.value)} onBlur={() => resolveLink(i, pointTab)} placeholder="Paste Google Maps link or lat,lng" className={`${inputCls} h-8 text-xs`} />
@@ -320,18 +344,20 @@ function RouteEditor({ user, canEdit, editingId, onBack, onSaved }) {
           </div>
 
           <div className="flex justify-end gap-2">
-            <button onClick={onBack} className="px-4 py-2 rounded-md text-xs font-medium text-zinc-700 ring-1 ring-zinc-200 hover:bg-zinc-50">Cancel</button>
-            <button onClick={save} disabled={saving || !canEdit} className="inline-flex items-center gap-1.5 bg-primary text-white px-5 py-2 rounded-md text-xs font-semibold hover:bg-primary/90 shadow-sm disabled:opacity-60">
-              <Save className="size-4" /> {saving ? 'Saving…' : (isEdit ? 'Update Route' : 'Save Route')}
+            <button onClick={onBack} className="flex items-center justify-center gap-1.5 h-9 px-6 min-w-[120px] w-full sm:w-auto bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-50 transition-colors rounded-md text-xs font-semibold shadow-sm">
+              Cancel
+            </button>
+            <button onClick={save} disabled={saving || !canEdit} className="inline-flex items-center justify-center gap-1.5 bg-primary text-white h-9 px-6 min-w-[120px] w-full sm:w-auto rounded-md text-xs font-semibold hover:bg-primary/90 shadow-sm transition-colors disabled:opacity-60">
+              <Save className="size-4" /> {saving ? 'Saving...' : (isEdit ? 'Update Route' : 'Save Route')}
             </button>
           </div>
         </div>
 
-        {/* RIGHT — map (sticky) */}
+        {/* RIGHT - map (sticky) */}
         <div className="lg:sticky lg:top-4">
-          <div className="ring-1 ring-black/5 rounded-lg bg-white p-3">
+          <div className="ring-1 ring-black/5 rounded-lg bg-white p-3 shadow-sm">
             <div className="flex items-center gap-3 mb-2 px-1">
-              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-700"><MapPinned className="size-4 text-primary" /> Route Map</span>
+              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-900"><MapPinned className="size-4 text-primary" /> Route Map</span>
               <span className="inline-flex items-center gap-1 text-[10px] text-zinc-500"><span className="size-2.5 rounded-full bg-primary" /> Pickup</span>
               <span className="inline-flex items-center gap-1 text-[10px] text-zinc-500"><span className="size-2.5 rounded-full bg-accent" /> Drop</span>
             </div>
@@ -355,8 +381,18 @@ function clean(p) {
   return { title: p.title, location_link: p.location_link || null, latitude: p.lat ?? null, longitude: p.lng ?? null, arrival_time: p.arrival_time || null };
 }
 
-const inputCls = 'w-full rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40';
-function Field({ label, children }) { return <div className="flex flex-col"><label className="text-xs font-medium text-zinc-600 mb-1.5">{label}</label>{children}</div>; }
+const inputCls = 'w-full rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-shadow';
+
+// Form Fields updated strictly to use Micro-labels
+function Field({ label, children }) { 
+  return (
+    <div className="flex flex-col">
+      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1.5">{label}</label>
+      {children}
+    </div>
+  ); 
+}
+
 function Select({ value, onChange, options, icon: Icon, empty }) {
   const only = options.length <= 1;
   return (
@@ -372,7 +408,7 @@ function Select({ value, onChange, options, icon: Icon, empty }) {
 }
 
 // =================================================================
-//  Route view (read-only) — points left, road-routed map right
+//  Route view (read-only) - points left, road-routed map right
 // =================================================================
 function gmapsDir(list) {
   const pts = list.filter(p => p.lat != null && p.lng != null);
@@ -432,15 +468,15 @@ function RouteView({ routeId, user, canEdit, onBack, onEdit }) {
 
   const PointList = ({ title, list, color }) => (
     <div>
-      <p className="text-xs font-semibold text-zinc-700 mb-2 flex items-center gap-1.5"><span className="size-2.5 rounded-full" style={{ backgroundColor: color }} /> {title} <span className="text-zinc-400 font-normal">({list.length})</span></p>
+      <p className="text-xs font-semibold text-zinc-900 mb-2 flex items-center gap-1.5"><span className="size-2.5 rounded-full" style={{ backgroundColor: color }} /> {title} <span className="text-zinc-400 font-normal">({list.length})</span></p>
       {list.length ? (
         <div className="space-y-2">
           {list.map((p, i) => (
-            <div key={p.id} className="flex items-center gap-2.5 ring-1 ring-zinc-200 rounded-md px-3 py-2">
-              <span className="size-6 shrink-0 rounded-full text-white text-[10px] font-bold flex items-center justify-center" style={{ backgroundColor: color }}>{i + 1}</span>
+            <div key={p.id} className="flex items-center gap-2.5 ring-1 ring-zinc-200 rounded-md px-3 py-2 shadow-sm">
+              <span className="size-6 shrink-0 rounded-full text-white text-[10px] font-semibold flex items-center justify-center" style={{ backgroundColor: color }}>{i + 1}</span>
               <div className="min-w-0 flex-1">
-                <p className="text-sm text-zinc-900 truncate">{p.title}{p.arrival_time ? <span className="text-zinc-400 font-normal"> · {p.arrival_time}</span> : ''}</p>
-                {p.location_link && <a href={p.location_link} target="_blank" rel="noreferrer" className="text-[11px] text-primary hover:underline inline-flex items-center gap-1 truncate"><MapPin className="size-3" /> location</a>}
+                <p className="text-sm text-zinc-900 truncate">{p.title}{p.arrival_time ? <span className="text-zinc-400"> - {p.arrival_time}</span> : ''}</p>
+                {p.location_link && <a href={p.location_link} target="_blank" rel="noreferrer" className="text-[11px] text-primary hover:underline inline-flex items-center gap-1 mt-0.5 truncate"><MapPin className="size-3" /> location</a>}
               </div>
             </div>
           ))}
@@ -451,52 +487,61 @@ function RouteView({ routeId, user, canEdit, onBack, onEdit }) {
 
   return (
     <div className="space-y-4">
-      <button onClick={onBack} className="inline-flex items-center gap-1.5 text-xs font-medium text-zinc-500 hover:text-primary"><ChevronLeft className="size-4" /> Back to routes</button>
+      <button onClick={onBack} className="inline-flex items-center gap-1.5 text-xs text-zinc-500 hover:text-primary transition-colors">
+        <ChevronLeft className="size-4" /> Back to routes
+      </button>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
-        {/* Left — details + points */}
+        {/* Left - details + points */}
         <div className="space-y-5">
-          <div className="ring-1 ring-black/5 rounded-lg bg-white p-5">
+          <div className="ring-1 ring-black/5 rounded-lg bg-white p-5 shadow-sm">
             <div className="flex items-start justify-between gap-3">
-              <div>
-                <h3 className="text-base font-bold text-zinc-900 flex items-center gap-2">
-                  <RouteIcon className="size-4 text-primary" /> {route.route_name}
-                  <TripPill track={track} />
-                </h3>
-                {route.route_code && <p className="text-[11px] text-zinc-400 mt-0.5 ml-6">{route.route_code}</p>}
+              <div className="flex items-start gap-2">
+                <RouteIcon className="size-4 text-primary mt-1 shrink-0" />
+                <div>
+                  <h3 className="text-base font-semibold text-zinc-900 flex items-center gap-2">
+                    {route.route_name}
+                    <TripPill track={track} />
+                  </h3>
+                  {route.route_code && <p className="text-[11px] text-zinc-400 mt-0.5">{route.route_code}</p>}
+                </div>
               </div>
               <div className="flex items-center gap-2">
-                {onEdit && <button onClick={onEdit} className="inline-flex items-center gap-1.5 text-xs font-medium text-primary ring-1 ring-primary/30 px-3 py-1.5 rounded-md hover:bg-primary/5"><Pencil className="size-3.5" /> Edit</button>}
+                {onEdit && (
+                  <button onClick={onEdit} className="inline-flex items-center justify-center gap-1.5 bg-white text-zinc-600 border border-zinc-200 h-9 px-4 shrink-0 rounded-md text-xs font-semibold hover:text-primary hover:bg-zinc-50 transition-colors shadow-sm">
+                    <Pencil className="size-3.5" /> Edit
+                  </button>
+                )}
               </div>
             </div>
             <div className="grid grid-cols-3 gap-3 mt-4 text-xs">
-              <Meta icon={Bus} label="Vehicle" value={route.vehicle_no || '—'} />
-              <Meta icon={User} label="Driver" value={route.driver_name || '—'} phone={route.driver_phone} />
-              <Meta icon={Users} label="Assistant" value={route.assistant_name || '—'} phone={route.assistant_phone} />
+              <Meta icon={Bus} label="Vehicle" value={route.vehicle_no || '-'} />
+              <Meta icon={User} label="Driver" value={route.driver_name || '-'} phone={route.driver_phone} />
+              <Meta icon={Users} label="Assistant" value={route.assistant_name || '-'} phone={route.assistant_phone} />
             </div>
             <div className="mt-4"><TripStatus track={track} /></div>
           </div>
 
-          <div className="ring-1 ring-black/5 rounded-lg bg-white p-5 space-y-5">
-            <PointList title="Pickup" list={pickups} color="#3284c7" />
+          <div className="ring-1 ring-black/5 rounded-lg bg-white p-5 space-y-5 shadow-sm">
+            <PointList title="Pickup" list={pickups} color="#18469A" />
             <div className="border-t border-zinc-100" />
             <PointList title="Drop" list={drops} color="#f29132" />
           </div>
         </div>
 
-        {/* Right — map */}
+        {/* Right - map */}
         <div className="lg:sticky lg:top-4">
-          <div className="ring-1 ring-black/5 rounded-lg bg-white p-3">
+          <div className="ring-1 ring-black/5 rounded-lg bg-white p-3 shadow-sm">
             <div className="flex items-center justify-between gap-2 mb-2 px-1 flex-wrap">
               <div className="flex items-center gap-3">
-                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-700"><MapPinned className="size-4 text-primary" /> Route Map</span>
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-900"><MapPinned className="size-4 text-primary" /> Route Map</span>
                 <span className="inline-flex items-center gap-1 text-[10px] text-zinc-500"><span className="size-2.5 rounded-full bg-primary" /> Pickup</span>
                 <span className="inline-flex items-center gap-1 text-[10px] text-zinc-500"><span className="size-2.5 rounded-full bg-accent" /> Drop</span>
-                {live.live && <span className="inline-flex items-center gap-1 text-[10px] text-green-700 font-medium">🚌 Bus live</span>}
+                {live.live && <span className="inline-flex items-center gap-1 text-[10px] text-green-700 font-semibold"><Bus className="size-3" /> Bus live</span>}
               </div>
               <div className="flex items-center gap-2">
-                {pickupNav && <a href={pickupNav} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[10px] font-medium text-primary hover:underline"><Navigation className="size-3" /> Pickup</a>}
-                {dropNav && <a href={dropNav} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[10px] font-medium text-accent hover:underline"><Navigation className="size-3" /> Drop</a>}
+                {pickupNav && <a href={pickupNav} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[10px] font-semibold text-primary hover:underline"><Navigation className="size-3" /> Pickup</a>}
+                {dropNav && <a href={dropNav} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[10px] font-semibold text-accent hover:underline"><Navigation className="size-3" /> Drop</a>}
               </div>
             </div>
             <LeafletMap points={mapPoints} routed liveLocation={live.live ? { lat: Number(track.lat), lng: Number(track.lng) } : null} height={560} />
@@ -509,12 +554,14 @@ function RouteView({ routeId, user, canEdit, onBack, onEdit }) {
 
 function Meta({ icon: Icon, label, value, phone }) {
   return (
-    <div className="rounded-md bg-zinc-50 ring-1 ring-zinc-100 p-2.5">
-      <p className="text-[10px] text-zinc-400 uppercase tracking-wider flex items-center gap-1"><Icon className="size-3" /> {label}</p>
-      <p className="text-sm font-medium text-zinc-900 truncate mt-0.5">{value}</p>
-      {phone
-        ? <a href={`tel:${phone}`} className="text-[11px] text-primary hover:underline inline-flex items-center gap-1 mt-0.5">{phone}</a>
-        : null}
+    <div className="rounded-md bg-zinc-50 ring-1 ring-zinc-100 p-2.5 shadow-sm">
+      <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1.5"><Icon className="size-3.5" /> {label}</p>
+      <p className="text-sm font-semibold text-zinc-900 truncate mt-1">{value}</p>
+      {phone ? (
+        <a href={`tel:${phone}`} className="text-[11px] text-primary hover:underline inline-flex items-center gap-1 mt-0.5">
+          {phone}
+        </a>
+      ) : null}
     </div>
   );
 }

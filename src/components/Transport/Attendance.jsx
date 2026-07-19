@@ -7,8 +7,8 @@ import { RangePresets, DateField, DownloadXlsx, useAcademicYears, firstOfMonth, 
 
 // =====================================================================
 //  Attendance
-//   • Mark    — one route, one trip, one day. What the assistant uses.
-//   • Summary — any date range (an academic year is one click via the
+//   - Mark    - one route, one trip, one day. What the assistant uses.
+//   - Summary - any date range (an academic year is one click via the
 //     presets), per student, with an Excel download. This is the "how did
 //     the year go?" view. There is no academic-year column on transport
 //     attendance: the records are dated, and a range says it better.
@@ -104,11 +104,11 @@ export default function Attendance({ user, canEdit, lockedRouteId = null, routes
       {/* Mark vs Summary */}
       <div className="inline-flex items-center gap-1 bg-zinc-100 p-1 rounded-lg">
         <button onClick={() => setMode('mark')}
-          className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-medium transition-colors ${mode === 'mark' ? 'bg-white text-primary shadow-sm' : 'text-zinc-600 hover:text-zinc-900'}`}>
+          className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-semibold transition-colors ${mode === 'mark' ? 'bg-white text-primary shadow-sm' : 'text-zinc-600 hover:text-zinc-900'}`}>
           <PenLine className="size-3.5" /> Mark a day
         </button>
         <button onClick={() => setMode('summary')}
-          className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-medium transition-colors ${mode === 'summary' ? 'bg-white text-primary shadow-sm' : 'text-zinc-600 hover:text-zinc-900'}`}>
+          className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-xs font-semibold transition-colors ${mode === 'summary' ? 'bg-white text-primary shadow-sm' : 'text-zinc-600 hover:text-zinc-900'}`}>
           <BarChart3 className="size-3.5" /> Summary & report
         </button>
       </div>
@@ -118,11 +118,11 @@ export default function Attendance({ user, canEdit, lockedRouteId = null, routes
       ) : (
         <>
           {/* controls */}
-          <div className="ring-1 ring-black/5 rounded-lg bg-white p-4 flex flex-wrap items-center gap-4">
+          <div className="ring-1 ring-black/5 rounded-lg bg-white p-4 flex flex-wrap items-center gap-4 shadow-sm">
             <div className="flex items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-700"><RouteIcon className="size-4 text-primary" /> Route</span>
+              <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider"><RouteIcon className="size-4 text-primary" /> Route</span>
               {lockedRouteId ? (
-                <span className="text-sm font-semibold text-zinc-900">{route?.route_name || '—'}{route?.route_code ? ` (${route.route_code})` : ''}</span>
+                <span className="text-sm font-semibold text-zinc-900">{route?.route_name || '-'}{route?.route_code ? ` (${route.route_code})` : ''}</span>
               ) : (
                 <div className="relative">
                   <select value={routeId} onChange={e => setRouteId(e.target.value)} className={`${inputCls} appearance-none pr-8 cursor-pointer min-w-[200px]`}>
@@ -135,17 +135,17 @@ export default function Attendance({ user, canEdit, lockedRouteId = null, routes
             </div>
             <div className="inline-flex items-center gap-1 bg-zinc-100 p-1 rounded-lg">
               {['pickup', 'drop'].map(t => (
-                <button key={t} onClick={() => setTrip(t)} className={`px-3.5 py-1.5 rounded-md text-xs font-medium capitalize transition-colors ${trip === t ? 'bg-white text-primary shadow-sm' : 'text-zinc-600 hover:text-zinc-900'}`}>{t}</button>
+                <button key={t} onClick={() => setTrip(t)} className={`px-3.5 py-1.5 rounded-md text-xs font-semibold capitalize transition-colors ${trip === t ? 'bg-white text-primary shadow-sm' : 'text-zinc-600 hover:text-zinc-900'}`}>{t}</button>
               ))}
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Date</span>
+              <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Date</span>
               <input type="date" value={date} onChange={e => setDate(e.target.value)} className={`${inputCls} w-auto`} />
               {date !== todayISO() && (
-                <button onClick={() => setDate(todayISO())} className="text-[11px] font-medium text-primary hover:underline">Today</button>
+                <button onClick={() => setDate(todayISO())} className="text-[11px] font-semibold text-primary hover:underline transition-colors">Today</button>
               )}
             </div>
-            <span className="text-[11px] text-zinc-500 ml-auto">Present <strong className="text-green-700">{counts.p}</strong> · Absent <strong className="text-red-600">{counts.a}</strong></span>
+            <span className="text-[11px] text-zinc-500 ml-auto">Present <strong className="text-emerald-700">{counts.p}</strong> - Absent <strong className="text-red-600">{counts.a}</strong></span>
           </div>
 
           {!routeId ? (
@@ -153,13 +153,17 @@ export default function Attendance({ user, canEdit, lockedRouteId = null, routes
           ) : loading ? (
             <div className="h-40 flex items-center justify-center"><div className="size-7 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" /></div>
           ) : (
-            <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden">
+            <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden shadow-sm">
               <div className="p-4 border-b border-zinc-100 flex items-center justify-between gap-3 flex-wrap">
                 <h3 className="text-sm font-semibold text-zinc-900 flex items-center gap-2"><ClipboardCheck className="size-4 text-primary" /> {trip === 'pickup' ? 'Pickup' : 'Drop'} Attendance <span className="text-zinc-400 font-normal">({students.length})</span></h3>
                 {canMark && (
                   <div className="flex items-center gap-2">
-                    <button onClick={() => setAll('present')} className="inline-flex items-center gap-1 text-[11px] font-medium text-green-700 ring-1 ring-green-600/20 bg-green-50 px-2.5 py-1 rounded-md hover:bg-green-100"><CheckCheck className="size-3.5" /> All present</button>
-                    <button onClick={() => setAll('absent')} className="inline-flex items-center gap-1 text-[11px] font-medium text-red-600 ring-1 ring-red-200 bg-red-50 px-2.5 py-1 rounded-md hover:bg-red-100"><Ban className="size-3.5" /> All absent</button>
+                    <button onClick={() => setAll('present')} className="flex items-center justify-center gap-1.5 h-8 px-3 bg-white text-zinc-600 border border-zinc-200 hover:text-emerald-700 hover:bg-emerald-50 transition-colors rounded-md text-[11px] font-semibold shadow-sm">
+                      <CheckCheck className="size-3.5" /> All present
+                    </button>
+                    <button onClick={() => setAll('absent')} className="flex items-center justify-center gap-1.5 h-8 px-3 bg-white text-zinc-600 border border-zinc-200 hover:text-red-700 hover:bg-red-50 transition-colors rounded-md text-[11px] font-semibold shadow-sm">
+                      <Ban className="size-3.5" /> All absent
+                    </button>
                   </div>
                 )}
               </div>
@@ -169,22 +173,22 @@ export default function Attendance({ user, canEdit, lockedRouteId = null, routes
                     const on = status[s.student_id] === 'present';
                     const m = marks[s.student_id];
                     return (
-                      <div key={s.student_id} className="flex items-center gap-3 px-5 py-2.5">
-                        <span className="text-[11px] font-semibold text-zinc-400 w-8 tabular-nums">{s.roll_no || '—'}</span>
+                      <div key={s.student_id} className="flex items-center gap-3 px-5 py-2.5 hover:bg-zinc-50/50 transition-colors">
+                        <span className="text-[11px] font-semibold text-zinc-400 w-8 tabular-nums">{s.roll_no || '-'}</span>
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm text-zinc-900 truncate">{s.name}</p>
+                          <p className="text-sm text-zinc-900 truncate font-semibold">{s.name}</p>
                           {m?.marked_at
-                            ? <p className="text-[10px] text-zinc-400 truncate">Marked by <span className="text-zinc-500 font-medium">{m.marked_by_name || 'Unknown'}</span> · {fmtISTDateTime(m.marked_at)}</p>
-                            : <p className="text-[10px] text-amber-600">Not marked yet</p>}
+                            ? <p className="text-[10px] text-zinc-400 truncate">Marked by <span className="text-zinc-600 font-semibold">{m.marked_by_name || 'Unknown'}</span> - {fmtISTDateTime(m.marked_at)}</p>
+                            : <span className="inline-block mt-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-700 bg-amber-50 ring-1 ring-inset ring-amber-600/20 px-2 py-0.5 rounded-full">Not marked yet</span>}
                         </div>
                         <button onClick={() => setCalFor(s)} className="text-[11px] text-primary hover:underline inline-flex items-center gap-1 shrink-0"><CalendarDays className="size-3.5" /> calendar</button>
                         {canMark ? (
-                          <div className="inline-flex items-center rounded-md ring-1 ring-zinc-200 overflow-hidden">
-                            <button onClick={() => setStatus(p => ({ ...p, [s.student_id]: 'present' }))} className={`px-2.5 py-1 text-[11px] font-semibold ${on ? 'bg-green-600 text-white' : 'text-zinc-500 hover:bg-zinc-50'}`}>Present</button>
-                            <button onClick={() => setStatus(p => ({ ...p, [s.student_id]: 'absent' }))} className={`px-2.5 py-1 text-[11px] font-semibold ${!on ? 'bg-red-600 text-white' : 'text-zinc-500 hover:bg-zinc-50'}`}>Absent</button>
+                          <div className="inline-flex items-center rounded-md border border-zinc-200 overflow-hidden shadow-sm">
+                            <button onClick={() => setStatus(p => ({ ...p, [s.student_id]: 'present' }))} className={`px-3 py-1.5 text-[11px] font-semibold transition-colors ${on ? 'bg-emerald-600 text-white' : 'bg-white text-zinc-600 hover:bg-zinc-50'}`}>Present</button>
+                            <button onClick={() => setStatus(p => ({ ...p, [s.student_id]: 'absent' }))} className={`px-3 py-1.5 text-[11px] font-semibold transition-colors ${!on ? 'bg-red-600 text-white border-l border-red-600' : 'bg-white text-zinc-600 hover:bg-zinc-50 border-l border-zinc-200'}`}>Absent</button>
                           </div>
                         ) : (
-                          <span className={`text-[11px] font-semibold px-2 py-0.5 rounded ${on ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>{on ? 'Present' : 'Absent'}</span>
+                          <span className={`text-[10px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full ring-1 ring-inset ${on ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' : 'bg-red-50 text-red-700 ring-red-600/20'}`}>{on ? 'Present' : 'Absent'}</span>
                         )}
                       </div>
                     );
@@ -194,7 +198,9 @@ export default function Attendance({ user, canEdit, lockedRouteId = null, routes
 
               {canMark && students.length > 0 && (
                 <div className="p-4 border-t border-zinc-100 flex justify-end">
-                  <button onClick={save} disabled={saving} className="inline-flex items-center gap-1.5 bg-primary text-white px-5 py-2 rounded-md text-xs font-semibold hover:bg-primary/90 disabled:opacity-60"><Save className="size-4" /> {saving ? 'Saving…' : `Save ${trip} attendance`}</button>
+                  <button onClick={save} disabled={saving} className="inline-flex items-center justify-center gap-1.5 bg-primary text-white h-9 px-6 min-w-[120px] rounded-md text-xs font-semibold hover:bg-primary/90 shadow-sm disabled:opacity-60 transition-colors">
+                    <Save className="size-4" /> {saving ? 'Saving...' : `Save ${trip} attendance`}
+                  </button>
                 </div>
               )}
             </div>
@@ -208,7 +214,7 @@ export default function Attendance({ user, canEdit, lockedRouteId = null, routes
 }
 
 // =====================================================================
-//  Summary — any range, per student. The academic-year chips just fill
+//  Summary - any range, per student. The academic-year chips just fill
 //  From/To, so a full year is one click without a second filter that
 //  could disagree with the dates.
 // =====================================================================
@@ -252,32 +258,32 @@ function Summary({ user, routes, lockedRouteId, initialRouteId }) {
 
   return (
     <div className="space-y-5">
-      <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden">
+      <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden shadow-sm">
         <div className="p-4 border-b border-zinc-100 space-y-3">
           <div className="flex flex-wrap items-end gap-3">
             {!lockedRouteId && (
-              <div className="flex flex-col gap-1">
-                <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Route</span>
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Route</span>
                 <div className="relative">
                   <select value={routeId} onChange={e => setRouteId(e.target.value)}
-                    className="h-8 appearance-none rounded border border-zinc-200 bg-white pl-2 pr-7 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer min-w-[180px]">
+                    className="h-9 appearance-none rounded-md border border-zinc-200 bg-white pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer min-w-[180px] shadow-sm">
                     <option value="">All routes</option>
                     {routes.map(r => <option key={r.id} value={r.id}>{r.route_name}{r.route_code ? ` (${r.route_code})` : ''}</option>)}
                   </select>
-                  <ChevronDown className="size-3.5 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
               </div>
             )}
-            <div className="flex flex-col gap-1">
-              <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Trip</span>
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Trip</span>
               <div className="relative">
                 <select value={trip} onChange={e => setTrip(e.target.value)}
-                  className="h-8 appearance-none rounded border border-zinc-200 bg-white pl-2 pr-7 text-xs font-medium text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer">
+                  className="h-9 appearance-none rounded-md border border-zinc-200 bg-white pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer shadow-sm">
                   <option value="">Pickup + Drop</option>
                   <option value="pickup">Pickup only</option>
                   <option value="drop">Drop only</option>
                 </select>
-                <ChevronDown className="size-3.5 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
             </div>
             <DateField label="From" value={range.from} onChange={v => setRange(r => ({ ...r, from: v }))} />
@@ -293,12 +299,12 @@ function Summary({ user, routes, lockedRouteId, initialRouteId }) {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 p-4">
           <Kpi icon={Users} label="Students" value={rows.length} tone="primary" />
           <Kpi icon={CalendarDays} label="Days recorded" value={data?.days_recorded ?? 0} tone="zinc" />
-          <Kpi icon={CheckCheck} label="Present marks" value={totals.present} tone="green" />
-          <Kpi icon={BarChart3} label="Overall attendance" value={overall == null ? '—' : `${overall}%`} tone="accent" />
+          <Kpi icon={CheckCheck} label="Present marks" value={totals.present} tone="emerald" />
+          <Kpi icon={BarChart3} label="Overall attendance" value={overall == null ? '-' : `${overall}%`} tone="accent" />
         </div>
       </div>
 
-      <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden">
+      <div className="ring-1 ring-black/5 rounded-lg bg-white overflow-hidden shadow-sm">
         <div className="p-4 border-b border-zinc-100 flex items-center gap-2">
           <ClipboardCheck className="size-4 text-primary" />
           <h3 className="text-sm font-semibold text-zinc-900">Per student <span className="text-zinc-400 font-normal">({rows.length})</span></h3>
@@ -317,22 +323,22 @@ function Summary({ user, routes, lockedRouteId, initialRouteId }) {
               </thead>
               <tbody className="divide-y divide-zinc-100">
                 {rows.length ? rows.map(s => (
-                  <tr key={s.student_id} className="hover:bg-zinc-50/60">
-                    <td className="px-4 py-2.5 text-xs font-semibold text-zinc-400 tabular-nums">{s.roll_no || '—'}</td>
-                    <td className="px-4 py-2.5 text-sm text-zinc-900">{s.name}</td>
-                    <td className="px-4 py-2.5 text-xs text-zinc-600">{s.className || '—'}</td>
-                    <td className="px-4 py-2.5 text-xs text-zinc-600">{s.route_name || '—'}</td>
-                    <td className="px-4 py-2.5 text-xs tabular-nums"><span className="text-green-700 font-medium">{s.pickup_present}</span> <span className="text-zinc-300">/</span> <span className="text-red-600 font-medium">{s.pickup_absent}</span></td>
-                    <td className="px-4 py-2.5 text-xs tabular-nums"><span className="text-green-700 font-medium">{s.drop_present}</span> <span className="text-zinc-300">/</span> <span className="text-red-600 font-medium">{s.drop_absent}</span></td>
+                  <tr key={s.student_id} className="hover:bg-zinc-50/60 transition-colors">
+                    <td className="px-4 py-2.5 text-xs font-semibold text-zinc-400 tabular-nums">{s.roll_no || '-'}</td>
+                    <td className="px-4 py-2.5 text-sm text-zinc-900 font-semibold">{s.name}</td>
+                    <td className="px-4 py-2.5 text-xs text-zinc-600">{s.className || '-'}</td>
+                    <td className="px-4 py-2.5 text-xs text-zinc-600">{s.route_name || '-'}</td>
+                    <td className="px-4 py-2.5 text-xs tabular-nums"><span className="text-emerald-700 font-semibold">{s.pickup_present}</span> <span className="text-zinc-300">/</span> <span className="text-red-600 font-semibold">{s.pickup_absent}</span></td>
+                    <td className="px-4 py-2.5 text-xs tabular-nums"><span className="text-emerald-700 font-semibold">{s.drop_present}</span> <span className="text-zinc-300">/</span> <span className="text-red-600 font-semibold">{s.drop_absent}</span></td>
                     <td className="px-4 py-2.5 text-xs text-zinc-600 tabular-nums">{s.days}</td>
                     <td className="px-4 py-2.5">
-                      {s.pct == null ? <span className="text-xs text-zinc-400">—</span> : (
-                        <span className={`text-xs font-semibold tabular-nums ${s.pct >= 80 ? 'text-green-700' : s.pct >= 50 ? 'text-primary' : 'text-red-600'}`}>{s.pct}%</span>
+                      {s.pct == null ? <span className="text-xs text-zinc-400">-</span> : (
+                        <span className={`text-xs font-semibold tabular-nums ${s.pct >= 80 ? 'text-emerald-700' : s.pct >= 50 ? 'text-primary' : 'text-red-600'}`}>{s.pct}%</span>
                       )}
                     </td>
                     <td className="px-4 py-2.5 text-right">
                       <button onClick={() => setCalFor({ student_id: s.student_id, name: s.name })}
-                        className="text-[11px] text-primary hover:underline inline-flex items-center gap-1"><CalendarDays className="size-3.5" /> calendar</button>
+                        className="text-[11px] text-primary hover:underline inline-flex items-center gap-1 transition-colors"><CalendarDays className="size-3.5" /> calendar</button>
                     </td>
                   </tr>
                 )) : (
@@ -344,8 +350,8 @@ function Summary({ user, routes, lockedRouteId, initialRouteId }) {
         )}
       </div>
 
-      <p className="text-[11px] text-zinc-400">
-        Transport records are kept by date, not by academic year — the year chips above simply fill the From / To dates
+      <p className="text-[11px] text-zinc-500">
+        Transport records are kept by date, not by academic year - the year chips above simply fill the From / To dates
         from your Academics Year module, so a full year is one click and a range can still span years.
       </p>
 
@@ -370,8 +376,10 @@ function CalendarModal({ student, onClose }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={onClose}>
       <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-sm shadow-xl overflow-hidden" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-zinc-100">
-          <h4 className="text-sm font-semibold text-zinc-900">{student.name} · Attendance</h4>
-          <button onClick={onClose} className="text-zinc-400 hover:text-zinc-700"><X className="size-5" /></button>
+          <h4 className="text-sm font-semibold text-zinc-900">{student.name} - Attendance</h4>
+          <button onClick={onClose} className="flex items-center justify-center size-8 rounded-md bg-white text-zinc-600 border border-zinc-200 hover:text-zinc-900 hover:bg-zinc-50 transition-colors shadow-sm">
+            <X className="size-4" />
+          </button>
         </div>
         <div className="p-4">
           {loading ? <div className="h-40 flex items-center justify-center"><div className="size-6 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" /></div>
@@ -383,23 +391,23 @@ function CalendarModal({ student, onClose }) {
 }
 
 function Kpi({ icon: Icon, label, value, tone }) {
-  const tones = { zinc: 'bg-zinc-100 text-zinc-600', green: 'bg-green-50 text-green-600', accent: 'bg-accent/10 text-accent', primary: 'bg-primary/10 text-primary' };
+  const tones = { zinc: 'bg-zinc-100 text-zinc-600', emerald: 'bg-emerald-50 text-emerald-600', accent: 'bg-accent/10 text-accent', primary: 'bg-primary/10 text-primary' };
   return (
-    <div className="ring-1 ring-black/5 rounded-lg bg-white p-3.5">
-      <span className={`size-8 rounded-lg flex items-center justify-center mb-2 ${tones[tone] || tones.zinc}`}><Icon className="size-4" /></span>
-      <p className="text-lg font-bold text-zinc-900 tabular-nums leading-tight">{value}</p>
-      <p className="text-[11px] font-medium text-zinc-600 mt-0.5">{label}</p>
+    <div className="border border-zinc-200 rounded-lg bg-white p-4 shadow-sm">
+      <span className={`size-8 rounded-lg flex items-center justify-center mb-2.5 ${tones[tone] || tones.zinc}`}><Icon className="size-4" /></span>
+      <p className="text-lg font-semibold text-zinc-900 tabular-nums leading-tight">{value}</p>
+      <p className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider mt-1">{label}</p>
     </div>
   );
 }
 
 function Empty({ text }) {
   return (
-    <div className="ring-1 ring-black/5 rounded-lg bg-white p-10 text-center">
-      <ClipboardCheck className="size-6 text-zinc-300 mx-auto mb-3" />
-      <p className="text-sm font-medium text-zinc-700">{text}</p>
+    <div className="ring-1 ring-black/5 rounded-lg bg-white p-10 text-center shadow-sm">
+      <ClipboardCheck className="size-10 text-zinc-300 mx-auto mb-3" />
+      <p className="text-sm text-zinc-900">{text}</p>
     </div>
   );
 }
 
-const inputCls = 'w-full rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40';
+const inputCls = 'w-full rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-shadow';
