@@ -3,7 +3,8 @@ import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import { 
   Users, Calendar, Clock, GraduationCap, Target, 
-  Video, Edit, Trash2, Search, X, Link as LinkIcon, Plus, Loader2, ChevronDown, Save, User
+  Video, Edit, Trash2, Search, X, Link as LinkIcon, Plus, Loader2, ChevronDown, Save, User,
+  HelpCircle, ShieldCheck
 } from 'lucide-react';
 
 // Render a UTC datetime (Railway stores UTC) as IST for display. Handles
@@ -217,14 +218,17 @@ export default function TeacherAdminPTM({ canEdit = false, canDelete = false }) 
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
       
-      <header className="flex flex-col mb-2 sm:mb-0">
-        <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
-          <Users className="text-primary size-5" />
-          PTM Schedule
-        </h1>
-        <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
-          Manage and schedule Parent-Teacher Meetings.
-        </p>
+      <header className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-2 sm:mb-0">
+        <div className="flex flex-col">
+          <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
+            <Users className="text-primary size-5" />
+            PTM Schedule
+          </h1>
+          <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
+            Manage and schedule Parent-Teacher Meetings.
+          </p>
+        </div>
+        <PTMHelp canEdit={canEdit} />
       </header>
 
       <div className="flex flex-col sm:flex-row sm:items-center gap-3">
@@ -341,7 +345,7 @@ export default function TeacherAdminPTM({ canEdit = false, canDelete = false }) 
                         </div>
                       </td>
                       <td className="px-5 py-4 whitespace-nowrap">
-                        <div className="font-medium text-zinc-800 text-sm">{item.created_by_name || '—'}</div>
+                        <div className="font-medium text-zinc-800 text-sm">{item.created_by_name || '\u2014'}</div>
                         {item.created_at && (
                           <div className="text-[11px] text-zinc-400 mt-0.5 flex items-center gap-1">
                             <Clock className="size-3" /> {fmtIST(item.created_at)}
@@ -502,5 +506,72 @@ function Field({ label, value, onChange, type = 'text', options, required, place
           placeholder={placeholder} className={base} required={required} />
       )}
     </div>
+  );
+}
+
+// =====================================================================
+//  PTMHelp — "How to use" guide.
+//  Same button + modal theme as the Reports module's ReportsHelp, so the
+//  help stays consistent across the app. Guide depends on whether the
+//  viewer can schedule (manage) or is read-only (view).
+// =====================================================================
+const GUIDES = {
+  manage: {
+    title: 'PTM Schedule',
+    steps: [
+      ['1 \u00b7 Schedule a meeting', 'Schedule Meeting opens the form \u2014 set the date & time, pick the teacher, optionally a class (leave it as All Classes for a whole-school meeting), and a short focus. Notes are optional.'],
+      ['2 \u00b7 Add a video link', 'Paste a Google Meet / Zoom link in Meeting Link. A Join button then appears on the row while the meeting is Scheduled and its time hasn\u2019t passed.'],
+      ['3 \u00b7 Find meetings', 'Search by teacher, class, focus or who created it, and narrow the list with the Class and Teacher filters.'],
+      ['4 \u00b7 Status', 'Meetings are Scheduled or Completed. A scheduled meeting whose time has passed shows as Expired automatically \u2014 open it and set the status to Completed once it\u2019s done.'],
+      ['5 \u00b7 Edit & delete', 'Hover a row for the edit action (and delete, if you have permission). Every meeting shows who created it and when.'],
+    ],
+    note: 'Join is only active while a meeting is Scheduled, has a link, and hasn\u2019t expired \u2014 that\u2019s why it may appear greyed out. Times display in your device\u2019s local time.'
+  },
+  view: {
+    title: 'PTM Schedule',
+    steps: [
+      ['1 \u00b7 The schedule', 'Every parent-teacher meeting, with its date & time, the teacher, the class (or All Classes) and what it\u2019s about.'],
+      ['2 \u00b7 Join a meeting', 'When a meeting has a video link and is still Scheduled, the Join button opens it. It stays greyed out otherwise.'],
+      ['3 \u00b7 Find one', 'Search by teacher, class or focus, and use the Class and Teacher filters to narrow the list.'],
+      ['4 \u00b7 Status', 'Scheduled means upcoming, Completed means done, and Expired means a scheduled meeting whose time has already passed.'],
+    ],
+    note: 'This is a read-only view \u2014 scheduling and changes are made by staff with edit rights. Times display in your device\u2019s local time.'
+  }
+};
+
+function PTMHelp({ canEdit = false, className = '' }) {
+  const [open, setOpen] = useState(false);
+  const content = canEdit ? GUIDES.manage : GUIDES.view;
+
+  return (
+    <>
+      <button onClick={() => setOpen(true)}
+        className={`inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors shrink-0 self-start ${className}`}>
+        <HelpCircle className="size-3.5" /> How to use
+      </button>
+
+      {open && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={() => setOpen(false)}>
+          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg max-h-[85vh] overflow-y-auto shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="bg-primary text-white px-5 py-3 flex items-center justify-between sticky top-0">
+              <span className="text-sm font-bold flex items-center gap-2"><HelpCircle className="size-4" /> {content.title}</span>
+              <button onClick={() => setOpen(false)} className="text-white/80 hover:text-white"><X className="size-5" /></button>
+            </div>
+            <div className="p-5 space-y-3">
+              {content.steps.map(([t, d], i) => (
+                <div key={i} className="rounded-md ring-1 ring-zinc-100 bg-zinc-50/60 p-3">
+                  <p className="text-xs font-semibold text-zinc-800">{t}</p>
+                  <p className="text-[11px] text-zinc-600 leading-relaxed mt-1">{d}</p>
+                </div>
+              ))}
+              <div className="rounded-md bg-blue-50/60 ring-1 ring-blue-100 p-3 flex gap-2">
+                <ShieldCheck className="size-4 text-blue-500 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-blue-800 leading-relaxed">{content.note}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
-import { Search, Users, Loader2 } from 'lucide-react';
+import { Search, Users, Loader2, HelpCircle, X, ShieldCheck } from 'lucide-react';
 import UserProfileDetail from './UserProfileDetail';
 
 // Numeric roll for ordering (non-numeric rolls sort last)
@@ -91,15 +91,18 @@ export default function Directory() {
           <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">Browse and view profiles of all members.</p>
         </div>
 
-        <div className="relative w-full md:w-72 shrink-0">
-          <Search className="size-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-          <input
-            type="text"
-            placeholder="Search by name or email..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="h-9 w-full rounded-md border border-zinc-200 bg-white pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm"
-          />
+        <div className="flex items-center gap-2 w-full md:w-auto">
+          <DirectoryHelp />
+          <div className="relative flex-1 md:flex-none md:w-72 shrink-0">
+            <Search className="size-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Search by name or email..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="h-9 w-full rounded-md border border-zinc-200 bg-white pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm"
+            />
+          </div>
         </div>
       </header>
 
@@ -194,5 +197,60 @@ export default function Directory() {
         </div>
       )}
     </div>
+  );
+}
+
+
+// =====================================================================
+//  DirectoryHelp — "How to use" guide.
+//  Same button + modal theme as the Reports module's ReportsHelp, so the
+//  help stays consistent across the app. Single guide (no tabs, no year).
+// =====================================================================
+const DIRECTORY_GUIDE = {
+  title: 'Institution Directory',
+  steps: [
+    ['1 \u00b7 Who you see', 'Every active member of the school \u2014 students, teachers and staff. Passed-out (alumni) students are left out, so this is always the current roll.'],
+    ['2 \u00b7 Filter by role', 'The tabs across the top switch between All and each role (Student, Teacher, and any custom roles your school has set up).'],
+    ['3 \u00b7 Narrow students by class', 'Pick the Student tab and a class filter appears \u2014 handy for finding one class quickly. Students are listed roll-number-wise; everyone else alphabetically.'],
+    ['4 \u00b7 Search', 'Type a name, username or email to jump straight to someone across every role at once.'],
+    ['5 \u00b7 Open a profile', 'Click any card for the full profile: Basic Info for everyone, plus Performance and Attendance for students and teachers.'],
+  ],
+  note: 'Inside a profile, the Performance and Attendance tabs are read-only views of the same live data as those modules (current academic year). To change a mark or a day, use the Reports or Attendance module \u2014 the profile updates on its own.'
+};
+
+function DirectoryHelp({ className = '' }) {
+  const [open, setOpen] = useState(false);
+  const content = DIRECTORY_GUIDE;
+
+  return (
+    <>
+      <button onClick={() => setOpen(true)}
+        className={`inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors shrink-0 self-start ${className}`}>
+        <HelpCircle className="size-3.5" /> How to use
+      </button>
+
+      {open && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={() => setOpen(false)}>
+          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg max-h-[85vh] overflow-y-auto shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="bg-primary text-white px-5 py-3 flex items-center justify-between sticky top-0">
+              <span className="text-sm font-bold flex items-center gap-2"><HelpCircle className="size-4" /> {content.title}</span>
+              <button onClick={() => setOpen(false)} className="text-white/80 hover:text-white"><X className="size-5" /></button>
+            </div>
+            <div className="p-5 space-y-3">
+              {content.steps.map(([t, d], i) => (
+                <div key={i} className="rounded-md ring-1 ring-zinc-100 bg-zinc-50/60 p-3">
+                  <p className="text-xs font-semibold text-zinc-800">{t}</p>
+                  <p className="text-[11px] text-zinc-600 leading-relaxed mt-1">{d}</p>
+                </div>
+              ))}
+              <div className="rounded-md bg-blue-50/60 ring-1 ring-blue-100 p-3 flex gap-2">
+                <ShieldCheck className="size-4 text-blue-500 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-blue-800 leading-relaxed">{content.note}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

@@ -4,7 +4,8 @@ import { usePermissions } from '../../Screens/PermissionsContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   Image as ImageIcon, Video, Plus, Trash2, Download, ChevronLeft,
-  Calendar, X, Play, Loader2, Search, Album as AlbumIcon
+  Calendar, X, Play, Loader2, Search, Album as AlbumIcon,
+  HelpCircle, ShieldCheck
 } from 'lucide-react';
 
 // =====================================================================
@@ -70,9 +71,9 @@ async function authedDownload(id, filenameHint) {
 }
 
 const fmtDMY = (val) => {
-  if (!val) return '—';
+  if (!val) return '\u2014';
   const d = new Date(val);
-  if (isNaN(d.getTime())) return '—';
+  if (isNaN(d.getTime())) return '\u2014';
   const dd = String(d.getDate()).padStart(2, '0');
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   return `${dd}/${mm}/${d.getFullYear()}`;
@@ -254,6 +255,7 @@ export default function Gallery() {
           <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">Memories and events captured in time.</p>
         </div>
         <div className="flex flex-row items-center gap-2 w-full sm:w-auto">
+          <GalleryHelp />
           <div className="relative flex-1 sm:w-64">
             <Search className="size-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
@@ -601,6 +603,60 @@ function CreateAlbumModal({ onCreated }) {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+// =====================================================================
+//  GalleryHelp — "How to use" guide.
+//  Same button + modal theme as the Reports module's ReportsHelp, so the
+//  help stays consistent across the app. Single guide.
+// =====================================================================
+const GALLERY_GUIDE = {
+  title: 'Gallery',
+  steps: [
+    ['1 \u00b7 Albums', 'Each card is an album of photos and videos from an event \u2014 the cover, the item count and the event date show on the card. Click one to open it.'],
+    ['2 \u00b7 Find an album', 'Search by title, or narrow by Year and Month (these are the event\u2019s calendar date, not the academic year). Clear resets the date filters.'],
+    ['3 \u00b7 Create an album', 'If you can edit the Gallery, New Album makes one \u2014 give it a title and event date and pick a cover photo or video. More can be added afterwards.'],
+    ['4 \u00b7 Inside an album', 'Add Media uploads more photos or videos, the All / Photo / Video tabs filter what you see, and clicking any tile opens it full-screen. Hover a tile to download or (with permission) delete it.'],
+    ['5 \u00b7 Download', 'Download (ZIP) saves a real folder of files: a single album on its own, a chosen Year as Album/file, or All Years nested as Year/Album/file \u2014 handy for backups.'],
+  ],
+  note: 'Uploads are limited to about 50 MB per file. Adding media needs Gallery edit permission, and deleting a whole album is limited to the Super Admin \u2014 individual items can be removed by anyone with delete permission.'
+};
+
+function GalleryHelp({ className = '' }) {
+  const [open, setOpen] = useState(false);
+  const content = GALLERY_GUIDE;
+
+  return (
+    <>
+      <button onClick={() => setOpen(true)}
+        className={`inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors shrink-0 self-start ${className}`}>
+        <HelpCircle className="size-3.5" /> How to use
+      </button>
+
+      {open && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={() => setOpen(false)}>
+          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg max-h-[85vh] overflow-y-auto shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="bg-primary text-white px-5 py-3 flex items-center justify-between sticky top-0">
+              <span className="text-sm font-bold flex items-center gap-2"><HelpCircle className="size-4" /> {content.title}</span>
+              <button onClick={() => setOpen(false)} className="text-white/80 hover:text-white"><X className="size-5" /></button>
+            </div>
+            <div className="p-5 space-y-3">
+              {content.steps.map(([t, d], i) => (
+                <div key={i} className="rounded-md ring-1 ring-zinc-100 bg-zinc-50/60 p-3">
+                  <p className="text-xs font-semibold text-zinc-800">{t}</p>
+                  <p className="text-[11px] text-zinc-600 leading-relaxed mt-1">{d}</p>
+                </div>
+              ))}
+              <div className="rounded-md bg-blue-50/60 ring-1 ring-blue-100 p-3 flex gap-2">
+                <ShieldCheck className="size-4 text-blue-500 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-blue-800 leading-relaxed">{content.note}</p>
+              </div>
+            </div>
           </div>
         </div>
       )}

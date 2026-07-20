@@ -4,7 +4,8 @@ import { usePermissions } from '../../Screens/PermissionsContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   UtensilsCrossed, Clock, CalendarDays, Plus, Trash2, Save,
-  Loader2, AlertCircle, Coffee, Sun, Moon, Cookie, ChevronDown, User
+  Loader2, AlertCircle, Coffee, Sun, Moon, Cookie, ChevronDown, User,
+  HelpCircle, X, ShieldCheck
 } from 'lucide-react';
 
 // =====================================================================
@@ -109,17 +110,24 @@ export default function Meals() {
 
   const tabProps = { data, fetchData, user, canEdit };
 
+  // The help guide follows the active tab for editors; viewers get the
+  // read-only "reading the menu" variant.
+  const helpTopic = canEdit ? activeTab : 'view';
+
   return (
     <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-6">
 
-      <header className="flex flex-col mb-4">
-        <h2 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
-          <UtensilsCrossed className="text-primary size-5" />
-          Meals
-        </h2>
-        <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
-          Define your school's meal slots, then plan the weekly menu.
-        </p>
+      <header className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-4">
+        <div className="flex flex-col">
+          <h2 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
+            <UtensilsCrossed className="text-primary size-5" />
+            Meals
+          </h2>
+          <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
+            Define your school's meal slots, then plan the weekly menu.
+          </p>
+        </div>
+        <MealsHelp topic={helpTopic} />
       </header>
 
       {canEdit && (
@@ -171,7 +179,7 @@ function MenuMeta({ meta }) {
       )}
       {fc?.by && (
         <span className="inline-flex items-center gap-1.5 text-zinc-400">
-          <span className="text-zinc-300">•</span>
+          <span className="text-zinc-300">{'\u2022'}</span>
           Created by <span className="font-medium text-zinc-600">{fc.by}</span>
         </span>
       )}
@@ -495,5 +503,84 @@ function MenuTab({ data, fetchData, user, canEdit }) {
         </table>
       </div>
     </div>
+  );
+}
+
+// =====================================================================
+//  MealsHelp — "How to use" guide.
+//  Same button + modal theme as the Reports module's ReportsHelp, so the
+//  help stays consistent across the app. Guide follows the active tab;
+//  viewers (no edit permission) get the read-only variant.
+//
+//  Topics: menu | slots | view
+// =====================================================================
+const GUIDES = {
+  menu: {
+    title: 'Weekly Menu',
+    steps: [
+      ['1 \u00b7 The grid', 'Rows are the seven days, columns are your meal slots. Fill each cell with the food served for that meal on that day.'],
+      ['2 \u00b7 Typing items', 'List the items separated by commas \u2014 e.g. Rice, Dal, Curd, Banana. Leave a cell empty if there\u2019s no meal for that slot that day (it shows as \u201cNot planned\u201d to everyone else).'],
+      ['3 \u00b7 Save', 'Nothing is stored until you press Save Weekly Menu \u2014 it saves the whole grid in one go.'],
+      ['4 \u00b7 Who sees it', 'Students, parents and staff see this same menu read-only, with a \u201cLast updated by\u201d line so they know it\u2019s current.'],
+      ['5 \u00b7 Changing the meals themselves', 'The columns come from the Meal Slots tab \u2014 add, rename or reorder slots there and this grid follows.'],
+    ],
+    note: 'Meal times shown on each column come from the slot setup and are optional. Keep the menu current \u2014 the audit line tells everyone when you last changed it.'
+  },
+  slots: {
+    title: 'Meal Slots',
+    steps: [
+      ['1 \u00b7 Define your meals', 'Add one to four slots \u2014 Breakfast, Lunch, Snacks, Dinner, whatever your school serves. Each slot needs a name.'],
+      ['2 \u00b7 Times are optional', 'Set a start and end time in 12-hour format if you want them shown on the menu; leave them blank if not.'],
+      ['3 \u00b7 Add & remove', 'Add Meal Slot creates another; the trash icon removes one. Removing a slot also clears its menu items across the whole week.'],
+      ['4 \u00b7 Order', 'Slots appear left-to-right on the Weekly Menu in the order you list them here.'],
+      ['5 \u00b7 Save', 'Save Meal Slots writes them, and the Weekly Menu grid immediately uses them as its columns.'],
+    ],
+    note: 'Try to settle the slots at the start of the term \u2014 renaming or removing one changes what everyone sees on the weekly menu straight away.'
+  },
+  view: {
+    title: 'Weekly Menu',
+    steps: [
+      ['1 \u00b7 Your week of meals', 'Each card is a day. Inside it, every meal slot (Breakfast, Lunch\u2026) shows what\u2019s planned for that day.'],
+      ['2 \u00b7 Reading it', '\u201cNot planned\u201d means nothing is scheduled for that meal that day. If the school set meal times, they show beside each slot.'],
+      ['3 \u00b7 Always current', 'The \u201cLast updated\u201d line tells you when the kitchen last changed the menu, and by whom.'],
+    ],
+    note: 'This is read-only \u2014 the school sets the menu. If something looks off, let the office know.'
+  }
+};
+
+function MealsHelp({ topic = 'menu', className = '' }) {
+  const [open, setOpen] = useState(false);
+  const content = GUIDES[topic] || GUIDES.menu;
+
+  return (
+    <>
+      <button onClick={() => setOpen(true)}
+        className={`inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors shrink-0 self-start ${className}`}>
+        <HelpCircle className="size-3.5" /> How to use
+      </button>
+
+      {open && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={() => setOpen(false)}>
+          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg max-h-[85vh] overflow-y-auto shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="bg-primary text-white px-5 py-3 flex items-center justify-between sticky top-0">
+              <span className="text-sm font-bold flex items-center gap-2"><HelpCircle className="size-4" /> {content.title}</span>
+              <button onClick={() => setOpen(false)} className="text-white/80 hover:text-white"><X className="size-5" /></button>
+            </div>
+            <div className="p-5 space-y-3">
+              {content.steps.map(([t, d], i) => (
+                <div key={i} className="rounded-md ring-1 ring-zinc-100 bg-zinc-50/60 p-3">
+                  <p className="text-xs font-semibold text-zinc-800">{t}</p>
+                  <p className="text-[11px] text-zinc-600 leading-relaxed mt-1">{d}</p>
+                </div>
+              ))}
+              <div className="rounded-md bg-blue-50/60 ring-1 ring-blue-100 p-3 flex gap-2">
+                <ShieldCheck className="size-4 text-blue-500 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-blue-800 leading-relaxed">{content.note}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
