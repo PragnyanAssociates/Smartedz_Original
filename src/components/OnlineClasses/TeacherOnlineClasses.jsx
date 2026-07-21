@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
-import { 
-  Video, PlayCircle, Plus, Edit, Trash2, X, Search, 
-  Loader2, Calendar as CalIcon, Clock, FileVideo, ChevronDown, Save, Link as LinkIcon 
+import {
+  Video, PlayCircle, Plus, Edit, Trash2, X, Search,
+  Loader2, Calendar as CalIcon, Clock, FileVideo, ChevronDown, Save, Link as LinkIcon,
+  HelpCircle, ShieldCheck
 } from 'lucide-react';
-
 // Render a UTC datetime (Railway stores UTC) as IST for display. Handles
 // both bare "YYYY-MM-DD HH:MM:SS" strings and ISO strings / Date objects.
 const fmtIST = (val) => {
@@ -24,6 +24,33 @@ const fmtIST = (val) => {
   });
 };
 
+// ---------------------------------------------------------------------
+//  openAuthedMedia — open a file served behind the /api auth gate (an
+//  UPLOADED recorded video at /admin/online-classes/video/:id) in a new
+//  tab. A plain window.open(url) is a navigation that sends NO token, so
+//  the backend replies "Please sign in to continue." (401). We fetch the
+//  bytes (the auth interceptor attaches the token) and point a pre-opened
+//  tab at the blob. External links (YouTube, Meet) don't hit our gate and
+//  open directly.
+// ---------------------------------------------------------------------
+async function openAuthedMedia(url) {
+  // Open the tab synchronously (inside the click) so the popup blocker
+  // allows it, then redirect it once the blob is ready.
+  const win = window.open('', '_blank');
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(String(r.status));
+    const blob = await r.blob();
+    const obj = URL.createObjectURL(blob);
+    if (win) win.location.href = obj;
+    else window.open(obj, '_blank');
+    setTimeout(() => URL.revokeObjectURL(obj), 120000);
+  } catch (e) {
+    if (win) win.close();
+    alert('Could not open the video. Please try again.');
+  }
+}
+
 // --- Helpers for 12h Time Logic ---
 const parseDateTimeToParts = (dtString) => {
   if (!dtString) {
@@ -39,7 +66,6 @@ const parseDateTimeToParts = (dtString) => {
   const time = `${String(hh).padStart(2, '0')}:${mm}`;
   return { date, time, period };
 };
-
 const joinPartsToDateTime = (date, time, period) => {
   if (!date || !time) return '';
   let [h, m] = time.split(':');
@@ -48,34 +74,28 @@ const joinPartsToDateTime = (date, time, period) => {
   if (period === 'AM' && hh === 12) hh = 0;
   return `${date} ${String(hh).padStart(2, '0')}:${(m || '00').padEnd(2, '0').slice(0, 2)}:00`;
 };
-
 export default function TeacherOnlineClasses({ canEdit = false, canDelete = false }) {
   const { user } = useAuth();
   const [classesList, setClassesList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
-  const [view, setView] = useState('live'); 
-
+  const [view, setView] = useState('live');
   // List filters (client-side, over the already-loaded classes). '' = All.
   const [classFilter, setClassFilter]     = useState('');
   const [subjectFilter, setSubjectFilter] = useState('');
-
   const [dbClasses, setDbClasses] = useState([]);
   const [dbSubjects, setDbSubjects] = useState([]);
   const [teachers, setTeachers] = useState([]);
-
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [videoSource, setVideoSource] = useState('upload'); 
+  const [videoSource, setVideoSource] = useState('upload');
   const [selectedVideo, setSelectedVideo] = useState(null);
-
   const [form, setForm] = useState({
-    title: '', class_type: 'live', class_id: '', subject_id: '', 
-    teacher_id: '', date: '', time: '', period: '', 
+    title: '', class_type: 'live', class_id: '', subject_id: '',
+    teacher_id: '', date: '', time: '', period: '',
     meet_link: '', topic: '', description: ''
   });
-
   const loadData = useCallback(async () => {
     if (!user?.institutionId) return;
     setLoading(true);
@@ -93,16 +113,14 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
     } catch (e) { console.error(e); }
     setLoading(false);
   }, [user]);
-
   useEffect(() => { loadData(); }, [loadData]);
-
   const filtered = useMemo(() => {
     let list = classesList.filter(c => c.class_type === view);
     if (classFilter)   list = list.filter(c => String(c.class_id) === String(classFilter));
     if (subjectFilter) list = list.filter(c => String(c.subject_id) === String(subjectFilter));
     if (query.trim()) {
       const q = query.toLowerCase();
-      list = list.filter(c => 
+      list = list.filter(c =>
         (c.title || '').toLowerCase().includes(q) ||
         (c.subject_name || '').toLowerCase().includes(q) ||
         (c.teacher_name || '').toLowerCase().includes(q) ||
@@ -111,38 +129,33 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
     }
     return list;
   }, [classesList, view, query, classFilter, subjectFilter]);
-
   const hasActiveFilter = Boolean(query.trim() || classFilter || subjectFilter);
-
   const classLabel = (c) => `${c.className}${c.section ? ` - ${c.section}` : ''}`;
-
   const openCreate = () => {
     setEditingItem(null);
     const parts = parseDateTimeToParts(null);
     setForm({
-      title: '', class_type: view, class_id: '', subject_id: '', 
-      teacher_id: '', date: parts.date, time: parts.time, period: parts.period, 
+      title: '', class_type: view, class_id: '', subject_id: '',
+      teacher_id: '', date: parts.date, time: parts.time, period: parts.period,
       meet_link: '', topic: '', description: ''
     });
     setSelectedVideo(null);
     setVideoSource('upload');
     setIsModalOpen(true);
   };
-
   const openEdit = (c) => {
     setEditingItem(c);
     const parts = parseDateTimeToParts(c.class_datetime);
     setForm({
       title: c.title, class_type: c.class_type, class_id: c.class_id ? String(c.class_id) : '',
       subject_id: c.subject_id ? String(c.subject_id) : '', teacher_id: c.teacher_id ? String(c.teacher_id) : '',
-      date: parts.date, time: parts.time, period: parts.period, 
+      date: parts.date, time: parts.time, period: parts.period,
       meet_link: c.meet_link || '', topic: c.topic || '', description: c.description || ''
     });
     setSelectedVideo(null);
     if (c.class_type === 'recorded') { setVideoSource(c.has_video_data ? 'upload' : 'link'); }
     setIsModalOpen(true);
   };
-
   const handleDelete = async (id) => {
     if (!window.confirm("Delete this online class?")) return;
     try {
@@ -150,7 +163,6 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
       if (res.ok) loadData();
     } catch (e) { alert('Delete failed'); }
   };
-
   const handleSave = async (e) => {
     e.preventDefault();
     if (!form.title || !form.subject_id || !form.teacher_id || !form.date || !form.time) {
@@ -161,7 +173,6 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
         if (videoSource === 'upload' && !selectedVideo && !editingItem?.has_video_data) return alert("Video file required.");
         if (videoSource === 'link' && !form.meet_link) return alert("Video link required.");
     }
-
     setSaving(true);
     try {
       const fullDateTime = joinPartsToDateTime(form.date, form.time, form.period);
@@ -171,13 +182,11 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
       fd.append('subject_id', form.subject_id); fd.append('teacher_id', form.teacher_id);
       fd.append('class_datetime', fullDateTime); if (form.topic) fd.append('topic', form.topic);
       if (form.description) fd.append('description', form.description); fd.append('created_by', user.id);
-
       if (form.class_type === 'live') { fd.append('meet_link', form.meet_link); }
       else if (form.class_type === 'recorded') {
         if (videoSource === 'link') { fd.append('meet_link', form.meet_link); fd.append('clear_video', 'true'); }
         else if (videoSource === 'upload' && selectedVideo) { fd.append('videoFile', selectedVideo); }
       }
-
       const url = editingItem ? `${API_BASE_URL}/admin/online-classes/${editingItem.id}` : `${API_BASE_URL}/admin/online-classes`;
       const res = await fetch(url, { method: editingItem ? 'PUT' : 'POST', body: fd });
       if (res.ok) { setIsModalOpen(false); loadData(); }
@@ -185,24 +194,27 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
     } catch (e) { alert('Error saving class.'); }
     setSaving(false);
   };
-
   const handleJoinOrWatch = (c) => {
-    if (c.class_type === 'live' && c.meet_link) { window.open(c.meet_link, '_blank'); }
-    else if (c.class_type === 'recorded') {
-        if (c.has_video_data) window.open(`${API_BASE_URL}/admin/online-classes/video/${c.id}`, '_blank');
-        else if (c.meet_link) window.open(c.meet_link, '_blank');
+    if (c.class_type === 'live' && c.meet_link) {
+      window.open(c.meet_link, '_blank', 'noopener,noreferrer');
+    } else if (c.class_type === 'recorded') {
+        // Uploaded video is served behind the auth gate -> fetch as a blob so
+        // it doesn't 401. An external video link opens directly.
+        if (c.has_video_data) openAuthedMedia(`${API_BASE_URL}/admin/online-classes/video/${c.id}`);
+        else if (c.meet_link) window.open(c.meet_link, '_blank', 'noopener,noreferrer');
     }
   };
-
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
-      <header className="flex flex-col mb-2 sm:mb-0">
-        <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
-          <Video className="text-primary size-5" /> Online Classes
-        </h1>
-        <p className="text-sm text-zinc-500 mt-1">Manage and join sessions.</p>
+      <header className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-2 sm:mb-0">
+        <div className="flex flex-col">
+          <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
+            <Video className="text-primary size-5" /> Online Classes
+          </h1>
+          <p className="text-sm text-zinc-500 mt-1">Manage and join sessions.</p>
+        </div>
+        <OnlineClassesHelp canEdit={canEdit} />
       </header>
-
       <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
         <div className="flex bg-zinc-100/80 p-1 rounded-md overflow-x-auto custom-scrollbar w-full xl:w-auto shrink-0">
           {['live', 'recorded'].map(t => (
@@ -242,7 +254,6 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
           )}
         </div>
       </div>
-
       <div className="flex-1">
         {loading ? ( <div className="h-64 flex items-center justify-center"><Loader2 className="animate-spin size-8 text-primary" /></div>
         ) : filtered.length === 0 ? (
@@ -268,7 +279,6 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
                   const isLive = c.class_type === 'live';
                   const isExpired = isLive && (dt < new Date());
                   const isJoinable = !isExpired;
-
                   return (
                     <tr key={c.id} className="hover:bg-zinc-50/60 transition-colors group">
                       <td className="px-5 py-4 whitespace-nowrap">
@@ -288,7 +298,7 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
                       </td>
                       <td className="px-5 py-4 text-sm font-medium text-zinc-700">{c.teacher_name}</td>
                       <td className="px-5 py-4 whitespace-nowrap">
-                        <div className="font-medium text-zinc-800 text-sm">{c.created_by_name || '—'}</div>
+                        <div className="font-medium text-zinc-800 text-sm">{c.created_by_name || '\u2014'}</div>
                         {c.created_at && (
                           <div className="text-[11px] text-zinc-400 mt-0.5 flex items-center gap-1">
                             <Clock className="size-3" /> {fmtIST(c.created_at)}
@@ -316,7 +326,6 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
           </div>
         )}
       </div>
-
       {isModalOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
           <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-2xl shadow-xl relative max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
@@ -366,7 +375,6 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
     </div>
   );
 }
-
 function Field({ label, value, onChange, type = 'text', options, required, placeholder }) {
   const base = "h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 transition-colors shadow-sm";
   return (
@@ -380,5 +388,69 @@ function Field({ label, value, onChange, type = 'text', options, required, place
         <input type={type} value={value || ''} onChange={e => onChange(e.target.value)} placeholder={placeholder} className={base} required={required} />
       )}
     </div>
+  );
+}
+
+// =====================================================================
+//  OnlineClassesHelp — "How to use" guide (same theme as ReportsHelp).
+//  Managers get the schedule/manage guide; read-only staff get the view one.
+// =====================================================================
+const GUIDES = {
+  manage: {
+    title: 'Online Classes',
+    steps: [
+      ['1 \u00b7 Live vs Recorded', 'The two tabs. Live is a scheduled session with a meeting link students join at the set time; Recorded is an uploaded video or a video link they can watch anytime.'],
+      ['2 \u00b7 Schedule a class', 'Schedule Class opens the form \u2014 title, class group (or All Classes), subject, teacher, date & time and an optional topic. A live class needs a meeting link; a recorded one takes an uploaded video file or an external link.'],
+      ['3 \u00b7 Join / Watch', 'Join opens a live meeting; Watch plays a recorded video. A live class whose time has passed shows \u201cDate is Expired\u201d and Join is disabled.'],
+      ['4 \u00b7 Find classes', 'Search by title, subject, teacher or author, and narrow with the Class and Subject filters (they apply to the tab you\u2019re on).'],
+      ['5 \u00b7 Edit & delete', 'Hover a row for the edit and delete actions. Each row shows who created the class and when.'],
+    ],
+    note: 'Uploaded videos are stored in the school\u2019s library and stream for signed-in users; external links (YouTube, Meet) open directly. Times display in your device\u2019s local time.'
+  },
+  view: {
+    title: 'Online Classes',
+    steps: [
+      ['1 \u00b7 Live vs Recorded', 'The two tabs. Live sessions are joined at their scheduled time; recorded ones can be watched whenever.'],
+      ['2 \u00b7 Join / Watch', 'Join opens a live meeting; Watch plays a recorded video. A past live class shows \u201cDate is Expired\u201d and can\u2019t be joined.'],
+      ['3 \u00b7 Find a class', 'Search by title, subject or teacher, and use the Class and Subject filters to narrow the current tab.'],
+    ],
+    note: 'This is a read-only view \u2014 classes are scheduled and edited by staff with edit rights. Times display in your device\u2019s local time.'
+  }
+};
+
+function OnlineClassesHelp({ canEdit = false, className = '' }) {
+  const [open, setOpen] = useState(false);
+  const content = canEdit ? GUIDES.manage : GUIDES.view;
+
+  return (
+    <>
+      <button onClick={() => setOpen(true)}
+        className={`inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors shrink-0 self-start ${className}`}>
+        <HelpCircle className="size-3.5" /> How to use
+      </button>
+
+      {open && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={() => setOpen(false)}>
+          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg max-h-[85vh] overflow-y-auto shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="bg-primary text-white px-5 py-3 flex items-center justify-between sticky top-0">
+              <span className="text-sm font-bold flex items-center gap-2"><HelpCircle className="size-4" /> {content.title}</span>
+              <button onClick={() => setOpen(false)} className="text-white/80 hover:text-white"><X className="size-5" /></button>
+            </div>
+            <div className="p-5 space-y-3">
+              {content.steps.map(([t, d], i) => (
+                <div key={i} className="rounded-md ring-1 ring-zinc-100 bg-zinc-50/60 p-3">
+                  <p className="text-xs font-semibold text-zinc-800">{t}</p>
+                  <p className="text-[11px] text-zinc-600 leading-relaxed mt-1">{d}</p>
+                </div>
+              ))}
+              <div className="rounded-md bg-blue-50/60 ring-1 ring-blue-100 p-3 flex gap-2">
+                <ShieldCheck className="size-4 text-blue-500 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-blue-800 leading-relaxed">{content.note}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

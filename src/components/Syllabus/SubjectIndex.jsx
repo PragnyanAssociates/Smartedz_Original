@@ -2,10 +2,10 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   FolderOpen, FileText, Loader2, Plus, Trash2, Edit, X, Upload,
-  Maximize2, Tag, Search, BookMarked, ArrowLeft, Clock, Save, BookOpen, RefreshCw
+  Maximize2, Tag, Search, BookMarked, ArrowLeft, Clock, Save, BookOpen, RefreshCw,
+  HelpCircle, ShieldCheck
 } from 'lucide-react';
 import { pageLabel, fileToBase64 } from './SyllabusUtils';
-
 // =====================================================================
 //  Subject Index — textbook-first, auto-detected chapters.
 //    LEFT   - Chapters (auto from the book's index; edit/delete to fix)
@@ -13,14 +13,12 @@ import { pageLabel, fileToBase64 } from './SyllabusUtils';
 //    RIGHT  - Keywords for the selected chapter
 //  (Academic-year logic removed.)
 // =====================================================================
-
 export default function SubjectIndex({ syllabus, canEdit, onBack, onOpenPeriods }) {
   const [chapters, setChapters] = useState([]);
   const [book, setBook]         = useState(null);
   const [loading, setLoading]   = useState(true);
   const [uploading, setUp]      = useState(false);
   const [selectedId, setSelId]  = useState(null);
-
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
@@ -35,21 +33,16 @@ export default function SubjectIndex({ syllabus, canEdit, onBack, onOpenPeriods 
     } catch (e) { console.error(e); }
     setLoading(false);
   }, [syllabus]);
-
   useEffect(() => { loadAll(); }, [loadAll]);
-
   useEffect(() => {
     if (chapters.length > 0 && !chapters.some(c => c.id === selectedId)) setSelId(chapters[0].id);
     if (chapters.length === 0) setSelId(null);
   }, [chapters, selectedId]);
-
   const selected = useMemo(
     () => chapters.find(c => c.id === selectedId) || null,
     [chapters, selectedId]
   );
-
   const hasBook = !!book && (book.has_book === 1 || book.has_book === true);
-
   const uploadTextbook = useCallback(() => {
     const input = document.createElement('input');
     input.type = 'file';
@@ -61,7 +54,6 @@ export default function SubjectIndex({ syllabus, canEdit, onBack, onOpenPeriods 
         'Re-reading the textbook rebuilds the chapter list from its index. ' +
         'Existing chapters and their keywords will be replaced. Continue?'
       )) return;
-
       setUp(true);
       try {
         const obj = await fileToBase64(file, 80);
@@ -78,17 +70,14 @@ export default function SubjectIndex({ syllabus, canEdit, onBack, onOpenPeriods 
     };
     input.click();
   }, [syllabus, chapters, loadAll]);
-
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
-
       <div className="flex items-center">
         <button onClick={onBack}
           className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors w-fit">
           <ArrowLeft className="size-4" /> Back to syllabuses
         </button>
       </div>
-
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-2">
         <header className="flex flex-col">
           <div className="flex flex-wrap items-center gap-3">
@@ -104,13 +93,14 @@ export default function SubjectIndex({ syllabus, canEdit, onBack, onOpenPeriods 
             {syllabus.class_group} - {syllabus.subject_name}
           </p>
         </header>
-
-        <button onClick={onOpenPeriods}
-          className="h-9 px-4 inline-flex items-center justify-center gap-2 bg-primary hover:bg-primary/90 text-white rounded-md font-semibold text-xs shadow-sm transition-colors w-full sm:w-auto shrink-0">
-          <Clock className="size-3.5" /> Lesson Periods
-        </button>
+        <div className="flex items-center gap-2 w-full sm:w-auto shrink-0">
+          <SubjectIndexHelp canEdit={canEdit} />
+          <button onClick={onOpenPeriods}
+            className="h-9 px-4 inline-flex items-center justify-center gap-2 bg-primary hover:bg-primary/90 text-white rounded-md font-semibold text-xs shadow-sm transition-colors flex-1 sm:flex-none">
+            <Clock className="size-3.5" /> Lesson Periods
+          </button>
+        </div>
       </div>
-
       {loading ? (
         <div className="flex-1 flex items-center justify-center min-h-[400px]">
           <Loader2 className="animate-spin size-8 text-primary" />
@@ -156,8 +146,6 @@ export default function SubjectIndex({ syllabus, canEdit, onBack, onOpenPeriods 
     </div>
   );
 }
-
-
 // =====================================================================
 //  LEFT - Chapters
 // =====================================================================
@@ -166,11 +154,9 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
   const [editing, setEditing]     = useState(null);
   const [form, setForm] = useState({ title: '', page_from: '', page_to: '' });
   const [saving, setSaving] = useState(false);
-
   const [offset, setOffset]    = useState(book?.page_offset ?? 0);
   const [savingOff, setSavOff] = useState(false);
   useEffect(() => { setOffset(book?.page_offset ?? 0); }, [book]);
-
   const saveOffset = async () => {
     setSavOff(true);
     try {
@@ -184,7 +170,6 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
     } catch (e) { alert(e.message); }
     setSavOff(false);
   };
-
   const openCreate = () => {
     setEditing(null);
     setForm({ title: '', page_from: '', page_to: '' });
@@ -195,7 +180,6 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
     setForm({ title: ch.title || '', page_from: ch.page_from || '', page_to: ch.page_to || '' });
     setModalOpen(true);
   };
-
   const handleSave = async (e) => {
     e.preventDefault();
     if (!form.title.trim()) return alert('Chapter title is required.');
@@ -224,7 +208,6 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
     } catch (e) { alert(e.message); }
     setSaving(false);
   };
-
   const handleDelete = async (ch) => {
     if (!window.confirm(`Delete chapter "${ch.title}"? Its keywords will be removed.`)) return;
     try {
@@ -233,7 +216,6 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
       reload();
     } catch (e) { alert(e.message); }
   };
-
   return (
     <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm flex flex-col overflow-hidden max-h-[800px]">
       <div className="flex items-center justify-between p-4 border-b border-zinc-100 bg-zinc-50/50 shrink-0">
@@ -242,10 +224,9 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
           <h3 className="font-semibold text-sm text-zinc-900">Chapters</h3>
         </div>
         <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">
-          {chapters.length} items{book?.doc_pages ? ` · ${book.doc_pages}p` : ''}
+          {chapters.length} items{book?.doc_pages ? ` \u00b7 ${book.doc_pages}p` : ''}
         </span>
       </div>
-
       <div className="overflow-y-auto custom-scrollbar flex-1 p-2 space-y-1">
         {chapters.length === 0 ? (
           <p className="p-6 text-center text-sm text-zinc-400 font-medium">No chapters detected.</p>
@@ -287,7 +268,6 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
           </div>
         ))}
       </div>
-
       {canEdit && (
         <div className="p-3 border-t border-zinc-100 bg-zinc-50/50 shrink-0 space-y-2">
           <div className="flex items-center gap-2">
@@ -303,7 +283,6 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
               Apply
             </button>
           </div>
-
           <div className="flex gap-2">
             <button onClick={openCreate}
               className="h-9 flex-1 bg-white ring-1 ring-black/5 shadow-sm hover:bg-zinc-50 hover:ring-black/10 text-zinc-700 rounded-md font-semibold text-xs flex items-center justify-center gap-1.5 transition-all">
@@ -317,7 +296,6 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
           </div>
         </div>
       )}
-
       {modalOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
           <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-md shadow-xl relative flex flex-col animate-in fade-in zoom-in-95 duration-200">
@@ -328,7 +306,6 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
                 <X className="size-4" />
               </button>
             </div>
-
             <form onSubmit={handleSave} className="flex flex-col flex-1 overflow-hidden">
               <div className="p-5 sm:p-6 overflow-y-auto custom-scrollbar space-y-4">
                 <div className="space-y-1.5">
@@ -354,6 +331,10 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
                       className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
                   </div>
                 </div>
+                <p className="text-[11px] text-zinc-400 leading-relaxed">
+                  Enter the book&apos;s printed page numbers. If the PDF pages differ from the printed
+                  numbers, set the Page offset (below the chapter list) instead of adjusting each chapter.
+                </p>
               </div>
               <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
                 <button type="button" onClick={() => setModalOpen(false)} disabled={saving}
@@ -373,8 +354,6 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
     </div>
   );
 }
-
-
 // =====================================================================
 //  MIDDLE - PDF viewer
 //   The chapter PDF is behind the /api auth gate, so a raw <iframe src>
@@ -386,7 +365,6 @@ function DocumentPanel({ chapter }) {
   const [url, setUrl]       = useState(null);
   const [loading, setLoad]  = useState(false);
   const [err, setErr]       = useState(false);
-
   useEffect(() => {
     if (!chapter) { setUrl(null); setErr(false); return; }
     let revoked = false;
@@ -403,7 +381,6 @@ function DocumentPanel({ chapter }) {
       .finally(() => { if (!revoked) setLoad(false); });
     return () => { revoked = true; if (objUrl) URL.revokeObjectURL(objUrl); };
   }, [chapter]);
-
   if (!chapter) {
     return (
       <div className="bg-white rounded-lg ring-1 ring-black/5 border-dashed shadow-sm flex items-center justify-center min-h-[500px] xl:min-h-[600px] w-full flex-1">
@@ -411,9 +388,7 @@ function DocumentPanel({ chapter }) {
       </div>
     );
   }
-
   const openFull = () => { if (url) window.open(url, '_blank'); };
-
   return (
     <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm flex flex-col min-h-[500px] xl:min-h-[600px] flex-1 overflow-hidden">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 border-b border-zinc-100 bg-zinc-50/50 gap-3 shrink-0">
@@ -433,7 +408,6 @@ function DocumentPanel({ chapter }) {
           </button>
         </div>
       </div>
-
       <div className="bg-zinc-100/50 flex-1 flex flex-col w-full">
         {loading ? (
           <div className="flex-1 flex items-center justify-center min-h-[500px]">
@@ -451,8 +425,6 @@ function DocumentPanel({ chapter }) {
     </div>
   );
 }
-
-
 // =====================================================================
 //  RIGHT - Keywords  (Term + Definition + Example)
 // =====================================================================
@@ -464,7 +436,6 @@ function KeywordsPanel({ chapter, canEdit }) {
   const [newTerm, setNewTerm]   = useState('');
   const [newDef, setNewDef]     = useState('');
   const [newExample, setNewEx]  = useState('');
-
   const load = useCallback(async () => {
     if (!chapter) { setKeywords([]); return; }
     setLoading(true);
@@ -475,9 +446,7 @@ function KeywordsPanel({ chapter, canEdit }) {
     } catch (e) { console.error(e); }
     setLoading(false);
   }, [chapter]);
-
   useEffect(() => { load(); setAdding(false); setQuery(''); }, [load]);
-
   const filtered = useMemo(() => {
     if (!query.trim()) return keywords;
     const q = query.toLowerCase();
@@ -486,9 +455,7 @@ function KeywordsPanel({ chapter, canEdit }) {
       (k.definition || '').toLowerCase().includes(q) ||
       (k.example || '').toLowerCase().includes(q));
   }, [keywords, query]);
-
   const resetForm = () => { setNewTerm(''); setNewDef(''); setNewEx(''); };
-
   const handleAdd = async (e) => {
     e.preventDefault();
     if (!newTerm.trim() || !newDef.trim()) return;
@@ -506,7 +473,6 @@ function KeywordsPanel({ chapter, canEdit }) {
       load();
     } catch (e) { alert(e.message); }
   };
-
   const handleDelete = async (id) => {
     try {
       const res = await fetch(`${API_BASE_URL}/admin/syllabus/keywords/${id}`, { method: 'DELETE' });
@@ -514,7 +480,6 @@ function KeywordsPanel({ chapter, canEdit }) {
       load();
     } catch (e) { alert(e.message); }
   };
-
   return (
     <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm flex flex-col h-full max-h-[800px] overflow-hidden">
       <div className="flex items-center justify-between p-4 border-b border-zinc-100 bg-zinc-50/50 shrink-0">
@@ -534,7 +499,6 @@ function KeywordsPanel({ chapter, canEdit }) {
           )}
         </div>
       </div>
-
       {!chapter ? (
         <div className="p-8 text-center h-full flex flex-col justify-center">
           <p className="text-sm text-zinc-400 font-medium">Select a chapter.</p>
@@ -551,7 +515,6 @@ function KeywordsPanel({ chapter, canEdit }) {
                   placeholder="e.g. Photosynthesis"
                   className="h-8 w-full bg-white border border-zinc-200 rounded-md px-2.5 text-xs text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
               </div>
-
               <div className="space-y-1">
                 <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">
                   Definition <span className="text-red-500">*</span>
@@ -560,7 +523,6 @@ function KeywordsPanel({ chapter, canEdit }) {
                   placeholder="What the term means"
                   className="w-full bg-white border border-zinc-200 rounded-md px-2.5 py-1.5 text-xs text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors resize-y leading-relaxed" />
               </div>
-
               <div className="space-y-1">
                 <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
                   Example
@@ -569,21 +531,18 @@ function KeywordsPanel({ chapter, canEdit }) {
                   placeholder="A sentence or case that illustrates it"
                   className="w-full bg-white border border-zinc-200 rounded-md px-2.5 py-1.5 text-xs text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors resize-y leading-relaxed" />
               </div>
-
               <button type="submit" disabled={!newTerm.trim() || !newDef.trim()}
                 className="h-8 w-full bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md font-semibold text-xs transition-colors shadow-sm mt-1">
                 Add Keyword
               </button>
             </form>
           )}
-
           <div className="relative mb-3 shrink-0">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 size-3.5" />
             <input value={query} onChange={e => setQuery(e.target.value)}
               placeholder="Search keywords..."
               className="h-8 w-full bg-white border border-zinc-200 rounded-md pl-8 pr-3 text-xs text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
           </div>
-
           <div className="overflow-y-auto custom-scrollbar flex-1 space-y-2 pb-2">
             {loading ? (
               <div className="py-10 text-center"><Loader2 className="animate-spin size-6 text-primary mx-auto" /></div>
@@ -617,5 +576,70 @@ function KeywordsPanel({ chapter, canEdit }) {
         </div>
       )}
     </div>
+  );
+}
+
+// =====================================================================
+//  SubjectIndexHelp — "How to use" guide (same theme as ReportsHelp).
+//  Editors get the manage guide (upload, page offset, add-chapter fixes);
+//  read-only users get the browse/read one.
+// =====================================================================
+const GUIDES = {
+  manage: {
+    title: 'Subject Index',
+    steps: [
+      ['1 \u00b7 Upload the textbook', 'Upload the subject PDF and the chapters are detected automatically from the book\u2019s printed index \u2014 an Index entry first, then each chapter with its page range.'],
+      ['2 \u00b7 How the pages are worked out', 'Detection uses the page numbers printed in the book\u2019s index \u2014 the book\u2019s pages, not the PDF\u2019s. If the PDF\u2019s first page isn\u2019t the book\u2019s printed page 1 (covers or front-matter shift it), set Page offset to the difference and Apply. Every chapter re-slices to match. Example: if printed page 1 is the 5th page of the PDF, the offset is 4.'],
+      ['3 \u00b7 Fix a bad split', 'If the auto-detection merged, missed or mis-paged a lesson, use Add Chapter to create one with the correct Page From / Page To, or Edit an existing chapter\u2019s pages. Delete removes a wrong entry. This is how you divide lessons that didn\u2019t come out cleanly.'],
+      ['4 \u00b7 Read a chapter', 'Click a chapter to see only its pages in the middle viewer; the maximize button opens it full-screen.'],
+      ['5 \u00b7 Keywords', 'On the right, add a term with its definition and an example for the selected chapter \u2014 students see these on their side.'],
+    ],
+    note: 'Replace re-reads the textbook and rebuilds the whole chapter list (existing chapters and their keywords are replaced). Lesson Periods (top-right) is where you set the teaching schedule.'
+  },
+  view: {
+    title: 'Subject Index',
+    steps: [
+      ['1 \u00b7 Chapters', 'The left list is the book\u2019s chapters, each with the pages it covers.'],
+      ['2 \u00b7 Read a chapter', 'Click one to see just its pages in the viewer; use maximize for a full-screen read.'],
+      ['3 \u00b7 Keywords', 'The right panel lists the chapter\u2019s key terms with definitions and examples \u2014 search to find one quickly.'],
+    ],
+    note: 'This is a read-only view \u2014 the textbook, chapters and keywords are set up by teachers.'
+  }
+};
+
+function SubjectIndexHelp({ canEdit = false, className = '' }) {
+  const [open, setOpen] = useState(false);
+  const content = canEdit ? GUIDES.manage : GUIDES.view;
+
+  return (
+    <>
+      <button onClick={() => setOpen(true)}
+        className={`inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors shrink-0 self-start ${className}`}>
+        <HelpCircle className="size-3.5" /> How to use
+      </button>
+
+      {open && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={() => setOpen(false)}>
+          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg max-h-[85vh] overflow-y-auto shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="bg-primary text-white px-5 py-3 flex items-center justify-between sticky top-0">
+              <span className="text-sm font-bold flex items-center gap-2"><HelpCircle className="size-4" /> {content.title}</span>
+              <button onClick={() => setOpen(false)} className="text-white/80 hover:text-white"><X className="size-5" /></button>
+            </div>
+            <div className="p-5 space-y-3">
+              {content.steps.map(([t, d], i) => (
+                <div key={i} className="rounded-md ring-1 ring-zinc-100 bg-zinc-50/60 p-3">
+                  <p className="text-xs font-semibold text-zinc-800">{t}</p>
+                  <p className="text-[11px] text-zinc-600 leading-relaxed mt-1">{d}</p>
+                </div>
+              ))}
+              <div className="rounded-md bg-blue-50/60 ring-1 ring-blue-100 p-3 flex gap-2">
+                <ShieldCheck className="size-4 text-blue-500 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-blue-800 leading-relaxed">{content.note}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

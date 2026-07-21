@@ -3,23 +3,20 @@ import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   Plus, Edit, Trash2, X, Search, Loader2, FlaskConical,
-  Video, LinkIcon, Radio, ChevronDown, Save, FileText, 
-  UploadCloud, ExternalLink, ArrowLeft, BookOpen, User, Clock, PencilLine
+  Video, LinkIcon, Radio, ChevronDown, Save, FileText,
+  UploadCloud, ExternalLink, ArrowLeft, BookOpen, User, Clock, PencilLine,
+  HelpCircle, ShieldCheck
 } from 'lucide-react';
-
 // =====================================================================
 //  Constants & Helpers
 // =====================================================================
-
 const RES_TYPES = [
   { value: 'video', label: 'Video', icon: Video, color: 'text-zinc-600', bg: 'bg-zinc-100' },
   { value: 'pdf',   label: 'PDF Document', icon: FileText, color: 'text-zinc-600', bg: 'bg-zinc-100' },
   { value: 'link',  label: 'Web Link', icon: LinkIcon, color: 'text-zinc-600', bg: 'bg-zinc-100' },
   { value: 'live',  label: 'Live Class', icon: Radio, color: 'text-zinc-600', bg: 'bg-zinc-100' }
 ];
-
 const resTypeMeta = (t) => RES_TYPES.find(r => r.value === t) || RES_TYPES[2];
-
 const fmtDateTime = (dt) => {
   if (!dt) return '';
   const d = new Date(dt);
@@ -29,7 +26,6 @@ const fmtDateTime = (dt) => {
     hour: '2-digit', minute: '2-digit'
   });
 };
-
 // Render a UTC audit timestamp (Railway stores UTC) as IST for display.
 const fmtIST = (val) => {
   if (!val) return '';
@@ -46,12 +42,10 @@ const fmtIST = (val) => {
     hour: '2-digit', minute: '2-digit', hour12: true
   });
 };
-
 // Show the "updated" line only when it's meaningfully after creation.
 const wasUpdated = (lab) =>
   lab.updated_at && lab.updated_by_name &&
   (!lab.created_at || new Date(lab.updated_at) - new Date(lab.created_at) > 1000);
-
 const isoLocal = (dt) => {
   if (!dt) return '';
   const d = new Date(dt);
@@ -60,38 +54,66 @@ const isoLocal = (dt) => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 
+// ---------------------------------------------------------------------
+//  openLabResource — open a lab resource in a new tab.
+//
+//  File-backed resources (PDFs, uploaded videos) are served from OUR
+//  backend at /admin/labs/resource/:id, behind the /api auth gate. A plain
+//  <a target="_blank"> navigation sends NO Authorization header, so the
+//  server replies {"error":"Please sign in to continue."} and the PDF never
+//  opens. We fetch the bytes (the auth interceptor attaches the token) and
+//  point a pre-opened tab at the blob. External URLs (YouTube, web links,
+//  meeting links) don't hit our gate, so those open directly.
+// ---------------------------------------------------------------------
+async function openLabResource(res, e) {
+  if (e) e.preventDefault();
+  const hasFile = res.has_file;
+  const url = hasFile ? `${API_BASE_URL}/admin/labs/resource/${res.id}` : res.url;
+  if (!url) return;
+
+  if (!hasFile) { window.open(url, '_blank', 'noopener,noreferrer'); return; }
+
+  // Open the tab synchronously (inside the click) so it isn't popup-blocked,
+  // then redirect it to the authed blob once it's ready.
+  const win = window.open('', '_blank');
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(String(r.status));
+    const blob = await r.blob();
+    const obj = URL.createObjectURL(blob);
+    if (win) win.location.href = obj;
+    else window.open(obj, '_blank');
+    setTimeout(() => URL.revokeObjectURL(obj), 60000);
+  } catch (err) {
+    if (win) win.close();
+    alert('Could not open this resource. Please try again.');
+  }
+}
+
 // =====================================================================
 //  MAIN COMPONENT
 // =====================================================================
-
 export default function TeacherLabs({ canManage = true }) {
   const { user } = useAuth();
-
   const [labs, setLabs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
-
   // List filters (client-side, over the already-loaded labs). '' = All.
   const [classFilter, setClassFilter]     = useState('');
   const [subjectFilter, setSubjectFilter] = useState('');
-
   // Data for Selects
   const [classes, setClasses] = useState([]);
   const [subjects, setSubjects] = useState([]);
   const [subjectClasses, setSC] = useState({});
-
   // Navigation / Modal States
   const [modalOpen, setModalOpen] = useState(false);
   const [viewingLab, setViewingLab] = useState(null);
   const [editing, setEditing] = useState(null);
   const [saving, setSaving] = useState(false);
-
   // Form State
   const [form, setForm] = useState({ title: '', description: '', class_id: '', subject_id: '' });
   const [resources, setResources] = useState([]);
-
   // --- API Actions ---
-
   const load = useCallback(async () => {
     if (!user?.id) return;
     setLoading(true);
@@ -102,7 +124,6 @@ export default function TeacherLabs({ canManage = true }) {
     } catch (e) { console.error('Load Labs Error:', e); }
     setLoading(false);
   }, [user]);
-
   const loadFormData = useCallback(async () => {
     if (!user?.institutionId) return;
     try {
@@ -113,11 +134,8 @@ export default function TeacherLabs({ canManage = true }) {
       setSC(d.subjectClasses || {});
     } catch (e) { console.error('Load Form Data Error:', e); }
   }, [user]);
-
   useEffect(() => { load(); loadFormData(); }, [load, loadFormData]);
-
   // --- Filter Logic ---
-
   const subjectsForClass = useMemo(() => {
     if (!form.class_id) return subjects;
     const cid = parseInt(form.class_id, 10);
@@ -126,7 +144,6 @@ export default function TeacherLabs({ canManage = true }) {
       return !links || links.length === 0 || links.includes(cid);
     });
   }, [subjects, subjectClasses, form.class_id]);
-
   // Subject options for the Subject filter — narrowed to the selected class
   // filter (a subject with no class links counts as "all classes"), matching
   // the create/edit form's behaviour.
@@ -138,7 +155,6 @@ export default function TeacherLabs({ canManage = true }) {
       return !links || links.length === 0 || links.includes(cid);
     });
   }, [subjects, subjectClasses, classFilter]);
-
   // Changing the class clears the subject filter only if that subject isn't
   // offered for the newly-chosen class.
   const onClassFilterChange = (v) => {
@@ -150,7 +166,6 @@ export default function TeacherLabs({ canManage = true }) {
       if (!stillValid) setSubjectFilter('');
     }
   };
-
   const filtered = useMemo(() => {
     let list = labs;
     if (classFilter)   list = list.filter(l => String(l.class_id) === String(classFilter));
@@ -166,20 +181,15 @@ export default function TeacherLabs({ canManage = true }) {
     }
     return list;
   }, [labs, query, classFilter, subjectFilter]);
-
   const hasActiveFilter = Boolean(query.trim() || classFilter || subjectFilter);
-
   const classLabel = (c) => `${c.className}${c.section ? ' - ' + c.section : ''}`;
-
   // --- Modal / Resource Helpers ---
-
   const openCreate = () => {
     setEditing(null);
     setForm({ title: '', description: '', class_id: '', subject_id: '' });
     setResources([]);
     setModalOpen(true);
   };
-
   const openEdit = async (lab, e) => {
     if (e) e.stopPropagation();
     setEditing(lab);
@@ -200,13 +210,11 @@ export default function TeacherLabs({ canManage = true }) {
     } catch { setResources([]); }
     setModalOpen(true);
   };
-
   const handleSave = async (e) => {
     e.preventDefault();
     if (!form.title.trim() || !form.class_id) return alert('Title and Class are required.');
-    
-    setSaving(true);
 
+    setSaving(true);
     // Create standard FormData payload
     const fd = new FormData();
     fd.append('institutionId', user.institutionId);
@@ -216,13 +224,12 @@ export default function TeacherLabs({ canManage = true }) {
     fd.append('subject_id', form.subject_id);
     fd.append('created_by', user.id);
     if (editing) fd.append('id', editing.id);
-
     // Append actual File objects directly to the payload
     const resMetadata = resources.map((r, i) => {
       if (r.file) {
         fd.append(`file_${i}`, r.file);
       }
-      
+
       return {
         id: r.id,
         resource_type: r.resource_type,
@@ -233,30 +240,26 @@ export default function TeacherLabs({ canManage = true }) {
         scheduled_at: r.resource_type === 'live' && r.scheduled_at ? r.scheduled_at.replace('T', ' ') + ':00' : null
       };
     });
-
     fd.append('resources', JSON.stringify(resMetadata));
-
     try {
       // Do NOT set Content-Type header. The browser does this automatically for FormData.
-      const res = await fetch(`${API_BASE_URL}/admin/labs`, { 
-        method: 'POST', 
-        body: fd 
+      const res = await fetch(`${API_BASE_URL}/admin/labs`, {
+        method: 'POST',
+        body: fd
       });
-
-      if (res.ok) { 
-        setModalOpen(false); 
-        load(); 
-      } else { 
-        const d = await res.json(); 
-        throw new Error(d.error || 'Save failed'); 
+      if (res.ok) {
+        setModalOpen(false);
+        load();
+      } else {
+        const d = await res.json();
+        throw new Error(d.error || 'Save failed');
       }
-    } catch (e) { 
-      alert(e.message); 
+    } catch (e) {
+      alert(e.message);
     } finally {
       setSaving(false);
     }
   };
-
   const handleDelete = async (lab, e) => {
     if (e) e.stopPropagation();
     if (!window.confirm(`Delete lab "${lab.title}"?`)) return;
@@ -274,16 +277,13 @@ export default function TeacherLabs({ canManage = true }) {
       alert(err.message || 'Delete failed');
     }
   };
-
   // --- Sub-View Navigation ---
-
   if (viewingLab) {
     return <LabDetailView lab={viewingLab} onBack={() => { setViewingLab(null); load(); }} canManage={canManage} onEdit={(l) => openEdit(l)} onDelete={(l) => handleDelete(l)} />;
   }
-
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
-      
+
       <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div className="flex flex-col">
           <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
@@ -294,7 +294,6 @@ export default function TeacherLabs({ canManage = true }) {
             Post videos, links and live classes for your students.
           </p>
         </div>
-
         <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
           {/* Class + Subject filters */}
           <div className="grid grid-cols-2 sm:flex sm:flex-row gap-3 w-full sm:w-auto">
@@ -315,14 +314,15 @@ export default function TeacherLabs({ canManage = true }) {
               <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
           </div>
-
           <div className="relative w-full sm:w-72 shrink-0">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
             <input value={query} onChange={e => setQuery(e.target.value)}
               placeholder="Search labs..."
               className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-4 text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors placeholder:text-zinc-400" />
           </div>
-          
+
+          <LabsHelp canManage={canManage} />
+
           {canManage && (
             <button onClick={openCreate}
               className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full sm:w-auto shrink-0">
@@ -331,7 +331,6 @@ export default function TeacherLabs({ canManage = true }) {
           )}
         </div>
       </header>
-
       <div className="flex-1">
         {loading ? (
           <div className="h-64 flex items-center justify-center">
@@ -346,8 +345,8 @@ export default function TeacherLabs({ canManage = true }) {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
             {filtered.map(lab => (
-              <div 
-                key={lab.id} 
+              <div
+                key={lab.id}
                 onClick={() => setViewingLab(lab)}
                 className="group bg-white rounded-lg ring-1 ring-black/5 shadow-sm flex flex-col hover:ring-primary/30 hover:shadow-md transition-all cursor-pointer overflow-hidden p-4 sm:p-5"
               >
@@ -361,46 +360,43 @@ export default function TeacherLabs({ canManage = true }) {
                         className="size-7 bg-white hover:bg-zinc-50 text-zinc-600 hover:text-primary rounded-md shadow-sm ring-1 ring-inset ring-black/5 flex items-center justify-center transition-colors">
                         <Edit className="size-3.5" />
                       </button>
-<button onClick={(e) => handleDelete(lab, e)}
-  className="size-7 bg-white hover:bg-red-50 text-zinc-600 hover:text-red-600 rounded-md shadow-sm ring-1 ring-inset ring-black/5 flex items-center justify-center transition-colors">
-  <Trash2 className="size-3.5" />
-</button>
+                      <button onClick={(e) => handleDelete(lab, e)}
+                        className="size-7 bg-white hover:bg-red-50 text-zinc-600 hover:text-red-600 rounded-md shadow-sm ring-1 ring-inset ring-black/5 flex items-center justify-center transition-colors">
+                        <Trash2 className="size-3.5" />
+                      </button>
                     </div>
                   )}
                 </div>
-                
+
                 <h3 className="font-semibold text-zinc-900 text-base leading-tight line-clamp-2 min-h-[2.5rem] group-hover:text-primary transition-colors">
                   {lab.title}
                 </h3>
-                
-                <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mt-1.5 line-clamp-1">
-                  {lab.class_group} {lab.subject_name ? `• ${lab.subject_name}` : ''}
-                </p>
 
+                <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mt-1.5 line-clamp-1">
+                  {lab.class_group} {lab.subject_name ? `\u2022 ${lab.subject_name}` : ''}
+                </p>
                 {/* Created / Updated audit line */}
                 <div className="mt-2 space-y-0.5">
                   {lab.created_by_name && (
                     <div className="text-[10px] text-zinc-400 flex items-center gap-1 line-clamp-1">
                       <User className="size-3 shrink-0" /> {lab.created_by_name}
                       {lab.created_at && (
-                        <><span className="text-zinc-300">·</span> {fmtIST(lab.created_at)}</>
+                        <><span className="text-zinc-300">{'\u00b7'}</span> {fmtIST(lab.created_at)}</>
                       )}
                     </div>
                   )}
                   {wasUpdated(lab) && (
                     <div className="text-[10px] text-zinc-400 flex items-center gap-1 line-clamp-1">
                       <PencilLine className="size-3 shrink-0" /> {lab.updated_by_name}
-                      <span className="text-zinc-300">·</span> {fmtIST(lab.updated_at)}
+                      <span className="text-zinc-300">{'\u00b7'}</span> {fmtIST(lab.updated_at)}
                     </div>
                   )}
                 </div>
-
                 {lab.description && (
                   <p className="text-xs text-zinc-500 mt-3 line-clamp-3 leading-relaxed font-medium">
                     {lab.description}
                   </p>
                 )}
-
                 <div className="mt-auto pt-4 flex flex-col gap-3">
                    <div className="flex flex-wrap gap-1.5">
                       {lab.resource_count > 0 ? (
@@ -417,12 +413,11 @@ export default function TeacherLabs({ canManage = true }) {
           </div>
         )}
       </div>
-
       {/* ---- CREATE / EDIT MODAL ---- */}
       {modalOpen && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
           <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-2xl shadow-xl relative max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
-            
+
             <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 rounded-t-lg shrink-0">
               <h2 className="text-lg font-semibold text-zinc-900 tracking-tight">
                 {editing ? 'Edit Lab' : 'Create Digital Lab'}
@@ -431,16 +426,14 @@ export default function TeacherLabs({ canManage = true }) {
                 <X className="size-4" />
               </button>
             </div>
-
             <form onSubmit={handleSave} className="flex flex-col flex-1 overflow-hidden">
               <div className="p-5 sm:p-6 overflow-y-auto custom-scrollbar space-y-6">
-                
+
                 <div className="space-y-1.5">
                    <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Lab Title <span className="text-red-500">*</span></label>
                    <input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })}
                     placeholder="e.g. Optics - Reflection & Refraction" className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
                 </div>
-
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Class <span className="text-red-500">*</span></label>
@@ -455,7 +448,6 @@ export default function TeacherLabs({ canManage = true }) {
                       <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                     </div>
                   </div>
-
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Subject</label>
                     <div className="relative">
@@ -470,20 +462,17 @@ export default function TeacherLabs({ canManage = true }) {
                     </div>
                   </div>
                 </div>
-
                 <div className="space-y-1.5">
                    <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Description</label>
                    <textarea rows={3} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })}
                     placeholder="What this lab covers..." className="w-full bg-white border border-zinc-200 rounded-md p-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm resize-none transition-colors" />
                 </div>
-
                 {/* Resources */}
                 <div className="pt-4 border-t border-zinc-100">
                   <div className="flex items-center justify-between mb-4">
                     <label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">Resources</label>
                     <span className="text-[10px] font-semibold bg-primary/10 text-primary px-2 py-0.5 rounded uppercase tracking-wider ring-1 ring-inset ring-primary/20">{resources.length} Added</span>
                   </div>
-
                   <div className="space-y-4 mb-6">
                     {resources.map((r, i) => {
                       const meta = resTypeMeta(r.resource_type);
@@ -494,38 +483,37 @@ export default function TeacherLabs({ canManage = true }) {
                             className="absolute top-3 right-3 p-1.5 text-zinc-400 hover:text-red-500 hover:bg-white rounded-md transition-colors shadow-sm ring-1 ring-inset ring-black/5">
                             <Trash2 className="size-3.5" />
                           </button>
-                          
+
                           <div className="flex items-center gap-2 mb-4">
                             <Icon className="size-4 text-zinc-600" />
                             <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-600">{meta.label}</span>
                           </div>
-                          
+
                           <div className="space-y-3">
                             <input value={r.title} required
                               onChange={e => setResources(p => p.map((rs, idx) => idx === i ? { ...rs, title: e.target.value } : rs))}
                               placeholder="Resource Title (e.g. Intro Video)"
                               className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
-                            
+
                             {/* Toggle Upload or Link for Video/PDF */}
                             {(r.resource_type === 'video' || r.resource_type === 'pdf') && (
                                <div className="flex bg-zinc-200/50 p-1 rounded-md w-full sm:w-fit">
-                                  <button type="button" 
+                                  <button type="button"
                                     onClick={() => setResources(p => p.map((rs, idx) => idx === i ? { ...rs, source: 'file', url: '' } : rs))}
                                     className={`flex-1 sm:flex-none px-4 py-1.5 rounded text-[10px] font-semibold uppercase tracking-wider transition-all ${r.source === 'file' ? 'bg-white shadow-sm text-zinc-900 ring-1 ring-black/5' : 'text-zinc-500 hover:text-zinc-700'}`}>
                                     <UploadCloud className="size-3 mr-1.5 inline" /> Upload
                                   </button>
-                                  <button type="button" 
+                                  <button type="button"
                                     onClick={() => setResources(p => p.map((rs, idx) => idx === i ? { ...rs, source: 'url', file: null } : rs))}
                                     className={`flex-1 sm:flex-none px-4 py-1.5 rounded text-[10px] font-semibold uppercase tracking-wider transition-all ${r.source === 'url' ? 'bg-white shadow-sm text-zinc-900 ring-1 ring-black/5' : 'text-zinc-500 hover:text-zinc-700'}`}>
                                     <ExternalLink className="size-3 mr-1.5 inline" /> URL
                                   </button>
                                </div>
                             )}
-
                             {r.source === 'file' ? (
                                <div className="relative h-9 flex items-center justify-center border border-dashed border-primary/30 rounded-md bg-primary/5 hover:bg-primary/10 transition-colors cursor-pointer px-3">
-                                  <input type="file" accept={r.resource_type === 'pdf' ? '.pdf' : 'video/*'} 
-                                    className="absolute inset-0 opacity-0 cursor-pointer" 
+                                  <input type="file" accept={r.resource_type === 'pdf' ? '.pdf' : 'video/*'}
+                                    className="absolute inset-0 opacity-0 cursor-pointer"
                                     onChange={e => setResources(p => p.map((rs, idx) => idx === i ? { ...rs, file: e.target.files[0] } : rs))} />
                                   <UploadCloud className="size-4 text-primary mr-2" />
                                   <span className="text-xs text-primary truncate font-medium">
@@ -538,7 +526,7 @@ export default function TeacherLabs({ canManage = true }) {
                                 placeholder={r.resource_type === 'live' ? 'Meeting Link (Zoom/Meet)' : 'External URL'}
                                 className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
                             )}
-                            
+
                             {r.resource_type === 'live' && (
                               <div className="pt-1">
                                 <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1.5 block">Scheduled Time (Optional)</label>
@@ -552,10 +540,9 @@ export default function TeacherLabs({ canManage = true }) {
                       );
                     })}
                   </div>
-
                   <div className="flex flex-wrap gap-2">
                     {RES_TYPES.map(rt => (
-                      <button key={rt.value} type="button" 
+                      <button key={rt.value} type="button"
                         onClick={() => setResources(p => [...p, { resource_type: rt.value, title: '', url: '', source: 'url', file: null, scheduled_at: '' }])}
                         className="h-8 inline-flex items-center gap-1.5 bg-white ring-1 ring-inset ring-black/5 hover:bg-zinc-50 text-zinc-700 px-3 rounded-md text-xs font-semibold transition-colors shadow-sm">
                         <Plus className="size-3" /> <rt.icon className="size-3" /> {rt.label}
@@ -564,7 +551,6 @@ export default function TeacherLabs({ canManage = true }) {
                   </div>
                 </div>
               </div>
-
               <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
                 <button type="button" onClick={() => setModalOpen(false)} disabled={saving}
                   className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 rounded-md font-semibold text-xs hover:bg-zinc-50 transition-colors w-full sm:w-auto shadow-sm">
@@ -583,16 +569,13 @@ export default function TeacherLabs({ canManage = true }) {
     </div>
   );
 }
-
 // =====================================================================
 //  ENLARGED DETAIL VIEW COMPONENT
 // =====================================================================
-
 function LabDetailView({ lab, onBack, canManage, onEdit, onDelete }) {
   const [resources, setResources] = useState([]);
   const [loading, setLoading] = useState(true);
   const [meta, setMeta] = useState(lab);
-
   useEffect(() => {
     (async () => {
       try {
@@ -604,35 +587,35 @@ function LabDetailView({ lab, onBack, canManage, onEdit, onDelete }) {
       setLoading(false);
     })();
   }, [lab.id]);
-
   const ordered = useMemo(() => {
     const rank = { live: 0, video: 1, pdf: 2, link: 3 };
     return [...resources].sort((a, b) => (rank[a.resource_type] ?? 9) - (rank[b.resource_type] ?? 9));
   }, [resources]);
-
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-      
+
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         {/* UPDATED BACK BUTTON: Removed box styling, added text hover */}
         <button onClick={onBack}
           className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
           <ArrowLeft className="size-4" /> Back to Digital Labs
         </button>
-      {canManage && (
-  <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
-    <button onClick={() => onEdit(lab)}
-      className="h-8 px-3 bg-white border border-zinc-200 text-zinc-700 hover:text-primary hover:bg-zinc-50 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shadow-sm w-full sm:w-auto">
-      <Edit className="size-3.5" /> Edit Lab
-    </button>
-    <button onClick={() => onDelete(lab)}
-      className="h-8 px-3 bg-white border border-zinc-200 text-zinc-700 hover:text-red-600 hover:bg-red-50 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shadow-sm w-full sm:w-auto">
-      <Trash2 className="size-3.5" /> Delete Lab
-    </button>
-  </div>
-)}
+        <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
+          <LabsHelp canManage={canManage} />
+          {canManage && (
+            <>
+              <button onClick={() => onEdit(lab)}
+                className="h-8 px-3 bg-white border border-zinc-200 text-zinc-700 hover:text-primary hover:bg-zinc-50 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shadow-sm w-full sm:w-auto">
+                <Edit className="size-3.5" /> Edit Lab
+              </button>
+              <button onClick={() => onDelete(lab)}
+                className="h-8 px-3 bg-white border border-zinc-200 text-zinc-700 hover:text-red-600 hover:bg-red-50 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shadow-sm w-full sm:w-auto">
+                <Trash2 className="size-3.5" /> Delete Lab
+              </button>
+            </>
+          )}
+        </div>
       </div>
-
       <div className="bg-white rounded-lg ring-1 ring-black/5 p-5 sm:p-6 shadow-sm">
         <div className="flex items-start gap-4 mb-6">
           <div className="size-12 bg-primary/10 text-primary rounded-md flex items-center justify-center ring-1 ring-inset ring-primary/20 shrink-0">
@@ -646,12 +629,12 @@ function LabDetailView({ lab, onBack, canManage, onEdit, onDelete }) {
               </span>
               <span className="flex items-center gap-1.5 bg-zinc-100 px-2 py-1 rounded-md text-zinc-600">
                 <User className="size-3.5" /> {meta.created_by_name || 'Teacher'}
-                {meta.created_at && <span className="normal-case font-normal text-zinc-400">· {fmtIST(meta.created_at)}</span>}
+                {meta.created_at && <span className="normal-case font-normal text-zinc-400">{'\u00b7'} {fmtIST(meta.created_at)}</span>}
               </span>
               {wasUpdated(meta) && (
                 <span className="flex items-center gap-1.5 bg-zinc-100 px-2 py-1 rounded-md text-zinc-600">
                   <PencilLine className="size-3.5" /> {meta.updated_by_name}
-                  <span className="normal-case font-normal text-zinc-400">· {fmtIST(meta.updated_at)}</span>
+                  <span className="normal-case font-normal text-zinc-400">{'\u00b7'} {fmtIST(meta.updated_at)}</span>
                 </span>
               )}
               <span className="bg-primary/10 text-primary px-2 py-1 rounded-md ring-1 ring-inset ring-primary/20 font-semibold">
@@ -660,14 +643,13 @@ function LabDetailView({ lab, onBack, canManage, onEdit, onDelete }) {
             </div>
           </div>
         </div>
-        
+
         {meta.description && (
           <div className="mt-5 bg-zinc-50/50 p-4 rounded-md border border-zinc-100">
             <p className="text-sm text-zinc-700 leading-relaxed whitespace-pre-wrap font-medium">{meta.description}</p>
           </div>
         )}
       </div>
-
       <div className="space-y-4">
         <h3 className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider pl-1">Lab Resources</h3>
         {loading ? (
@@ -699,9 +681,12 @@ function LabDetailView({ lab, onBack, canManage, onEdit, onDelete }) {
                       <p className="font-semibold text-zinc-900 text-sm truncate">{r.title}</p>
                     </div>
                   </div>
-                  
-                  {/* UNIFIED PRIMARY ACTION BUTTON */}
-                  <a href={clickUrl} target="_blank" rel="noreferrer" 
+
+                  {/* UNIFIED PRIMARY ACTION BUTTON.
+                      File-backed resources open via an authed blob fetch (a plain
+                      <a> would 401); external URLs open directly. */}
+                  <a href={clickUrl} target="_blank" rel="noreferrer"
+                    onClick={(e) => openLabResource(r, e)}
                     className="h-9 px-4 rounded-md flex items-center justify-center gap-1.5 text-xs font-semibold text-white transition-colors shadow-sm sm:ml-4 shrink-0 w-full sm:w-auto bg-primary hover:bg-primary/90">
                     {r.resource_type === 'video' ? 'Watch' : r.resource_type === 'live' ? 'Join' : 'Open'}
                     <ExternalLink className="size-3.5" />
@@ -713,5 +698,69 @@ function LabDetailView({ lab, onBack, canManage, onEdit, onDelete }) {
         )}
       </div>
     </div>
+  );
+}
+
+// =====================================================================
+//  LabsHelp — "How to use" guide (same theme as ReportsHelp).
+//  Managers get the create/manage guide; read-only staff get the view one.
+// =====================================================================
+const GUIDES = {
+  manage: {
+    title: 'Digital Labs',
+    steps: [
+      ['1 \u00b7 Create a lab', 'Create Lab opens the form \u2014 give it a title, a class (required) and optional subject and description, then attach resources.'],
+      ['2 \u00b7 Add resources', 'Each lab can hold Videos, PDF Documents, Web Links and Live Classes. For a video or PDF you can either Upload the file or paste a URL; a live class takes a meeting link and an optional scheduled time.'],
+      ['3 \u00b7 Open a lab', 'Click a lab card to see its details and every resource. On a resource, Watch / Open / Join opens it \u2014 uploaded PDFs and videos open securely for signed-in users.'],
+      ['4 \u00b7 Find labs', 'Search by title, class, subject or author, and narrow with the Class and Subject filters (subjects follow the chosen class).'],
+      ['5 \u00b7 Edit & delete', 'Hover a lab card, or use Edit Lab / Delete Lab inside a lab. Each card shows who created it and who last updated it.'],
+    ],
+    note: 'Uploaded files are stored in the school\u2019s library and served behind sign-in, so they won\u2019t open in a logged-out tab. External links (YouTube, web pages, meeting links) open directly.'
+  },
+  view: {
+    title: 'Digital Labs',
+    steps: [
+      ['1 \u00b7 Browse labs', 'Each card is a lab for a class, with its subject and a short description. Click one to open it.'],
+      ['2 \u00b7 Open resources', 'Inside a lab, Watch a video, Open a PDF or Web Link, or Join a live class. Live classes show their scheduled time.'],
+      ['3 \u00b7 Find labs', 'Search by title, class, subject or author, and use the Class and Subject filters to narrow the list.'],
+    ],
+    note: 'Uploaded PDFs and videos open securely for signed-in users. This is a read-only view \u2014 labs are created and edited by teachers.'
+  }
+};
+
+function LabsHelp({ canManage = false, className = '' }) {
+  const [open, setOpen] = useState(false);
+  const content = canManage ? GUIDES.manage : GUIDES.view;
+
+  return (
+    <>
+      <button onClick={() => setOpen(true)}
+        className={`inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors shrink-0 self-start ${className}`}>
+        <HelpCircle className="size-3.5" /> How to use
+      </button>
+
+      {open && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={() => setOpen(false)}>
+          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg max-h-[85vh] overflow-y-auto shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="bg-primary text-white px-5 py-3 flex items-center justify-between sticky top-0">
+              <span className="text-sm font-bold flex items-center gap-2"><HelpCircle className="size-4" /> {content.title}</span>
+              <button onClick={() => setOpen(false)} className="text-white/80 hover:text-white"><X className="size-5" /></button>
+            </div>
+            <div className="p-5 space-y-3">
+              {content.steps.map(([t, d], i) => (
+                <div key={i} className="rounded-md ring-1 ring-zinc-100 bg-zinc-50/60 p-3">
+                  <p className="text-xs font-semibold text-zinc-800">{t}</p>
+                  <p className="text-[11px] text-zinc-600 leading-relaxed mt-1">{d}</p>
+                </div>
+              ))}
+              <div className="rounded-md bg-blue-50/60 ring-1 ring-blue-100 p-3 flex gap-2">
+                <ShieldCheck className="size-4 text-blue-500 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-blue-800 leading-relaxed">{content.note}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

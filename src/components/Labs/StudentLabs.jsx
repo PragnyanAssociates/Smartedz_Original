@@ -3,15 +3,14 @@ import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   Loader2, FlaskConical, Video, LinkIcon, Radio, ExternalLink,
-  Search, BookOpen, Clock, ArrowLeft, User, FileText, PencilLine
+  Search, BookOpen, Clock, ArrowLeft, User, FileText, PencilLine,
+  HelpCircle, X, ShieldCheck
 } from 'lucide-react';
-
 // =====================================================================
 //  StudentLabs - a student browses the digital labs posted for their
 //  class, opens a lab, and watches videos / opens links / joins live
 //  classes.
 // =====================================================================
-
 const fmtDateTime = (dt) => {
   if (!dt) return '';
   const d = new Date(dt);
@@ -21,7 +20,6 @@ const fmtDateTime = (dt) => {
     hour: '2-digit', minute: '2-digit'
   });
 };
-
 // Render a UTC audit timestamp (Railway stores UTC) as IST for display.
 const fmtIST = (val) => {
   if (!val) return '';
@@ -38,11 +36,41 @@ const fmtIST = (val) => {
     hour: '2-digit', minute: '2-digit', hour12: true
   });
 };
-
 // Show the "updated" line only when it's meaningfully after creation.
 const wasUpdated = (lab) =>
   lab.updated_at && lab.updated_by_name &&
   (!lab.created_at || new Date(lab.updated_at) - new Date(lab.created_at) > 1000);
+
+// ---------------------------------------------------------------------
+//  openLabResource — open a lab resource in a new tab.
+//  File-backed resources (PDFs / uploaded videos) come from OUR backend
+//  behind the /api auth gate, so a plain <a target="_blank"> sends no
+//  token and gets "Please sign in to continue." We fetch the bytes (the
+//  interceptor attaches the token) and open the blob. External URLs open
+//  directly.
+// ---------------------------------------------------------------------
+async function openLabResource(res, e) {
+  if (e) e.preventDefault();
+  const hasFile = res.has_file;
+  const url = hasFile ? `${API_BASE_URL}/admin/labs/resource/${res.id}` : res.url;
+  if (!url) return;
+
+  if (!hasFile) { window.open(url, '_blank', 'noopener,noreferrer'); return; }
+
+  const win = window.open('', '_blank');
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(String(r.status));
+    const blob = await r.blob();
+    const obj = URL.createObjectURL(blob);
+    if (win) win.location.href = obj;
+    else window.open(obj, '_blank');
+    setTimeout(() => URL.revokeObjectURL(obj), 60000);
+  } catch (err) {
+    if (win) win.close();
+    alert('Could not open this resource. Please try again.');
+  }
+}
 
 // STRICT ENTERPRISE PALETTE: Replaced all rose, orange, and emerald with zinc/primary
 function resMeta(type) {
@@ -53,15 +81,12 @@ function resMeta(type) {
     default:      return { icon: LinkIcon, label: 'Link',       color: 'text-zinc-600', bg: 'bg-zinc-100' };
   }
 }
-
 export default function StudentLabs() {
   const { user } = useAuth();
-
   const [labs, setLabs]       = useState([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery]     = useState('');
   const [openLab, setOpenLab] = useState(null);   // lab object for detail view
-
   const load = useCallback(async () => {
     if (!user?.id) return;
     setLoading(true);
@@ -72,9 +97,7 @@ export default function StudentLabs() {
     } catch (e) { console.error(e); }
     setLoading(false);
   }, [user]);
-
   useEffect(() => { load(); }, [load]);
-
   const filtered = useMemo(() => {
     if (!query.trim()) return labs;
     const q = query.toLowerCase();
@@ -83,24 +106,24 @@ export default function StudentLabs() {
       (l.subject_name || '').toLowerCase().includes(q) ||
       (l.created_by_name || '').toLowerCase().includes(q));
   }, [labs, query]);
-
   if (openLab) {
     return <LabDetail lab={openLab} onBack={() => setOpenLab(null)} />;
   }
-
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
-      
-      <header className="flex flex-col mb-2 sm:mb-0">
-        <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
-          <FlaskConical className="text-primary size-5" />
-          Digital Labs
-        </h1>
-        <p className="text-sm text-zinc-500 mt-1 max-w-[56ch] font-medium">
-          Watch lab videos, open resources and join live classes assigned to your class.
-        </p>
-      </header>
 
+      <header className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-2 sm:mb-0">
+        <div className="flex flex-col">
+          <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
+            <FlaskConical className="text-primary size-5" />
+            Digital Labs
+          </h1>
+          <p className="text-sm text-zinc-500 mt-1 max-w-[56ch] font-medium">
+            Watch lab videos, open resources and join live classes assigned to your class.
+          </p>
+        </div>
+        <LabsHelp />
+      </header>
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div className="relative w-full sm:w-72 shrink-0">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
@@ -109,7 +132,6 @@ export default function StudentLabs() {
             className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-4 text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors placeholder:text-zinc-400" />
         </div>
       </div>
-
       <div className="flex-1">
         {loading ? (
           <div className="h-64 flex items-center justify-center">
@@ -137,25 +159,23 @@ export default function StudentLabs() {
                   <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mt-1.5 line-clamp-1">
                     {lab.subject_name || 'General'}
                   </p>
-
                   {/* Created / Updated audit line */}
                   <div className="mt-2 space-y-0.5">
                     {lab.created_by_name && (
                       <div className="text-[10px] text-zinc-400 flex items-center gap-1 line-clamp-1">
                         <User className="size-3 shrink-0" /> {lab.created_by_name}
                         {lab.created_at && (
-                          <><span className="text-zinc-300">·</span> {fmtIST(lab.created_at)}</>
+                          <><span className="text-zinc-300">{'\u00b7'}</span> {fmtIST(lab.created_at)}</>
                         )}
                       </div>
                     )}
                     {wasUpdated(lab) && (
                       <div className="text-[10px] text-zinc-400 flex items-center gap-1 line-clamp-1">
                         <PencilLine className="size-3 shrink-0" /> {lab.updated_by_name}
-                        <span className="text-zinc-300">·</span> {fmtIST(lab.updated_at)}
+                        <span className="text-zinc-300">{'\u00b7'}</span> {fmtIST(lab.updated_at)}
                       </div>
                     )}
                   </div>
-
                   {lab.description && (
                     <p className="text-xs text-zinc-500 mt-3 line-clamp-2 leading-relaxed font-medium">{lab.description}</p>
                   )}
@@ -176,29 +196,28 @@ export default function StudentLabs() {
     </div>
   );
 }
-
 // =====================================================================
 //  LAB DETAIL - all resources of one lab
 // =====================================================================
 function LabDetail({ lab, onBack }) {
   const resources = lab.resources || [];
-
   // group: live classes first, then videos, then PDFs, then links
   const ordered = useMemo(() => {
     const rank = { live: 0, video: 1, pdf: 2, link: 3 };
     return [...resources].sort((a, b) =>
       (rank[a.resource_type] ?? 9) - (rank[b.resource_type] ?? 9));
   }, [resources]);
-
   return (
     <div className="space-y-4 sm:space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300 p-4 sm:p-6 lg:p-8 max-w-[1440px] mx-auto w-full">
-      
-      {/* UPDATED BACK BUTTON: Removed box styling, padding, and background */}
-      <button onClick={onBack}
-        className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
-        <ArrowLeft className="size-4" /> Back to labs
-      </button>
 
+      {/* UPDATED BACK BUTTON: Removed box styling, padding, and background */}
+      <div className="flex items-center justify-between gap-4">
+        <button onClick={onBack}
+          className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
+          <ArrowLeft className="size-4" /> Back to labs
+        </button>
+        <LabsHelp />
+      </div>
       {/* Lab header */}
       <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm p-5 sm:p-6">
         <div className="flex items-start gap-4">
@@ -214,13 +233,13 @@ function LabDetail({ lab, onBack }) {
               {lab.created_by_name && (
                 <span className="flex items-center gap-1.5 bg-zinc-100 px-2 py-1 rounded-md text-zinc-600">
                   <User className="size-3.5" /> {lab.created_by_name}
-                  {lab.created_at && <span className="text-zinc-400">· {fmtIST(lab.created_at)}</span>}
+                  {lab.created_at && <span className="text-zinc-400">{'\u00b7'} {fmtIST(lab.created_at)}</span>}
                 </span>
               )}
               {wasUpdated(lab) && (
                 <span className="flex items-center gap-1.5 bg-zinc-100 px-2 py-1 rounded-md text-zinc-600">
                   <PencilLine className="size-3.5" /> {lab.updated_by_name}
-                  <span className="text-zinc-400">· {fmtIST(lab.updated_at)}</span>
+                  <span className="text-zinc-400">{'\u00b7'} {fmtIST(lab.updated_at)}</span>
                 </span>
               )}
             </div>
@@ -232,11 +251,10 @@ function LabDetail({ lab, onBack }) {
           </div>
         )}
       </div>
-
       {/* Resources */}
       <div className="space-y-4">
         <h3 className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider pl-1">Resources</h3>
-        
+
         {ordered.length === 0 ? (
           <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
             <p className="text-zinc-400 font-medium text-sm">This lab has no resources yet.</p>
@@ -246,12 +264,10 @@ function LabDetail({ lab, onBack }) {
             {ordered.map(r => {
               const meta = resMeta(r.resource_type);
               const Icon = meta.icon;
-
               // Check if file is stored in DB or is an external URL
-              const clickUrl = r.has_file 
-                ? `${API_BASE_URL}/admin/labs/resource/${r.id}` 
+              const clickUrl = r.has_file
+                ? `${API_BASE_URL}/admin/labs/resource/${r.id}`
                 : r.url;
-
               return (
                 <div key={r.id}
                   className="bg-white rounded-md ring-1 ring-black/5 shadow-sm p-4 flex flex-col sm:flex-row sm:items-center gap-4 hover:shadow-md transition-shadow group">
@@ -273,9 +289,12 @@ function LabDetail({ lab, onBack }) {
                       <p className="font-semibold text-zinc-900 text-sm truncate">{r.title}</p>
                     </div>
                   </div>
-                  
-                  {/* UNIFIED PRIMARY ACTION BUTTON */}
+
+                  {/* UNIFIED PRIMARY ACTION BUTTON.
+                      File-backed resources open via an authed blob fetch (a plain
+                      <a> would 401); external URLs open directly. */}
                   <a href={clickUrl} target="_blank" rel="noopener noreferrer"
+                    onClick={(e) => openLabResource(r, e)}
                     className="h-9 px-4 rounded-md font-semibold text-xs text-white transition-colors flex items-center justify-center gap-1.5 w-full sm:w-auto shrink-0 shadow-sm bg-primary hover:bg-primary/90">
                     {r.resource_type === 'live' ? 'Join' : r.resource_type === 'video' ? 'Watch' : r.resource_type === 'pdf' ? 'Open PDF' : 'Open Link'}
                     <ExternalLink className="size-3.5" />
@@ -289,7 +308,6 @@ function LabDetail({ lab, onBack }) {
     </div>
   );
 }
-
 function ResourceTag({ type, count }) {
   const meta = resMeta(type);
   const Icon = meta.icon;
@@ -297,5 +315,56 @@ function ResourceTag({ type, count }) {
     <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded ${meta.bg} ${meta.color} ring-1 ring-inset ring-black/5`}>
       <Icon className="size-3" /> {count} {meta.label}{count !== 1 ? 's' : ''}
     </span>
+  );
+}
+
+// =====================================================================
+//  LabsHelp — "How to use" guide (same theme as ReportsHelp).
+// =====================================================================
+const STUDENT_GUIDE = {
+  title: 'Digital Labs',
+  steps: [
+    ['1 \u00b7 Browse your labs', 'Each card is a lab your teacher posted for your class, with its subject and a short description. Click one to open it.'],
+    ['2 \u00b7 Open resources', 'Inside a lab: Watch a video, Open a PDF or link, or Join a live class. The little tags on a card show what each lab contains.'],
+    ['3 \u00b7 Live classes', 'A live class shows its scheduled date and time \u2014 use Join at that time to enter the meeting.'],
+    ['4 \u00b7 Find a lab', 'Use the search box to find a lab by its title, subject or teacher.'],
+  ],
+  note: 'PDFs and videos your teacher uploaded open securely because you\u2019re signed in. This screen is read-only \u2014 teachers create and update the labs.'
+};
+
+function LabsHelp({ className = '' }) {
+  const [open, setOpen] = useState(false);
+  const content = STUDENT_GUIDE;
+
+  return (
+    <>
+      <button onClick={() => setOpen(true)}
+        className={`inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors shrink-0 self-start ${className}`}>
+        <HelpCircle className="size-3.5" /> How to use
+      </button>
+
+      {open && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={() => setOpen(false)}>
+          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg max-h-[85vh] overflow-y-auto shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="bg-primary text-white px-5 py-3 flex items-center justify-between sticky top-0">
+              <span className="text-sm font-bold flex items-center gap-2"><HelpCircle className="size-4" /> {content.title}</span>
+              <button onClick={() => setOpen(false)} className="text-white/80 hover:text-white"><X className="size-5" /></button>
+            </div>
+            <div className="p-5 space-y-3">
+              {content.steps.map(([t, d], i) => (
+                <div key={i} className="rounded-md ring-1 ring-zinc-100 bg-zinc-50/60 p-3">
+                  <p className="text-xs font-semibold text-zinc-800">{t}</p>
+                  <p className="text-[11px] text-zinc-600 leading-relaxed mt-1">{d}</p>
+                </div>
+              ))}
+              <div className="rounded-md bg-blue-50/60 ring-1 ring-blue-100 p-3 flex gap-2">
+                <ShieldCheck className="size-4 text-blue-500 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-blue-800 leading-relaxed">{content.note}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

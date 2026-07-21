@@ -3,11 +3,9 @@ import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import { API_BASE_URL } from '../../apiConfig';
 import { Loader2 } from 'lucide-react';
-
 import SyllabusManagement from './SyllabusManagement';
 import SubjectIndex from './SubjectIndex';
 import Periods from './Periods';
-
 // =====================================================================
 //  Syllabus - module entry point.
 //
@@ -25,25 +23,24 @@ import Periods from './Periods';
 //
 //  A "nav" object { screen, syllabus } is threaded through so the same
 //  class/subject/syllabus carries across all three screens.
+//
+//  NOTE: no academic-year concept in this module — a syllabus carries
+//  across years, so no active-year is loaded or passed down (the backend
+//  no longer stamps or filters by academic_year_id either).
 // =====================================================================
-
 export default function Syllabus() {
   const { user } = useAuth();
   const { can } = usePermissions();
   const canEdit = can('Syllabus', 'edit');
-
-  // shared dropdown data (classes / subjects / teachers / year)
+  // shared dropdown data (classes / subjects / teachers)
   const [classes, setClasses]   = useState([]);
   const [subjects, setSubjects] = useState([]);
   const [subjectClasses, setSC] = useState({});
   const [teachers, setTeachers] = useState([]);
-  const [activeYear, setYear]   = useState(null);
   const [loading, setLoading]   = useState(true);
-
   // nav.screen -> 'management' | 'index' | 'periods'
   // nav.syllabus = the selected syllabus row (for index / periods)
   const [nav, setNav] = useState({ screen: 'management', syllabus: null });
-
   const loadData = useCallback(async () => {
     if (!user?.institutionId) return;
     setLoading(true);
@@ -57,14 +54,10 @@ export default function Syllabus() {
       const staff = (d.users || []).filter(u =>
         (u.role || '').toLowerCase().includes('teacher'));
       setTeachers(staff);
-      const yr = (d.academicYears || []).find(y => y.is_active) || (d.academicYears || [])[0];
-      setYear(yr || null);
     } catch (e) { console.error('Syllabus data error:', e); }
     setLoading(false);
   }, [user]);
-
   useEffect(() => { loadData(); }, [loadData]);
-
   if (loading) {
     return (
       <div className="flex items-center justify-center flex-1 h-full min-h-[calc(100vh-64px)]">
@@ -72,15 +65,12 @@ export default function Syllabus() {
       </div>
     );
   }
-
   const shared = {
-    user, canEdit, classes, subjects, subjectClasses, teachers, activeYear
+    user, canEdit, classes, subjects, subjectClasses, teachers
   };
-
   const goManagement = () => setNav({ screen: 'management', syllabus: null });
   const goIndex   = (syllabus) => setNav({ screen: 'index', syllabus });
   const goPeriods = (syllabus) => setNav({ screen: 'periods', syllabus });
-
   return (
     <div className="flex flex-col flex-1 h-full w-full animate-in fade-in duration-300">
       {nav.screen === 'management' && (

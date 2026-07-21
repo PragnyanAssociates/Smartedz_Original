@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { API_BASE_URL } from '../../apiConfig';
-import { Clock, Loader2, ArrowLeft, Save, Check, BookOpen } from 'lucide-react';
-
+import { Clock, Loader2, ArrowLeft, Save, Check, BookOpen, HelpCircle, X, ShieldCheck } from 'lucide-react';
 // Date + time rendered in IST (Railway stores UTC), so each lesson row can
 // show "updated by" name / date / time.
 const _toDate = (val) => {
@@ -37,8 +36,11 @@ const fmtTimeIST = (val) => {
 //  Rows auto-save on change (debounced via an explicit Save per row).
 //
 //  Top-left: "Back to Subject Index".
+//
+//  NOTE: no academic-year concept here — a syllabus (and its lesson
+//  schedule) carries across years, so no year badge/filter is shown.
 // =====================================================================
-export default function Periods({ syllabus, canEdit, activeYear, onBackToIndex }) {
+export default function Periods({ syllabus, canEdit, onBackToIndex }) {
   const [rows, setRows]       = useState([]);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState(null);
@@ -83,7 +85,7 @@ export default function Periods({ syllabus, canEdit, activeYear, onBackToIndex }
   const totalPeriods = rows.reduce((s, r) => s + (parseInt(r.periods, 10) || 0), 0);
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
-      
+
       {/* Back Button (Top Edge) */}
       <div className="flex items-center">
         <button onClick={onBackToIndex}
@@ -92,24 +94,20 @@ export default function Periods({ syllabus, canEdit, activeYear, onBackToIndex }
         </button>
       </div>
       {/* Header */}
-      <header className="flex flex-col mb-2 sm:mb-0">
-        <div className="flex flex-wrap items-center gap-3">
+      <header className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-2 sm:mb-0">
+        <div className="flex flex-col">
           <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
             <BookOpen className="text-primary size-5" />
             Lesson Periods
           </h1>
-          {activeYear && (
-            <span className="bg-primary/10 text-primary text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded ring-1 ring-inset ring-primary/20">
-              {activeYear.year_name || activeYear.name || ''}
-            </span>
-          )}
+          <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
+            Manage time allocation and schedules for syllabus lessons.
+          </p>
+          <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider mt-1.5">
+            {syllabus.class_group} - {syllabus.subject_name}
+          </p>
         </div>
-        <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
-          Manage time allocation and schedules for syllabus lessons.
-        </p>
-        <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider mt-1.5">
-          {syllabus.class_group} - {syllabus.subject_name}
-        </p>
+        <SyllabusHelp canEdit={canEdit} />
       </header>
       <div className="flex-1">
         {loading ? (
@@ -150,7 +148,7 @@ export default function Periods({ syllabus, canEdit, activeYear, onBackToIndex }
                       )}
                     </td>
                     <td className="px-5 py-3 whitespace-nowrap">
-                      <div className="text-xs font-semibold text-zinc-700">{r.updated_by_name || '—'}</div>
+                      <div className="text-xs font-semibold text-zinc-700">{r.updated_by_name || '\u2014'}</div>
                       {r.updated_at && <div className="text-[13px] font-medium text-zinc-500 mt-0.5">{fmtDateIST(r.updated_at)}</div>}
                       {r.updated_at && <div className="text-[11px] text-zinc-400 mt-0.5">{fmtTimeIST(r.updated_at)}</div>}
                     </td>
@@ -203,5 +201,69 @@ export default function Periods({ syllabus, canEdit, activeYear, onBackToIndex }
         )}
       </div>
     </div>
+  );
+}
+
+// =====================================================================
+//  SyllabusHelp — "How to use" guide (same theme as ReportsHelp).
+//  Shown on the Lesson Periods screen. Editors get the manage guide;
+//  read-only users get the view one.
+// =====================================================================
+const GUIDES = {
+  manage: {
+    title: 'Lesson Periods',
+    steps: [
+      ['1 \u00b7 What this is', 'The teaching plan for this syllabus \u2014 how many class periods each lesson needs and the dates you\u2019ll cover it.'],
+      ['2 \u00b7 Set periods', 'Type the number of periods for each lesson in the Periods column. The footer keeps a running Total Allocated Periods.'],
+      ['3 \u00b7 Set the dates', 'Pick a start and end date for each lesson so the schedule reflects your term plan.'],
+      ['4 \u00b7 Save each row', 'Changes are saved per lesson \u2014 hit Save on that row. It then shows who last updated it, with the date and time.'],
+      ['5 \u00b7 Where lessons come from', 'The lessons listed here are the chapters from the Subject Index. To add or rename one, go back and edit it there.'],
+    ],
+    note: 'A syllabus and its schedule carry across academic years \u2014 there\u2019s no year filter here, so what you set stays until you change it.'
+  },
+  view: {
+    title: 'Lesson Periods',
+    steps: [
+      ['1 \u00b7 What this is', 'The teaching plan for this syllabus\u2019s lessons \u2014 the periods allocated to each and the dates they\u2019re scheduled.'],
+      ['2 \u00b7 Reading it', 'Each lesson shows its period count and its start\u2013end dates; the footer shows the total periods across all lessons.'],
+    ],
+    note: 'This is a read-only view \u2014 the schedule is set by teachers. A syllabus carries across academic years, so there\u2019s no year filter here.'
+  }
+};
+
+function SyllabusHelp({ canEdit = false, className = '' }) {
+  const [open, setOpen] = useState(false);
+  const content = canEdit ? GUIDES.manage : GUIDES.view;
+
+  return (
+    <>
+      <button onClick={() => setOpen(true)}
+        className={`inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors shrink-0 self-start ${className}`}>
+        <HelpCircle className="size-3.5" /> How to use
+      </button>
+
+      {open && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={() => setOpen(false)}>
+          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg max-h-[85vh] overflow-y-auto shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="bg-primary text-white px-5 py-3 flex items-center justify-between sticky top-0">
+              <span className="text-sm font-bold flex items-center gap-2"><HelpCircle className="size-4" /> {content.title}</span>
+              <button onClick={() => setOpen(false)} className="text-white/80 hover:text-white"><X className="size-5" /></button>
+            </div>
+            <div className="p-5 space-y-3">
+              {content.steps.map(([t, d], i) => (
+                <div key={i} className="rounded-md ring-1 ring-zinc-100 bg-zinc-50/60 p-3">
+                  <p className="text-xs font-semibold text-zinc-800">{t}</p>
+                  <p className="text-[11px] text-zinc-600 leading-relaxed mt-1">{d}</p>
+                </div>
+              ))}
+              <div className="rounded-md bg-blue-50/60 ring-1 ring-blue-100 p-3 flex gap-2">
+                <ShieldCheck className="size-4 text-blue-500 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-blue-800 leading-relaxed">{content.note}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

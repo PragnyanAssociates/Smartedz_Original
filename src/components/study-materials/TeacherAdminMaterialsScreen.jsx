@@ -2,12 +2,12 @@ import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { API_BASE_URL, SERVER_URL } from "../../apiConfig";
 import { useAuth } from "../../context/AuthContext";
 import { usePermissions } from "../../Screens/PermissionsContext";
-import { 
-  Folder, Edit, Trash2, Download, ExternalLink, Plus, 
+import {
+  Folder, Edit, Trash2, Download, ExternalLink, Plus,
   Search, X, FileText, Video, MonitorPlay, FileSpreadsheet, Link,
-  Loader2, ChevronDown, BookOpen, Save, Eye, User, Clock
+  Loader2, ChevronDown, BookOpen, Save, Eye, User, Clock,
+  HelpCircle, ShieldCheck
 } from 'lucide-react';
-
 // Render a UTC timestamp (Railway stores UTC) as IST for display.
 const fmtIST = (val) => {
   if (!val) return '';
@@ -24,7 +24,6 @@ const fmtIST = (val) => {
     hour: '2-digit', minute: '2-digit', hour12: true
   });
 };
-
 // Updated aesthetics to support smaller icons and crisp ring borders for the new layout
 const getCardAesthetics = (type) => {
   switch(type) {
@@ -37,7 +36,7 @@ const getCardAesthetics = (type) => {
 };
 export default function TeacherAdminMaterialsScreen() {
   const { user } = useAuth();
-  
+
   const { can, isAllAccess } = usePermissions();
   const canEdit = can('StudyMaterials', 'edit');
   const canDelete = can('StudyMaterials', 'delete');
@@ -50,7 +49,7 @@ export default function TeacherAdminMaterialsScreen() {
   // List filters (client-side, over the already-loaded materials). '' = All.
   const [classFilter, setClassFilter] = useState("");
   const [subjectFilter, setSubjectFilter] = useState("");
-  
+
   const [dbClasses, setDbClasses] = useState([]);
   const [dbSubjects, setDbSubjects] = useState([]);
   const fetchMaterialsAndData = useCallback(async () => {
@@ -66,8 +65,8 @@ export default function TeacherAdminMaterialsScreen() {
       setDbSubjects(dbData.subjects || []);
     } catch (error) {
       console.error(error);
-    } finally { 
-      setIsLoading(false); 
+    } finally {
+      setIsLoading(false);
     }
   }, [user]);
   useEffect(() => { fetchMaterialsAndData(); }, [fetchMaterialsAndData]);
@@ -101,13 +100,16 @@ export default function TeacherAdminMaterialsScreen() {
   const hasActiveFilter = Boolean(query.trim() || classFilter || subjectFilter);
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
-      
-      <header className="flex flex-col mb-2 sm:mb-0">
-        <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
-          <BookOpen className="text-primary size-5" />
-          Study Materials
-        </h1>
-        <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">Manage and share educational resources.</p>
+
+      <header className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-2 sm:mb-0">
+        <div className="flex flex-col">
+          <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
+            <BookOpen className="text-primary size-5" />
+            Study Materials
+          </h1>
+          <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">Manage and share educational resources.</p>
+        </div>
+        <MaterialsHelp canEdit={canEdit || isAdmin} />
       </header>
       <div className="flex flex-col sm:flex-row sm:items-center gap-3">
         <div className="relative w-full sm:w-64 shrink-0">
@@ -134,7 +136,7 @@ export default function TeacherAdminMaterialsScreen() {
             <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
         </div>
-        
+
         {(canEdit || isAdmin) && (
           <button onClick={() => openModal()} className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full sm:w-auto shrink-0 sm:ml-auto">
             <Plus className="size-3.5" /> Add Material
@@ -159,7 +161,7 @@ export default function TeacherAdminMaterialsScreen() {
               const fileUrl = isBase64 ? item.file_path : `${SERVER_URL.replace('/api','')}${item.file_path}`;
               return (
                 <div key={item.id} className="group bg-white rounded-lg ring-1 ring-black/5 shadow-sm flex flex-col hover:ring-primary/30 hover:shadow-md transition-all overflow-hidden relative">
-                  
+
                   {/* Floating Action Buttons */}
                   <div className="absolute top-4 right-4 flex gap-1.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity z-10">
                     {(canEdit || isAdmin) && (
@@ -186,7 +188,6 @@ export default function TeacherAdminMaterialsScreen() {
                         </span>
                       </div>
                     </div>
-
                     {/* Uploaded-by + date/time (IST) */}
                     {(item.uploaded_by_name || item.created_at) && (
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-zinc-400 mb-3">
@@ -202,7 +203,6 @@ export default function TeacherAdminMaterialsScreen() {
                         )}
                       </div>
                     )}
-
                     <div className="flex flex-wrap gap-1.5 mb-3">
                       <span className="text-[10px] font-semibold uppercase tracking-wider bg-zinc-100 text-zinc-600 px-2 py-1 rounded">
                         {item.className} {item.section}
@@ -214,11 +214,11 @@ export default function TeacherAdminMaterialsScreen() {
                       )}
                     </div>
                     {item.description && <p className="text-xs text-zinc-500 line-clamp-2 mb-4 leading-relaxed">{item.description}</p>}
-                    
+
                     <div className="mt-auto pt-4 border-t border-zinc-100 flex gap-2">
                       {item.file_path ? (
                         <>
-                          <button 
+                          <button
                             onClick={() => {
                               if (isBase64) {
                                 const win = window.open('', '_blank');
@@ -236,18 +236,18 @@ export default function TeacherAdminMaterialsScreen() {
                                 }
                               } else {
                                 const isOfficeFile = item.file_path.match(/\.(xlsx|xls|doc|docx|ppt|pptx)$/i);
-                                const viewUrl = isOfficeFile 
-                                  ? `https://docs.google.com/viewer?url=${encodeURIComponent(fileUrl)}&embedded=true` 
+                                const viewUrl = isOfficeFile
+                                  ? `https://docs.google.com/viewer?url=${encodeURIComponent(fileUrl)}&embedded=true`
                                   : fileUrl;
                                 window.open(viewUrl, "_blank");
                               }
-                            }} 
+                            }}
                             className="flex-1 h-9 bg-white hover:bg-zinc-50 text-zinc-700 font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 ring-1 ring-inset ring-zinc-200 shadow-sm transition-colors"
                           >
                             <Eye className="size-3.5" /> View
                           </button>
-                          
-                          <button 
+
+                          <button
                             onClick={(e) => {
                               e.preventDefault();
                               if (isBase64) {
@@ -261,7 +261,7 @@ export default function TeacherAdminMaterialsScreen() {
                                     document.body.appendChild(link);
                                     link.click();
                                     document.body.removeChild(link);
-                                    URL.revokeObjectURL(blobUrl); 
+                                    URL.revokeObjectURL(blobUrl);
                                   })
                                   .catch(() => alert("Failed to prepare file for download."));
                               } else {
@@ -272,14 +272,14 @@ export default function TeacherAdminMaterialsScreen() {
                                 link.click();
                                 document.body.removeChild(link);
                               }
-                            }} 
+                            }}
                             className="flex-1 h-9 bg-primary hover:bg-primary/90 text-white font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 shadow-sm transition-colors"
                           >
                             <Download className="size-3.5" /> Download
                           </button>
                         </>
                       ) : item.external_link ? (
-                        <button onClick={() => window.open(item.external_link, "_blank")} 
+                        <button onClick={() => window.open(item.external_link, "_blank")}
                           className="w-full h-9 bg-white hover:bg-zinc-50 text-zinc-700 font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 ring-1 ring-inset ring-zinc-200 shadow-sm transition-colors">
                           <ExternalLink className="size-3.5" /> Open Link
                         </button>
@@ -293,12 +293,12 @@ export default function TeacherAdminMaterialsScreen() {
         )}
       </div>
       {isModalVisible && (
-        <MaterialFormModal 
-          material={editingMaterial} 
-          onClose={() => setIsModalVisible(false)} 
-          onSave={fetchMaterialsAndData} 
-          dbClasses={dbClasses} 
-          dbSubjects={dbSubjects} 
+        <MaterialFormModal
+          material={editingMaterial}
+          onClose={() => setIsModalVisible(false)}
+          onSave={fetchMaterialsAndData}
+          dbClasses={dbClasses}
+          dbSubjects={dbSubjects}
         />
       )}
     </div>
@@ -318,7 +318,7 @@ const MaterialFormModal = ({ material, onClose, onSave, dbClasses, dbSubjects })
     material_type: isEditMode ? material.material_type : "Notes",
     external_link: isEditMode ? material.external_link || "" : ""
   });
-  
+
   const [file, setFile] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
   const handleSave = async (e) => {
@@ -338,19 +338,19 @@ const MaterialFormModal = ({ material, onClose, onSave, dbClasses, dbSubjects })
     const sendRequest = async (finalPayload) => {
         try {
             const url = isEditMode ? `${API_BASE_URL}/admin/study-materials/${material.id}` : `${API_BASE_URL}/admin/study-materials`;
-            
-            const res = await fetch(url, { 
-                method: isEditMode ? 'PUT' : 'POST', 
+
+            const res = await fetch(url, {
+                method: isEditMode ? 'PUT' : 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify(finalPayload) 
+                body: JSON.stringify(finalPayload)
             });
             if (!res.ok) throw new Error('Save failed');
-            onSave(); 
+            onSave();
             onClose();
-        } catch (error) { 
-            alert("Save failed."); 
+        } catch (error) {
+            alert("Save failed.");
         } finally {
             setIsSaving(false);
         }
@@ -369,7 +369,7 @@ const MaterialFormModal = ({ material, onClose, onSave, dbClasses, dbSubjects })
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
       <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-2xl shadow-xl relative max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
-        
+
         <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 rounded-t-lg shrink-0">
           <h2 className="text-lg font-semibold text-zinc-900">{isEditMode ? "Edit Material" : "Add Material"}</h2>
           <button onClick={onClose} className="text-zinc-400 hover:text-zinc-700 transition-colors p-1.5 hover:bg-zinc-100 rounded-md">
@@ -382,7 +382,7 @@ const MaterialFormModal = ({ material, onClose, onSave, dbClasses, dbSubjects })
               <div className="md:col-span-2">
                 <Field label="Title" value={formData.title} onChange={v => setFormData({...formData, title: v})} required />
               </div>
-              
+
               <div className="space-y-1.5">
                 <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">Class <span className="text-red-500">*</span></label>
                 <div className="relative">
@@ -407,7 +407,7 @@ const MaterialFormModal = ({ material, onClose, onSave, dbClasses, dbSubjects })
                   <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
               </div>
-              
+
               <div className="space-y-1.5">
                 <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">Type <span className="text-red-500">*</span></label>
                 <div className="relative">
@@ -420,13 +420,13 @@ const MaterialFormModal = ({ material, onClose, onSave, dbClasses, dbSubjects })
               <div className="space-y-1.5">
                 <Field label="External Link" type="url" value={formData.external_link} onChange={v => setFormData({...formData, external_link: v})} placeholder="https://..." />
               </div>
-              
+
               <div className="md:col-span-2 space-y-1.5">
                 <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">File Upload (Max 10MB)</label>
-                <input type="file" onChange={e => setFile(e.target.files[0])} 
+                <input type="file" onChange={e => setFile(e.target.files[0])}
                   className="block w-full text-sm text-zinc-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-zinc-100 file:text-zinc-700 hover:file:bg-zinc-200 cursor-pointer border border-zinc-200 rounded-md bg-white shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 h-9 leading-9" />
               </div>
-              
+
               <div className="md:col-span-2">
                 <Field type="textarea" label="Description" value={formData.description} onChange={v => setFormData({...formData, description: v})} placeholder="Optional details..." />
               </div>
@@ -456,12 +456,76 @@ function Field({ label, value, onChange, type = 'text', required, placeholder })
         {label} {required && <span className="text-red-500">*</span>}
       </label>
       {type === 'textarea' ? (
-        <textarea value={value} onChange={e => onChange(e.target.value)} rows={3} 
+        <textarea value={value} onChange={e => onChange(e.target.value)} rows={3}
           placeholder={placeholder} className={`${base} h-auto py-2.5 resize-none`} required={required} />
       ) : (
-        <input type={type} value={value} onChange={e => onChange(e.target.value)} 
+        <input type={type} value={value} onChange={e => onChange(e.target.value)}
           placeholder={placeholder} className={base} required={required} />
       )}
     </div>
+  );
+}
+
+// =====================================================================
+//  MaterialsHelp — "How to use" guide (same theme as ReportsHelp).
+//  Editors/admins get the manage guide; read-only viewers get the view one.
+// =====================================================================
+const GUIDES = {
+  manage: {
+    title: 'Study Materials',
+    steps: [
+      ['1 \u00b7 What this is', 'A shared library of resources for your classes \u2014 notes, presentations, video lectures, worksheets and links, each tagged by class, subject and type.'],
+      ['2 \u00b7 Add material', 'Add Material opens the form: give it a title, pick a class (required) and optional subject, choose a type, then either upload a file (up to 10 MB) or paste an external link.'],
+      ['3 \u00b7 View & download', 'On a card, View opens the resource (Office files preview in Google\u2019s viewer) and Download saves it. A link-only material shows Open Link instead.'],
+      ['4 \u00b7 Find material', 'Search by title, subject, class or uploader, and narrow with the Class and Subject filters.'],
+      ['5 \u00b7 Edit & delete', 'Hover a card for the edit and delete actions. Each card shows who uploaded it and when.'],
+    ],
+    note: 'Uploads are capped at 10 MB per file. Adding, editing and deleting depend on your Study Materials permissions.'
+  },
+  view: {
+    title: 'Study Materials',
+    steps: [
+      ['1 \u00b7 Browse resources', 'Each card is a resource for a class \u2014 notes, presentations, videos, worksheets or links \u2014 tagged by class, subject and type.'],
+      ['2 \u00b7 View & download', 'View opens the resource and Download saves it. A link-only material shows Open Link instead.'],
+      ['3 \u00b7 Find material', 'Search by title, subject or class, and use the Class and Subject filters to narrow the list.'],
+    ],
+    note: 'This is a read-only view \u2014 materials are added and managed by teachers and staff.'
+  }
+};
+
+function MaterialsHelp({ canEdit = false, className = '' }) {
+  const [open, setOpen] = useState(false);
+  const content = canEdit ? GUIDES.manage : GUIDES.view;
+
+  return (
+    <>
+      <button onClick={() => setOpen(true)}
+        className={`inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors shrink-0 self-start ${className}`}>
+        <HelpCircle className="size-3.5" /> How to use
+      </button>
+
+      {open && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={() => setOpen(false)}>
+          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg max-h-[85vh] overflow-y-auto shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="bg-primary text-white px-5 py-3 flex items-center justify-between sticky top-0">
+              <span className="text-sm font-bold flex items-center gap-2"><HelpCircle className="size-4" /> {content.title}</span>
+              <button onClick={() => setOpen(false)} className="text-white/80 hover:text-white"><X className="size-5" /></button>
+            </div>
+            <div className="p-5 space-y-3">
+              {content.steps.map(([t, d], i) => (
+                <div key={i} className="rounded-md ring-1 ring-zinc-100 bg-zinc-50/60 p-3">
+                  <p className="text-xs font-semibold text-zinc-800">{t}</p>
+                  <p className="text-[11px] text-zinc-600 leading-relaxed mt-1">{d}</p>
+                </div>
+              ))}
+              <div className="rounded-md bg-blue-50/60 ring-1 ring-blue-100 p-3 flex gap-2">
+                <ShieldCheck className="size-4 text-blue-500 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-blue-800 leading-relaxed">{content.note}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
