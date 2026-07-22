@@ -165,6 +165,7 @@ const DEFAULT_MODULES = [
     'Syllabus',
     'GroupChat',
     'Alumni',
+    'InventoryAssets',
     'LessonPlan'
     
 ];
@@ -13188,6 +13189,528 @@ app.post('/api/admin/module-order', async (req, res) => {
         await conn.rollback();
         res.status(500).json({ error: err.message });
     } finally { conn.release(); }
+});
+
+
+
+// =====================================================================
+//  BACKEND — Section 27: INVENTORY & ASSETS  (v1 — TENANT-SCOPED)
+//
+//  The institution's asset register. Every row is one line item
+//  (e.g. "Student Desk x 40") filed under a Head of Account.
+//
+//  NO ACADEMIC-YEAR LOGIC. An asset belongs to the school and carries
+//  across years (same reasoning as Syllabus). Year filtering is done on
+//  YEAR(purchase_date), which is a plain calendar year.
+//
+//  Tables (run migration_assets.js once, or the SQL block inside it):
+//    asset_heads  — per-institution heads of account, auto-seeded with
+//                   the 21 standard heads on first read.
+//    assets       — the register itself. `photo` is a base64 data URL in
+//                   a MEDIUMTEXT column.
+//
+//  PERFORMANCE / RAILWAY NOTES
+//   • No list query ever SELECTs `photo` — it returns `(photo IS NOT
+//     NULL) AS has_photo` instead, and the image is served by its own
+//     endpoint. This keeps row size small and avoids the sort-memory
+//     error (Error 2013) we hit on other modules.
+//   • For the same reason list results are sorted in Node, not SQL.
+//
+//  AUTH GATE
+//   • assets/photo/:id sits under /api, so the frontend FETCHES it
+//     (token via the interceptor) and renders a blob URL — never a raw
+//     <img src>. Same for the Excel export.
+//
+//  Requires: npm install exceljs --save   (already used by Alumni /
+//  Pre-Admissions exports — no new dependency if those are in place).
+//
+//  Reuses: db, sameTenant(), nowSQL()
+// =====================================================================
+const ExcelJS = require('exceljs');
+
+// The 21 standard heads every institution starts with.
+const DEFAULT_ASSET_HEADS = [
+    'Office Assets',
+    'Classroom Assets',
+    'Computer & IT Assets',
+    'Laboratory Assets',
+    'Library Assets',
+    'Sports Assets',
+    'Kitchen Assets',
+    'Dining Hall Assets',
+    'Electrical Assets',
+    'Security Assets',
+    'Transportation Assets',
+    'Medical Assets',
+    'Cleaning & Housekeeping Assets',
+    'Maintenance Tools',
+    'Garden & Outdoor Assets',
+    'Hostel Assets',
+    'Examination Assets',
+    'Event & Auditorium Assets',
+    'Stationery & Consumables',
+    'Infrastructure Assets',
+    'Miscellaneous Assets'
+];
+
+const ASSET_STATUSES = ['In Use', 'In Store', 'Under Repair', 'Damaged', 'Disposed'];
+
+// ---- tenant helpers -------------------------------------------------
+async function _assetInst(id) {
+    const [r] = await db.execute('SELECT institutionId FROM assets WHERE id = ?', [id]);
+    return r.length ? r[0].institutionId : null;
+}
+async function _headInst(id) {
+    const [r] = await db.execute('SELECT institutionId FROM asset_heads WHERE id = ?', [id]);
+    return r.length ? r[0].institutionId : null;
+}
+
+// Seed the standard heads for an institution that has none yet, so the
+// dropdown is never empty on a fresh school.
+async function _ensureHeads(institutionId) {
+    const [[{ c }]] = await db.execute(
+        'SELECT COUNT(*) AS c FROM asset_heads WHERE institutionId = ?', [institutionId]);
+    if (c > 0) return;
+    for (const name of DEFAULT_ASSET_HEADS) {
+        try {
+            await db.execute(
+                'INSERT IGNORE INTO asset_heads (institutionId, name, is_default) VALUES (?, ?, 1)',
+                [institutionId, name]);
+        } catch (e) { /* ignore duplicates from a concurrent first hit */ }
+    }
+}
+
+// Build the shared WHERE for list / summary / export so all three agree.
+// Returns { where, params }. Never interpolates user input.
+function _assetFilters(institutionId, q) {
+    const where = ['a.institutionId = ?'];
+    const params = [institutionId];
+    if (q.headId) { where.push('a.head_id = ?'); params.push(parseInt(q.headId, 10) || 0); }
+    if (q.status && ASSET_STATUSES.includes(q.status)) { where.push('a.status = ?'); params.push(q.status); }
+    if (q.room) { where.push('a.room_no = ?'); params.push(String(q.room)); }
+    if (q.year && q.year !== 'all') { where.push('YEAR(a.purchase_date) = ?'); params.push(parseInt(q.year, 10) || 0); }
+    if (q.q && String(q.q).trim()) {
+        const term = `%${String(q.q).trim()}%`;
+        where.push('(a.item_name LIKE ? OR a.serial_no LIKE ? OR a.vendor LIKE ? OR a.invoice_no LIKE ? OR a.room_no LIKE ?)');
+        params.push(term, term, term, term, term);
+    }
+    return { where: where.join(' AND '), params };
+}
+
+// ---------------------------------------------------------------------
+//  HEADS OF ACCOUNT
+//  Deliberately on their own /asset-heads prefix so nothing can collide
+//  with /assets/:id on DELETE.
+// ---------------------------------------------------------------------
+
+// --- 27.1 List heads (auto-seeds the standard set) -------------------
+app.get('/api/admin/asset-heads/:instId', async (req, res) => {
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    try {
+        await _ensureHeads(instId);
+        const [rows] = await db.execute(
+            `SELECT h.id, h.name, h.is_default,
+                    (SELECT COUNT(*) FROM assets a WHERE a.head_id = h.id) AS asset_count
+               FROM asset_heads h
+              WHERE h.institutionId = ?`,
+            [instId]
+        );
+        rows.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 27.2 Add a custom head -----------------------------------------
+app.post('/api/admin/asset-heads', async (req, res) => {
+    const institutionId = req.auth.institutionId;
+    const name = (req.body.name || '').trim();
+    if (!name) return res.status(400).json({ error: 'A head name is required.' });
+    try {
+        const [result] = await db.execute(
+            'INSERT INTO asset_heads (institutionId, name, is_default) VALUES (?, ?, 0)',
+            [institutionId, name]);
+        res.json({ success: true, id: result.insertId });
+    } catch (err) {
+        if (err.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({ error: 'That head already exists.' });
+        }
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// --- 27.3 Delete a head (blocked while assets still use it) ---------
+app.delete('/api/admin/asset-heads/:id', async (req, res) => {
+    try {
+        const inst = await _headInst(req.params.id);
+        if (inst === null) return res.json({ success: true });
+        if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This head belongs to another institution.' });
+        const [[{ c }]] = await db.execute(
+            'SELECT COUNT(*) AS c FROM assets WHERE head_id = ?', [req.params.id]);
+        if (c > 0) {
+            return res.status(409).json({ error: `${c} asset(s) are still filed under this head. Move or delete them first.` });
+        }
+        await db.execute('DELETE FROM asset_heads WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ---------------------------------------------------------------------
+//  ASSETS
+// ---------------------------------------------------------------------
+
+// --- 27.4 The register (filtered). Never selects `photo`. ------------
+app.get('/api/admin/assets/list/:instId', async (req, res) => {
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    try {
+        const { where, params } = _assetFilters(instId, req.query);
+        const [rows] = await db.execute(
+            `SELECT a.id, a.institutionId, a.head_id, a.item_name, a.quantity, a.unit,
+                    a.room_no, a.purchase_date, a.unit_cost, a.vendor, a.invoice_no,
+                    a.serial_no, a.status, a.warranty_expiry, a.details,
+                    a.created_at, a.updated_at, a.created_by, a.updated_by,
+                    (a.photo IS NOT NULL) AS has_photo,
+                    h.name AS head_name,
+                    cu.name AS created_by_name,
+                    uu.name AS updated_by_name
+               FROM assets a
+               LEFT JOIN asset_heads h ON h.id = a.head_id
+               LEFT JOIN users cu ON cu.id = a.created_by
+               LEFT JOIN users uu ON uu.id = a.updated_by
+              WHERE ${where}`,
+            params
+        );
+        // Sorted in Node (not SQL) — same defensive pattern as the other
+        // modules, keeps Railway from ever sorting wide rows on disk.
+        rows.sort((x, y) => {
+            const h = String(x.head_name || '').localeCompare(String(y.head_name || ''));
+            if (h !== 0) return h;
+            return String(x.item_name || '').localeCompare(String(y.item_name || ''));
+        });
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 27.5 Filter options (purchase years + rooms in use) ------------
+app.get('/api/admin/assets/filters/:instId', async (req, res) => {
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    try {
+        const [yRows] = await db.execute(
+            `SELECT DISTINCT YEAR(purchase_date) AS y FROM assets
+              WHERE institutionId = ? AND purchase_date IS NOT NULL`, [instId]);
+        const [rRows] = await db.execute(
+            `SELECT DISTINCT room_no FROM assets
+              WHERE institutionId = ? AND room_no IS NOT NULL AND room_no <> ''`, [instId]);
+        const years = yRows.map(r => Number(r.y)).filter(Boolean).sort((a, b) => b - a);
+        const rooms = rRows.map(r => r.room_no).filter(Boolean)
+            .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+        res.json({ years, rooms });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 27.6 Summary for the stat strip (honours the same filters) -----
+app.get('/api/admin/assets/summary/:instId', async (req, res) => {
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    try {
+        const { where, params } = _assetFilters(instId, req.query);
+        const [[totals]] = await db.execute(
+            `SELECT COUNT(*) AS items,
+                    COALESCE(SUM(a.quantity), 0) AS qty,
+                    COALESCE(SUM(a.quantity * COALESCE(a.unit_cost, 0)), 0) AS val,
+                    COALESCE(SUM(CASE WHEN a.status IN ('Under Repair','Damaged') THEN 1 ELSE 0 END), 0) AS attention
+               FROM assets a WHERE ${where}`,
+            params
+        );
+        const [byHead] = await db.execute(
+            `SELECT COALESCE(h.name, 'Unassigned') AS head_name,
+                    COUNT(*) AS items,
+                    COALESCE(SUM(a.quantity), 0) AS qty,
+                    COALESCE(SUM(a.quantity * COALESCE(a.unit_cost, 0)), 0) AS val
+               FROM assets a
+               LEFT JOIN asset_heads h ON h.id = a.head_id
+              WHERE ${where}
+              GROUP BY COALESCE(h.name, 'Unassigned')`,
+            params
+        );
+        byHead.sort((a, b) => Number(b.val) - Number(a.val));
+        res.json({
+            items: Number(totals.items) || 0,
+            qty: Number(totals.qty) || 0,
+            val: Number(totals.val) || 0,
+            attention: Number(totals.attention) || 0,
+            byHead
+        });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 27.7 One asset (no photo blob) ---------------------------------
+app.get('/api/admin/assets/item/:id', async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            `SELECT a.id, a.institutionId, a.head_id, a.item_name, a.quantity, a.unit,
+                    a.room_no, a.purchase_date, a.unit_cost, a.vendor, a.invoice_no,
+                    a.serial_no, a.status, a.warranty_expiry, a.details,
+                    a.created_at, a.updated_at,
+                    (a.photo IS NOT NULL) AS has_photo,
+                    h.name AS head_name,
+                    cu.name AS created_by_name,
+                    uu.name AS updated_by_name
+               FROM assets a
+               LEFT JOIN asset_heads h ON h.id = a.head_id
+               LEFT JOIN users cu ON cu.id = a.created_by
+               LEFT JOIN users uu ON uu.id = a.updated_by
+              WHERE a.id = ?`, [req.params.id]);
+        if (!rows.length) return res.status(404).json({ error: 'Asset not found.' });
+        if (!sameTenant(req, rows[0].institutionId)) {
+            return res.status(403).json({ error: 'This asset belongs to another institution.' });
+        }
+        res.json(rows[0]);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 27.8 Asset photo as real image bytes (auth-gated) --------------
+app.get('/api/admin/assets/photo/:id', async (req, res) => {
+    try {
+        const inst = await _assetInst(req.params.id);
+        if (inst === null) return res.status(404).send('No image');
+        if (!sameTenant(req, inst)) return res.status(403).send('Forbidden');
+        const [rows] = await db.execute('SELECT photo FROM assets WHERE id = ?', [req.params.id]);
+        if (!rows.length || !rows[0].photo) return res.status(404).send('No image');
+        const raw = String(rows[0].photo);
+        const match = raw.match(/^data:([^;]+);base64,/);
+        const mime = match ? match[1] : 'image/jpeg';
+        const bytes = Buffer.from(raw.replace(/^data:[^;]+;base64,/, ''), 'base64');
+        res.setHeader('Content-Type', mime);
+        res.setHeader('Cache-Control', 'private, max-age=3600');
+        res.send(bytes);
+    } catch (err) { res.status(500).send(err.message); }
+});
+
+// --- 27.9 Create an asset -------------------------------------------
+app.post('/api/admin/assets', async (req, res) => {
+    const institutionId = req.auth.institutionId;
+    const actor_id = req.auth.userId;
+    const b = req.body || {};
+    if (!b.item_name || !String(b.item_name).trim()) {
+        return res.status(400).json({ error: 'Item name is required.' });
+    }
+    if (!b.head_id) return res.status(400).json({ error: 'Head of Account is required.' });
+    try {
+        // The head must belong to the caller's institution.
+        const headInst = await _headInst(b.head_id);
+        if (headInst === null || !sameTenant(req, headInst)) {
+            return res.status(403).json({ error: 'That head of account belongs to another institution.' });
+        }
+        const status = ASSET_STATUSES.includes(b.status) ? b.status : 'In Use';
+        const [result] = await db.execute(
+            `INSERT INTO assets
+               (institutionId, head_id, item_name, quantity, unit, room_no, purchase_date,
+                unit_cost, vendor, invoice_no, serial_no, status, warranty_expiry, details,
+                photo, created_by, updated_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                institutionId,
+                parseInt(b.head_id, 10),
+                String(b.item_name).trim(),
+                Math.max(1, parseInt(b.quantity, 10) || 1),
+                b.unit || 'Nos',
+                b.room_no || null,
+                b.purchase_date || null,
+                (b.unit_cost === null || b.unit_cost === undefined || b.unit_cost === '') ? null : Number(b.unit_cost),
+                b.vendor || null,
+                b.invoice_no || null,
+                b.serial_no || null,
+                status,
+                b.warranty_expiry || null,
+                b.details || null,
+                b.photo || null,
+                actor_id,
+                actor_id
+            ]
+        );
+        res.json({ success: true, id: result.insertId });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 27.10 Update an asset ------------------------------------------
+//  `photo` is only touched when the key is present in the body, so an
+//  edit that doesn't change the picture leaves the stored one alone.
+app.put('/api/admin/assets/:id', async (req, res) => {
+    const actor_id = req.auth.userId;
+    const b = req.body || {};
+    try {
+        const inst = await _assetInst(req.params.id);
+        if (inst === null) return res.status(404).json({ error: 'Asset not found.' });
+        if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This asset belongs to another institution.' });
+        if (b.head_id) {
+            const headInst = await _headInst(b.head_id);
+            if (headInst === null || !sameTenant(req, headInst)) {
+                return res.status(403).json({ error: 'That head of account belongs to another institution.' });
+            }
+        }
+        const status = ASSET_STATUSES.includes(b.status) ? b.status : 'In Use';
+        await db.execute(
+            `UPDATE assets SET
+                head_id = ?, item_name = ?, quantity = ?, unit = ?, room_no = ?,
+                purchase_date = ?, unit_cost = ?, vendor = ?, invoice_no = ?, serial_no = ?,
+                status = ?, warranty_expiry = ?, details = ?, updated_at = ?, updated_by = ?
+              WHERE id = ?`,
+            [
+                b.head_id ? parseInt(b.head_id, 10) : null,
+                String(b.item_name || '').trim(),
+                Math.max(1, parseInt(b.quantity, 10) || 1),
+                b.unit || 'Nos',
+                b.room_no || null,
+                b.purchase_date || null,
+                (b.unit_cost === null || b.unit_cost === undefined || b.unit_cost === '') ? null : Number(b.unit_cost),
+                b.vendor || null,
+                b.invoice_no || null,
+                b.serial_no || null,
+                status,
+                b.warranty_expiry || null,
+                b.details || null,
+                nowSQL(),
+                actor_id,
+                req.params.id
+            ]
+        );
+        if (Object.prototype.hasOwnProperty.call(b, 'photo')) {
+            await db.execute('UPDATE assets SET photo = ? WHERE id = ?', [b.photo || null, req.params.id]);
+        }
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 27.11 Delete an asset ------------------------------------------
+app.delete('/api/admin/assets/:id', async (req, res) => {
+    try {
+        const inst = await _assetInst(req.params.id);
+        if (inst === null) return res.json({ success: true });
+        if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This asset belongs to another institution.' });
+        await db.execute('DELETE FROM assets WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 27.12 Excel export (honours the same filters as the list) ------
+app.get('/api/admin/assets/export/:instId', async (req, res) => {
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    try {
+        const { where, params } = _assetFilters(instId, req.query);
+        const [rows] = await db.execute(
+            `SELECT a.item_name, a.quantity, a.unit, a.room_no, a.purchase_date,
+                    a.unit_cost, a.vendor, a.invoice_no, a.serial_no, a.status,
+                    a.warranty_expiry, a.details, a.created_at,
+                    h.name AS head_name,
+                    cu.name AS created_by_name
+               FROM assets a
+               LEFT JOIN asset_heads h ON h.id = a.head_id
+               LEFT JOIN users cu ON cu.id = a.created_by
+              WHERE ${where}`,
+            params
+        );
+        rows.sort((x, y) => {
+            const h = String(x.head_name || '').localeCompare(String(y.head_name || ''));
+            if (h !== 0) return h;
+            return String(x.item_name || '').localeCompare(String(y.item_name || ''));
+        });
+
+        const wb = new ExcelJS.Workbook();
+        wb.creator = 'SmartEdz';
+        const ws = wb.addWorksheet('Assets');
+
+        const columns = [
+            { header: 'S.No', key: 'sno', width: 7 },
+            { header: 'Head of Account', key: 'head_name', width: 26 },
+            { header: 'Item Name', key: 'item_name', width: 30 },
+            { header: 'Quantity', key: 'quantity', width: 10 },
+            { header: 'Unit', key: 'unit', width: 9 },
+            { header: 'Room / Location', key: 'room_no', width: 18 },
+            { header: 'Date of Purchase', key: 'purchase_date', width: 16 },
+            { header: 'Cost per Unit', key: 'unit_cost', width: 14 },
+            { header: 'Total Value', key: 'total_value', width: 14 },
+            { header: 'Status', key: 'status', width: 14 },
+            { header: 'Vendor', key: 'vendor', width: 22 },
+            { header: 'Bill / Invoice No', key: 'invoice_no', width: 18 },
+            { header: 'Serial / Model No', key: 'serial_no', width: 20 },
+            { header: 'Warranty Expires', key: 'warranty_expiry', width: 16 },
+            { header: 'Details', key: 'details', width: 34 },
+            { header: 'Added By', key: 'created_by_name', width: 20 }
+        ];
+        ws.columns = columns;
+
+        // Brand header row (primary #3284c7)
+        const header = ws.getRow(1);
+        header.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+        header.height = 22;
+        header.eachCell((cell) => {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF3284C7' } };
+            cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+            cell.border = { bottom: { style: 'thin', color: { argb: 'FFDDDDDD' } } };
+        });
+
+        const fmtD = (v) => {
+            if (!v) return '';
+            const s = String(v);
+            const part = s.includes('T') ? s.split('T')[0] : s.split(' ')[0];
+            const [y, m, d] = part.split('-');
+            return (y && m && d) ? `${d}/${m}/${y}` : '';
+        };
+
+        let totalQty = 0;
+        let totalVal = 0;
+        rows.forEach((r, i) => {
+            const qty = parseInt(r.quantity, 10) || 0;
+            const cost = (r.unit_cost === null || r.unit_cost === undefined) ? null : Number(r.unit_cost);
+            const value = cost === null ? null : qty * cost;
+            totalQty += qty;
+            totalVal += value || 0;
+            const row = ws.addRow({
+                sno: i + 1,
+                head_name: r.head_name || 'Unassigned',
+                item_name: r.item_name || '',
+                quantity: qty,
+                unit: r.unit || '',
+                room_no: r.room_no || '',
+                purchase_date: fmtD(r.purchase_date),
+                unit_cost: cost,
+                total_value: value,
+                status: r.status || '',
+                vendor: r.vendor || '',
+                invoice_no: r.invoice_no || '',
+                serial_no: r.serial_no || '',
+                warranty_expiry: fmtD(r.warranty_expiry),
+                details: r.details || '',
+                created_by_name: r.created_by_name || ''
+            });
+            row.getCell('unit_cost').numFmt = '#,##0.00';
+            row.getCell('total_value').numFmt = '#,##0.00';
+            row.alignment = { vertical: 'top', wrapText: false };
+        });
+
+        // Totals row, accent-tinted (#f29132)
+        const totalRow = ws.addRow({
+            head_name: 'TOTAL',
+            quantity: totalQty,
+            total_value: totalVal
+        });
+        totalRow.font = { bold: true };
+        totalRow.eachCell((cell) => {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDEBDC' } };
+            cell.border = { top: { style: 'thin', color: { argb: 'FFF29132' } } };
+        });
+        totalRow.getCell('total_value').numFmt = '#,##0.00';
+
+        ws.views = [{ state: 'frozen', ySplit: 1 }];
+        ws.autoFilter = { from: 'A1', to: { row: 1, column: columns.length } };
+
+        const buffer = await wb.xlsx.writeBuffer();
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', 'attachment; filename="Assets.xlsx"');
+        res.send(Buffer.from(buffer));
+    } catch (err) {
+        console.error('Asset export failed:', err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 

@@ -213,6 +213,14 @@ export const MODULES = [
     navigateTo: '/WhatsAppLayout'
   },
   {
+    id: 'InventoryAssets',
+    module_name: 'InventoryAssets', // Must match backend exactly
+    label: 'Inventory & Assets',
+    title: 'Inventory & Assets',
+    imageSource: 'https://cdn-icons-png.flaticon.com/128/10112/10112441.png',
+    navigateTo: '/InventoryAssets'
+  },
+  {
     id: 'Alumni',
     module_name: 'Alumni',
     label: 'Alumni',

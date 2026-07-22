@@ -27,6 +27,7 @@ import LessonPlan from '../components/LessonPlan/LessonPlan';
 import NotificationsScreen from './NotificationsScreen';
 import Profile from './Profile';
 import OnlineClasses from '../components/OnlineClasses/OnlineClasses';
+import InventoryAssets from '../components/Assets/InventoryAssets';
 
 import { PermissionsProvider, usePermissions } from './PermissionsContext';
 import { MODULES } from './Modules';
@@ -109,6 +110,7 @@ function DashboardShell() {
       case 'GroupChat':         return <WhatsAppLayout/>;
       case 'Alumni':            return <Alumni/>;
       case 'LessonPlan':        return <LessonPlan/>;
+      case 'InventoryAssets':   return <InventoryAssets/>;
       case 'notifications':     return <NotificationsScreen onNavigate={setActiveTab} />;
     
       default:
