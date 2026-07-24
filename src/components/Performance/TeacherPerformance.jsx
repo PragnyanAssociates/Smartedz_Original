@@ -10,7 +10,7 @@ import { PerfBar, BarRow, ChartModal } from './PerfBar';
 
 // =====================================================================
 //  TeacherPerformance - ranks teachers by their students' results.
-//   - Class / Subject / Exam-type filters + High→Low / Low→High sort.
+//   - Class / Subject / Exam-type filters + High->Low / Low->High sort.
 //   - "Table" button: detailed per class+subject breakdown (image 8).
 //   - "Analysis" button: exam-wise + class-filter bar chart (image 9).
 //
@@ -152,7 +152,7 @@ export default function TeacherPerformance() {
       </div>
 
       {/* Filter bar */}
-      <div className="flex flex-wrap items-end gap-3 sm:gap-4 bg-white p-4 rounded-lg ring-1 ring-black/5 shadow-sm">
+      <div className="flex flex-wrap items-end gap-3 sm:gap-4">
         <Selector label="Class" value={classId} onChange={setClassId}
           options={[{ value: 'all', label: 'All Classes' }, ...classOptions]} />
         <Selector label="Subject" value={subjectId} onChange={setSubjectId}
@@ -336,7 +336,7 @@ export default function TeacherPerformance() {
 
 
 // =====================================================================
-//  Table modal — image 8 layout: S.No, teacher (avatar + classes count),
+//  Table modal image 8 layout: S.No, teacher (avatar + classes count),
 //  Class/Subject list with per-row %, Performance.
 // =====================================================================
 function TeacherTableModal({ rows, examLabel, onClose }) {
@@ -345,8 +345,8 @@ function TeacherTableModal({ rows, examLabel, onClose }) {
       <div className="bg-white w-full max-w-5xl rounded-3xl shadow-2xl flex flex-col max-h-[92vh] overflow-hidden">
         <div className="flex justify-between items-center p-5 border-b border-slate-100 bg-slate-50">
           <div>
-            <h3 className="text-lg font-black text-slate-800">Teacher Performance — Table</h3>
-            <p className="text-xs text-slate-500 font-medium">{examLabel} · class &amp; subject breakdown</p>
+            <h3 className="text-lg font-black text-slate-800">Teacher Performance - Table</h3>
+            <p className="text-xs text-slate-500 font-medium">{examLabel} - class &amp; subject breakdown</p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-700"><X size={22} /></button>
         </div>
@@ -408,7 +408,7 @@ function TeacherTableModal({ rows, examLabel, onClose }) {
 
 
 // =====================================================================
-//  Analysis modal — image 9: EXAM WISE + CLASS FILTER + sort, one bar
+//  Analysis modal image 9: EXAM WISE + CLASS FILTER + sort, one bar
 //  per teacher for the chosen exam.
 // =====================================================================
 function TeacherAnalysisModal({ teachers, examTypes, classOptions, initialExam, initialClass, onClose }) {
@@ -464,8 +464,8 @@ function TeacherAnalysisModal({ teachers, examTypes, classOptions, initialExam, 
 
 function SortControl({ mode, onChange }) {
   const opts = [
-    { id: 'high', label: 'High → Low' },
-    { id: 'low',  label: 'Low → High' }
+    { id: 'high', label: 'High -> Low' },
+    { id: 'low',  label: 'Low -> High' }
   ];
   return (
     <div className="flex items-center gap-2 shrink-0">

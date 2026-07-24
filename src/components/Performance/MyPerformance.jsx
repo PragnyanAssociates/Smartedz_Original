@@ -24,9 +24,8 @@ export default function MyPerformance() {
   return <StudentMyPerformance user={user} />;
 }
 
-
 // =====================================================================
-//  TEACHER's own performance — uses /performance/teacher/:id (18.5)
+//  TEACHER's own performance uses /performance/teacher/:id
 // =====================================================================
 function TeacherMyPerformance({ user }) {
   const [data, setData]       = useState(null);
@@ -86,7 +85,7 @@ function TeacherMyPerformance({ user }) {
     <div className="flex flex-col flex-1 gap-4 sm:gap-6 animate-in fade-in duration-300">
 
       {/* Filter bar */}
-      <div className="flex flex-wrap items-end gap-3 sm:gap-4 bg-white p-4 rounded-lg ring-1 ring-black/5 shadow-sm">
+      <div className="flex flex-wrap items-end gap-3 sm:gap-4">
         <Selector label="Exam" value={examTypeId} onChange={setExam}
           options={[
             { value: 'all', label: 'All Exams' },
@@ -116,26 +115,26 @@ function TeacherMyPerformance({ user }) {
       </div>
 
       {!hasData ? (
-        <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center justify-center flex-1 min-h-[300px]">
+        <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 shadow-sm border-dashed text-center flex flex-col items-center justify-center flex-1 min-h-[300px]">
           <BarChart3 className="size-10 text-zinc-300 mx-auto mb-3" />
           <p className="text-zinc-500 font-medium text-sm">No performance data yet.</p>
           <p className="text-zinc-400 text-xs mt-1">
-            Marks need to be entered for your assigned class &amp; subject in <strong>Reports</strong> first.
+            Marks need to be entered for your assigned class &amp; subject in <span className="font-semibold text-zinc-500">Reports</span> first.
           </p>
         </div>
       ) : (
         <div className="flex flex-col gap-4 sm:gap-6 flex-1">
           {/* Overall summary */}
           <div className="bg-gradient-to-r from-amber-50/80 to-white border border-amber-200/60 rounded-lg p-4 sm:p-5 flex items-center gap-4 shadow-sm shrink-0">
-            <div className="size-10 sm:size-12 bg-amber-100 rounded-md flex items-center justify-center text-amber-600 shrink-0 ring-1 ring-amber-200/50">
+            <div className="size-10 sm:size-12 bg-amber-100 rounded-md flex items-center justify-center text-amber-600 shrink-0 ring-1 ring-inset ring-amber-500/20">
               <Trophy className="size-5 sm:size-6" />
             </div>
             <div className="min-w-0 flex-1">
-              <div className="text-[10px] font-semibold text-amber-600 uppercase tracking-wider mb-0.5">My Overall Performance · {examLabel}</div>
+              <div className="text-[10px] font-semibold text-amber-600 uppercase tracking-wider mb-0.5">My Overall Performance - {examLabel}</div>
               <div className="font-semibold text-zinc-900 truncate text-sm sm:text-base">{data.teacher_name}</div>
             </div>
             <div className="text-right shrink-0">
-              <div className={`text-lg sm:text-2xl font-bold tabular-nums leading-none ${ob.text}`}>{overall.pct}%</div>
+              <div className={`text-lg sm:text-2xl font-semibold tabular-nums leading-none ${ob.text}`}>{overall.pct}%</div>
               <div className="text-[11px] font-medium text-zinc-500 mt-1 uppercase tracking-wider">
                 {Math.round(overall.obtained)} / {Math.round(overall.possible)}
               </div>
@@ -169,7 +168,7 @@ function TeacherMyPerformance({ user }) {
                         </div>
                       </td>
                       <td className="px-5 py-3 text-right">
-                        <div className="text-sm font-bold text-zinc-900 tabular-nums">{Math.round(r.obtained)}</div>
+                        <div className="text-sm font-semibold text-zinc-900 tabular-nums">{Math.round(r.obtained)}</div>
                         <div className="text-[10px] text-zinc-400 font-medium uppercase tracking-wider mt-0.5">of {Math.round(r.possible)}</div>
                       </td>
                     </tr>
@@ -202,9 +201,8 @@ function TeacherMyPerformance({ user }) {
   );
 }
 
-
 // =====================================================================
-//  STUDENT's own performance — Topper vs You
+//  STUDENT's own performance Topper vs You
 // =====================================================================
 function StudentMyPerformance({ user }) {
   const [data, setData]         = useState(null);
@@ -252,7 +250,7 @@ function StudentMyPerformance({ user }) {
 
   if (!data || !data.class) {
     return (
-      <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center justify-center flex-1 min-h-[300px]">
+      <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 shadow-sm border-dashed text-center flex flex-col items-center justify-center flex-1 min-h-[300px]">
         <BarChart3 className="size-10 text-zinc-300 mx-auto mb-3" />
         <p className="text-zinc-500 font-medium text-sm">You're not assigned to a class yet.</p>
         <p className="text-zinc-400 text-xs mt-1">Please contact administration.</p>
@@ -264,7 +262,7 @@ function StudentMyPerformance({ user }) {
     <div className="flex flex-col flex-1 gap-4 sm:gap-6 animate-in fade-in duration-300">
 
       {/* Filter bar */}
-      <div className="flex flex-wrap items-end gap-3 sm:gap-4 bg-white p-4 rounded-lg ring-1 ring-black/5 shadow-sm">
+      <div className="flex flex-wrap items-end gap-3 sm:gap-4">
         <Selector label="Exam" value={examTypeId} onChange={setExam}
           options={[
             { value: 'overall', label: 'Overall' },
@@ -299,14 +297,15 @@ function StudentMyPerformance({ user }) {
       </div>
 
       {(data.examTypes || []).length === 0 || !me ? (
-        <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center justify-center flex-1 min-h-[300px]">
+        <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 shadow-sm border-dashed text-center flex flex-col items-center justify-center flex-1 min-h-[300px]">
           <BarChart3 className="size-10 text-zinc-300 mx-auto mb-3" />
           <p className="text-zinc-500 font-medium text-sm">No marks recorded for this selection yet.</p>
         </div>
       ) : (
         <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm p-6 sm:p-8 flex flex-col flex-1 justify-center">
 
-          <div className="flex items-end justify-center gap-12 sm:gap-24 md:gap-32 h-[340px] pt-4">
+          {/* Increased container height from h-[340px] to h-[420px] to accommodate taller bars */}
+          <div className="flex items-end justify-center gap-12 sm:gap-24 md:gap-32 h-[420px] pt-4">
             {topper && <BigBar row={topper} label="Topper" icon={<Trophy className="size-3.5" />} />}
             <BigBar row={me} label="You" highlight icon={<User className="size-3.5" />} />
           </div>
@@ -355,12 +354,13 @@ function BigBar({ row, label, highlight, icon }) {
         <div className="inline-flex items-center justify-center size-7 rounded-full bg-zinc-100 text-[11px] font-semibold text-zinc-700 ring-1 ring-inset ring-black/5 mb-2">
           #{row.rank}
         </div>
-        <div className="text-3xl font-bold text-zinc-900 leading-none tabular-nums">{Math.round(row.obtained)}</div>
+        <div className="text-3xl font-semibold text-zinc-900 leading-none tabular-nums">{Math.round(row.obtained)}</div>
         <div className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mt-1.5">of {Math.round(row.possible)}</div>
-        <div className={`text-sm font-bold ${b.text} mt-1`}>{row.percentage}%</div>
+        <div className={`text-sm font-semibold ${b.text} mt-1`}>{row.percentage}%</div>
       </div>
 
-      <div className="w-20 sm:w-24 h-56 bg-zinc-100/80 rounded-t-md flex flex-col justify-end overflow-hidden ring-1 ring-inset ring-black/5">
+      {/* Increased bar height from h-64 sm:h-72 to h-72 sm:h-80 */}
+      <div className="w-12 sm:w-16 h-72 sm:h-80 bg-zinc-100/80 rounded-t-md flex flex-col justify-end overflow-hidden ring-1 ring-inset ring-black/5">
         <div className={`w-full ${b.bar} transition-all duration-1000 ease-out rounded-t-md opacity-90 group-hover:opacity-100`}
           style={{ height: `${fill}%` }} />
       </div>
@@ -378,7 +378,7 @@ function Stat({ label, value }) {
   return (
     <div>
       <div className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">{label}</div>
-      <div className="text-lg sm:text-xl font-bold text-zinc-900 mt-1 tabular-nums">{value}</div>
+      <div className="text-lg sm:text-xl font-semibold text-zinc-900 mt-1 tabular-nums">{value}</div>
     </div>
   );
 }

@@ -391,7 +391,7 @@ export default function SchedulesManager({ canManage }) {
                 </FormField>
                 <FormField label="Subtitle">
                   <input value={form.subtitle} onChange={e => setForm({ ...form, subtitle: e.target.value })}
-                    placeholder="Optional — e.g. Term I / 2026-2027" className={inputCls} />
+                    placeholder="Optional - e.g. Term I / 2026-2027" className={inputCls} />
                 </FormField>
                 <FormField label="Schedule Type">
                   <div className="relative">
@@ -556,47 +556,56 @@ export function ScheduleDetailView({ schedule }) {
 
   return (
     <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col">
-      <div className="p-6 border-b border-zinc-100 text-center bg-zinc-50/50">
-        <div className="inline-flex size-12 rounded-lg bg-primary/10 items-center justify-center mb-4 ring-1 ring-primary/20">
-          <CalendarDays className="text-primary size-6" />
-        </div>
-        <h2 className="text-xl font-semibold text-zinc-900">{schedule.title}</h2>
-        <div className="mt-2.5">
-          <span className={`text-[10px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-md ring-1 ${
-            isExternal ? 'bg-purple-50 text-purple-700 ring-purple-600/20' : 'bg-rose-50 text-rose-700 ring-rose-600/20'
-          }`}>
-            {isExternal ? 'Govt Schedule' : 'School Exam'}
-          </span>
-        </div>
-        <div className="mt-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-xs text-zinc-600">
-          {schedule.className && (
-            <span className="font-medium bg-white ring-1 ring-zinc-200 px-2 py-0.5 rounded text-zinc-700">
-              {schedule.className}{schedule.section ? ` - ${schedule.section}` : ''}
-            </span>
-          )}
-          {schedule.subtitle && <span className="text-zinc-500">{schedule.subtitle}</span>}
-          {dates.start && (
-            <span className="flex items-center gap-1.5 text-zinc-500">
-              <span className="font-medium text-zinc-700">{dates.start}</span>
-              {dates.end && dates.end !== dates.start && (
-                <>
-                  <span className="text-zinc-300">|</span>
-                  <span className="font-medium text-zinc-700">{dates.end}</span>
-                </>
+      <div className="p-6 border-b border-zinc-100 bg-zinc-50/50 flex flex-col sm:flex-row sm:items-start justify-between gap-6">
+        
+        {/* Left Section: Icon, Title, Badge, and Metadata */}
+        <div className="flex flex-col sm:flex-row items-start gap-4">
+          <div className="inline-flex size-12 rounded-lg bg-primary/10 items-center justify-center ring-1 ring-primary/20 shrink-0">
+            <CalendarDays className="text-primary size-6" />
+          </div>
+          
+          <div className="flex flex-col items-start text-left">
+            <div className="flex flex-wrap items-center gap-3">
+              <h2 className="text-xl font-semibold text-zinc-900">{schedule.title}</h2>
+              <span className={`text-[10px] font-semibold uppercase tracking-wider px-2.5 py-1 rounded-md ring-1 ${
+                isExternal ? 'bg-purple-50 text-purple-700 ring-purple-600/20' : 'bg-rose-50 text-rose-700 ring-rose-600/20'
+              }`}>
+                {isExternal ? 'Govt Schedule' : 'School Exam'}
+              </span>
+            </div>
+            
+            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-zinc-600">
+              {schedule.className && (
+                <span className="font-medium bg-white ring-1 ring-zinc-200 px-2 py-0.5 rounded text-zinc-700">
+                  {schedule.className}{schedule.section ? ` - ${schedule.section}` : ''}
+                </span>
               )}
-            </span>
-          )}
+              {schedule.subtitle && <span className="text-zinc-500">{schedule.subtitle}</span>}
+              {dates.start && (
+                <span className="flex items-center gap-1.5 text-zinc-500">
+                  <span className="font-medium text-zinc-700">{dates.start}</span>
+                  {dates.end && dates.end !== dates.start && (
+                    <>
+                      <span className="text-zinc-300">|</span>
+                      <span className="font-medium text-zinc-700">{dates.end}</span>
+                    </>
+                  )}
+                </span>
+              )}
+            </div>
+          </div>
         </div>
 
+        {/* Right Section: Creator and Time */}
         {(schedule.created_by_name || schedule.created_at) && (
-          <div className="mt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 text-[11px] text-zinc-400">
+          <div className="flex flex-col sm:items-end text-left sm:text-right gap-2 text-[11px] text-zinc-400 shrink-0 mt-2 sm:mt-0">
             {schedule.created_by_name && (
-              <span className="inline-flex items-center gap-1">
+              <span className="inline-flex items-center gap-1.5">
                 <User className="size-3" /> {schedule.created_by_name}
               </span>
             )}
             {schedule.created_at && (
-              <span className="inline-flex items-center gap-1">
+              <span className="inline-flex items-center gap-1.5">
                 <Clock className="size-3" /> {fmtIST(schedule.created_at)}
               </span>
             )}

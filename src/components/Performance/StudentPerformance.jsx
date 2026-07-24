@@ -142,7 +142,7 @@ export default function StudentPerformance() {
     <div className="flex flex-col flex-1 gap-4 sm:gap-6 animate-in fade-in duration-300">
 
       {/* Filter bar */}
-      <div className="flex flex-wrap items-end gap-3 sm:gap-4 bg-white p-4 rounded-lg ring-1 ring-black/5 shadow-sm">
+      <div className="flex flex-wrap items-end gap-3 sm:gap-4">
         <Selector label="Class" value={classId} onChange={setClassId}
           options={classes.map(c => ({ value: String(c.id), label: c.class_group }))} />
         <Selector label="Exam" value={examTypeId} onChange={setExamTypeId}
@@ -426,8 +426,8 @@ function StudentAnalysisModal({ classes, initialClassId, initialExam, initialSub
         ]} />
       <Selector label="Sort Order" value={sortOrder} onChange={setSortOrder}
         options={[
-          { value: 'high', label: 'High to Low' },
-          { value: 'low', label: 'Low to High' }
+          { value: 'high', label: 'High -> Low' },
+          { value: 'low', label: 'Low -> High' }
         ]} />
     </div>
   );
@@ -534,8 +534,8 @@ function InfoCell({ icon, label, value, sub, valueClass }) {
 function SortControl({ mode, onChange }) {
   const opts = [
     { id: 'roll', label: 'Roll wise' },
-    { id: 'high', label: 'High → Low' },
-    { id: 'low',  label: 'Low → High' }
+    { id: 'high', label: 'High -> Low' },
+    { id: 'low',  label: 'Low -> High' }
   ];
   return (
     <div className="flex items-center gap-2 shrink-0">

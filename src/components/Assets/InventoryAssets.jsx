@@ -14,14 +14,14 @@ import {
 } from './AssetsUtils';
 
 // =====================================================================
-//  Inventory & Assets — the institution's asset register.
-//    • Every item is filed under a Head of Account (dropdown, seeded
-//      with the 21 standard heads; custom heads can be added).
-//    • Filters: search, head, status, room, purchase year.
-//    • Summary strip: line items, total quantity, total value, and how
-//      many need attention (Under Repair + Damaged).
-//    • Excel export follows whatever filters are applied.
-//  No academic-year scoping — an asset belongs to the school, not a year.
+//  Inventory & Assets - the institution's asset register.
+//   - Every item is filed under a Head of Account (dropdown, seeded
+//     with the 21 standard heads; custom heads can be added).
+//   - Filters: search, head, status, room, purchase year.
+//   - Summary strip: line items, total quantity, total value, and how
+//     many need attention (Under Repair + Damaged).
+//   - Excel export follows whatever filters are applied.
+//  No academic-year scoping - an asset belongs to the school, not a year.
 // =====================================================================
 export default function InventoryAssets() {
   const { user } = useAuth();
@@ -120,7 +120,7 @@ export default function InventoryAssets() {
     } catch (e) { alert(e.message); }
   };
 
-  // Export endpoint is behind the /api gate — fetch as a blob (the
+  // Export endpoint is behind the /api gate - fetch as a blob (the
   // interceptor attaches the token) rather than a plain download link.
   const handleDownload = useCallback(async () => {
     if (!instId) return;
@@ -159,11 +159,11 @@ export default function InventoryAssets() {
 
   if (!canRead && !isAdmin) {
     return (
-      <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
-        <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
+      <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
+        <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 shadow-sm text-center flex flex-col items-center">
           <Boxes className="size-10 text-zinc-300 mb-3" />
           <h2 className="text-lg font-semibold text-zinc-900 mb-1">Access Denied</h2>
-          <p className="text-sm font-medium text-zinc-500">You do not have permission to view the asset register.</p>
+          <p className="text-sm text-zinc-500">You do not have permission to view the asset register.</p>
         </div>
       </div>
     );
@@ -177,29 +177,29 @@ export default function InventoryAssets() {
         <div className="flex flex-col">
           <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
             <Boxes className="text-primary size-5" />
-            Inventory &amp; Assets
+            Inventory & Assets
           </h1>
           <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
-            The school&apos;s asset register &mdash; what you own, how many, where it is and what it cost.
+            The school's asset register - what you own, how many, where it is and what it cost.
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0 self-start sm:self-auto">
           <AssetsHelp canEdit={mayEdit} />
           {mayEdit && (
             <button onClick={() => setHeadsOpen(true)} title="Manage heads of account"
-              className="h-9 px-3 bg-white ring-1 ring-zinc-200 shadow-sm hover:bg-zinc-50 text-zinc-700 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shrink-0">
+              className="h-9 px-4 bg-white ring-1 ring-zinc-200 shadow-sm hover:bg-zinc-50 text-zinc-700 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shrink-0">
               <Settings2 className="size-3.5" /> Heads
             </button>
           )}
           <button onClick={handleDownload} disabled={downloading}
             title="Download the current view as Excel"
-            className="h-9 px-3 bg-white ring-1 ring-zinc-200 shadow-sm hover:bg-zinc-50 text-zinc-700 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shrink-0">
+            className="h-9 px-4 bg-white ring-1 ring-zinc-200 shadow-sm hover:bg-zinc-50 text-zinc-700 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shrink-0">
             {downloading ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
             {downloading ? 'Preparing...' : 'Excel'}
           </button>
           {mayEdit && (
             <button onClick={() => { setEditing(null); setFormOpen(true); }}
-              className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors shrink-0">
+              className="h-9 px-6 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors shrink-0">
               <Plus className="size-3.5" /> Add Asset
             </button>
           )}
@@ -221,7 +221,7 @@ export default function InventoryAssets() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
             <input type="text" value={query} onChange={e => setQuery(e.target.value)}
               placeholder="Search item, serial no, vendor, invoice or room..."
-              className="h-9 w-full bg-zinc-50/50 border border-transparent rounded-md pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:bg-white transition-colors placeholder:text-zinc-400" />
+              className="h-9 w-full bg-zinc-50/50 border border-transparent rounded-md pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:bg-white transition-colors placeholder:text-zinc-400 shadow-sm" />
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 lg:gap-3">
             <Select value={filterHead} onChange={setFilterHead}
@@ -236,11 +236,11 @@ export default function InventoryAssets() {
         </div>
         {hasFilter && (
           <div className="flex items-center justify-between border-t border-zinc-100 pt-2">
-            <span className="text-[11px] font-medium text-zinc-500">
+            <span className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">
               Showing {rows.length} filtered {rows.length === 1 ? 'item' : 'items'}
             </span>
             <button onClick={clearFilters}
-              className="text-[11px] font-semibold text-primary hover:underline">Clear filters</button>
+              className="text-[11px] font-semibold text-primary hover:underline transition-colors">Clear filters</button>
           </div>
         )}
       </div>
@@ -250,13 +250,13 @@ export default function InventoryAssets() {
         {loading ? (
           <div className="h-64 flex items-center justify-center"><Loader2 className="animate-spin size-8 text-primary" /></div>
         ) : rows.length === 0 ? (
-          <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
+          <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 shadow-sm text-center flex flex-col items-center">
             <Boxes className="size-10 text-zinc-300 mb-3" />
-            <p className="text-zinc-500 text-sm font-medium">
+            <p className="text-zinc-500 text-sm">
               {hasFilter ? 'No assets match your filters.' : 'No assets recorded yet.'}
             </p>
             {!hasFilter && mayEdit && (
-              <p className="text-zinc-400 text-xs mt-1.5">Click &quot;Add Asset&quot; to start the register.</p>
+              <p className="text-zinc-400 text-xs mt-1.5">Click "Add Asset" to start the register.</p>
             )}
           </div>
         ) : (
@@ -292,35 +292,35 @@ export default function InventoryAssets() {
                         </div>
                       </td>
                       <td className="px-5 py-3">
-                        <span className="inline-flex items-center px-2 py-1 rounded text-[11px] font-semibold bg-zinc-100 text-zinc-700 ring-1 ring-inset ring-black/5">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-zinc-50 text-zinc-700 ring-1 ring-inset ring-zinc-600/20">
                           {r.head_name || 'Unassigned'}
                         </span>
                       </td>
                       <td className="px-5 py-3 text-center font-semibold text-zinc-900 tabular-nums">
-                        {r.quantity} <span className="text-[11px] font-medium text-zinc-400">{r.unit}</span>
+                        {r.quantity} <span className="text-[11px] font-semibold text-zinc-400">{r.unit}</span>
                       </td>
-                      <td className="px-5 py-3 text-sm font-medium text-zinc-700 truncate">{r.room_no || '-'}</td>
-                      <td className="px-5 py-3 text-sm font-medium text-zinc-500 whitespace-nowrap">{fmtDate(r.purchase_date) || '-'}</td>
+                      <td className="px-5 py-3 text-sm font-semibold text-zinc-700 truncate">{r.room_no || '-'}</td>
+                      <td className="px-5 py-3 text-sm text-zinc-600 whitespace-nowrap">{fmtDate(r.purchase_date) || '-'}</td>
                       <td className="px-5 py-3 text-right text-sm font-semibold text-zinc-900 tabular-nums whitespace-nowrap">
                         {r.unit_cost === null || r.unit_cost === undefined ? '-' : money(lineValue(r))}
                       </td>
                       <td className="px-5 py-3">
-                        <span className={`inline-flex items-center px-2 py-1 rounded text-[11px] font-semibold ring-1 ring-inset ${ss.bg} ${ss.text} ${ss.ring}`}>
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ring-1 ring-inset ${ss.bg} ${ss.text} ${ss.ring}`}>
                           {r.status}
                         </span>
                       </td>
                       {(mayEdit || mayDelete) && (
                         <td className="px-5 py-3 text-right whitespace-nowrap">
-                          <div className="flex items-center justify-end gap-1 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                          <div className="flex items-center justify-end gap-2 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
                             {mayEdit && (
                               <button onClick={e => { e.stopPropagation(); setEditing(r); setFormOpen(true); }} title="Edit"
-                                className="size-8 bg-white hover:bg-zinc-50 text-zinc-600 hover:text-primary rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5">
+                                className="flex items-center justify-center size-7 rounded bg-white text-zinc-600 border border-zinc-200 hover:text-primary hover:bg-zinc-50 transition-colors shadow-sm">
                                 <Edit className="size-3.5" />
                               </button>
                             )}
                             {mayDelete && (
                               <button onClick={e => { e.stopPropagation(); handleDelete(r); }} title="Delete"
-                                className="size-8 bg-white hover:bg-zinc-50 text-zinc-600 hover:text-red-600 rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5">
+                                className="flex items-center justify-center size-7 rounded bg-white text-zinc-600 border border-zinc-200 hover:text-red-600 hover:bg-red-50 transition-colors shadow-sm">
                                 <Trash2 className="size-3.5" />
                               </button>
                             )}
@@ -388,7 +388,7 @@ function StatCard({ icon: Icon, label, value, tone }) {
       </div>
       <div className="min-w-0">
         <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">{label}</p>
-        <p className="text-lg font-semibold text-zinc-900 tabular-nums truncate mt-0.5">{value}</p>
+        <p className="text-lg font-semibold text-zinc-900 tabular-nums truncate mt-1">{value}</p>
       </div>
     </div>
   );
@@ -399,7 +399,7 @@ function Select({ value, onChange, options }) {
   return (
     <div className="relative">
       <select value={value} onChange={e => onChange(e.target.value)}
-        className="h-9 w-full bg-zinc-50/50 border border-transparent rounded-md pl-3 pr-8 text-xs font-medium text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:bg-white cursor-pointer appearance-none transition-colors">
+        className="h-9 w-full bg-zinc-50/50 border border-transparent rounded-md pl-3 pr-8 text-xs font-semibold text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:bg-white cursor-pointer appearance-none transition-colors shadow-sm">
         {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
       <ChevronDown className="size-3.5 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -419,29 +419,29 @@ function AssetDetailModal({ asset, onClose, onEdit, onDelete }) {
      new Date(String(asset.created_at).replace(' ', 'T') + 'Z').getTime()) > 1000;
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4" onClick={onClose}>
-      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-2xl shadow-xl max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-200"
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={onClose}>
+      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-2xl shadow-xl max-h-[90vh] flex flex-col"
         onClick={e => e.stopPropagation()}>
         <div className="p-5 border-b border-zinc-100 flex justify-between items-start bg-zinc-50/50 rounded-t-lg shrink-0 gap-4">
           <div className="min-w-0">
             <h2 className="text-lg font-semibold text-zinc-900 truncate">{asset.item_name}</h2>
-            <div className="flex flex-wrap items-center gap-2 mt-1.5">
-              <span className="inline-flex items-center px-2 py-1 rounded text-[11px] font-semibold bg-zinc-100 text-zinc-700 ring-1 ring-inset ring-black/5">
+            <div className="flex flex-wrap items-center gap-2 mt-2">
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-zinc-50 text-zinc-700 ring-1 ring-inset ring-zinc-600/20">
                 {asset.head_name || 'Unassigned'}
               </span>
-              <span className={`inline-flex items-center px-2 py-1 rounded text-[11px] font-semibold ring-1 ring-inset ${ss.bg} ${ss.text} ${ss.ring}`}>
+              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ring-1 ring-inset ${ss.bg} ${ss.text} ${ss.ring}`}>
                 {asset.status}
               </span>
             </div>
           </div>
-          <button onClick={onClose} className="text-zinc-400 hover:text-zinc-700 transition-colors p-1.5 hover:bg-zinc-100 rounded-md shrink-0">
+          <button onClick={onClose} className="flex items-center justify-center size-8 bg-white text-zinc-600 border border-zinc-200 hover:text-zinc-900 hover:bg-zinc-50 transition-colors rounded-md shrink-0 shadow-sm">
             <X className="size-4" />
           </button>
         </div>
 
         <div className="p-5 sm:p-6 overflow-y-auto custom-scrollbar space-y-5">
           {asset.has_photo && (
-            <div className="rounded-lg overflow-hidden ring-1 ring-black/5 bg-zinc-50 flex items-center justify-center min-h-[160px]">
+            <div className="rounded-lg overflow-hidden ring-1 ring-black/5 bg-zinc-50 flex items-center justify-center min-h-[160px] shadow-sm">
               {photo
                 ? <img src={photo} alt={asset.item_name} className="w-full max-h-72 object-contain" />
                 : <Loader2 className="size-6 animate-spin text-primary" />}
@@ -450,29 +450,29 @@ function AssetDetailModal({ asset, onClose, onEdit, onDelete }) {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <InfoRow icon={Package}     label="Quantity"        value={`${asset.quantity} ${asset.unit || ''}`.trim()} />
-            <InfoRow icon={IndianRupee} label="Cost per Unit"    value={money(asset.unit_cost)} />
-            <InfoRow icon={IndianRupee} label="Total Value"      value={asset.unit_cost == null ? '-' : money(lineValue(asset))} />
-            <InfoRow icon={MapPin}      label="Room / Location"  value={asset.room_no || '-'} />
+            <InfoRow icon={IndianRupee} label="Cost per Unit"   value={money(asset.unit_cost)} />
+            <InfoRow icon={IndianRupee} label="Total Value"     value={asset.unit_cost == null ? '-' : money(lineValue(asset))} />
+            <InfoRow icon={MapPin}      label="Room / Location" value={asset.room_no || '-'} />
             <InfoRow icon={CalendarDays} label="Date of Purchase" value={fmtDate(asset.purchase_date) || '-'} />
             <InfoRow icon={CalendarDays} label="Warranty Expires" value={fmtDate(asset.warranty_expiry) || '-'} />
-            <InfoRow icon={User}        label="Vendor"           value={asset.vendor || '-'} />
+            <InfoRow icon={User}        label="Vendor"          value={asset.vendor || '-'} />
             <InfoRow icon={FileText}    label="Bill / Invoice No" value={asset.invoice_no || '-'} />
             <InfoRow icon={FileText}    label="Serial / Model No" value={asset.serial_no || '-'} />
           </div>
 
           {asset.details && (
-            <div className="bg-zinc-50/60 ring-1 ring-zinc-100 rounded-md p-3">
-              <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1">Details</p>
+            <div className="bg-zinc-50/60 ring-1 ring-zinc-100 rounded-md p-4 shadow-sm">
+              <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-2">Details</p>
               <p className="text-sm text-zinc-700 leading-relaxed whitespace-pre-wrap">{asset.details}</p>
             </div>
           )}
 
           <div className="pt-4 border-t border-zinc-100 grid grid-cols-1 sm:grid-cols-2 gap-4">
             <InfoRow icon={User} label="Added By"
-              value={asset.created_by_name || '\u2014'} sub={fmtIST(asset.created_at)} />
+              value={asset.created_by_name || '-'} sub={fmtIST(asset.created_at)} />
             {wasUpdated && (
               <InfoRow icon={Edit} label="Last Updated By"
-                value={asset.updated_by_name || '\u2014'} sub={fmtIST(asset.updated_at)} />
+                value={asset.updated_by_name || '-'} sub={fmtIST(asset.updated_at)} />
             )}
           </div>
         </div>
@@ -481,14 +481,14 @@ function AssetDetailModal({ asset, onClose, onEdit, onDelete }) {
           <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
             {onDelete && (
               <button onClick={onDelete}
-                className="h-9 px-4 bg-white ring-1 ring-inset ring-red-200 text-red-600 hover:bg-red-50 rounded-md font-semibold text-xs flex items-center gap-1.5 transition-colors shadow-sm">
-                <Trash2 className="size-3.5" /> Delete
+                className="flex items-center justify-center gap-1.5 h-9 px-6 min-w-[120px] w-full sm:w-auto bg-white text-zinc-600 border border-zinc-200 hover:text-red-600 hover:bg-red-50 transition-colors rounded-md text-xs font-semibold shadow-sm">
+                <Trash2 className="size-4" /> Delete
               </button>
             )}
             {onEdit && (
               <button onClick={onEdit}
-                className="h-9 px-6 bg-primary hover:bg-primary/90 text-white rounded-md font-semibold text-xs flex items-center gap-1.5 shadow-sm transition-colors">
-                <Edit className="size-3.5" /> Edit
+                className="inline-flex items-center justify-center gap-1.5 bg-primary text-white h-9 px-6 min-w-[120px] w-full sm:w-auto rounded-md text-xs font-semibold hover:bg-primary/90 shadow-sm transition-colors">
+                <Edit className="size-4" /> Edit
               </button>
             )}
           </div>
@@ -501,12 +501,12 @@ function AssetDetailModal({ asset, onClose, onEdit, onDelete }) {
 function InfoRow({ icon: Icon, label, value, sub }) {
   return (
     <div className="flex items-start gap-3 bg-white p-3 rounded-md ring-1 ring-black/5 shadow-sm">
-      <div className="size-8 rounded-md bg-zinc-50 flex items-center justify-center ring-1 ring-black/5 shrink-0">
+      <div className="size-8 rounded-md bg-zinc-50 flex items-center justify-center ring-1 ring-inset ring-zinc-200 shrink-0">
         <Icon className="size-4 text-primary" />
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">{label}</p>
-        <p className="text-sm font-medium text-zinc-900 mt-0.5 break-words">{value}</p>
+        <p className="text-sm font-semibold text-zinc-900 mt-1 break-words">{value}</p>
         {sub && <p className="text-[11px] text-zinc-400 mt-0.5">{sub}</p>}
       </div>
     </div>
@@ -547,33 +547,33 @@ function HeadsModal({ heads, institutionId, onClose, onChanged }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4" onClick={onClose}>
-      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-md shadow-xl max-h-[85vh] flex flex-col animate-in fade-in zoom-in-95 duration-200"
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={onClose}>
+      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-md shadow-xl max-h-[85vh] flex flex-col"
         onClick={e => e.stopPropagation()}>
         <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 rounded-t-lg shrink-0">
           <h2 className="text-lg font-semibold text-zinc-900">Heads of Account</h2>
-          <button onClick={onClose} className="text-zinc-400 hover:text-zinc-700 transition-colors p-1.5 hover:bg-zinc-100 rounded-md">
+          <button onClick={onClose} className="flex items-center justify-center size-8 bg-white text-zinc-600 border border-zinc-200 hover:text-zinc-900 hover:bg-zinc-50 transition-colors rounded-md shadow-sm">
             <X className="size-4" />
           </button>
         </div>
-        <form onSubmit={addHead} className="p-4 border-b border-zinc-100 flex gap-2 shrink-0">
+        <form onSubmit={addHead} className="p-4 border-b border-zinc-100 flex gap-3 shrink-0 bg-white">
           <input value={name} onChange={e => setName(e.target.value)} placeholder="Add a custom head..."
             className="h-9 flex-1 bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
           <button type="submit" disabled={busy || !name.trim()}
-            className="h-9 px-4 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md font-semibold text-xs flex items-center gap-1.5 shadow-sm transition-colors shrink-0">
+            className="h-9 px-6 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md font-semibold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-colors shrink-0">
             {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />} Add
           </button>
         </form>
-        <div className="p-4 overflow-y-auto custom-scrollbar space-y-2">
+        <div className="p-4 overflow-y-auto custom-scrollbar space-y-2.5">
           {heads.length === 0 ? (
-            <p className="text-sm text-zinc-400 text-center py-6 font-medium">No heads yet.</p>
+            <p className="text-sm text-zinc-400 text-center py-6">No heads yet.</p>
           ) : heads.map(h => (
-            <div key={h.id} className="group flex items-center justify-between bg-white ring-1 ring-black/5 rounded-md px-3 py-2 shadow-sm">
-              <span className="text-sm font-medium text-zinc-800 truncate">{h.name}</span>
-              <div className="flex items-center gap-2 shrink-0">
-                <span className="text-[10px] font-semibold text-zinc-400 tabular-nums">{h.asset_count ?? 0} items</span>
+            <div key={h.id} className="group flex items-center justify-between bg-white ring-1 ring-black/5 rounded-md px-3 py-2.5 shadow-sm">
+              <span className="text-sm font-semibold text-zinc-900 truncate">{h.name}</span>
+              <div className="flex items-center gap-3 shrink-0">
+                <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider tabular-nums">{h.asset_count ?? 0} items</span>
                 <button onClick={() => removeHead(h)} title="Remove"
-                  className="p-1.5 text-zinc-300 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors opacity-100 sm:opacity-0 sm:group-hover:opacity-100">
+                  className="flex items-center justify-center size-7 rounded bg-white text-zinc-600 border border-zinc-200 hover:text-red-600 hover:bg-red-50 transition-colors shadow-sm opacity-100 sm:opacity-0 sm:group-hover:opacity-100">
                   <Trash2 className="size-3.5" />
                 </button>
               </div>
@@ -581,8 +581,8 @@ function HeadsModal({ heads, institutionId, onClose, onChanged }) {
           ))}
         </div>
         <div className="p-4 border-t border-zinc-100 bg-blue-50/60 shrink-0">
-          <p className="text-[11px] text-blue-800 leading-relaxed">
-            A head that still has assets filed under it can&apos;t be removed &mdash; move or delete those items first.
+          <p className="text-[11px] text-blue-800 leading-relaxed font-semibold">
+            A head that still has assets filed under it can't be removed - move or delete those items first.
           </p>
         </div>
       </div>
@@ -591,28 +591,28 @@ function HeadsModal({ heads, institutionId, onClose, onChanged }) {
 }
 
 // =====================================================================
-//  AssetsHelp — "How to use" guide (same theme as the other modules).
+//  AssetsHelp - "How to use" guide (same theme as the other modules).
 // =====================================================================
 const GUIDES = {
   manage: {
     title: 'Inventory & Assets',
     steps: [
-      ['1 \u00b7 What this is', 'The school\u2019s asset register \u2014 every table, chair, laptop, lab item and so on, with its count, where it sits, what it cost and when it was bought.'],
-      ['2 \u00b7 Add an asset', 'Add Asset records the item name, Head of Account (required), quantity and unit, room or location, purchase date, cost per unit, vendor, bill no, serial no and a photo. Total value is worked out as quantity \u00d7 cost.'],
-      ['3 \u00b7 Heads of Account', 'Every item is filed under a head \u2014 Office, Classroom, Computer & IT, Laboratory and so on. The standard heads are ready to use; Heads lets you add your own or remove unused ones.'],
-      ['4 \u00b7 Track condition', 'Set each item to In Use, In Store, Under Repair, Damaged or Disposed. The Needs Attention box counts everything under repair or damaged.'],
-      ['5 \u00b7 Find & export', 'Search by item, serial, vendor, invoice or room, and narrow by head, status, room or purchase year. Excel downloads exactly what the filters are showing.'],
+      ['1 - What this is', 'The school\'s asset register - every table, chair, laptop, lab item and so on, with its count, where it sits, what it cost and when it was bought.'],
+      ['2 - Add an asset', 'Add Asset records the item name, Head of Account (required), quantity and unit, room or location, purchase date, cost per unit, vendor, bill no, serial no and a photo. Total value is worked out as quantity x cost.'],
+      ['3 - Heads of Account', 'Every item is filed under a head - Office, Classroom, Computer & IT, Laboratory and so on. The standard heads are ready to use; Heads lets you add your own or remove unused ones.'],
+      ['4 - Track condition', 'Set each item to In Use, In Store, Under Repair, Damaged or Disposed. The Needs Attention box counts everything under repair or damaged.'],
+      ['5 - Find & export', 'Search by item, serial, vendor, invoice or room, and narrow by head, status, room or purchase year. Excel downloads exactly what the filters are showing.'],
     ],
-    note: 'Assets are not tied to an academic year \u2014 the register carries forward until you change it. Photos are capped at 3 MB. Adding, editing and deleting depend on your permissions.'
+    note: 'Assets are not tied to an academic year - the register carries forward until you change it. Photos are capped at 3 MB. Adding, editing and deleting depend on your permissions.'
   },
   view: {
     title: 'Inventory & Assets',
     steps: [
-      ['1 \u00b7 What this is', 'The school\u2019s asset register \u2014 what the institution owns, how many, where it is and what it cost.'],
-      ['2 \u00b7 Read an entry', 'Click any row for the full record: photo, quantity, cost, room, purchase and warranty dates, vendor, invoice and serial numbers.'],
-      ['3 \u00b7 Find & export', 'Search by item, serial, vendor, invoice or room, and narrow by head of account, status, room or purchase year. Excel downloads the current view.'],
+      ['1 - What this is', 'The school\'s asset register - what the institution owns, how many, where it is and what it cost.'],
+      ['2 - Read an entry', 'Click any row for the full record: photo, quantity, cost, room, purchase and warranty dates, vendor, invoice and serial numbers.'],
+      ['3 - Find & export', 'Search by item, serial, vendor, invoice or room, and narrow by head of account, status, room or purchase year. Excel downloads the current view.'],
     ],
-    note: 'This is a read-only view \u2014 the register is maintained by admins and staff with the right permissions.'
+    note: 'This is a read-only view - the register is maintained by admins and staff with the right permissions.'
   }
 };
 
@@ -623,27 +623,29 @@ function AssetsHelp({ canEdit = false, className = '' }) {
   return (
     <>
       <button onClick={() => setOpen(true)}
-        className={`inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors shrink-0 self-start ${className}`}>
+        className={`h-9 px-4 bg-white ring-1 ring-zinc-200 shadow-sm hover:bg-zinc-50 text-zinc-700 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shrink-0 self-start ${className}`}>
         <HelpCircle className="size-3.5" /> How to use
       </button>
 
       {open && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={() => setOpen(false)}>
-          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg max-h-[85vh] overflow-y-auto shadow-xl" onClick={e => e.stopPropagation()}>
-            <div className="bg-primary text-white px-5 py-3 flex items-center justify-between sticky top-0">
-              <span className="text-sm font-bold flex items-center gap-2"><HelpCircle className="size-4" /> {content.title}</span>
-              <button onClick={() => setOpen(false)} className="text-white/80 hover:text-white"><X className="size-5" /></button>
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={() => setOpen(false)}>
+          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg max-h-[85vh] flex flex-col shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="bg-primary text-white px-5 py-4 flex items-center justify-between shrink-0 rounded-t-lg">
+              <span className="text-sm font-semibold flex items-center gap-2"><HelpCircle className="size-4" /> {content.title}</span>
+              <button onClick={() => setOpen(false)} className="flex items-center justify-center size-8 rounded-md bg-white/10 hover:bg-white/20 text-white transition-colors">
+                <X className="size-4" />
+              </button>
             </div>
-            <div className="p-5 space-y-3">
+            <div className="p-5 space-y-4 overflow-y-auto custom-scrollbar">
               {content.steps.map(([t, d], i) => (
-                <div key={i} className="rounded-md ring-1 ring-zinc-100 bg-zinc-50/60 p-3">
-                  <p className="text-xs font-semibold text-zinc-800">{t}</p>
-                  <p className="text-[11px] text-zinc-600 leading-relaxed mt-1">{d}</p>
+                <div key={i} className="rounded-md ring-1 ring-zinc-200 bg-zinc-50/60 p-4 shadow-sm">
+                  <p className="text-xs font-semibold text-zinc-900 uppercase tracking-wider">{t}</p>
+                  <p className="text-xs text-zinc-600 leading-relaxed mt-2">{d}</p>
                 </div>
               ))}
-              <div className="rounded-md bg-blue-50/60 ring-1 ring-blue-100 p-3 flex gap-2">
+              <div className="rounded-md bg-blue-50 ring-1 ring-blue-200 p-4 flex gap-3 shadow-sm items-start">
                 <ShieldCheck className="size-4 text-blue-500 shrink-0 mt-0.5" />
-                <p className="text-[11px] text-blue-800 leading-relaxed">{content.note}</p>
+                <p className="text-xs text-blue-800 leading-relaxed font-semibold">{content.note}</p>
               </div>
             </div>
           </div>

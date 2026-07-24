@@ -6,7 +6,7 @@ import {
 } from './AssetsUtils';
 
 // =====================================================================
-//  AssetFormModal — create / edit one asset.
+//  AssetFormModal - create / edit one asset.
 //  Head of Account is a dropdown fed from /admin/asset-heads/:instId.
 //  Photo is stored as base64 on the row; the existing photo is loaded
 //  through the authed blob endpoint (never a raw <img src>).
@@ -120,7 +120,7 @@ export default function AssetFormModal({ asset, heads, institutionId, onClose, o
       <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-3xl shadow-xl relative max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
         <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 rounded-t-lg shrink-0">
           <h2 className="text-lg font-semibold text-zinc-900">{isEdit ? 'Edit Asset' : 'Add Asset'}</h2>
-          <button onClick={onClose} className="text-zinc-400 hover:text-zinc-700 transition-colors p-1.5 hover:bg-zinc-100 rounded-md">
+          <button onClick={onClose} className="flex items-center justify-center size-8 rounded-md bg-white text-zinc-600 border border-zinc-200 hover:text-zinc-900 hover:bg-zinc-50 transition-colors shadow-sm shrink-0">
             <X className="size-4" />
           </button>
         </div>
@@ -129,23 +129,25 @@ export default function AssetFormModal({ asset, heads, institutionId, onClose, o
           <div className="p-5 sm:p-6 overflow-y-auto custom-scrollbar space-y-5">
 
             {/* Photo */}
-            <div className="flex items-center gap-4">
-              <div className="size-24 rounded-lg bg-zinc-50 ring-1 ring-black/5 overflow-hidden flex items-center justify-center shrink-0">
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="size-24 rounded-lg bg-zinc-50 ring-1 ring-black/5 overflow-hidden flex items-center justify-center shrink-0 shadow-sm">
                 {preview
                   ? <img src={preview} alt="Asset" className="w-full h-full object-cover" />
                   : <Camera className="size-7 text-zinc-300" />}
               </div>
-              <div className="flex flex-col gap-2">
-                <label className="h-8 px-3 inline-flex items-center gap-1.5 bg-white ring-1 ring-black/5 shadow-sm hover:bg-zinc-50 text-zinc-700 rounded-md font-semibold text-xs cursor-pointer transition-colors w-fit">
-                  <Camera className="size-3.5" /> {preview ? 'Change photo' : 'Add photo'}
-                  <input type="file" accept="image/*" className="hidden" onChange={pickPhoto} />
-                </label>
-                {preview && (
-                  <button type="button" onClick={() => { setPhoto(null); setRemovePhoto(true); }}
-                    className="h-8 px-3 inline-flex items-center gap-1.5 bg-white ring-1 ring-black/5 shadow-sm hover:bg-red-50 text-zinc-600 hover:text-red-600 rounded-md font-semibold text-xs transition-colors w-fit">
-                    <Trash2 className="size-3.5" /> Remove
-                  </button>
-                )}
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center gap-2">
+                  <label className="cursor-pointer inline-flex items-center justify-center gap-1.5 h-9 px-4 shrink-0 bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-50 rounded-md text-xs font-semibold transition-colors shadow-sm w-fit">
+                    <Camera className="size-3.5" /> {preview ? 'Change photo' : 'Add photo'}
+                    <input type="file" accept="image/*" className="hidden" onChange={pickPhoto} />
+                  </label>
+                  {preview && (
+                    <button type="button" onClick={() => { setPhoto(null); setRemovePhoto(true); }}
+                      className="inline-flex items-center justify-center gap-1.5 h-9 px-4 shrink-0 bg-white text-zinc-600 border border-zinc-200 hover:text-red-600 hover:bg-red-50 rounded-md text-xs font-semibold transition-colors shadow-sm w-fit">
+                      <Trash2 className="size-3.5" /> Remove
+                    </button>
+                  )}
+                </div>
                 <span className="text-[10px] text-zinc-400">JPG or PNG, under 3 MB.</span>
               </div>
             </div>
@@ -184,9 +186,9 @@ export default function AssetFormModal({ asset, heads, institutionId, onClose, o
 
               {/* Live total */}
               <div className="md:col-span-2 -mt-1">
-                <div className="bg-zinc-50 ring-1 ring-inset ring-black/5 rounded-md px-3 py-2 flex items-center justify-between">
+                <div className="bg-zinc-50 ring-1 ring-inset ring-black/5 rounded-md px-4 py-3 flex items-center justify-between shadow-sm">
                   <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1.5">
-                    <IndianRupee className="size-3" /> Total Value
+                    <IndianRupee className="size-3.5" /> Total Value
                   </span>
                   <span className="text-sm font-semibold text-zinc-900 tabular-nums">
                     {form.unit_cost === '' ? '-' : money(total)}
@@ -213,13 +215,13 @@ export default function AssetFormModal({ asset, heads, institutionId, onClose, o
             </div>
           </div>
 
-          <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
+          <div className="p-5 border-t border-zinc-100 flex flex-col-reverse sm:flex-row justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
             <button type="button" onClick={onClose} disabled={saving}
-              className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 rounded-md font-semibold text-xs hover:bg-zinc-50 transition-colors w-full sm:w-auto">
+              className="flex items-center justify-center gap-1.5 h-9 px-6 min-w-[120px] w-full sm:w-auto bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-50 transition-colors rounded-md text-xs font-semibold shadow-sm">
               Cancel
             </button>
             <button type="submit" disabled={saving}
-              className="h-9 px-6 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors w-full sm:w-auto min-w-[140px]">
+              className="inline-flex items-center justify-center gap-1.5 bg-primary text-white h-9 px-6 min-w-[120px] w-full sm:w-auto rounded-md text-xs font-semibold hover:bg-primary/90 shadow-sm transition-colors disabled:opacity-60">
               {saving ? <Loader2 className="size-3.5 animate-spin shrink-0" /> : <Save className="size-3.5 shrink-0" />}
               {saving ? 'Saving...' : (isEdit ? 'Save Changes' : 'Add Asset')}
             </button>
@@ -232,10 +234,11 @@ export default function AssetFormModal({ asset, heads, institutionId, onClose, o
 
 // Shared input field standard (matches the rest of SmartEdz)
 function Field({ label, value, onChange, type = 'text', required, placeholder, options }) {
-  const base = "h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm";
+  const base = "h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-shadow shadow-sm";
+  
   return (
-    <div className="space-y-1.5">
-      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">
+    <div className="flex flex-col">
+      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1.5 flex items-center gap-1">
         {label} {required && <span className="text-red-500">*</span>}
       </label>
       {type === 'select' ? (
