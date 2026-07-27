@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { API_BASE_URL } from '../../apiConfig';
-import { X, Save, Loader2, Camera, Trash2, ChevronDown, IndianRupee } from 'lucide-react';
+import { X, Save, Loader2, Camera, Trash2, ChevronDown } from 'lucide-react';
 import {
-  ASSET_STATUSES, ASSET_UNITS, fileToBase64, toYYYYMMDD, money, useAuthedImage
+  ASSET_STATUSES, ASSET_UNITS, fileToBase64, toYYYYMMDD, useAuthedImage
 } from './AssetsUtils';
 
 // =====================================================================
@@ -15,7 +15,7 @@ export default function AssetFormModal({ asset, heads, institutionId, onClose, o
   const isEdit = !!asset;
   const [form, setForm] = useState({
     item_name: '', head_id: '', quantity: 1, unit: 'Nos', room_no: '',
-    purchase_date: '', unit_cost: '', vendor: '', invoice_no: '', serial_no: '',
+    purchase_date: '', vendor: '', invoice_no: '', serial_no: '',
     status: 'In Use', warranty_expiry: '', details: ''
   });
   const [photo, setPhoto] = useState(null);        // new base64, if picked
@@ -36,7 +36,6 @@ export default function AssetFormModal({ asset, heads, institutionId, onClose, o
       unit: asset.unit || 'Nos',
       room_no: asset.room_no || '',
       purchase_date: toYYYYMMDD(asset.purchase_date),
-      unit_cost: asset.unit_cost ?? '',
       vendor: asset.vendor || '',
       invoice_no: asset.invoice_no || '',
       serial_no: asset.serial_no || '',
@@ -49,14 +48,6 @@ export default function AssetFormModal({ asset, heads, institutionId, onClose, o
   }, [asset]);
 
   const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
-
-  // Live total so the person sees quantity x unit cost while typing.
-  const total = useMemo(() => {
-    const q = parseInt(form.quantity, 10) || 0;
-    const c = Number(form.unit_cost);
-    if (isNaN(c)) return 0;
-    return q * c;
-  }, [form.quantity, form.unit_cost]);
 
   const pickPhoto = async (e) => {
     const file = e.target.files?.[0];
@@ -86,7 +77,6 @@ export default function AssetFormModal({ asset, heads, institutionId, onClose, o
         unit: form.unit || 'Nos',
         room_no: form.room_no.trim() || null,
         purchase_date: form.purchase_date || null,
-        unit_cost: form.unit_cost === '' ? null : Number(form.unit_cost),
         vendor: form.vendor.trim() || null,
         invoice_no: form.invoice_no.trim() || null,
         serial_no: form.serial_no.trim() || null,
@@ -181,21 +171,6 @@ export default function AssetFormModal({ asset, heads, institutionId, onClose, o
               <Field label="Date of Purchase" type="date" value={form.purchase_date}
                 onChange={v => set('purchase_date', v)} />
 
-              <Field label="Cost per Unit" type="number" value={form.unit_cost}
-                onChange={v => set('unit_cost', v)} placeholder="0.00" />
-
-              {/* Live total */}
-              <div className="md:col-span-2 -mt-1">
-                <div className="bg-zinc-50 ring-1 ring-inset ring-black/5 rounded-md px-4 py-3 flex items-center justify-between shadow-sm">
-                  <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1.5">
-                    <IndianRupee className="size-3.5" /> Total Value
-                  </span>
-                  <span className="text-sm font-semibold text-zinc-900 tabular-nums">
-                    {form.unit_cost === '' ? '-' : money(total)}
-                  </span>
-                </div>
-              </div>
-
               <Field label="Vendor / Supplier" value={form.vendor}
                 onChange={v => set('vendor', v)} placeholder="Who it was bought from" />
 
@@ -235,7 +210,7 @@ export default function AssetFormModal({ asset, heads, institutionId, onClose, o
 // Shared input field standard (matches the rest of SmartEdz)
 function Field({ label, value, onChange, type = 'text', required, placeholder, options }) {
   const base = "h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-shadow shadow-sm";
-  
+
   return (
     <div className="flex flex-col">
       <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1.5 flex items-center gap-1">

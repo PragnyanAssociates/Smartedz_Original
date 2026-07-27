@@ -13194,7 +13194,7 @@ app.post('/api/admin/module-order', async (req, res) => {
 
 
 // =====================================================================
-//  BACKEND — Section 27: INVENTORY & ASSETS  (v1 — TENANT-SCOPED)
+//  BACKEND - Section 27: INVENTORY & ASSETS  (v2 - TENANT-SCOPED)
 //
 //  The institution's asset register. Every row is one line item
 //  (e.g. "Student Desk x 40") filed under a Head of Account.
@@ -13203,26 +13203,31 @@ app.post('/api/admin/module-order', async (req, res) => {
 //  across years (same reasoning as Syllabus). Year filtering is done on
 //  YEAR(purchase_date), which is a plain calendar year.
 //
-//  Tables (run migration_assets.js once, or the SQL block inside it):
-//    asset_heads  — per-institution heads of account, auto-seeded with
+//  NO MONETARY DISPLAY. The `unit_cost` column is kept in the schema
+//  (nullable, reversible) but is no longer collected in the form,
+//  shown in the UI, or exported. Nothing is lost if you want it back
+//  later - just re-add the field.
+//
+//  Tables (run assets_schema.sql once in Workbench):
+//    asset_heads  - per-institution heads of account, auto-seeded with
 //                   the 21 standard heads on first read.
-//    assets       — the register itself. `photo` is a base64 data URL in
+//    assets       - the register itself. `photo` is a base64 data URL in
 //                   a MEDIUMTEXT column.
 //
 //  PERFORMANCE / RAILWAY NOTES
-//   • No list query ever SELECTs `photo` — it returns `(photo IS NOT
+//   - No list query ever SELECTs `photo` - it returns `(photo IS NOT
 //     NULL) AS has_photo` instead, and the image is served by its own
 //     endpoint. This keeps row size small and avoids the sort-memory
 //     error (Error 2013) we hit on other modules.
-//   • For the same reason list results are sorted in Node, not SQL.
+//   - For the same reason list results are sorted in Node, not SQL.
 //
 //  AUTH GATE
-//   • assets/photo/:id sits under /api, so the frontend FETCHES it
-//     (token via the interceptor) and renders a blob URL — never a raw
+//   - assets/photo/:id sits under /api, so the frontend FETCHES it
+//     (token via the interceptor) and renders a blob URL - never a raw
 //     <img src>. Same for the Excel export.
 //
 //  Requires: npm install exceljs --save   (already used by Alumni /
-//  Pre-Admissions exports — no new dependency if those are in place).
+//  Pre-Admissions exports - no new dependency if those are in place).
 //
 //  Reuses: db, sameTenant(), nowSQL()
 // =====================================================================
@@ -13365,7 +13370,7 @@ app.get('/api/admin/assets/list/:instId', async (req, res) => {
         const { where, params } = _assetFilters(instId, req.query);
         const [rows] = await db.execute(
             `SELECT a.id, a.institutionId, a.head_id, a.item_name, a.quantity, a.unit,
-                    a.room_no, a.purchase_date, a.unit_cost, a.vendor, a.invoice_no,
+                    a.room_no, a.purchase_date, a.vendor, a.invoice_no,
                     a.serial_no, a.status, a.warranty_expiry, a.details,
                     a.created_at, a.updated_at, a.created_by, a.updated_by,
                     (a.photo IS NOT NULL) AS has_photo,
@@ -13379,7 +13384,7 @@ app.get('/api/admin/assets/list/:instId', async (req, res) => {
               WHERE ${where}`,
             params
         );
-        // Sorted in Node (not SQL) — same defensive pattern as the other
+        // Sorted in Node (not SQL) - same defensive pattern as the other
         // modules, keeps Railway from ever sorting wide rows on disk.
         rows.sort((x, y) => {
             const h = String(x.head_name || '').localeCompare(String(y.head_name || ''));
@@ -13415,7 +13420,6 @@ app.get('/api/admin/assets/summary/:instId', async (req, res) => {
         const [[totals]] = await db.execute(
             `SELECT COUNT(*) AS items,
                     COALESCE(SUM(a.quantity), 0) AS qty,
-                    COALESCE(SUM(a.quantity * COALESCE(a.unit_cost, 0)), 0) AS val,
                     COALESCE(SUM(CASE WHEN a.status IN ('Under Repair','Damaged') THEN 1 ELSE 0 END), 0) AS attention
                FROM assets a WHERE ${where}`,
             params
@@ -13423,19 +13427,17 @@ app.get('/api/admin/assets/summary/:instId', async (req, res) => {
         const [byHead] = await db.execute(
             `SELECT COALESCE(h.name, 'Unassigned') AS head_name,
                     COUNT(*) AS items,
-                    COALESCE(SUM(a.quantity), 0) AS qty,
-                    COALESCE(SUM(a.quantity * COALESCE(a.unit_cost, 0)), 0) AS val
+                    COALESCE(SUM(a.quantity), 0) AS qty
                FROM assets a
                LEFT JOIN asset_heads h ON h.id = a.head_id
               WHERE ${where}
               GROUP BY COALESCE(h.name, 'Unassigned')`,
             params
         );
-        byHead.sort((a, b) => Number(b.val) - Number(a.val));
+        byHead.sort((a, b) => Number(b.qty) - Number(a.qty));
         res.json({
             items: Number(totals.items) || 0,
             qty: Number(totals.qty) || 0,
-            val: Number(totals.val) || 0,
             attention: Number(totals.attention) || 0,
             byHead
         });
@@ -13447,7 +13449,7 @@ app.get('/api/admin/assets/item/:id', async (req, res) => {
     try {
         const [rows] = await db.execute(
             `SELECT a.id, a.institutionId, a.head_id, a.item_name, a.quantity, a.unit,
-                    a.room_no, a.purchase_date, a.unit_cost, a.vendor, a.invoice_no,
+                    a.room_no, a.purchase_date, a.vendor, a.invoice_no,
                     a.serial_no, a.status, a.warranty_expiry, a.details,
                     a.created_at, a.updated_at,
                     (a.photo IS NOT NULL) AS has_photo,
@@ -13486,6 +13488,8 @@ app.get('/api/admin/assets/photo/:id', async (req, res) => {
 });
 
 // --- 27.9 Create an asset -------------------------------------------
+//  unit_cost is intentionally inserted as NULL - the column is kept but
+//  the UI no longer collects a cost. Re-add here if you ever want it.
 app.post('/api/admin/assets', async (req, res) => {
     const institutionId = req.auth.institutionId;
     const actor_id = req.auth.userId;
@@ -13504,9 +13508,9 @@ app.post('/api/admin/assets', async (req, res) => {
         const [result] = await db.execute(
             `INSERT INTO assets
                (institutionId, head_id, item_name, quantity, unit, room_no, purchase_date,
-                unit_cost, vendor, invoice_no, serial_no, status, warranty_expiry, details,
+                vendor, invoice_no, serial_no, status, warranty_expiry, details,
                 photo, created_by, updated_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 institutionId,
                 parseInt(b.head_id, 10),
@@ -13515,7 +13519,6 @@ app.post('/api/admin/assets', async (req, res) => {
                 b.unit || 'Nos',
                 b.room_no || null,
                 b.purchase_date || null,
-                (b.unit_cost === null || b.unit_cost === undefined || b.unit_cost === '') ? null : Number(b.unit_cost),
                 b.vendor || null,
                 b.invoice_no || null,
                 b.serial_no || null,
@@ -13551,7 +13554,7 @@ app.put('/api/admin/assets/:id', async (req, res) => {
         await db.execute(
             `UPDATE assets SET
                 head_id = ?, item_name = ?, quantity = ?, unit = ?, room_no = ?,
-                purchase_date = ?, unit_cost = ?, vendor = ?, invoice_no = ?, serial_no = ?,
+                purchase_date = ?, vendor = ?, invoice_no = ?, serial_no = ?,
                 status = ?, warranty_expiry = ?, details = ?, updated_at = ?, updated_by = ?
               WHERE id = ?`,
             [
@@ -13561,7 +13564,6 @@ app.put('/api/admin/assets/:id', async (req, res) => {
                 b.unit || 'Nos',
                 b.room_no || null,
                 b.purchase_date || null,
-                (b.unit_cost === null || b.unit_cost === undefined || b.unit_cost === '') ? null : Number(b.unit_cost),
                 b.vendor || null,
                 b.invoice_no || null,
                 b.serial_no || null,
@@ -13592,19 +13594,22 @@ app.delete('/api/admin/assets/:id', async (req, res) => {
 });
 
 // --- 27.12 Excel export (honours the same filters as the list) ------
+//  No cost / value columns - the register is non-monetary.
 app.get('/api/admin/assets/export/:instId', async (req, res) => {
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     try {
         const { where, params } = _assetFilters(instId, req.query);
         const [rows] = await db.execute(
             `SELECT a.item_name, a.quantity, a.unit, a.room_no, a.purchase_date,
-                    a.unit_cost, a.vendor, a.invoice_no, a.serial_no, a.status,
+                    a.vendor, a.invoice_no, a.serial_no, a.status,
                     a.warranty_expiry, a.details, a.created_at,
                     h.name AS head_name,
-                    cu.name AS created_by_name
+                    cu.name AS created_by_name,
+                    uu.name AS updated_by_name, a.updated_at
                FROM assets a
                LEFT JOIN asset_heads h ON h.id = a.head_id
                LEFT JOIN users cu ON cu.id = a.created_by
+               LEFT JOIN users uu ON uu.id = a.updated_by
               WHERE ${where}`,
             params
         );
@@ -13626,15 +13631,14 @@ app.get('/api/admin/assets/export/:instId', async (req, res) => {
             { header: 'Unit', key: 'unit', width: 9 },
             { header: 'Room / Location', key: 'room_no', width: 18 },
             { header: 'Date of Purchase', key: 'purchase_date', width: 16 },
-            { header: 'Cost per Unit', key: 'unit_cost', width: 14 },
-            { header: 'Total Value', key: 'total_value', width: 14 },
             { header: 'Status', key: 'status', width: 14 },
             { header: 'Vendor', key: 'vendor', width: 22 },
             { header: 'Bill / Invoice No', key: 'invoice_no', width: 18 },
             { header: 'Serial / Model No', key: 'serial_no', width: 20 },
             { header: 'Warranty Expires', key: 'warranty_expiry', width: 16 },
             { header: 'Details', key: 'details', width: 34 },
-            { header: 'Added By', key: 'created_by_name', width: 20 }
+            { header: 'Added By', key: 'created_by_name', width: 20 },
+            { header: 'Last Updated By', key: 'updated_by_name', width: 20 }
         ];
         ws.columns = columns;
 
@@ -13656,14 +13660,18 @@ app.get('/api/admin/assets/export/:instId', async (req, res) => {
             return (y && m && d) ? `${d}/${m}/${y}` : '';
         };
 
+        // "Last updated" only counts when the row was edited > 1s after creation.
+        const wasUpdated = (r) => {
+            if (!r.created_at || !r.updated_at) return false;
+            const c = new Date(String(r.created_at).replace(' ', 'T') + 'Z').getTime();
+            const u = new Date(String(r.updated_at).replace(' ', 'T') + 'Z').getTime();
+            return (u - c) > 1000;
+        };
+
         let totalQty = 0;
-        let totalVal = 0;
         rows.forEach((r, i) => {
             const qty = parseInt(r.quantity, 10) || 0;
-            const cost = (r.unit_cost === null || r.unit_cost === undefined) ? null : Number(r.unit_cost);
-            const value = cost === null ? null : qty * cost;
             totalQty += qty;
-            totalVal += value || 0;
             const row = ws.addRow({
                 sno: i + 1,
                 head_name: r.head_name || 'Unassigned',
@@ -13672,33 +13680,28 @@ app.get('/api/admin/assets/export/:instId', async (req, res) => {
                 unit: r.unit || '',
                 room_no: r.room_no || '',
                 purchase_date: fmtD(r.purchase_date),
-                unit_cost: cost,
-                total_value: value,
                 status: r.status || '',
                 vendor: r.vendor || '',
                 invoice_no: r.invoice_no || '',
                 serial_no: r.serial_no || '',
                 warranty_expiry: fmtD(r.warranty_expiry),
                 details: r.details || '',
-                created_by_name: r.created_by_name || ''
+                created_by_name: r.created_by_name || '',
+                updated_by_name: wasUpdated(r) ? (r.updated_by_name || '') : ''
             });
-            row.getCell('unit_cost').numFmt = '#,##0.00';
-            row.getCell('total_value').numFmt = '#,##0.00';
             row.alignment = { vertical: 'top', wrapText: false };
         });
 
         // Totals row, accent-tinted (#f29132)
         const totalRow = ws.addRow({
             head_name: 'TOTAL',
-            quantity: totalQty,
-            total_value: totalVal
+            quantity: totalQty
         });
         totalRow.font = { bold: true };
         totalRow.eachCell((cell) => {
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDEBDC' } };
             cell.border = { top: { style: 'thin', color: { argb: 'FFF29132' } } };
         });
-        totalRow.getCell('total_value').numFmt = '#,##0.00';
 
         ws.views = [{ state: 'frozen', ySplit: 1 }];
         ws.autoFilter = { from: 'A1', to: { row: 1, column: columns.length } };

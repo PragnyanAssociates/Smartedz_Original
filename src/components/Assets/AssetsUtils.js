@@ -1,5 +1,5 @@
 // =====================================================================
-//  Inventory & Assets — shared helpers
+//  Inventory & Assets - shared helpers
 //  No academic-year logic: an asset belongs to the institution and
 //  carries across years (like Syllabus). Filters are calendar-based.
 // =====================================================================
@@ -23,7 +23,7 @@ export function statusStyle(status) {
   }
 }
 
-// Railway stores UTC — bare MySQL timestamps get a 'Z' before parsing so
+// Railway stores UTC - bare MySQL timestamps get a 'Z' before parsing so
 // they render correctly in IST.
 export function fmtIST(val) {
   if (!val) return '';
@@ -57,34 +57,6 @@ export function toYYYYMMDD(val) {
   const s = String(val);
   const datePart = s.includes('T') ? s.split('T')[0] : s.split(' ')[0];
   return /^\d{4}-\d{2}-\d{2}$/.test(datePart) ? datePart : '';
-}
-
-// Indian-format rupees. Returns '-' for null/undefined so tables stay tidy.
-export function money(val) {
-  const n = Number(val);
-  if (val === null || val === undefined || val === '' || isNaN(n)) return '-';
-  return n.toLocaleString('en-IN', {
-    style: 'currency', currency: 'INR',
-    minimumFractionDigits: 0, maximumFractionDigits: 2
-  });
-}
-
-// Compact rupees for the summary strip (1.2L / 3.4Cr style).
-export function moneyShort(val) {
-  const n = Number(val || 0);
-  if (isNaN(n)) return '-';
-  if (n >= 10000000) return `\u20b9${(n / 10000000).toFixed(2)} Cr`;
-  if (n >= 100000)   return `\u20b9${(n / 100000).toFixed(2)} L`;
-  if (n >= 1000)     return `\u20b9${(n / 1000).toFixed(1)} K`;
-  return `\u20b9${n.toFixed(0)}`;
-}
-
-// Total value of a row = quantity x unit cost
-export function lineValue(row) {
-  const q = parseInt(row?.quantity, 10) || 0;
-  const c = Number(row?.unit_cost);
-  if (isNaN(c)) return 0;
-  return q * c;
 }
 
 // Read a File -> base64 data URL with a size cap (MB).

@@ -4,13 +4,12 @@ import { usePermissions } from '../../Screens/PermissionsContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   Boxes, Search, Loader2, Plus, Edit, Trash2, X, Download, ChevronDown,
-  Package, IndianRupee, Wrench, Layers, Image as ImageIcon, MapPin, CalendarDays,
-  FileText, User, HelpCircle, ShieldCheck, Settings2, Check
+  Package, Wrench, Layers, Image as ImageIcon, MapPin, CalendarDays,
+  FileText, User, HelpCircle, ShieldCheck, Settings2, Check, Eye
 } from 'lucide-react';
 import AssetFormModal from './AssetFormModal';
 import {
-  ASSET_STATUSES, statusStyle, fmtIST, fmtDate, money, moneyShort,
-  lineValue, useAuthedImage
+  ASSET_STATUSES, statusStyle, fmtIST, fmtDate, useAuthedImage
 } from './AssetsUtils';
 
 // =====================================================================
@@ -18,8 +17,8 @@ import {
 //   - Every item is filed under a Head of Account (dropdown, seeded
 //     with the 21 standard heads; custom heads can be added).
 //   - Filters: search, head, status, room, purchase year.
-//   - Summary strip: line items, total quantity, total value, and how
-//     many need attention (Under Repair + Damaged).
+//   - Summary strip: line items, total quantity, and how many need
+//     attention (Under Repair + Damaged).
 //   - Excel export follows whatever filters are applied.
 //  No academic-year scoping - an asset belongs to the school, not a year.
 // =====================================================================
@@ -150,9 +149,8 @@ export default function InventoryAssets() {
   // Fallback totals if the summary endpoint is unavailable.
   const localTotals = useMemo(() => {
     const qty = rows.reduce((s, r) => s + (parseInt(r.quantity, 10) || 0), 0);
-    const val = rows.reduce((s, r) => s + lineValue(r), 0);
     const attention = rows.filter(r => r.status === 'Under Repair' || r.status === 'Damaged').length;
-    return { items: rows.length, qty, val, attention };
+    return { items: rows.length, qty, attention };
   }, [rows]);
 
   const totals = summary || localTotals;
@@ -180,7 +178,7 @@ export default function InventoryAssets() {
             Inventory & Assets
           </h1>
           <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
-            The school's asset register - what you own, how many, where it is and what it cost.
+            The school's asset register - what you own, how many and where it is.
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0 self-start sm:self-auto">
@@ -193,9 +191,9 @@ export default function InventoryAssets() {
           )}
           <button onClick={handleDownload} disabled={downloading}
             title="Download the current view as Excel"
-            className="h-9 px-4 bg-white ring-1 ring-zinc-200 shadow-sm hover:bg-zinc-50 text-zinc-700 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shrink-0">
+            className="h-9 px-4 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors shrink-0">
             {downloading ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
-            {downloading ? 'Preparing...' : 'Excel'}
+            {downloading ? 'Preparing...' : 'Download (Excel)'}
           </button>
           {mayEdit && (
             <button onClick={() => { setEditing(null); setFormOpen(true); }}
@@ -207,11 +205,10 @@ export default function InventoryAssets() {
       </header>
 
       {/* Summary strip */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-        <StatCard icon={Layers}       label="Line Items"     value={totals.items ?? 0} />
-        <StatCard icon={Package}      label="Total Quantity" value={totals.qty ?? 0} />
-        <StatCard icon={IndianRupee}  label="Total Value"    value={moneyShort(totals.val || 0)} />
-        <StatCard icon={Wrench}       label="Needs Attention" value={totals.attention ?? 0} tone="amber" />
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+        <StatCard icon={Layers}   label="Line Items"      value={totals.items ?? 0} />
+        <StatCard icon={Package}  label="Total Quantity"  value={totals.qty ?? 0} />
+        <StatCard icon={Wrench}   label="Needs Attention" value={totals.attention ?? 0} tone="amber" />
       </div>
 
       {/* Filters */}
@@ -261,18 +258,18 @@ export default function InventoryAssets() {
           </div>
         ) : (
           <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-x-auto custom-scrollbar">
-            <table className="w-full text-left border-collapse min-w-[1080px]">
+            <table className="w-full text-left border-collapse min-w-[1020px]">
               <thead className="bg-zinc-50/80">
                 <tr>
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 w-14 text-center">S.No</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 w-16 text-center">Image</th>
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Item</th>
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Head of Account</th>
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 text-center w-24">Qty</th>
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 w-32">Room</th>
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 w-32">Purchased</th>
-                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 text-right w-32">Value</th>
                   <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 w-32">Status</th>
-                  {(mayEdit || mayDelete) && <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 text-right w-28">Actions</th>}
+                  <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 text-right w-32">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
@@ -283,12 +280,14 @@ export default function InventoryAssets() {
                       className="hover:bg-zinc-50/60 transition-colors group cursor-pointer">
                       <td className="px-5 py-3 text-center font-semibold text-primary tabular-nums">{idx + 1}</td>
                       <td className="px-5 py-3">
-                        <div className="flex items-center gap-2">
-                          {r.has_photo ? <ImageIcon className="size-3.5 text-zinc-300 shrink-0" /> : null}
-                          <div className="min-w-0">
-                            <div className="font-semibold text-sm text-zinc-900 truncate">{r.item_name}</div>
-                            {r.serial_no && <div className="text-[11px] text-zinc-400 truncate mt-0.5">SL: {r.serial_no}</div>}
-                          </div>
+                        <div className="flex justify-center">
+                          <AssetThumb asset={r} />
+                        </div>
+                      </td>
+                      <td className="px-5 py-3">
+                        <div className="min-w-0">
+                          <div className="font-semibold text-sm text-zinc-900 truncate">{r.item_name}</div>
+                          {r.serial_no && <div className="text-[11px] text-zinc-400 truncate mt-0.5">SL: {r.serial_no}</div>}
                         </div>
                       </td>
                       <td className="px-5 py-3">
@@ -301,43 +300,40 @@ export default function InventoryAssets() {
                       </td>
                       <td className="px-5 py-3 text-sm font-semibold text-zinc-700 truncate">{r.room_no || '-'}</td>
                       <td className="px-5 py-3 text-sm text-zinc-600 whitespace-nowrap">{fmtDate(r.purchase_date) || '-'}</td>
-                      <td className="px-5 py-3 text-right text-sm font-semibold text-zinc-900 tabular-nums whitespace-nowrap">
-                        {r.unit_cost === null || r.unit_cost === undefined ? '-' : money(lineValue(r))}
-                      </td>
                       <td className="px-5 py-3">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ring-1 ring-inset ${ss.bg} ${ss.text} ${ss.ring}`}>
                           {r.status}
                         </span>
                       </td>
-                      {(mayEdit || mayDelete) && (
-                        <td className="px-5 py-3 text-right whitespace-nowrap">
-                          <div className="flex items-center justify-end gap-2 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                            {mayEdit && (
-                              <button onClick={e => { e.stopPropagation(); setEditing(r); setFormOpen(true); }} title="Edit"
-                                className="flex items-center justify-center size-7 rounded bg-white text-zinc-600 border border-zinc-200 hover:text-primary hover:bg-zinc-50 transition-colors shadow-sm">
-                                <Edit className="size-3.5" />
-                              </button>
-                            )}
-                            {mayDelete && (
-                              <button onClick={e => { e.stopPropagation(); handleDelete(r); }} title="Delete"
-                                className="flex items-center justify-center size-7 rounded bg-white text-zinc-600 border border-zinc-200 hover:text-red-600 hover:bg-red-50 transition-colors shadow-sm">
-                                <Trash2 className="size-3.5" />
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      )}
+                      <td className="px-5 py-3 text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-2">
+                          <button onClick={e => { e.stopPropagation(); setDetail(r); }} title="View details"
+                            className="flex items-center justify-center size-7 rounded bg-white text-zinc-600 border border-zinc-200 hover:text-primary hover:bg-zinc-50 transition-colors shadow-sm">
+                            <Eye className="size-3.5" />
+                          </button>
+                          {mayEdit && (
+                            <button onClick={e => { e.stopPropagation(); setEditing(r); setFormOpen(true); }} title="Edit"
+                              className="flex items-center justify-center size-7 rounded bg-white text-zinc-600 border border-zinc-200 hover:text-primary hover:bg-zinc-50 transition-colors shadow-sm">
+                              <Edit className="size-3.5" />
+                            </button>
+                          )}
+                          {mayDelete && (
+                            <button onClick={e => { e.stopPropagation(); handleDelete(r); }} title="Delete"
+                              className="flex items-center justify-center size-7 rounded bg-white text-zinc-600 border border-zinc-200 hover:text-red-600 hover:bg-red-50 transition-colors shadow-sm">
+                              <Trash2 className="size-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
                     </tr>
                   );
                 })}
               </tbody>
               <tfoot>
                 <tr className="bg-zinc-50/80 border-t border-zinc-200/60">
-                  <td className="px-5 py-4 font-semibold text-sm text-zinc-700" colSpan={3}>Totals ({rows.length} items)</td>
+                  <td className="px-5 py-4 font-semibold text-sm text-zinc-700" colSpan={4}>Totals ({rows.length} items)</td>
                   <td className="px-5 py-4 text-center font-semibold text-primary text-sm tabular-nums">{totals.qty ?? 0}</td>
-                  <td className="px-5 py-4" colSpan={2}></td>
-                  <td className="px-5 py-4 text-right font-semibold text-primary text-sm tabular-nums whitespace-nowrap">{money(totals.val || 0)}</td>
-                  <td className="px-5 py-4" colSpan={(mayEdit || mayDelete) ? 2 : 1}></td>
+                  <td className="px-5 py-4" colSpan={4}></td>
                 </tr>
               </tfoot>
             </table>
@@ -372,6 +368,21 @@ export default function InventoryAssets() {
           onChanged={() => { loadHeads(); loadList(); }}
         />
       )}
+    </div>
+  );
+}
+
+// --- Row thumbnail (authed blob; placeholder when no photo) ----------
+function AssetThumb({ asset }) {
+  const { src } = useAuthedImage(
+    asset.has_photo ? `${API_BASE_URL}/admin/assets/photo/${asset.id}` : null
+  );
+  if (asset.has_photo && src) {
+    return <img src={src} alt="" className="size-10 rounded-md object-cover bg-zinc-100 ring-1 ring-black/5" />;
+  }
+  return (
+    <div className="size-10 rounded-md bg-zinc-50 ring-1 ring-black/5 flex items-center justify-center">
+      <ImageIcon className="size-4 text-zinc-300" />
     </div>
   );
 }
@@ -449,15 +460,15 @@ function AssetDetailModal({ asset, onClose, onEdit, onDelete }) {
           )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <InfoRow icon={Package}     label="Quantity"        value={`${asset.quantity} ${asset.unit || ''}`.trim()} />
-            <InfoRow icon={IndianRupee} label="Cost per Unit"   value={money(asset.unit_cost)} />
-            <InfoRow icon={IndianRupee} label="Total Value"     value={asset.unit_cost == null ? '-' : money(lineValue(asset))} />
-            <InfoRow icon={MapPin}      label="Room / Location" value={asset.room_no || '-'} />
-            <InfoRow icon={CalendarDays} label="Date of Purchase" value={fmtDate(asset.purchase_date) || '-'} />
-            <InfoRow icon={CalendarDays} label="Warranty Expires" value={fmtDate(asset.warranty_expiry) || '-'} />
-            <InfoRow icon={User}        label="Vendor"          value={asset.vendor || '-'} />
-            <InfoRow icon={FileText}    label="Bill / Invoice No" value={asset.invoice_no || '-'} />
-            <InfoRow icon={FileText}    label="Serial / Model No" value={asset.serial_no || '-'} />
+            <InfoRow icon={Package}      label="Quantity"          value={`${asset.quantity} ${asset.unit || ''}`.trim()} />
+            <InfoRow icon={MapPin}       label="Room / Location"   value={asset.room_no || '-'} />
+            <InfoRow icon={CalendarDays} label="Date of Purchase"  value={fmtDate(asset.purchase_date) || '-'} />
+            <InfoRow icon={CalendarDays} label="Warranty Expires"  value={fmtDate(asset.warranty_expiry) || '-'} />
+            <InfoRow icon={User}         label="Vendor"            value={asset.vendor || '-'} />
+            <InfoRow icon={FileText}     label="Bill / Invoice No" value={asset.invoice_no || '-'} />
+            <div className="sm:col-span-2">
+              <InfoRow icon={FileText}   label="Serial / Model No" value={asset.serial_no || '-'} />
+            </div>
           </div>
 
           {asset.details && (
@@ -467,6 +478,7 @@ function AssetDetailModal({ asset, onClose, onEdit, onDelete }) {
             </div>
           )}
 
+          {/* Audit - who added it and when, and who last updated it and when (IST) */}
           <div className="pt-4 border-t border-zinc-100 grid grid-cols-1 sm:grid-cols-2 gap-4">
             <InfoRow icon={User} label="Added By"
               value={asset.created_by_name || '-'} sub={fmtIST(asset.created_at)} />
@@ -597,20 +609,20 @@ const GUIDES = {
   manage: {
     title: 'Inventory & Assets',
     steps: [
-      ['1 - What this is', 'The school\'s asset register - every table, chair, laptop, lab item and so on, with its count, where it sits, what it cost and when it was bought.'],
-      ['2 - Add an asset', 'Add Asset records the item name, Head of Account (required), quantity and unit, room or location, purchase date, cost per unit, vendor, bill no, serial no and a photo. Total value is worked out as quantity x cost.'],
+      ['1 - What this is', 'The school\'s asset register - every table, chair, laptop, lab item and so on, with its count, where it sits and when it was bought.'],
+      ['2 - Add an asset', 'Add Asset records the item name, Head of Account (required), quantity and unit, room or location, purchase date, vendor, bill no, serial no and a photo of the item.'],
       ['3 - Heads of Account', 'Every item is filed under a head - Office, Classroom, Computer & IT, Laboratory and so on. The standard heads are ready to use; Heads lets you add your own or remove unused ones.'],
       ['4 - Track condition', 'Set each item to In Use, In Store, Under Repair, Damaged or Disposed. The Needs Attention box counts everything under repair or damaged.'],
-      ['5 - Find & export', 'Search by item, serial, vendor, invoice or room, and narrow by head, status, room or purchase year. Excel downloads exactly what the filters are showing.'],
+      ['5 - View, find & export', 'Click a row or the eye button to see the full record - including who added it and who last updated it, with dates and times. Search by item, serial, vendor, invoice or room, and narrow by head, status, room or purchase year. Download (Excel) saves exactly what the filters are showing.'],
     ],
     note: 'Assets are not tied to an academic year - the register carries forward until you change it. Photos are capped at 3 MB. Adding, editing and deleting depend on your permissions.'
   },
   view: {
     title: 'Inventory & Assets',
     steps: [
-      ['1 - What this is', 'The school\'s asset register - what the institution owns, how many, where it is and what it cost.'],
-      ['2 - Read an entry', 'Click any row for the full record: photo, quantity, cost, room, purchase and warranty dates, vendor, invoice and serial numbers.'],
-      ['3 - Find & export', 'Search by item, serial, vendor, invoice or room, and narrow by head of account, status, room or purchase year. Excel downloads the current view.'],
+      ['1 - What this is', 'The school\'s asset register - what the institution owns, how many and where it is.'],
+      ['2 - Read an entry', 'Click any row or the eye button for the full record: photo, quantity, room, purchase and warranty dates, vendor, invoice and serial numbers, plus who added or last updated it and when.'],
+      ['3 - Find & export', 'Search by item, serial, vendor, invoice or room, and narrow by head of account, status, room or purchase year. Download (Excel) saves the current view.'],
     ],
     note: 'This is a read-only view - the register is maintained by admins and staff with the right permissions.'
   }
