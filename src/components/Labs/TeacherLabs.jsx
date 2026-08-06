@@ -110,6 +110,8 @@ export default function TeacherLabs({ canManage = true }) {
   const [viewingLab, setViewingLab] = useState(null);
   const [editing, setEditing] = useState(null);
   const [saving, setSaving] = useState(false);
+  // Bumped after an in-place save so the open detail view re-fetches itself.
+  const [detailRefresh, setDetailRefresh] = useState(0);
   // Form State
   const [form, setForm] = useState({ title: '', description: '', class_id: '', subject_id: '' });
   const [resources, setResources] = useState([]);
@@ -250,6 +252,9 @@ export default function TeacherLabs({ canManage = true }) {
       if (res.ok) {
         setModalOpen(false);
         load();
+        // If we edited while inside the detail view, make it re-fetch so the
+        // change shows straight away instead of only after going Back.
+        setDetailRefresh(n => n + 1);
       } else {
         const d = await res.json();
         throw new Error(d.error || 'Save failed');
@@ -277,9 +282,181 @@ export default function TeacherLabs({ canManage = true }) {
       alert(err.message || 'Delete failed');
     }
   };
+
+  // ---- CREATE / EDIT MODAL ----
+  //  Kept as a node so it can render in BOTH the list view and the detail
+  //  view. Previously the modal only lived in the list return, so clicking
+  //  Edit inside a lab flipped modalOpen=true but nothing showed until you
+  //  navigated Back (which re-rendered the list and revealed the modal).
+  const modalNode = modalOpen ? (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
+      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-2xl shadow-xl relative max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
+
+        <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 rounded-t-lg shrink-0">
+          <h2 className="text-lg font-semibold text-zinc-900 tracking-tight">
+            {editing ? 'Edit Lab' : 'Create Digital Lab'}
+          </h2>
+          <button onClick={() => setModalOpen(false)} className="text-zinc-400 hover:text-zinc-700 transition-colors p-1.5 hover:bg-zinc-100 rounded-md">
+            <X className="size-4" />
+          </button>
+        </div>
+        <form onSubmit={handleSave} className="flex flex-col flex-1 overflow-hidden">
+          <div className="p-5 sm:p-6 overflow-y-auto custom-scrollbar space-y-6">
+
+            <div className="space-y-1.5">
+               <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Lab Title <span className="text-red-500">*</span></label>
+               <input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })}
+                placeholder="e.g. Optics - Reflection & Refraction" className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Class <span className="text-red-500">*</span></label>
+                <div className="relative">
+                  <select value={form.class_id} onChange={e => setForm({ ...form, class_id: e.target.value, subject_id: '' })}
+                    className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 appearance-none shadow-sm cursor-pointer transition-colors" required>
+                    <option value="" disabled>Select a class</option>
+                    {classes.map(c => (
+                      <option key={c.id} value={String(c.id)}>{classLabel(c)}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Subject</label>
+                <div className="relative">
+                  <select value={form.subject_id} onChange={e => setForm({ ...form, subject_id: e.target.value })}
+                    className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 appearance-none shadow-sm cursor-pointer transition-colors">
+                    <option value="">{form.class_id ? 'Select a subject' : 'Select a class first'}</option>
+                    {subjectsForClass.map(s => (
+                      <option key={s.id} value={String(s.id)}>{s.name}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+               <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Description</label>
+               <textarea rows={3} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })}
+                placeholder="What this lab covers..." className="w-full bg-white border border-zinc-200 rounded-md p-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm resize-none transition-colors" />
+            </div>
+            {/* Resources */}
+            <div className="pt-4 border-t border-zinc-100">
+              <div className="flex items-center justify-between mb-4">
+                <label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">Resources</label>
+                <span className="text-[10px] font-semibold bg-primary/10 text-primary px-2 py-0.5 rounded uppercase tracking-wider ring-1 ring-inset ring-primary/20">{resources.length} Added</span>
+              </div>
+              <div className="space-y-4 mb-6">
+                {resources.map((r, i) => {
+                  const meta = resTypeMeta(r.resource_type);
+                  const Icon = meta.icon;
+                  return (
+                    <div key={i} className="bg-zinc-50 border border-zinc-200 rounded-lg p-4 relative group">
+                      <button type="button" onClick={() => setResources(p => p.filter((_, idx) => idx !== i))}
+                        className="absolute top-3 right-3 p-1.5 text-zinc-400 hover:text-red-500 hover:bg-white rounded-md transition-colors shadow-sm ring-1 ring-inset ring-black/5">
+                        <Trash2 className="size-3.5" />
+                      </button>
+
+                      <div className="flex items-center gap-2 mb-4">
+                        <Icon className="size-4 text-zinc-600" />
+                        <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-600">{meta.label}</span>
+                      </div>
+
+                      <div className="space-y-3">
+                        <input value={r.title} required
+                          onChange={e => setResources(p => p.map((rs, idx) => idx === i ? { ...rs, title: e.target.value } : rs))}
+                          placeholder="Resource Title (e.g. Intro Video)"
+                          className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
+
+                        {/* Toggle Upload or Link for Video/PDF */}
+                        {(r.resource_type === 'video' || r.resource_type === 'pdf') && (
+                           <div className="flex bg-zinc-200/50 p-1 rounded-md w-full sm:w-fit">
+                              <button type="button"
+                                onClick={() => setResources(p => p.map((rs, idx) => idx === i ? { ...rs, source: 'file', url: '' } : rs))}
+                                className={`flex-1 sm:flex-none px-4 py-1.5 rounded text-[10px] font-semibold uppercase tracking-wider transition-all ${r.source === 'file' ? 'bg-white shadow-sm text-zinc-900 ring-1 ring-black/5' : 'text-zinc-500 hover:text-zinc-700'}`}>
+                                <UploadCloud className="size-3 mr-1.5 inline" /> Upload
+                              </button>
+                              <button type="button"
+                                onClick={() => setResources(p => p.map((rs, idx) => idx === i ? { ...rs, source: 'url', file: null } : rs))}
+                                className={`flex-1 sm:flex-none px-4 py-1.5 rounded text-[10px] font-semibold uppercase tracking-wider transition-all ${r.source === 'url' ? 'bg-white shadow-sm text-zinc-900 ring-1 ring-black/5' : 'text-zinc-500 hover:text-zinc-700'}`}>
+                                <ExternalLink className="size-3 mr-1.5 inline" /> URL
+                              </button>
+                           </div>
+                        )}
+                        {r.source === 'file' ? (
+                           <div className="relative h-9 flex items-center justify-center border border-dashed border-primary/30 rounded-md bg-primary/5 hover:bg-primary/10 transition-colors cursor-pointer px-3">
+                              <input type="file" accept={r.resource_type === 'pdf' ? '.pdf' : 'video/*'}
+                                className="absolute inset-0 opacity-0 cursor-pointer"
+                                onChange={e => setResources(p => p.map((rs, idx) => idx === i ? { ...rs, file: e.target.files[0] } : rs))} />
+                              <UploadCloud className="size-4 text-primary mr-2" />
+                              <span className="text-xs text-primary truncate font-medium">
+                                {r.file ? r.file.name : (r.has_file ? 'Existing File Attached' : 'Choose File')}
+                              </span>
+                           </div>
+                        ) : (
+                          <input value={r.url || ''} required
+                            onChange={e => setResources(p => p.map((rs, idx) => idx === i ? { ...rs, url: e.target.value } : rs))}
+                            placeholder={r.resource_type === 'live' ? 'Meeting Link (Zoom/Meet)' : 'External URL'}
+                            className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
+                        )}
+
+                        {r.resource_type === 'live' && (
+                          <div className="pt-1">
+                            <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1.5 block">Scheduled Time (Optional)</label>
+                            <input type="datetime-local" value={r.scheduled_at}
+                              onChange={e => setResources(p => p.map((rs, idx) => idx === i ? { ...rs, scheduled_at: e.target.value } : rs))}
+                              className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {RES_TYPES.map(rt => (
+                  <button key={rt.value} type="button"
+                    onClick={() => setResources(p => [...p, { resource_type: rt.value, title: '', url: '', source: 'url', file: null, scheduled_at: '' }])}
+                    className="h-8 inline-flex items-center gap-1.5 bg-white ring-1 ring-inset ring-black/5 hover:bg-zinc-50 text-zinc-700 px-3 rounded-md text-xs font-semibold transition-colors shadow-sm">
+                    <Plus className="size-3" /> <rt.icon className="size-3" /> {rt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
+            <button type="button" onClick={() => setModalOpen(false)} disabled={saving}
+              className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 rounded-md font-semibold text-xs hover:bg-zinc-50 transition-colors w-full sm:w-auto shadow-sm">
+              Cancel
+            </button>
+            <button type="submit" disabled={saving}
+              className="h-9 px-6 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors w-full sm:w-auto min-w-[120px]">
+              {saving ? <Loader2 className="size-3.5 animate-spin shrink-0" /> : <Save className="size-3.5 shrink-0" />}
+              {saving ? 'Saving...' : (editing ? 'Save Changes' : 'Create Lab')}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  ) : null;
+
   // --- Sub-View Navigation ---
+  //  The modal is rendered alongside the detail view so Edit works in place.
   if (viewingLab) {
-    return <LabDetailView lab={viewingLab} onBack={() => { setViewingLab(null); load(); }} canManage={canManage} onEdit={(l) => openEdit(l)} onDelete={(l) => handleDelete(l)} />;
+    return (
+      <>
+        <LabDetailView
+          lab={viewingLab}
+          onBack={() => { setViewingLab(null); load(); }}
+          canManage={canManage}
+          onEdit={(l) => openEdit(l)}
+          onDelete={(l) => handleDelete(l)}
+          refreshToken={detailRefresh}
+        />
+        {modalNode}
+      </>
+    );
   }
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
@@ -413,166 +590,14 @@ export default function TeacherLabs({ canManage = true }) {
           </div>
         )}
       </div>
-      {/* ---- CREATE / EDIT MODAL ---- */}
-      {modalOpen && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-2xl shadow-xl relative max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
-
-            <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 rounded-t-lg shrink-0">
-              <h2 className="text-lg font-semibold text-zinc-900 tracking-tight">
-                {editing ? 'Edit Lab' : 'Create Digital Lab'}
-              </h2>
-              <button onClick={() => setModalOpen(false)} className="text-zinc-400 hover:text-zinc-700 transition-colors p-1.5 hover:bg-zinc-100 rounded-md">
-                <X className="size-4" />
-              </button>
-            </div>
-            <form onSubmit={handleSave} className="flex flex-col flex-1 overflow-hidden">
-              <div className="p-5 sm:p-6 overflow-y-auto custom-scrollbar space-y-6">
-
-                <div className="space-y-1.5">
-                   <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Lab Title <span className="text-red-500">*</span></label>
-                   <input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })}
-                    placeholder="e.g. Optics - Reflection & Refraction" className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Class <span className="text-red-500">*</span></label>
-                    <div className="relative">
-                      <select value={form.class_id} onChange={e => setForm({ ...form, class_id: e.target.value, subject_id: '' })}
-                        className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 appearance-none shadow-sm cursor-pointer transition-colors" required>
-                        <option value="" disabled>Select a class</option>
-                        {classes.map(c => (
-                          <option key={c.id} value={String(c.id)}>{classLabel(c)}</option>
-                        ))}
-                      </select>
-                      <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                    </div>
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Subject</label>
-                    <div className="relative">
-                      <select value={form.subject_id} onChange={e => setForm({ ...form, subject_id: e.target.value })}
-                        className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 appearance-none shadow-sm cursor-pointer transition-colors">
-                        <option value="">{form.class_id ? 'Select a subject' : 'Select a class first'}</option>
-                        {subjectsForClass.map(s => (
-                          <option key={s.id} value={String(s.id)}>{s.name}</option>
-                        ))}
-                      </select>
-                      <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                    </div>
-                  </div>
-                </div>
-                <div className="space-y-1.5">
-                   <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Description</label>
-                   <textarea rows={3} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })}
-                    placeholder="What this lab covers..." className="w-full bg-white border border-zinc-200 rounded-md p-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm resize-none transition-colors" />
-                </div>
-                {/* Resources */}
-                <div className="pt-4 border-t border-zinc-100">
-                  <div className="flex items-center justify-between mb-4">
-                    <label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">Resources</label>
-                    <span className="text-[10px] font-semibold bg-primary/10 text-primary px-2 py-0.5 rounded uppercase tracking-wider ring-1 ring-inset ring-primary/20">{resources.length} Added</span>
-                  </div>
-                  <div className="space-y-4 mb-6">
-                    {resources.map((r, i) => {
-                      const meta = resTypeMeta(r.resource_type);
-                      const Icon = meta.icon;
-                      return (
-                        <div key={i} className="bg-zinc-50 border border-zinc-200 rounded-lg p-4 relative group">
-                          <button type="button" onClick={() => setResources(p => p.filter((_, idx) => idx !== i))}
-                            className="absolute top-3 right-3 p-1.5 text-zinc-400 hover:text-red-500 hover:bg-white rounded-md transition-colors shadow-sm ring-1 ring-inset ring-black/5">
-                            <Trash2 className="size-3.5" />
-                          </button>
-
-                          <div className="flex items-center gap-2 mb-4">
-                            <Icon className="size-4 text-zinc-600" />
-                            <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-600">{meta.label}</span>
-                          </div>
-
-                          <div className="space-y-3">
-                            <input value={r.title} required
-                              onChange={e => setResources(p => p.map((rs, idx) => idx === i ? { ...rs, title: e.target.value } : rs))}
-                              placeholder="Resource Title (e.g. Intro Video)"
-                              className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
-
-                            {/* Toggle Upload or Link for Video/PDF */}
-                            {(r.resource_type === 'video' || r.resource_type === 'pdf') && (
-                               <div className="flex bg-zinc-200/50 p-1 rounded-md w-full sm:w-fit">
-                                  <button type="button"
-                                    onClick={() => setResources(p => p.map((rs, idx) => idx === i ? { ...rs, source: 'file', url: '' } : rs))}
-                                    className={`flex-1 sm:flex-none px-4 py-1.5 rounded text-[10px] font-semibold uppercase tracking-wider transition-all ${r.source === 'file' ? 'bg-white shadow-sm text-zinc-900 ring-1 ring-black/5' : 'text-zinc-500 hover:text-zinc-700'}`}>
-                                    <UploadCloud className="size-3 mr-1.5 inline" /> Upload
-                                  </button>
-                                  <button type="button"
-                                    onClick={() => setResources(p => p.map((rs, idx) => idx === i ? { ...rs, source: 'url', file: null } : rs))}
-                                    className={`flex-1 sm:flex-none px-4 py-1.5 rounded text-[10px] font-semibold uppercase tracking-wider transition-all ${r.source === 'url' ? 'bg-white shadow-sm text-zinc-900 ring-1 ring-black/5' : 'text-zinc-500 hover:text-zinc-700'}`}>
-                                    <ExternalLink className="size-3 mr-1.5 inline" /> URL
-                                  </button>
-                               </div>
-                            )}
-                            {r.source === 'file' ? (
-                               <div className="relative h-9 flex items-center justify-center border border-dashed border-primary/30 rounded-md bg-primary/5 hover:bg-primary/10 transition-colors cursor-pointer px-3">
-                                  <input type="file" accept={r.resource_type === 'pdf' ? '.pdf' : 'video/*'}
-                                    className="absolute inset-0 opacity-0 cursor-pointer"
-                                    onChange={e => setResources(p => p.map((rs, idx) => idx === i ? { ...rs, file: e.target.files[0] } : rs))} />
-                                  <UploadCloud className="size-4 text-primary mr-2" />
-                                  <span className="text-xs text-primary truncate font-medium">
-                                    {r.file ? r.file.name : (r.has_file ? 'Existing File Attached' : 'Choose File')}
-                                  </span>
-                               </div>
-                            ) : (
-                              <input value={r.url || ''} required
-                                onChange={e => setResources(p => p.map((rs, idx) => idx === i ? { ...rs, url: e.target.value } : rs))}
-                                placeholder={r.resource_type === 'live' ? 'Meeting Link (Zoom/Meet)' : 'External URL'}
-                                className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
-                            )}
-
-                            {r.resource_type === 'live' && (
-                              <div className="pt-1">
-                                <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1.5 block">Scheduled Time (Optional)</label>
-                                <input type="datetime-local" value={r.scheduled_at}
-                                  onChange={e => setResources(p => p.map((rs, idx) => idx === i ? { ...rs, scheduled_at: e.target.value } : rs))}
-                                  className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {RES_TYPES.map(rt => (
-                      <button key={rt.value} type="button"
-                        onClick={() => setResources(p => [...p, { resource_type: rt.value, title: '', url: '', source: 'url', file: null, scheduled_at: '' }])}
-                        className="h-8 inline-flex items-center gap-1.5 bg-white ring-1 ring-inset ring-black/5 hover:bg-zinc-50 text-zinc-700 px-3 rounded-md text-xs font-semibold transition-colors shadow-sm">
-                        <Plus className="size-3" /> <rt.icon className="size-3" /> {rt.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-              <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
-                <button type="button" onClick={() => setModalOpen(false)} disabled={saving}
-                  className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 rounded-md font-semibold text-xs hover:bg-zinc-50 transition-colors w-full sm:w-auto shadow-sm">
-                  Cancel
-                </button>
-                <button type="submit" disabled={saving}
-                  className="h-9 px-6 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors w-full sm:w-auto min-w-[120px]">
-                  {saving ? <Loader2 className="size-3.5 animate-spin shrink-0" /> : <Save className="size-3.5 shrink-0" />}
-                  {saving ? 'Saving...' : (editing ? 'Save Changes' : 'Create Lab')}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      {modalNode}
     </div>
   );
 }
 // =====================================================================
 //  ENLARGED DETAIL VIEW COMPONENT
 // =====================================================================
-function LabDetailView({ lab, onBack, canManage, onEdit, onDelete }) {
+function LabDetailView({ lab, onBack, canManage, onEdit, onDelete, refreshToken }) {
   const [resources, setResources] = useState([]);
   const [loading, setLoading] = useState(true);
   const [meta, setMeta] = useState(lab);
@@ -586,7 +611,7 @@ function LabDetailView({ lab, onBack, canManage, onEdit, onDelete }) {
       } catch { setResources([]); }
       setLoading(false);
     })();
-  }, [lab.id]);
+  }, [lab.id, refreshToken]);
   const ordered = useMemo(() => {
     const rank = { live: 0, video: 1, pdf: 2, link: 3 };
     return [...resources].sort((a, b) => (rank[a.resource_type] ?? 9) - (rank[b.resource_type] ?? 9));
