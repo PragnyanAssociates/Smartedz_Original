@@ -17,6 +17,11 @@ const { performance } = require('perf_hooks');
 const app = express();
 const server = http.createServer({ maxHeaderSize: 81920 }, app);
 
+// Hold idle keep-alive connections longer than Railway's proxy so the
+// client never reuses a socket the server has already closed.
+server.keepAliveTimeout = 65000;
+server.headersTimeout   = 66000;
+
 const io = new Server(server, {
     cors: {
         origin: "*",
