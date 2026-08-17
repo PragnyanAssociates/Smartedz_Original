@@ -9,19 +9,19 @@ import StudentSchedulesView from './StudentSchedulesView';
 import ExamsHelp from './ExamsHelp';
 
 // =====================================================================
-//  Exams — top-level container
+//  Exams - top-level container
 //
 //  Two tabs:
-//   • Exam Schedules — printable exam timetables
-//   • Online Exams   — actual quizzes students take
+//   - Exam Schedules - printable exam timetables
+//   - Online Exams   - actual quizzes students take
 //
 //  Role behaviour:
-//   • Students see read-only views (their class's schedules + exams to take)
-//   • Teachers/Super Admin/permitted custom roles get full CRUD
+//   - Students see read-only views (their class's schedules + exams to take)
+//   - Teachers/Super Admin/permitted custom roles get full CRUD
 //
 //  No academic-year scoping: exams & schedules are plain per-institution
 //  records. The old "Academic Year" badge and active-year fetch were
-//  removed — schedules carry a free-text subtitle instead.
+//  removed - schedules carry a free-text subtitle instead.
 //
 //  The How-to-use guide lives here in the header rather than inside the
 //  managers, so it stays put across their sub-views (schedule detail,
@@ -49,7 +49,7 @@ export default function Exams() {
     : (tab === 'schedules' ? 'schedules' : 'exams');
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-6 animate-in fade-in duration-500">
+    <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-6 animate-in fade-in duration-500">
 
       {/* Header */}
       <header className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 mb-2 sm:mb-6">

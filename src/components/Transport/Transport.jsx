@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import { Bus, Users, Route as RouteIcon, UserCheck, ClipboardCheck, NotebookPen, HelpCircle, X, Lock, ShieldCheck } from 'lucide-react';
@@ -43,7 +43,7 @@ export default function Transport() {
 
   if (!canView) {
     return (
-      <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
+      <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
         <div className="ring-1 ring-black/5 rounded-lg bg-white p-12 text-center shadow-sm">
           <Lock className="size-7 text-zinc-300 mx-auto mb-3" />
           <p className="text-sm text-zinc-700">You don't have access to Transport.</p>
@@ -69,7 +69,7 @@ export default function Transport() {
     : 'Manage vehicles, drivers & assistants, routes with pickup/drop points, student assignments, attendance and the log book.';
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
+    <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
       <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Transport</h1>

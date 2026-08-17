@@ -153,7 +153,7 @@ export default function OverviewSettingsModal({ instId, roles = [], onClose }) {
 
   return (
     <div className="fixed inset-0 z-[60] flex items-stretch sm:items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-0 sm:p-6 animate-in fade-in duration-200">
-      <div className="bg-white w-full sm:max-w-4xl rounded-lg ring-1 ring-black/5 shadow-xl flex flex-col max-h-screen sm:max-h-[92vh] overflow-hidden animate-in zoom-in-95 duration-200">
+      <div className="bg-white w-full sm:max-w-4xl lg:max-w-5xl xl:max-w-6xl 2xl:max-w-[1600px] rounded-lg ring-1 ring-black/5 shadow-xl flex flex-col max-h-screen sm:max-h-[92vh] overflow-hidden animate-in zoom-in-95 duration-200">
 
         <div className="px-6 py-5 bg-white border-b border-zinc-100 flex items-start gap-3 shrink-0">
           <div className="size-10 rounded-md bg-primary/5 ring-1 ring-inset ring-primary/20 text-primary flex items-center justify-center shrink-0">
@@ -218,7 +218,7 @@ export default function OverviewSettingsModal({ instId, roles = [], onClose }) {
                 {disabledKpi.length > 0 && (
                   <>
                     <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mt-5 mb-2">Available to add</p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">{disabledKpi.map(AddTile)}</div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-2">{disabledKpi.map(AddTile)}</div>
                   </>
                 )}
               </div>
@@ -226,7 +226,7 @@ export default function OverviewSettingsModal({ instId, roles = [], onClose }) {
               {/* Sections */}
               <div className="pt-2">
                 <h3 className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider mb-2.5">Dashboard Sections</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-2.5">
                   {[...enabledPanel.map(id => cardById[id]), ...disabledPanel].map(PanelRow)}
                 </div>
               </div>

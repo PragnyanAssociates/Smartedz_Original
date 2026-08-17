@@ -51,7 +51,7 @@ export default function TeacherHomework({ canManage = true }) {
   const [activeHw, setActiveHw] = useState(null);
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
+    <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-2 sm:mb-0">
         <header className="flex flex-col">
           <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
@@ -787,10 +787,10 @@ function SubmissionList({ user, homework, canManage, onBack }) {
                   )}
                   
                   {(grading.files || []).length > 0 && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="flex flex-wrap gap-3">
                       {grading.files.map((f, i) => (
                         <button type="button" key={i} onClick={() => setViewFile(f)}
-                          className="flex items-start gap-3 bg-white hover:bg-zinc-50 border border-zinc-200 p-3 rounded-md transition-colors text-left shadow-sm ring-1 ring-black/5 group">
+                          className="flex items-start gap-3 bg-white hover:bg-zinc-50 border border-zinc-200 p-3 rounded-md transition-colors text-left shadow-sm ring-1 ring-black/5 group w-full sm:w-[320px]">
                           <FileText className="size-5 text-primary shrink-0 mt-0.5" />
                           <div className="flex-1 overflow-hidden">
                             <p className="text-sm font-semibold text-zinc-800 truncate group-hover:text-primary transition-colors">{f.name}</p>

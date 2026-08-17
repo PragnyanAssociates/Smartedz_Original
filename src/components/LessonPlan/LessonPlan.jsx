@@ -94,7 +94,7 @@ export default function LessonPlan() {
     <div className={`flex flex-col gap-4 sm:gap-6 animate-in fade-in duration-300 ${
       isFullscreen 
         ? 'fixed inset-0 z-[100] bg-zinc-950 p-4 sm:p-6' 
-        : 'p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto h-[calc(100vh-64px)] lg:h-[calc(100vh-88px)]'
+        : 'w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 h-[calc(100vh-64px)] lg:h-[calc(100vh-88px)]'
     }`}>
       
       {/* Header */}

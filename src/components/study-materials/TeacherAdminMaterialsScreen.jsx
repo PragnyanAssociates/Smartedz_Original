@@ -8,6 +8,7 @@ import {
   Loader2, ChevronDown, BookOpen, Save, Eye, User, Clock,
   HelpCircle, ShieldCheck
 } from 'lucide-react';
+
 // Render a UTC timestamp (Railway stores UTC) as IST for display.
 const fmtIST = (val) => {
   if (!val) return '';
@@ -24,6 +25,7 @@ const fmtIST = (val) => {
     hour: '2-digit', minute: '2-digit', hour12: true
   });
 };
+
 // Updated aesthetics to support smaller icons and crisp ring borders for the new layout
 const getCardAesthetics = (type) => {
   switch(type) {
@@ -34,6 +36,7 @@ const getCardAesthetics = (type) => {
     default: return { bg: "bg-indigo-50 text-indigo-600 ring-indigo-600/20", icon: <FileText className="size-5" /> };
   }
 };
+
 export default function TeacherAdminMaterialsScreen() {
   const { user } = useAuth();
 
@@ -46,12 +49,14 @@ export default function TeacherAdminMaterialsScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [editingMaterial, setEditingMaterial] = useState(null);
+  
   // List filters (client-side, over the already-loaded materials). '' = All.
   const [classFilter, setClassFilter] = useState("");
   const [subjectFilter, setSubjectFilter] = useState("");
 
   const [dbClasses, setDbClasses] = useState([]);
   const [dbSubjects, setDbSubjects] = useState([]);
+
   const fetchMaterialsAndData = useCallback(async () => {
     if (!user?.id || !user?.institutionId) return;
     setIsLoading(true);
@@ -69,11 +74,14 @@ export default function TeacherAdminMaterialsScreen() {
       setIsLoading(false);
     }
   }, [user]);
+
   useEffect(() => { fetchMaterialsAndData(); }, [fetchMaterialsAndData]);
+
   const openModal = (material = null) => {
     setEditingMaterial(material);
     setIsModalVisible(true);
   };
+
   const handleDelete = async (id) => {
     if (!window.confirm("Delete this study material?")) return;
     try {
@@ -81,7 +89,9 @@ export default function TeacherAdminMaterialsScreen() {
       setMaterials((prev) => prev.filter((m) => m.id !== id));
     } catch (error) { alert("Failed to delete."); }
   };
+
   const classLabel = (c) => `${c.className}${c.section ? ' - ' + c.section : ''}`;
+
   const filteredMaterials = useMemo(() => {
     let list = materials;
     if (classFilter)   list = list.filter(m => String(m.class_id) === String(classFilter));
@@ -97,9 +107,11 @@ export default function TeacherAdminMaterialsScreen() {
     }
     return list;
   }, [materials, query, classFilter, subjectFilter]);
+
   const hasActiveFilter = Boolean(query.trim() || classFilter || subjectFilter);
+
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
+    <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
 
       <header className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-2 sm:mb-0">
         <div className="flex flex-col">
@@ -111,6 +123,7 @@ export default function TeacherAdminMaterialsScreen() {
         </div>
         <MaterialsHelp canEdit={canEdit || isAdmin} />
       </header>
+
       <div className="flex flex-col sm:flex-row sm:items-center gap-3">
         <div className="relative w-full sm:w-64 shrink-0">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
@@ -143,6 +156,7 @@ export default function TeacherAdminMaterialsScreen() {
           </button>
         )}
       </div>
+
       <div className="flex-1">
         {isLoading ? (
           <div className="h-64 flex items-center justify-center">
@@ -159,6 +173,7 @@ export default function TeacherAdminMaterialsScreen() {
               const aesthetics = getCardAesthetics(item.material_type);
               const isBase64 = item.file_path && String(item.file_path).startsWith('data:');
               const fileUrl = isBase64 ? item.file_path : `${SERVER_URL.replace('/api','')}${item.file_path}`;
+              
               return (
                 <div key={item.id} className="group bg-white rounded-lg ring-1 ring-black/5 shadow-sm flex flex-col hover:ring-primary/30 hover:shadow-md transition-all overflow-hidden relative">
 
@@ -175,6 +190,7 @@ export default function TeacherAdminMaterialsScreen() {
                       </button>
                     )}
                   </div>
+
                   <div className="p-4 sm:p-5 flex flex-col flex-grow">
                     {/* Header: Icon + Title inline */}
                     <div className="flex items-start gap-3 mb-3 pr-16">
@@ -188,6 +204,7 @@ export default function TeacherAdminMaterialsScreen() {
                         </span>
                       </div>
                     </div>
+
                     {/* Uploaded-by + date/time (IST) */}
                     {(item.uploaded_by_name || item.created_at) && (
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-zinc-400 mb-3">
@@ -203,6 +220,7 @@ export default function TeacherAdminMaterialsScreen() {
                         )}
                       </div>
                     )}
+
                     <div className="flex flex-wrap gap-1.5 mb-3">
                       <span className="text-[10px] font-semibold uppercase tracking-wider bg-zinc-100 text-zinc-600 px-2 py-1 rounded">
                         {item.className} {item.section}
@@ -213,6 +231,7 @@ export default function TeacherAdminMaterialsScreen() {
                         </span>
                       )}
                     </div>
+
                     {item.description && <p className="text-xs text-zinc-500 line-clamp-2 mb-4 leading-relaxed">{item.description}</p>}
 
                     <div className="mt-auto pt-4 border-t border-zinc-100 flex gap-2">
@@ -292,6 +311,7 @@ export default function TeacherAdminMaterialsScreen() {
           </div>
         )}
       </div>
+
       {isModalVisible && (
         <MaterialFormModal
           material={editingMaterial}
@@ -304,6 +324,7 @@ export default function TeacherAdminMaterialsScreen() {
     </div>
   );
 }
+
 // -----------------------------------------------------------------
 // Subcomponents
 // -----------------------------------------------------------------
@@ -321,6 +342,7 @@ const MaterialFormModal = ({ material, onClose, onSave, dbClasses, dbSubjects })
 
   const [file, setFile] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
+
   const handleSave = async (e) => {
     e.preventDefault();
     if (!formData.title || !formData.class_id) return alert("Title and Class are required.");
@@ -366,6 +388,7 @@ const MaterialFormModal = ({ material, onClose, onSave, dbClasses, dbSubjects })
         sendRequest(payload);
     }
   };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
       <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-2xl shadow-xl relative max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
@@ -376,6 +399,7 @@ const MaterialFormModal = ({ material, onClose, onSave, dbClasses, dbSubjects })
             <X className="size-4" />
           </button>
         </div>
+        
         <form onSubmit={handleSave} className="flex flex-col flex-1 overflow-hidden">
           <div className="p-5 sm:p-6 overflow-y-auto custom-scrollbar space-y-5">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -395,6 +419,7 @@ const MaterialFormModal = ({ material, onClose, onSave, dbClasses, dbSubjects })
                   <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
               </div>
+
               <div className="space-y-1.5">
                 <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Subject</label>
                 <div className="relative">
@@ -417,6 +442,7 @@ const MaterialFormModal = ({ material, onClose, onSave, dbClasses, dbSubjects })
                   <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
               </div>
+
               <div className="space-y-1.5">
                 <Field label="External Link" type="url" value={formData.external_link} onChange={v => setFormData({...formData, external_link: v})} placeholder="https://..." />
               </div>
@@ -448,6 +474,7 @@ const MaterialFormModal = ({ material, onClose, onSave, dbClasses, dbSubjects })
     </div>
   );
 }
+
 function Field({ label, value, onChange, type = 'text', required, placeholder }) {
   const base = "h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm";
   return (

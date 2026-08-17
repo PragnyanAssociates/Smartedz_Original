@@ -31,8 +31,8 @@ const fmtCreatedAt = (val) => {
 
 // =====================================================================
 //  StudentHomework - list of assigned homework + detail panel.
-//   • PDF type     -> upload files (base64)
-//   • Written type -> in-app text answer screen
+//   - PDF type     -> upload files (base64)
+//   - Written type -> in-app text answer screen
 //  Students can delete their submission until it's graded.
 //  (Homework is no longer scoped to an academic year.)
 // =====================================================================
@@ -138,11 +138,15 @@ export default function StudentHomework() {
   };
 
   if (loading) {
-    return <div className="h-64 flex items-center justify-center animate-in fade-in duration-300"><Loader2 className="animate-spin size-8 text-primary" /></div>;
+    return (
+      <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 flex items-center justify-center animate-in fade-in duration-300 min-h-[calc(100vh-64px)]">
+        <Loader2 className="animate-spin size-8 text-primary" />
+      </div>
+    );
   }
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
+    <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
       
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-2 sm:mb-0">
         <header className="flex flex-col">
@@ -195,7 +199,7 @@ export default function StudentHomework() {
                       {(it.created_by_name || it.created_at) && (
                         <p className="text-[10px] font-medium text-zinc-400 mt-1 truncate">
                           {it.created_by_name ? `By ${it.created_by_name}` : ''}
-                          {it.created_by_name && it.created_at ? ' · ' : ''}
+                          {it.created_by_name && it.created_at ? ' - ' : ''}
                           {it.created_at ? fmtCreatedAt(it.created_at) : ''}
                         </p>
                       )}
@@ -238,7 +242,6 @@ export default function StudentHomework() {
     </div>
   );
 }
-
 
 // =====================================================================
 //  Detail panel for one homework
@@ -414,7 +417,6 @@ function AssignmentDetail({ hw, busy, onSubmitFiles, onWrite, onDelete }) {
     </div>
   );
 }
-
 
 // =====================================================================
 //  Written answer full-screen editor

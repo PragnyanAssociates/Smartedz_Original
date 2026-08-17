@@ -13,7 +13,7 @@ import { GraduationCap, Printer } from 'lucide-react';
 //  exams are excluded and their "/max" hint hidden.
 //
 //  ONE-PAGE PRINT (robust):
-//  We do NOT rely on @page orientation or per-class CSS compression —
+//  We do NOT rely on @page orientation or per-class CSS compression -
 //  browsers honour those inconsistently, which was clipping the bottom
 //  of the card. Instead, on `beforeprint` we measure the card's real
 //  height/width and apply an INLINE `zoom` so the entire card (marks +
@@ -46,7 +46,7 @@ const fmtDateTime = (iso) => {
 };
 
 // ---------------------------------------------------------------------
-//  LastPrintedStamp — screen-only, rendered by the parent next to Print.
+//  LastPrintedStamp - screen-only, rendered by the parent next to Print.
 //  Records the moment per student in localStorage on any print (button
 //  or Ctrl/Cmd+P) and shows it back.
 // ---------------------------------------------------------------------
@@ -172,7 +172,7 @@ export default function ReportCardView({ card }) {
       return sum + (v != null ? Number(v) : 0);
     }, 0);
 
-  // Row max — ONLY over exams actually sat, so the denominator is honest.
+  // Row max - ONLY over exams actually sat, so the denominator is honest.
   const subjectRowMax = (subjectId) =>
     (examTypes || []).reduce(
       (sum, t) => (isAttempted(t.id) ? sum + maxFor(t, subjectId) : sum),
@@ -200,7 +200,7 @@ export default function ReportCardView({ card }) {
 
   return (
     <>
-      {/* Minimal print rules — reveal ONLY the card and let the wide table
+      {/* Minimal print rules - reveal ONLY the card and let the wide table
           fit the page. The one-page fit itself is done by the inline zoom
           set in the effect above (unbypassable, orientation-independent). */}
       <style>{`
@@ -301,7 +301,7 @@ export default function ReportCardView({ card }) {
                         className={`border border-zinc-300 px-3 py-2.5 text-center font-semibold whitespace-nowrap ${
                           counted ? 'text-zinc-700' : 'text-zinc-400'
                         }`}
-                        title={counted ? undefined : 'Not conducted yet — excluded from Total & %'}>
+                        title={counted ? undefined : 'Not conducted yet - excluded from Total & %'}>
                         {t.name}
                       </th>
                     );
@@ -322,7 +322,7 @@ export default function ReportCardView({ card }) {
                         return (
                           <td key={t.id} className="border border-zinc-300 px-3 py-2.5 text-center tabular-nums whitespace-nowrap">
                             <span className={v != null ? 'font-semibold text-zinc-800' : 'text-zinc-300'}>
-                              {v != null ? fmtNum(v) : '–'}
+                              {v != null ? fmtNum(v) : '-'}
                             </span>
                             {counted && mx > 0 && (
                               <span className="text-zinc-400 text-[11px]">/{fmtNum(mx)}</span>
@@ -342,7 +342,7 @@ export default function ReportCardView({ card }) {
                   <td className="border border-zinc-300 px-3 py-2.5 font-bold text-zinc-800">Total</td>
                   {examTypes.map(t => (
                     <td key={t.id} className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-zinc-800 tabular-nums whitespace-nowrap">
-                      {fmtNum(examColumnTotal(t.id)) || '–'}
+                      {fmtNum(examColumnTotal(t.id)) || '-'}
                     </td>
                   ))}
                   <td className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-primary tabular-nums whitespace-nowrap">
@@ -438,7 +438,7 @@ export default function ReportCardView({ card }) {
           </div>
         )}
 
-        {/* Signature line — Parent (left) · Class Teacher (centre) · Principal (right) */}
+        {/* Signature line - Parent (left) - Class Teacher (centre) - Principal (right) */}
         <div className="signatures flex justify-between items-end gap-4 mt-16 px-2 sm:px-8 text-sm font-medium text-zinc-500 pb-4">
           <div className="text-center">
             <div className="border-t border-zinc-300 w-24 sm:w-40 pt-2">Parent</div>

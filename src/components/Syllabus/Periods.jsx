@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { API_BASE_URL } from '../../apiConfig';
 import { Clock, Loader2, ArrowLeft, Save, Check, BookOpen, HelpCircle, X, ShieldCheck } from 'lucide-react';
+
 // Date + time rendered in IST (Railway stores UTC), so each lesson row can
 // show "updated by" name / date / time.
 const _toDate = (val) => {
@@ -13,6 +14,7 @@ const _toDate = (val) => {
   }
   return isNaN(d.getTime()) ? null : d;
 };
+
 const fmtDateIST = (val) => {
   const d = _toDate(val);
   if (!d) return '';
@@ -20,6 +22,7 @@ const fmtDateIST = (val) => {
     timeZone: 'Asia/Kolkata', day: '2-digit', month: '2-digit', year: 'numeric'
   });
 };
+
 const fmtTimeIST = (val) => {
   const d = _toDate(val);
   if (!d) return '';
@@ -27,6 +30,7 @@ const fmtTimeIST = (val) => {
     timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true
   });
 };
+
 // =====================================================================
 //  Lesson Periods
 //  A table of the syllabus's chapters/lessons:
@@ -37,7 +41,7 @@ const fmtTimeIST = (val) => {
 //
 //  Top-left: "Back to Subject Index".
 //
-//  NOTE: no academic-year concept here — a syllabus (and its lesson
+//  NOTE: no academic-year concept here - a syllabus (and its lesson
 //  schedule) carries across years, so no year badge/filter is shown.
 // =====================================================================
 export default function Periods({ syllabus, canEdit, onBackToIndex }) {
@@ -45,6 +49,7 @@ export default function Periods({ syllabus, canEdit, onBackToIndex }) {
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState(null);
   const [savedId, setSavedId]   = useState(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -59,10 +64,13 @@ export default function Periods({ syllabus, canEdit, onBackToIndex }) {
     } catch (e) { console.error(e); }
     setLoading(false);
   }, [syllabus]);
+
   useEffect(() => { load(); }, [load]);
+
   const setField = (id, key, value) => {
     setRows(rs => rs.map(r => r.id === id ? { ...r, [key]: value } : r));
   };
+
   const saveRow = async (row) => {
     setSavingId(row.id);
     try {
@@ -82,9 +90,11 @@ export default function Periods({ syllabus, canEdit, onBackToIndex }) {
     } catch (e) { alert(e.message); }
     setSavingId(null);
   };
+
   const totalPeriods = rows.reduce((s, r) => s + (parseInt(r.periods, 10) || 0), 0);
+
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
+    <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
 
       {/* Back Button (Top Edge) */}
       <div className="flex items-center">
@@ -93,6 +103,7 @@ export default function Periods({ syllabus, canEdit, onBackToIndex }) {
           <ArrowLeft className="size-4" /> Back to Subject Index
         </button>
       </div>
+
       {/* Header */}
       <header className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-2 sm:mb-0">
         <div className="flex flex-col">
@@ -109,6 +120,7 @@ export default function Periods({ syllabus, canEdit, onBackToIndex }) {
         </div>
         <SyllabusHelp canEdit={canEdit} />
       </header>
+
       <div className="flex-1">
         {loading ? (
           <div className="h-64 flex items-center justify-center">
@@ -148,7 +160,7 @@ export default function Periods({ syllabus, canEdit, onBackToIndex }) {
                       )}
                     </td>
                     <td className="px-5 py-3 whitespace-nowrap">
-                      <div className="text-xs font-semibold text-zinc-700">{r.updated_by_name || '\u2014'}</div>
+                      <div className="text-xs font-semibold text-zinc-700">{r.updated_by_name || '-'}</div>
                       {r.updated_at && <div className="text-[13px] font-medium text-zinc-500 mt-0.5">{fmtDateIST(r.updated_at)}</div>}
                       {r.updated_at && <div className="text-[11px] text-zinc-400 mt-0.5">{fmtTimeIST(r.updated_at)}</div>}
                     </td>
@@ -205,7 +217,7 @@ export default function Periods({ syllabus, canEdit, onBackToIndex }) {
 }
 
 // =====================================================================
-//  SyllabusHelp — "How to use" guide (same theme as ReportsHelp).
+//  SyllabusHelp - "How to use" guide (same theme as ReportsHelp).
 //  Shown on the Lesson Periods screen. Editors get the manage guide;
 //  read-only users get the view one.
 // =====================================================================
@@ -213,21 +225,21 @@ const GUIDES = {
   manage: {
     title: 'Lesson Periods',
     steps: [
-      ['1 \u00b7 What this is', 'The teaching plan for this syllabus \u2014 how many class periods each lesson needs and the dates you\u2019ll cover it.'],
-      ['2 \u00b7 Set periods', 'Type the number of periods for each lesson in the Periods column. The footer keeps a running Total Allocated Periods.'],
-      ['3 \u00b7 Set the dates', 'Pick a start and end date for each lesson so the schedule reflects your term plan.'],
-      ['4 \u00b7 Save each row', 'Changes are saved per lesson \u2014 hit Save on that row. It then shows who last updated it, with the date and time.'],
-      ['5 \u00b7 Where lessons come from', 'The lessons listed here are the chapters from the Subject Index. To add or rename one, go back and edit it there.'],
+      ['1 - What this is', 'The teaching plan for this syllabus - how many class periods each lesson needs and the dates you\'ll cover it.'],
+      ['2 - Set periods', 'Type the number of periods for each lesson in the Periods column. The footer keeps a running Total Allocated Periods.'],
+      ['3 - Set the dates', 'Pick a start and end date for each lesson so the schedule reflects your term plan.'],
+      ['4 - Save each row', 'Changes are saved per lesson - hit Save on that row. It then shows who last updated it, with the date and time.'],
+      ['5 - Where lessons come from', 'The lessons listed here are the chapters from the Subject Index. To add or rename one, go back and edit it there.'],
     ],
-    note: 'A syllabus and its schedule carry across academic years \u2014 there\u2019s no year filter here, so what you set stays until you change it.'
+    note: 'A syllabus and its schedule carry across academic years - there\'s no year filter here, so what you set stays until you change it.'
   },
   view: {
     title: 'Lesson Periods',
     steps: [
-      ['1 \u00b7 What this is', 'The teaching plan for this syllabus\u2019s lessons \u2014 the periods allocated to each and the dates they\u2019re scheduled.'],
-      ['2 \u00b7 Reading it', 'Each lesson shows its period count and its start\u2013end dates; the footer shows the total periods across all lessons.'],
+      ['1 - What this is', 'The teaching plan for this syllabus\'s lessons - the periods allocated to each and the dates they\'re scheduled.'],
+      ['2 - Reading it', 'Each lesson shows its period count and its start-end dates; the footer shows the total periods across all lessons.'],
     ],
-    note: 'This is a read-only view \u2014 the schedule is set by teachers. A syllabus carries across academic years, so there\u2019s no year filter here.'
+    note: 'This is a read-only view - the schedule is set by teachers. A syllabus carries across academic years, so there\'s no year filter here.'
   }
 };
 

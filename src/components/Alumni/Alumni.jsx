@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { initials, statusStyle } from './AlumniUtils';
 import AlumniDetail from './AlumniDetail';
+
 // =====================================================================
 //  Alumni - card list of passed-out students.
 //  • Plain calendar-year filter (auto, like Pre-Admissions): the year list
@@ -28,11 +29,13 @@ export default function Alumni() {
   const [query, setQuery]     = useState('');
   const [openId, setOpenId]   = useState(null);    // alumni id in detail view
   const [downloading, setDownloading] = useState(false);
+
   // Calendar-year filter. Selectable years come from the data (plus the
   // current year); 'all' means every year. Defaults to the current year.
   const currentYear = new Date().getFullYear();
   const [availableYears, setAvailableYears] = useState([]); // years present in data
   const [filterYear, setFilterYear] = useState(String(currentYear)); // a year, or 'all'
+
   // Year filter options — distinct YEAR(created_at) present in the data.
   const loadYears = useCallback(async () => {
     if (!user?.institutionId) return;
@@ -42,6 +45,7 @@ export default function Alumni() {
       setAvailableYears(Array.isArray(d) ? d.map(Number).filter(Boolean) : []);
     } catch (e) { console.error(e); }
   }, [user]);
+
   // load the card list (re-runs on year/search change)
   const loadList = useCallback(async () => {
     if (!user?.institutionId) return;
@@ -57,12 +61,15 @@ export default function Alumni() {
     } catch (e) { console.error(e); }
     setLoading(false);
   }, [user, filterYear, query]);
+
   useEffect(() => { loadYears(); }, [loadYears]);
+
   // debounce the search a touch
   useEffect(() => {
     const t = setTimeout(() => loadList(), 250);
     return () => clearTimeout(t);
   }, [loadList]);
+
   // Year dropdown options: every year present in the data, plus the current
   // year (so you can always filter the year you're adding to), newest first.
   const yearOptions = useMemo(() => {
@@ -70,8 +77,10 @@ export default function Alumni() {
     set.add(currentYear);
     return Array.from(set).sort((a, b) => b - a);
   }, [availableYears, currentYear]);
+
   // Whether any filter is narrowing the list (controls the empty-state copy).
   const hasFilter = query.trim() || filterYear !== 'all';
+
   // Download the alumni list as an Excel file. The export endpoint is behind
   // the /api gate, so a plain download link would 401 — fetch it as a blob
   // (token attached by the interceptor) and save that. Scope follows the Year
@@ -97,6 +106,7 @@ export default function Alumni() {
     } catch (e) { alert(e.message || 'Download failed.'); }
     setDownloading(false);
   }, [user, filterYear]);
+
   // detail view takes over the whole module
   if (openId) {
     return (
@@ -105,8 +115,9 @@ export default function Alumni() {
         onBack={() => { setOpenId(null); loadList(); loadYears(); }} />
     );
   }
+
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300">
+    <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-4 sm:space-y-6 animate-in fade-in duration-300">
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
         <header className="flex flex-col">
           <h2 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
@@ -131,6 +142,7 @@ export default function Alumni() {
           </button>
         </div>
       </div>
+
       {/* Filter + search bar */}
       <div className="flex flex-col sm:flex-row gap-3 sm:items-center justify-between">
         <div className="flex items-center gap-2 w-full sm:w-auto">
@@ -153,6 +165,7 @@ export default function Alumni() {
             className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-3 text-sm placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
         </div>
       </div>
+
       {/* Cards */}
       {loading ? (
         <div className="h-64 flex items-center justify-center"><Loader2 className="animate-spin size-8 text-primary" /></div>
@@ -178,6 +191,7 @@ export default function Alumni() {
     </div>
   );
 }
+
 // --- Fetch a token-protected image as a blob object URL -------------
 //   The /admin/alumni/pic/:id endpoint sits behind the /api auth gate,
 //   so a raw <img src> gets no token and 401s. Fetching it (the app's
@@ -203,6 +217,7 @@ function useAuthedImage(url) {
   }, [url]);
   return { src, err };
 }
+
 // --- Avatar: shows the stored photo, falls back to initials ---------
 function AlumniAvatar({ a }) {
   // a.has_pic comes back as 1/0 from MySQL
@@ -222,6 +237,7 @@ function AlumniAvatar({ a }) {
     </div>
   );
 }
+
 // --- One alumni card -----------------------------------------------
 function AlumniCard({ a, onClick }) {
   const ss = statusStyle(a.current_status);

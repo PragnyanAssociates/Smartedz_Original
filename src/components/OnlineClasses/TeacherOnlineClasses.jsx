@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
@@ -6,6 +6,7 @@ import {
   Loader2, Calendar as CalIcon, Clock, FileVideo, ChevronDown, Save, Link as LinkIcon,
   HelpCircle, ShieldCheck
 } from 'lucide-react';
+
 // Render a UTC datetime (Railway stores UTC) as IST for display. Handles
 // both bare "YYYY-MM-DD HH:MM:SS" strings and ISO strings / Date objects.
 const fmtIST = (val) => {
@@ -74,6 +75,7 @@ const joinPartsToDateTime = (date, time, period) => {
   if (period === 'AM' && hh === 12) hh = 0;
   return `${date} ${String(hh).padStart(2, '0')}:${(m || '00').padEnd(2, '0').slice(0, 2)}:00`;
 };
+
 export default function TeacherOnlineClasses({ canEdit = false, canDelete = false }) {
   const { user } = useAuth();
   const [classesList, setClassesList] = useState([]);
@@ -96,6 +98,7 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
     teacher_id: '', date: '', time: '', period: '',
     meet_link: '', topic: '', description: ''
   });
+
   const loadData = useCallback(async () => {
     if (!user?.institutionId) return;
     setLoading(true);
@@ -113,7 +116,9 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
     } catch (e) { console.error(e); }
     setLoading(false);
   }, [user]);
+
   useEffect(() => { loadData(); }, [loadData]);
+
   const filtered = useMemo(() => {
     let list = classesList.filter(c => c.class_type === view);
     if (classFilter)   list = list.filter(c => String(c.class_id) === String(classFilter));
@@ -129,8 +134,10 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
     }
     return list;
   }, [classesList, view, query, classFilter, subjectFilter]);
+
   const hasActiveFilter = Boolean(query.trim() || classFilter || subjectFilter);
   const classLabel = (c) => `${c.className}${c.section ? ` - ${c.section}` : ''}`;
+
   const openCreate = () => {
     setEditingItem(null);
     const parts = parseDateTimeToParts(null);
@@ -143,6 +150,7 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
     setVideoSource('upload');
     setIsModalOpen(true);
   };
+
   const openEdit = (c) => {
     setEditingItem(c);
     const parts = parseDateTimeToParts(c.class_datetime);
@@ -156,6 +164,7 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
     if (c.class_type === 'recorded') { setVideoSource(c.has_video_data ? 'upload' : 'link'); }
     setIsModalOpen(true);
   };
+
   const handleDelete = async (id) => {
     if (!window.confirm("Delete this online class?")) return;
     try {
@@ -163,6 +172,7 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
       if (res.ok) loadData();
     } catch (e) { alert('Delete failed'); }
   };
+
   const handleSave = async (e) => {
     e.preventDefault();
     if (!form.title || !form.subject_id || !form.teacher_id || !form.date || !form.time) {
@@ -194,6 +204,7 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
     } catch (e) { alert('Error saving class.'); }
     setSaving(false);
   };
+
   const handleJoinOrWatch = (c) => {
     if (c.class_type === 'live' && c.meet_link) {
       window.open(c.meet_link, '_blank', 'noopener,noreferrer');
@@ -204,8 +215,9 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
         else if (c.meet_link) window.open(c.meet_link, '_blank', 'noopener,noreferrer');
     }
   };
+
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
+    <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
       <header className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-2 sm:mb-0">
         <div className="flex flex-col">
           <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
@@ -215,6 +227,7 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
         </div>
         <OnlineClassesHelp canEdit={canEdit} />
       </header>
+
       <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
         <div className="flex bg-zinc-100/80 p-1 rounded-md overflow-x-auto custom-scrollbar w-full xl:w-auto shrink-0">
           {['live', 'recorded'].map(t => (
@@ -254,6 +267,7 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
           )}
         </div>
       </div>
+
       <div className="flex-1">
         {loading ? ( <div className="h-64 flex items-center justify-center"><Loader2 className="animate-spin size-8 text-primary" /></div>
         ) : filtered.length === 0 ? (
@@ -326,6 +340,7 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
           </div>
         )}
       </div>
+
       {isModalOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
           <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-2xl shadow-xl relative max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
@@ -375,6 +390,7 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
     </div>
   );
 }
+
 function Field({ label, value, onChange, type = 'text', options, required, placeholder }) {
   const base = "h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 transition-colors shadow-sm";
   return (

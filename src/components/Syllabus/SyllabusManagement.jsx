@@ -5,6 +5,7 @@ import {
   HelpCircle, ShieldCheck
 } from 'lucide-react';
 import { fmtDate } from './SyllabusUtils';
+
 // Time-only, rendered in IST (Railway stores UTC). Pairs with fmtDate for
 // the date line so "Last Updated" can show name / date / time.
 const fmtTimeIST = (val) => {
@@ -20,6 +21,7 @@ const fmtTimeIST = (val) => {
     timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true
   });
 };
+
 // =====================================================================
 //  Syllabus Management - the landing screen.
 //
@@ -35,11 +37,13 @@ export default function SyllabusManagement({
   const [rows, setRows]       = useState([]);
   const [loading, setLoading] = useState(true);
   const [filterClass, setFilterClass] = useState('');
+  
   // create / edit modal
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing]     = useState(null);
   const [form, setForm] = useState({ class_id: '', subject_id: '', teacher_id: '' });
   const [saving, setSaving] = useState(false);
+
   const load = useCallback(async () => {
     if (!user?.institutionId) return;
     setLoading(true);
@@ -52,8 +56,11 @@ export default function SyllabusManagement({
     } catch (e) { console.error(e); }
     setLoading(false);
   }, [user, filterClass]);
+
   useEffect(() => { load(); }, [load]);
+
   const classLabel = (c) => `${c.className}${c.section ? ' - ' + c.section : ''}`;
+
   // subjects available for the class chosen in the modal
   const subjectsForClass = useMemo(() => {
     if (!form.class_id) return subjects;
@@ -64,11 +71,13 @@ export default function SyllabusManagement({
       return links.includes(cid);
     });
   }, [subjects, subjectClasses, form.class_id]);
+
   const openCreate = () => {
     setEditing(null);
     setForm({ class_id: '', subject_id: '', teacher_id: '' });
     setModalOpen(true);
   };
+
   const openEdit = (row) => {
     setEditing(row);
     setForm({
@@ -78,6 +87,7 @@ export default function SyllabusManagement({
     });
     setModalOpen(true);
   };
+
   const handleSave = async (e) => {
     e.preventDefault();
     if (!form.class_id || !form.subject_id) {
@@ -115,6 +125,7 @@ export default function SyllabusManagement({
     } catch (e) { alert(e.message); }
     setSaving(false);
   };
+
   const handleDelete = async (row) => {
     if (!window.confirm(
       `Delete the ${row.subject_name} syllabus for ${row.class_group}? All its lessons and keywords will be removed.`
@@ -125,8 +136,9 @@ export default function SyllabusManagement({
       load();
     } catch (e) { alert(e.message); }
   };
+
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
+    <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
 
       {/* Header */}
       <header className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-2 sm:mb-0">
@@ -141,6 +153,7 @@ export default function SyllabusManagement({
         </div>
         <SyllabusManagementHelp canEdit={canEdit} />
       </header>
+
       {/* Action bar & Filters */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full md:w-auto">
@@ -171,6 +184,7 @@ export default function SyllabusManagement({
           </button>
         )}
       </div>
+
       {/* Table */}
       <div className="flex-1">
         {loading ? (
@@ -210,7 +224,7 @@ export default function SyllabusManagement({
                       {row.teacher_name || <span className="text-zinc-400 italic">Unassigned</span>}
                     </td>
                     <td className="px-5 py-4 whitespace-nowrap">
-                      <div className="text-xs font-semibold text-zinc-700">{row.updated_by_name || '\u2014'}</div>
+                      <div className="text-xs font-semibold text-zinc-700">{row.updated_by_name || '-'}</div>
                       <div className="text-sm font-medium text-zinc-500 mt-0.5">{fmtDate(row.updated_at)}</div>
                       {row.updated_at && <div className="text-[11px] text-zinc-400 mt-0.5">{fmtTimeIST(row.updated_at)}</div>}
                     </td>
@@ -242,6 +256,7 @@ export default function SyllabusManagement({
           </div>
         )}
       </div>
+
       {/* ---- CREATE / EDIT MODAL ---- */}
       {modalOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
@@ -298,6 +313,7 @@ export default function SyllabusManagement({
     </div>
   );
 }
+
 // --- Shared Field Component ---
 function Field({ label, value, onChange, type = 'text', options, required, placeholder }) {
   const base = "h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm";
@@ -333,22 +349,22 @@ const GUIDES = {
   manage: {
     title: 'Syllabus Management',
     steps: [
-      ['1 \u00b7 What this is', 'One syllabus per class + subject. The table shows the subject, class, how many lessons it has, its teacher, and who last updated it.'],
-      ['2 \u00b7 Create a syllabus', 'Create Syllabus picks a class, a subject and (optionally) a teacher. A class-and-subject pair is unique \u2014 you can\u2019t create the same one twice.'],
-      ['3 \u00b7 Manage (Subject Index)', 'The green Manage button opens the Subject Index for that syllabus: upload the textbook, auto-detect chapters, add keywords, and set the lesson periods.'],
-      ['4 \u00b7 Filter & refresh', 'Narrow the table by class, and use Refresh to reload the list.'],
-      ['5 \u00b7 Edit & delete', 'Hover a row for the edit and delete actions. Deleting a syllabus also removes its lessons and keywords.'],
+      ['1 · What this is', 'One syllabus per class + subject. The table shows the subject, class, how many lessons it has, its teacher, and who last updated it.'],
+      ['2 · Create a syllabus', 'Create Syllabus picks a class, a subject and (optionally) a teacher. A class-and-subject pair is unique - you can\'t create the same one twice.'],
+      ['3 · Manage (Subject Index)', 'The green Manage button opens the Subject Index for that syllabus: upload the textbook, auto-detect chapters, add keywords, and set the lesson periods.'],
+      ['4 · Filter & refresh', 'Narrow the table by class, and use Refresh to reload the list.'],
+      ['5 · Edit & delete', 'Hover a row for the edit and delete actions. Deleting a syllabus also removes its lessons and keywords.'],
     ],
-    note: 'A syllabus carries across academic years \u2014 there\u2019s no year to pick here, so what you build stays until you change it.'
+    note: 'A syllabus carries across academic years - there\'s no year to pick here, so what you build stays until you change it.'
   },
   view: {
     title: 'Syllabus Management',
     steps: [
-      ['1 \u00b7 Browse', 'One row per syllabus \u2014 a class + subject pairing \u2014 with its lesson count and teacher.'],
-      ['2 \u00b7 Open a syllabus', 'The Manage button opens the Subject Index, where you can read the chapters, the textbook and the keywords.'],
-      ['3 \u00b7 Filter', 'Narrow the list by class to find one quickly.'],
+      ['1 · Browse', 'One row per syllabus - a class + subject pairing - with its lesson count and teacher.'],
+      ['2 · Open a syllabus', 'The Manage button opens the Subject Index, where you can read the chapters, the textbook and the keywords.'],
+      ['3 · Filter', 'Narrow the list by class to find one quickly.'],
     ],
-    note: 'This is a read-only view \u2014 syllabuses are created and edited by teachers.'
+    note: 'This is a read-only view - syllabuses are created and edited by teachers.'
   }
 };
 

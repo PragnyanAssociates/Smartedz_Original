@@ -134,7 +134,7 @@ export default function MyFee({ user }) {
 
   if (loading) {
     return (
-      <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
+      <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
         <div className="h-96 flex items-center justify-center">
           <div className="size-8 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" />
         </div>
@@ -150,7 +150,7 @@ export default function MyFee({ user }) {
   ];
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
+    <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
       <header>
         <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">My Fee</h1>
         <p className="text-sm text-zinc-500 mt-1">

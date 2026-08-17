@@ -11,6 +11,7 @@ import { usePermissions } from '../../Screens/PermissionsContext';
 import { io } from "socket.io-client";
 import { SERVER_URL } from "../../apiConfig";
 import { MessageSquare, ShieldAlert, Plus, HelpCircle, X, ShieldCheck } from 'lucide-react';
+
 const WhatsAppLayout = () => {
     const location = useLocation();
     const navigate = useNavigate();
@@ -24,6 +25,7 @@ const WhatsAppLayout = () => {
     const [isViewingSettings, setIsViewingSettings] = useState(false); 
     const [loading, setLoading] = useState(true);
     const socketRef = useRef(null);
+
     const fetchGroups = useCallback(async () => {
         if (!hasReadAccess || !user?.id || !user?.institutionId) return;
         try {
@@ -41,9 +43,11 @@ const WhatsAppLayout = () => {
             setLoading(false);
         }
     }, [hasReadAccess, user?.id, user?.institutionId]);
+
     useEffect(() => {
         fetchGroups();
     }, [fetchGroups]);
+
     useEffect(() => {
         if (!hasReadAccess) return;
         // Allow the polling -> websocket upgrade (more robust behind Railway's
@@ -56,11 +60,13 @@ const WhatsAppLayout = () => {
             socketRef.current?.disconnect();
         };
     }, [hasReadAccess, fetchGroups]);
+
     const handleSelectGroup = (group) => {
         setSelectedGroup(group);
         setIsCreatingGroup(false);
         setIsViewingSettings(false);
     };
+
     const handleBackToList = () => {
         setSelectedGroup(null);
         setIsCreatingGroup(false);
@@ -68,6 +74,7 @@ const WhatsAppLayout = () => {
         window.history.replaceState({}, document.title);
         fetchGroups();
     };
+
     if (!hasReadAccess) {
         return (
             <div className="flex flex-col items-center justify-center flex-1 h-full min-h-[calc(100vh-64px)] bg-zinc-50 p-6">
@@ -83,9 +90,11 @@ const WhatsAppLayout = () => {
             </div>
         );
     }
+
     const isActivityActive = selectedGroup || isCreatingGroup || isViewingSettings;
+
     return (
-        <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col h-[calc(100vh-64px)]">
+        <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col h-[calc(100vh-64px)]">
             
             {/* HEADER AREA - Now includes the Create Group button on the right */}
             <header className="flex items-start sm:items-center justify-between mb-2 sm:mb-0 shrink-0 gap-4">
@@ -111,6 +120,7 @@ const WhatsAppLayout = () => {
                     </button>
                 </div>
             </header>
+
             {/* CORE LAYOUT WRAPPER */}
             <div className="flex flex-1 w-full bg-zinc-50 overflow-hidden ring-1 ring-black/5 sm:rounded-lg shadow-sm min-h-0">
                 
@@ -126,6 +136,7 @@ const WhatsAppLayout = () => {
                         loading={loading}
                     />
                 </div>
+
                 {/* RIGHT PANEL: Main Area */}
                 <div className={`
                     ${!isActivityActive ? 'hidden lg:flex' : 'flex'} 
@@ -174,6 +185,7 @@ const WhatsAppLayout = () => {
         </div>
     );
 };
+
 export default WhatsAppLayout;
 
 // =====================================================================

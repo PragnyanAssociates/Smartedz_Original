@@ -7,6 +7,7 @@ import {
   UploadCloud, ExternalLink, ArrowLeft, BookOpen, User, Clock, PencilLine,
   HelpCircle, ShieldCheck
 } from 'lucide-react';
+
 // =====================================================================
 //  Constants & Helpers
 // =====================================================================
@@ -26,6 +27,7 @@ const fmtDateTime = (dt) => {
     hour: '2-digit', minute: '2-digit'
   });
 };
+
 // Render a UTC audit timestamp (Railway stores UTC) as IST for display.
 const fmtIST = (val) => {
   if (!val) return '';
@@ -42,10 +44,12 @@ const fmtIST = (val) => {
     hour: '2-digit', minute: '2-digit', hour12: true
   });
 };
+
 // Show the "updated" line only when it's meaningfully after creation.
 const wasUpdated = (lab) =>
   lab.updated_at && lab.updated_by_name &&
   (!lab.created_at || new Date(lab.updated_at) - new Date(lab.created_at) > 1000);
+
 const isoLocal = (dt) => {
   if (!dt) return '';
   const d = new Date(dt);
@@ -98,23 +102,29 @@ export default function TeacherLabs({ canManage = true }) {
   const [labs, setLabs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
+  
   // List filters (client-side, over the already-loaded labs). '' = All.
   const [classFilter, setClassFilter]     = useState('');
   const [subjectFilter, setSubjectFilter] = useState('');
+  
   // Data for Selects
   const [classes, setClasses] = useState([]);
   const [subjects, setSubjects] = useState([]);
   const [subjectClasses, setSC] = useState({});
+  
   // Navigation / Modal States
   const [modalOpen, setModalOpen] = useState(false);
   const [viewingLab, setViewingLab] = useState(null);
   const [editing, setEditing] = useState(null);
   const [saving, setSaving] = useState(false);
+  
   // Bumped after an in-place save so the open detail view re-fetches itself.
   const [detailRefresh, setDetailRefresh] = useState(0);
+  
   // Form State
   const [form, setForm] = useState({ title: '', description: '', class_id: '', subject_id: '' });
   const [resources, setResources] = useState([]);
+
   // --- API Actions ---
   const load = useCallback(async () => {
     if (!user?.id) return;
@@ -126,6 +136,7 @@ export default function TeacherLabs({ canManage = true }) {
     } catch (e) { console.error('Load Labs Error:', e); }
     setLoading(false);
   }, [user]);
+
   const loadFormData = useCallback(async () => {
     if (!user?.institutionId) return;
     try {
@@ -136,7 +147,9 @@ export default function TeacherLabs({ canManage = true }) {
       setSC(d.subjectClasses || {});
     } catch (e) { console.error('Load Form Data Error:', e); }
   }, [user]);
+
   useEffect(() => { load(); loadFormData(); }, [load, loadFormData]);
+
   // --- Filter Logic ---
   const subjectsForClass = useMemo(() => {
     if (!form.class_id) return subjects;
@@ -146,6 +159,7 @@ export default function TeacherLabs({ canManage = true }) {
       return !links || links.length === 0 || links.includes(cid);
     });
   }, [subjects, subjectClasses, form.class_id]);
+
   // Subject options for the Subject filter — narrowed to the selected class
   // filter (a subject with no class links counts as "all classes"), matching
   // the create/edit form's behaviour.
@@ -157,6 +171,7 @@ export default function TeacherLabs({ canManage = true }) {
       return !links || links.length === 0 || links.includes(cid);
     });
   }, [subjects, subjectClasses, classFilter]);
+
   // Changing the class clears the subject filter only if that subject isn't
   // offered for the newly-chosen class.
   const onClassFilterChange = (v) => {
@@ -168,6 +183,7 @@ export default function TeacherLabs({ canManage = true }) {
       if (!stillValid) setSubjectFilter('');
     }
   };
+
   const filtered = useMemo(() => {
     let list = labs;
     if (classFilter)   list = list.filter(l => String(l.class_id) === String(classFilter));
@@ -183,8 +199,10 @@ export default function TeacherLabs({ canManage = true }) {
     }
     return list;
   }, [labs, query, classFilter, subjectFilter]);
+
   const hasActiveFilter = Boolean(query.trim() || classFilter || subjectFilter);
   const classLabel = (c) => `${c.className}${c.section ? ' - ' + c.section : ''}`;
+
   // --- Modal / Resource Helpers ---
   const openCreate = () => {
     setEditing(null);
@@ -192,6 +210,7 @@ export default function TeacherLabs({ canManage = true }) {
     setResources([]);
     setModalOpen(true);
   };
+
   const openEdit = async (lab, e) => {
     if (e) e.stopPropagation();
     setEditing(lab);
@@ -212,6 +231,7 @@ export default function TeacherLabs({ canManage = true }) {
     } catch { setResources([]); }
     setModalOpen(true);
   };
+
   const handleSave = async (e) => {
     e.preventDefault();
     if (!form.title.trim() || !form.class_id) return alert('Title and Class are required.');
@@ -226,6 +246,7 @@ export default function TeacherLabs({ canManage = true }) {
     fd.append('subject_id', form.subject_id);
     fd.append('created_by', user.id);
     if (editing) fd.append('id', editing.id);
+    
     // Append actual File objects directly to the payload
     const resMetadata = resources.map((r, i) => {
       if (r.file) {
@@ -265,6 +286,7 @@ export default function TeacherLabs({ canManage = true }) {
       setSaving(false);
     }
   };
+
   const handleDelete = async (lab, e) => {
     if (e) e.stopPropagation();
     if (!window.confirm(`Delete lab "${lab.title}"?`)) return;
@@ -341,6 +363,7 @@ export default function TeacherLabs({ canManage = true }) {
                <textarea rows={3} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })}
                 placeholder="What this lab covers..." className="w-full bg-white border border-zinc-200 rounded-md p-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm resize-none transition-colors" />
             </div>
+            
             {/* Resources */}
             <div className="pt-4 border-t border-zinc-100">
               <div className="flex items-center justify-between mb-4">
@@ -458,8 +481,9 @@ export default function TeacherLabs({ canManage = true }) {
       </>
     );
   }
+
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
+    <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
 
       <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div className="flex flex-col">
@@ -508,6 +532,7 @@ export default function TeacherLabs({ canManage = true }) {
           )}
         </div>
       </header>
+
       <div className="flex-1">
         {loading ? (
           <div className="h-64 flex items-center justify-center">
@@ -552,6 +577,7 @@ export default function TeacherLabs({ canManage = true }) {
                 <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mt-1.5 line-clamp-1">
                   {lab.class_group} {lab.subject_name ? `\u2022 ${lab.subject_name}` : ''}
                 </p>
+                
                 {/* Created / Updated audit line */}
                 <div className="mt-2 space-y-0.5">
                   {lab.created_by_name && (
@@ -569,6 +595,7 @@ export default function TeacherLabs({ canManage = true }) {
                     </div>
                   )}
                 </div>
+
                 {lab.description && (
                   <p className="text-xs text-zinc-500 mt-3 line-clamp-3 leading-relaxed font-medium">
                     {lab.description}
@@ -594,6 +621,7 @@ export default function TeacherLabs({ canManage = true }) {
     </div>
   );
 }
+
 // =====================================================================
 //  ENLARGED DETAIL VIEW COMPONENT
 // =====================================================================
@@ -601,6 +629,7 @@ function LabDetailView({ lab, onBack, canManage, onEdit, onDelete, refreshToken 
   const [resources, setResources] = useState([]);
   const [loading, setLoading] = useState(true);
   const [meta, setMeta] = useState(lab);
+
   useEffect(() => {
     (async () => {
       try {
@@ -612,12 +641,14 @@ function LabDetailView({ lab, onBack, canManage, onEdit, onDelete, refreshToken 
       setLoading(false);
     })();
   }, [lab.id, refreshToken]);
+
   const ordered = useMemo(() => {
     const rank = { live: 0, video: 1, pdf: 2, link: 3 };
     return [...resources].sort((a, b) => (rank[a.resource_type] ?? 9) - (rank[b.resource_type] ?? 9));
   }, [resources]);
+
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+    <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
 
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         {/* UPDATED BACK BUTTON: Removed box styling, added text hover */}
@@ -641,6 +672,7 @@ function LabDetailView({ lab, onBack, canManage, onEdit, onDelete, refreshToken 
           )}
         </div>
       </div>
+      
       <div className="bg-white rounded-lg ring-1 ring-black/5 p-5 sm:p-6 shadow-sm">
         <div className="flex items-start gap-4 mb-6">
           <div className="size-12 bg-primary/10 text-primary rounded-md flex items-center justify-center ring-1 ring-inset ring-primary/20 shrink-0">
@@ -675,6 +707,7 @@ function LabDetailView({ lab, onBack, canManage, onEdit, onDelete, refreshToken 
           </div>
         )}
       </div>
+
       <div className="space-y-4">
         <h3 className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider pl-1">Lab Resources</h3>
         {loading ? (
