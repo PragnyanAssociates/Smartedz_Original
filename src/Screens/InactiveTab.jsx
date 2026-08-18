@@ -1,13 +1,13 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Trash2, Search, UserCircle2, GraduationCap, ChevronDown, RotateCcw, Info, UserX } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
 
 // =====================================================================
-//  InactiveTab — the same filtering UI as the Users tab (role tabs +
+//  InactiveTab - the same filtering UI as the Users tab (role tabs +
 //  class filter + search), but scoped to status === 'inactive'. These
 //  users are kept for records but cannot log in. Per row:
-//    • Reactivate -> flips status back to 'active' (moves to Users tab)
-//    • Delete     -> permanent hard delete (frees roll / PEN / TC)
+//    - Reactivate -> flips status back to 'active' (moves to Users tab)
+//    - Delete     -> permanent hard delete (frees roll / PEN / TC)
 //  While a user sits here they still HOLD their roll number for their
 //  academic year (the backend counts them), so a new student can't reuse
 //  it until this user is deleted or the academic year changes.
@@ -140,7 +140,7 @@ export default function InactiveTab({ data, fetchData, user }) {
         <p>
           <strong className="font-semibold text-amber-900">Inactive users.</strong>{' '}
           These people are kept for records but <strong>cannot log in</strong>. Use <strong>Reactivate</strong> to restore login access (they move back to the Users tab), or <strong>Delete</strong> to remove them permanently.
-          While a user stays here, their roll number is still reserved for their academic year — a new student can reuse that roll only after this user is deleted, or once the academic year changes.
+          While a user stays here, their roll number is still reserved for their academic year - a new student can reuse that roll only after this user is deleted, or once the academic year changes.
         </p>
       </div>
 
@@ -233,7 +233,7 @@ export default function InactiveTab({ data, fetchData, user }) {
                   <td className="px-5 py-4">
                     <div className="flex items-center gap-3">
                       <span className="w-6 shrink-0 text-center text-xs font-semibold text-zinc-400 tabular-nums">
-                        {isStudent ? (u.roll_no || '—') : (serialMap[u.id] || '—')}
+                        {isStudent ? (u.roll_no || '-') : (serialMap[u.id] || '-')}
                       </span>
                       {u.profile_pic ? (
                         <img src={u.profile_pic} alt={u.name} className="size-8 rounded-full object-cover shrink-0 ring-1 ring-black/5 grayscale" />
@@ -260,7 +260,7 @@ export default function InactiveTab({ data, fetchData, user }) {
                   <td className="px-5 py-4 text-xs text-zinc-700">
                     {isStudent && cls ? `${cls.className}${u.section ? ` - ${u.section}` : ''}`
                       : isTeacher ? (teacherSubjectNames(u.id) || <span className="italic text-zinc-400">Unassigned</span>)
-                      : '—'}
+                      : '-'}
                   </td>
                   <td className="px-5 py-4">
                     <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium ring-1 bg-amber-50 text-amber-700 ring-amber-600/10">

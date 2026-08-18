@@ -1,6 +1,6 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
-  Download, Loader2, Info, AlertTriangle, ShieldAlert, CheckCircle2,
+  Download, Loader2, Info, AlertTriangle, CheckCircle2,
   CalendarRange, ChevronDown, Archive, FileSpreadsheet, Users as UsersIcon, RefreshCw, BookOpen, BarChart3
 } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
@@ -26,7 +26,7 @@ const fmtWhen = (v) => {
 };
 
 // =====================================================================
-//  YearSelect / ScopeSelect — shared little controls
+//  YearSelect / ScopeSelect - shared little controls
 // =====================================================================
 function YearSelect({ years, value, onChange, w = "w-full sm:w-48" }) {
   return (
@@ -61,10 +61,10 @@ function ScopeSelect({ classes, value, onChange, studentsOnly, noOther }) {
           ) : (
             <>
               <option value="all">Everything (students + {noOther ? 'teachers' : 'staff'})</option>
-              <option value="students">Students — All classes</option>
+              <option value="students">Students - All classes</option>
               {classes.map(c => (
                 <option key={c.id} value={`class:${c.id}`}>
-                  Students — {c.className}{c.section ? ` ${c.section}` : ''}
+                  Students - {c.className}{c.section ? ` ${c.section}` : ''}
                 </option>
               ))}
               <option value="teachers">Teachers</option>
@@ -96,14 +96,14 @@ function StatusLine({ done, err, okText }) {
 }
 
 // =====================================================================
-//  FinalArchivePanel — the tracked, keep-safe download for one module.
+//  FinalArchivePanel - the tracked, keep-safe download for one module.
 //
 //   States it shows:
-//     • never downloaded -> plain "Download Final Archive" button
-//     • downloaded & current -> green tick + "Saved on <when>" and a
+//     - never downloaded -> plain "Download Final Archive" button
+//     - downloaded & current -> green tick + "Saved on <when>" and a
 //       "Download again" checkbox (button stays locked until ticked, so
 //       it isn't re-downloaded by accident)
-//     • new data since -> amber "New data added — download again" and the
+//     - new data since -> amber "New data added - download again" and the
 //       button is enabled straight away
 // =====================================================================
 function FinalArchivePanel({ status, statusLoading, busy, err, again, setAgain, onDownload, note }) {
@@ -119,7 +119,7 @@ function FinalArchivePanel({ status, statusLoading, busy, err, again, setAgain, 
         <span className="size-7 rounded-md bg-amber-100 text-amber-700 ring-1 ring-amber-600/20 flex items-center justify-center shrink-0">
           <Archive className="size-3.5" />
         </span>
-        <h6 className="text-xs font-semibold text-zinc-900">Final archive — keep-safe copy</h6>
+        <h6 className="text-xs font-semibold text-zinc-900">Final archive - keep-safe copy</h6>
       </div>
 
       <div className="text-[11px] text-amber-800 leading-relaxed space-y-1">{note}</div>
@@ -127,7 +127,7 @@ function FinalArchivePanel({ status, statusLoading, busy, err, again, setAgain, 
       {/* freshness status */}
       {statusLoading ? (
         <p className="inline-flex items-center gap-1.5 text-[11px] text-zinc-400">
-          <Loader2 className="size-3.5 animate-spin" /> Checking…
+          <Loader2 className="size-3.5 animate-spin" /> Checking...
         </p>
       ) : fresh ? (
         <div className="flex flex-col gap-2">
@@ -154,7 +154,7 @@ function FinalArchivePanel({ status, statusLoading, busy, err, again, setAgain, 
       <button onClick={onDownload} disabled={!canDownload}
         className="h-9 px-4 rounded-md bg-amber-600 hover:bg-amber-700 disabled:bg-zinc-200 disabled:text-zinc-400 text-white text-xs font-semibold inline-flex items-center gap-2 shadow-sm transition-colors disabled:cursor-not-allowed whitespace-nowrap">
         {busy ? <Loader2 className="size-4 animate-spin" /> : (stale ? <RefreshCw className="size-4" /> : <Archive className="size-4" />)}
-        {busy ? 'Preparing…' : (stale ? 'Download again' : 'Download Final Archive (.xlsx)')}
+        {busy ? 'Preparing...' : (stale ? 'Download again' : 'Download Final Archive (.xlsx)')}
       </button>
 
       {err && (
@@ -400,8 +400,8 @@ export default function DownloadsTab({ data, user }) {
       <div>
         <h3 className="text-lg font-semibold text-zinc-900 tracking-tight">Downloads</h3>
         <p className="text-[11px] text-zinc-500 max-w-2xl mt-1 leading-relaxed">
-          Export your school&rsquo;s records as Excel (.xlsx) files. Pick a section below. Each section has a
-          <strong> normal download</strong> (take any time, filter by class / staff) and a <strong>final archive</strong> —
+          Export your school's records as Excel (.xlsx) files. Pick a section below. Each section has a
+          <strong> normal download</strong> (take any time, filter by class / staff) and a <strong>final archive</strong> -
           the complete keep-safe copy you take before deleting a year. Read the note on each before you download.
         </p>
       </div>
@@ -431,7 +431,7 @@ export default function DownloadsTab({ data, user }) {
             </span>
             <div>
               <h5 className="text-sm font-semibold text-zinc-900">Users directory</h5>
-              <p className="text-[11px] text-zinc-500">Every student, teacher &amp; staff member with full details.</p>
+              <p className="text-[11px] text-zinc-500">Every student, teacher & staff member with full details.</p>
             </div>
           </div>
 
@@ -444,8 +444,8 @@ export default function DownloadsTab({ data, user }) {
             <div className="rounded-md ring-1 ring-inset ring-blue-500/15 bg-blue-50/60 px-4 py-3 flex items-start gap-2.5">
               <Info className="size-4 text-blue-600 shrink-0 mt-0.5" />
               <div className="text-[11px] text-blue-800 leading-relaxed space-y-1">
-                <p>The complete directory in one sheet — <strong>Students</strong> class-wise &amp; roll-wise, then <strong>Teachers</strong>, then <strong>Other staff</strong>, with every field from the Users tab (roll, admission no, Aadhaar, phone, address, class, parent, salaries, subjects, …).</p>
-                <p><span className="font-semibold">Filter:</span> download everyone, a single class, only Teachers, or only Other staff. Read-only — take it any time. Alumni are not included.</p>
+                <p>The complete directory in one sheet - <strong>Students</strong> class-wise & roll-wise, then <strong>Teachers</strong>, then <strong>Other staff</strong>, with every field from the Users tab (roll, admission no, Aadhaar, phone, address, class, parent, salaries, subjects, ...).</p>
+                <p><span className="font-semibold">Filter:</span> download everyone, a single class, only Teachers, or only Other staff. Read-only - take it any time. Alumni are not included.</p>
               </div>
             </div>
             <div className="flex flex-col sm:flex-row sm:items-end gap-3">
@@ -453,7 +453,7 @@ export default function DownloadsTab({ data, user }) {
               <button onClick={downloadUsers} disabled={usrBusy || !usrYear}
                 className="h-9 px-4 rounded-md bg-primary hover:bg-primary/90 disabled:bg-zinc-200 disabled:text-zinc-400 text-white text-xs font-semibold inline-flex items-center gap-2 shadow-sm transition-colors disabled:cursor-not-allowed whitespace-nowrap">
                 {usrBusy ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
-                {usrBusy ? 'Preparing…' : 'Download .xlsx'}
+                {usrBusy ? 'Preparing...' : 'Download .xlsx'}
               </button>
             </div>
             <StatusLine done={usrDone} err={usrErr} okText="Downloaded. Check your browser's downloads folder." />
@@ -466,8 +466,8 @@ export default function DownloadsTab({ data, user }) {
               busy={usrFinBusy} err={usrFinErr} again={usrAgain} setAgain={setUsrAgain}
               onDownload={downloadUsersFinal}
               note={<>
-                <p>The <strong>whole Users directory</strong> for this year in one file (no filter — everyone). This is your keep-safe copy to store and print before deleting the year.</p>
-                <p>Once saved it&rsquo;s ticked. If you later <strong>add or change any user</strong>, the tick clears and it asks you to download again, so your saved copy is never out of date.</p>
+                <p>The <strong>whole Users directory</strong> for this year in one file (no filter - everyone). This is your keep-safe copy to store and print before deleting the year.</p>
+                <p>Once saved it's ticked. If you later <strong>add or change any user</strong>, the tick clears and it asks you to download again, so your saved copy is never out of date.</p>
               </>}
             />
           </div>
@@ -483,7 +483,7 @@ export default function DownloadsTab({ data, user }) {
             </span>
             <div>
               <h5 className="text-sm font-semibold text-zinc-900">Attendance register</h5>
-              <p className="text-[11px] text-zinc-500">Class-wise &amp; staff attendance for one academic year.</p>
+              <p className="text-[11px] text-zinc-500">Class-wise & staff attendance for one academic year.</p>
             </div>
           </div>
 
@@ -496,8 +496,8 @@ export default function DownloadsTab({ data, user }) {
             <div className="rounded-md ring-1 ring-inset ring-blue-500/15 bg-blue-50/60 px-4 py-3 flex items-start gap-2.5">
               <Info className="size-4 text-blue-600 shrink-0 mt-0.5" />
               <div className="text-[11px] text-blue-800 leading-relaxed space-y-1">
-                <p>A register sheet — Students class-wise &amp; roll-wise, then Teachers, then Other staff. Each month column is <strong>present days / total days marked</strong>; the last column is the yearly <strong>%</strong> (green ≥ 80, blue 50–80, red &lt; 50).</p>
-                <p><span className="font-semibold">Filter:</span> everything, a single class, only Teachers, or only Other staff. Read-only — take it any time.</p>
+                <p>A register sheet - Students class-wise & roll-wise, then Teachers, then Other staff. Each month column is <strong>present days / total days marked</strong>; the last column is the yearly <strong>%</strong> (green {'>'}= 80, blue 50-80, red {'<'} 50).</p>
+                <p><span className="font-semibold">Filter:</span> everything, a single class, only Teachers, or only Other staff. Read-only - take it any time.</p>
               </div>
             </div>
             <div className="flex flex-col sm:flex-row sm:items-end gap-3">
@@ -505,7 +505,7 @@ export default function DownloadsTab({ data, user }) {
               <button onClick={downloadAttendance} disabled={attBusy || !attYear}
                 className="h-9 px-4 rounded-md bg-primary hover:bg-primary/90 disabled:bg-zinc-200 disabled:text-zinc-400 text-white text-xs font-semibold inline-flex items-center gap-2 shadow-sm transition-colors disabled:cursor-not-allowed whitespace-nowrap">
                 {attBusy ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
-                {attBusy ? 'Preparing…' : 'Download .xlsx'}
+                {attBusy ? 'Preparing...' : 'Download .xlsx'}
               </button>
             </div>
             <StatusLine done={attDone} err={attErr} okText="Downloaded. Check your browser's downloads folder." />
@@ -518,8 +518,8 @@ export default function DownloadsTab({ data, user }) {
               busy={attFinBusy} err={attFinErr} again={attAgain} setAgain={setAttAgain}
               onDownload={downloadAttendanceFinal}
               note={<>
-                <p>The <strong>whole attendance register</strong> for this year in one file (everyone — students, teachers, other staff). This is your keep-safe copy to store and print before deleting the year.</p>
-                <p>Once saved it&rsquo;s ticked. If <strong>any new attendance is marked or edited</strong> afterwards, the tick clears and it asks you to download again, so your saved copy is never out of date.</p>
+                <p>The <strong>whole attendance register</strong> for this year in one file (everyone - students, teachers, other staff). This is your keep-safe copy to store and print before deleting the year.</p>
+                <p>Once saved it's ticked. If <strong>any new attendance is marked or edited</strong> afterwards, the tick clears and it asks you to download again, so your saved copy is never out of date.</p>
               </>}
             />
           </div>
@@ -535,7 +535,7 @@ export default function DownloadsTab({ data, user }) {
             </span>
             <div>
               <h5 className="text-sm font-semibold text-zinc-900">Marks register</h5>
-              <p className="text-[11px] text-zinc-500">Exam marks, class-wise &amp; roll-wise, for one academic year.</p>
+              <p className="text-[11px] text-zinc-500">Exam marks, class-wise & roll-wise, for one academic year.</p>
             </div>
           </div>
 
@@ -549,8 +549,8 @@ export default function DownloadsTab({ data, user }) {
               <Info className="size-4 text-blue-600 shrink-0 mt-0.5" />
               <div className="text-[11px] text-blue-800 leading-relaxed space-y-1">
                 <p>A marks register grouped by <strong>class</strong>, students <strong>roll-wise</strong>. Subjects run across the columns; each <strong>exam type</strong> is a row under the student, and every cell is <strong>marks obtained / max</strong> (e.g. <code className="bg-white/70 px-1 rounded">18/20</code>).</p>
-                <p>Each student ends with a bold <strong>Overall</strong> row and a colour-coded <strong>%</strong> (green ≥ 80, blue 50–80, red &lt; 50).</p>
-                <p><span className="font-semibold">Filter:</span> all classes at once, or a single class. Read-only — take it any time. Alumni are not included.</p>
+                <p>Each student ends with a bold <strong>Overall</strong> row and a colour-coded <strong>%</strong> (green {'>'}= 80, blue 50-80, red {'<'} 50).</p>
+                <p><span className="font-semibold">Filter:</span> all classes at once, or a single class. Read-only - take it any time. Alumni are not included.</p>
               </div>
             </div>
             <div className="flex flex-col sm:flex-row sm:items-end gap-3">
@@ -558,7 +558,7 @@ export default function DownloadsTab({ data, user }) {
               <button onClick={downloadMarks} disabled={mkBusy || !mkYear}
                 className="h-9 px-4 rounded-md bg-primary hover:bg-primary/90 disabled:bg-zinc-200 disabled:text-zinc-400 text-white text-xs font-semibold inline-flex items-center gap-2 shadow-sm transition-colors disabled:cursor-not-allowed whitespace-nowrap">
                 {mkBusy ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
-                {mkBusy ? 'Preparing…' : 'Download .xlsx'}
+                {mkBusy ? 'Preparing...' : 'Download .xlsx'}
               </button>
             </div>
             <StatusLine done={mkDone} err={mkErr} okText="Downloaded. Check your browser's downloads folder." />
@@ -572,7 +572,7 @@ export default function DownloadsTab({ data, user }) {
               onDownload={downloadMarksFinal}
               note={<>
                 <p>The <strong>whole marks register</strong> for this year in one file (every class). This is your keep-safe copy to store and print before deleting the year.</p>
-                <p>Once saved it&rsquo;s ticked. If <strong>any marks are entered or changed</strong> afterwards, the tick clears and it asks you to download again, so your saved copy is never out of date.</p>
+                <p>Once saved it's ticked. If <strong>any marks are entered or changed</strong> afterwards, the tick clears and it asks you to download again, so your saved copy is never out of date.</p>
               </>}
             />
           </div>
@@ -588,7 +588,7 @@ export default function DownloadsTab({ data, user }) {
             </span>
             <div>
               <h5 className="text-sm font-semibold text-zinc-900">Performance</h5>
-              <p className="text-[11px] text-zinc-500">Student &amp; teacher performance percentages for one academic year.</p>
+              <p className="text-[11px] text-zinc-500">Student & teacher performance percentages for one academic year.</p>
             </div>
           </div>
 
@@ -601,9 +601,9 @@ export default function DownloadsTab({ data, user }) {
             <div className="rounded-md ring-1 ring-inset ring-blue-500/15 bg-blue-50/60 px-4 py-3 flex items-start gap-2.5">
               <Info className="size-4 text-blue-600 shrink-0 mt-0.5" />
               <div className="text-[11px] text-blue-800 leading-relaxed space-y-1">
-                <p>Same shape as the Marks register, but every cell is a <strong>%</strong>. <strong>Students</strong> — per class, roll-wise, each <strong>exam type</strong> a row, a % per <strong>subject</strong> across the columns, an <strong>Overall %</strong> column and a bold Overall row.</p>
-                <p><strong>Teachers</strong> — one row per class &amp; subject with an exam-wise % in each column and a bold Overall row. Every % is <strong>marks obtained / possible</strong>, colour-coded (green ≥ 80, blue 50–80, red &lt; 50).</p>
-                <p><span className="font-semibold">Filter:</span> everything, a single class, or only Teachers. Read-only — take it any time. Alumni are not included.</p>
+                <p>Same shape as the Marks register, but every cell is a <strong>%</strong>. <strong>Students</strong> - per class, roll-wise, each <strong>exam type</strong> a row, a % per <strong>subject</strong> across the columns, an <strong>Overall %</strong> column and a bold Overall row.</p>
+                <p><strong>Teachers</strong> - one row per class & subject with an exam-wise % in each column and a bold Overall row. Every % is <strong>marks obtained / possible</strong>, colour-coded (green {'>'}= 80, blue 50-80, red {'<'} 50).</p>
+                <p><span className="font-semibold">Filter:</span> everything, a single class, or only Teachers. Read-only - take it any time. Alumni are not included.</p>
               </div>
             </div>
             <div className="flex flex-col sm:flex-row sm:items-end gap-3">
@@ -611,7 +611,7 @@ export default function DownloadsTab({ data, user }) {
               <button onClick={downloadPerformance} disabled={pfBusy || !pfYear}
                 className="h-9 px-4 rounded-md bg-primary hover:bg-primary/90 disabled:bg-zinc-200 disabled:text-zinc-400 text-white text-xs font-semibold inline-flex items-center gap-2 shadow-sm transition-colors disabled:cursor-not-allowed whitespace-nowrap">
                 {pfBusy ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
-                {pfBusy ? 'Preparing…' : 'Download .xlsx'}
+                {pfBusy ? 'Preparing...' : 'Download .xlsx'}
               </button>
             </div>
             <StatusLine done={pfDone} err={pfErr} okText="Downloaded. Check your browser's downloads folder." />
@@ -624,8 +624,8 @@ export default function DownloadsTab({ data, user }) {
               busy={pfFinBusy} err={pfFinErr} again={pfAgain} setAgain={setPfAgain}
               onDownload={downloadPerformanceFinal}
               note={<>
-                <p>The <strong>whole performance report</strong> for this year in one file (all students &amp; all teachers). This is your keep-safe copy to store and print before deleting the year.</p>
-                <p>Performance is built from marks, so if <strong>any marks change</strong> afterwards the tick clears and it asks you to download again — keeping your saved copy current.</p>
+                <p>The <strong>whole performance report</strong> for this year in one file (all students & all teachers). This is your keep-safe copy to store and print before deleting the year.</p>
+                <p>Performance is built from marks, so if <strong>any marks change</strong> afterwards the tick clears and it asks you to download again - keeping your saved copy current.</p>
               </>}
             />
           </div>

@@ -59,7 +59,7 @@ const isoLocal = (dt) => {
 };
 
 // ---------------------------------------------------------------------
-//  openLabResource — open a lab resource in a new tab.
+//  openLabResource - open a lab resource in a new tab.
 //
 //  File-backed resources (PDFs, uploaded videos) are served from OUR
 //  backend at /admin/labs/resource/:id, behind the /api auth gate. A plain
@@ -160,7 +160,7 @@ export default function TeacherLabs({ canManage = true }) {
     });
   }, [subjects, subjectClasses, form.class_id]);
 
-  // Subject options for the Subject filter — narrowed to the selected class
+  // Subject options for the Subject filter - narrowed to the selected class
   // filter (a subject with no class links counts as "all classes"), matching
   // the create/edit form's behaviour.
   const subjectFilterOptions = useMemo(() => {
@@ -485,8 +485,9 @@ export default function TeacherLabs({ canManage = true }) {
   return (
     <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
 
-      <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div className="flex flex-col">
+      {/* Changed lg:flex-row and added flex-wrap to the controls wrapper to prevent button cutoffs */}
+      <header className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
+        <div className="flex flex-col shrink-0">
           <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
             <FlaskConical className="text-primary size-5" />
             Digital Labs
@@ -495,10 +496,12 @@ export default function TeacherLabs({ canManage = true }) {
             Post videos, links and live classes for your students.
           </p>
         </div>
-        <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+
+        {/* Added flex-wrap here so the items drop gracefully instead of overflowing the screen edge */}
+        <div className="flex flex-wrap items-center justify-start xl:justify-end gap-3 w-full xl:w-auto">
           {/* Class + Subject filters */}
           <div className="grid grid-cols-2 sm:flex sm:flex-row gap-3 w-full sm:w-auto">
-            <div className="relative w-full sm:w-40">
+            <div className="relative w-full sm:w-36">
               <select value={classFilter} onChange={e => onClassFilterChange(e.target.value)}
                 className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm font-medium text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
                 <option value="">All Classes</option>
@@ -506,7 +509,7 @@ export default function TeacherLabs({ canManage = true }) {
               </select>
               <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
-            <div className="relative w-full sm:w-40">
+            <div className="relative w-full sm:w-36">
               <select value={subjectFilter} onChange={e => setSubjectFilter(e.target.value)}
                 className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm font-medium text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
                 <option value="">All Subjects</option>
@@ -515,21 +518,24 @@ export default function TeacherLabs({ canManage = true }) {
               <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
           </div>
-          <div className="relative w-full sm:w-72 shrink-0">
+
+          <div className="relative w-full sm:flex-1 lg:w-56 lg:flex-none shrink-0">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
             <input value={query} onChange={e => setQuery(e.target.value)}
               placeholder="Search labs..."
               className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-4 text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors placeholder:text-zinc-400" />
           </div>
 
-          <LabsHelp canManage={canManage} />
-
-          {canManage && (
-            <button onClick={openCreate}
-              className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full sm:w-auto shrink-0">
-              <Plus className="size-3.5" /> Create Lab
-            </button>
-          )}
+          {/* Grouped the action buttons so they stay together when wrapping */}
+          <div className="flex items-center gap-3 w-full sm:w-auto">
+            <LabsHelp canManage={canManage} />
+            {canManage && (
+              <button onClick={openCreate}
+                className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full sm:w-auto shrink-0">
+                <Plus className="size-3.5" /> Create Lab
+              </button>
+            )}
+          </div>
         </div>
       </header>
 
@@ -575,7 +581,7 @@ export default function TeacherLabs({ canManage = true }) {
                 </h3>
 
                 <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mt-1.5 line-clamp-1">
-                  {lab.class_group} {lab.subject_name ? `\u2022 ${lab.subject_name}` : ''}
+                  {lab.class_group} {lab.subject_name ? `- ${lab.subject_name}` : ''}
                 </p>
                 
                 {/* Created / Updated audit line */}
@@ -584,14 +590,14 @@ export default function TeacherLabs({ canManage = true }) {
                     <div className="text-[10px] text-zinc-400 flex items-center gap-1 line-clamp-1">
                       <User className="size-3 shrink-0" /> {lab.created_by_name}
                       {lab.created_at && (
-                        <><span className="text-zinc-300">{'\u00b7'}</span> {fmtIST(lab.created_at)}</>
+                        <><span className="text-zinc-300">|</span> {fmtIST(lab.created_at)}</>
                       )}
                     </div>
                   )}
                   {wasUpdated(lab) && (
                     <div className="text-[10px] text-zinc-400 flex items-center gap-1 line-clamp-1">
                       <PencilLine className="size-3 shrink-0" /> {lab.updated_by_name}
-                      <span className="text-zinc-300">{'\u00b7'}</span> {fmtIST(lab.updated_at)}
+                      <span className="text-zinc-300">|</span> {fmtIST(lab.updated_at)}
                     </div>
                   )}
                 </div>
@@ -686,12 +692,12 @@ function LabDetailView({ lab, onBack, canManage, onEdit, onDelete, refreshToken 
               </span>
               <span className="flex items-center gap-1.5 bg-zinc-100 px-2 py-1 rounded-md text-zinc-600">
                 <User className="size-3.5" /> {meta.created_by_name || 'Teacher'}
-                {meta.created_at && <span className="normal-case font-normal text-zinc-400">{'\u00b7'} {fmtIST(meta.created_at)}</span>}
+                {meta.created_at && <span className="normal-case font-normal text-zinc-400">| {fmtIST(meta.created_at)}</span>}
               </span>
               {wasUpdated(meta) && (
                 <span className="flex items-center gap-1.5 bg-zinc-100 px-2 py-1 rounded-md text-zinc-600">
                   <PencilLine className="size-3.5" /> {meta.updated_by_name}
-                  <span className="normal-case font-normal text-zinc-400">{'\u00b7'} {fmtIST(meta.updated_at)}</span>
+                  <span className="normal-case font-normal text-zinc-400">| {fmtIST(meta.updated_at)}</span>
                 </span>
               )}
               <span className="bg-primary/10 text-primary px-2 py-1 rounded-md ring-1 ring-inset ring-primary/20 font-semibold">
@@ -760,29 +766,29 @@ function LabDetailView({ lab, onBack, canManage, onEdit, onDelete, refreshToken 
 }
 
 // =====================================================================
-//  LabsHelp — "How to use" guide (same theme as ReportsHelp).
+//  LabsHelp - "How to use" guide (same theme as ReportsHelp).
 //  Managers get the create/manage guide; read-only staff get the view one.
 // =====================================================================
 const GUIDES = {
   manage: {
     title: 'Digital Labs',
     steps: [
-      ['1 \u00b7 Create a lab', 'Create Lab opens the form \u2014 give it a title, a class (required) and optional subject and description, then attach resources.'],
-      ['2 \u00b7 Add resources', 'Each lab can hold Videos, PDF Documents, Web Links and Live Classes. For a video or PDF you can either Upload the file or paste a URL; a live class takes a meeting link and an optional scheduled time.'],
-      ['3 \u00b7 Open a lab', 'Click a lab card to see its details and every resource. On a resource, Watch / Open / Join opens it \u2014 uploaded PDFs and videos open securely for signed-in users.'],
-      ['4 \u00b7 Find labs', 'Search by title, class, subject or author, and narrow with the Class and Subject filters (subjects follow the chosen class).'],
-      ['5 \u00b7 Edit & delete', 'Hover a lab card, or use Edit Lab / Delete Lab inside a lab. Each card shows who created it and who last updated it.'],
+      ['1 - Create a lab', 'Create Lab opens the form - give it a title, a class (required) and optional subject and description, then attach resources.'],
+      ['2 - Add resources', 'Each lab can hold Videos, PDF Documents, Web Links and Live Classes. For a video or PDF you can either Upload the file or paste a URL; a live class takes a meeting link and an optional scheduled time.'],
+      ['3 - Open a lab', 'Click a lab card to see its details and every resource. On a resource, Watch / Open / Join opens it - uploaded PDFs and videos open securely for signed-in users.'],
+      ['4 - Find labs', 'Search by title, class, subject or author, and narrow with the Class and Subject filters (subjects follow the chosen class).'],
+      ['5 - Edit & delete', 'Hover a lab card, or use Edit Lab / Delete Lab inside a lab. Each card shows who created it and who last updated it.'],
     ],
-    note: 'Uploaded files are stored in the school\u2019s library and served behind sign-in, so they won\u2019t open in a logged-out tab. External links (YouTube, web pages, meeting links) open directly.'
+    note: 'Uploaded files are stored in the school\'s library and served behind sign-in, so they won\'t open in a logged-out tab. External links (YouTube, web pages, meeting links) open directly.'
   },
   view: {
     title: 'Digital Labs',
     steps: [
-      ['1 \u00b7 Browse labs', 'Each card is a lab for a class, with its subject and a short description. Click one to open it.'],
-      ['2 \u00b7 Open resources', 'Inside a lab, Watch a video, Open a PDF or Web Link, or Join a live class. Live classes show their scheduled time.'],
-      ['3 \u00b7 Find labs', 'Search by title, class, subject or author, and use the Class and Subject filters to narrow the list.'],
+      ['1 - Browse labs', 'Each card is a lab for a class, with its subject and a short description. Click one to open it.'],
+      ['2 - Open resources', 'Inside a lab, Watch a video, Open a PDF or Web Link, or Join a live class. Live classes show their scheduled time.'],
+      ['3 - Find labs', 'Search by title, class, subject or author, and use the Class and Subject filters to narrow the list.'],
     ],
-    note: 'Uploaded PDFs and videos open securely for signed-in users. This is a read-only view \u2014 labs are created and edited by teachers.'
+    note: 'Uploaded PDFs and videos open securely for signed-in users. This is a read-only view - labs are created and edited by teachers.'
   }
 };
 

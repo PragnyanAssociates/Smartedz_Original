@@ -33,7 +33,7 @@ export default function RolesTab({ data, fetchData, user }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.roles]);
 
-  // Count only ACTIVE users per role — alumni are not on the roster.
+  // Count only ACTIVE users per role - alumni are not on the roster.
   const userCount = useMemo(() => {
     const map = {};
     (data.users || []).forEach(u => {
@@ -234,7 +234,7 @@ export default function RolesTab({ data, fetchData, user }) {
                   <Lock className="size-3.5" /> System roles are protected
                 </div>
                 Super Admin, Student, Teacher, and Driver &amp; Assistant exist in every school and
-                cannot be renamed or deleted. They guarantee a stable foundation for core modules —
+                cannot be renamed or deleted. They guarantee a stable foundation for core modules -
                 Driver &amp; Assistant powers the Transport crew (bus drivers and their assistants).
               </div>
 

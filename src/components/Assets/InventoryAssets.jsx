@@ -214,13 +214,15 @@ export default function InventoryAssets() {
       {/* Filters */}
       <div className="bg-white p-3 rounded-lg shadow-sm ring-1 ring-black/5 flex flex-col gap-3">
         <div className="flex flex-col lg:flex-row gap-3">
-          <div className="relative flex-1 min-w-0">
+          {/* UPDATED: Given a fixed/min width to prevent crushing and removed flex-1 */}
+          <div className="relative w-full lg:w-64 xl:w-80 shrink-0">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
             <input type="text" value={query} onChange={e => setQuery(e.target.value)}
               placeholder="Search item, serial no, vendor, invoice or room..."
               className="h-9 w-full bg-zinc-50/50 border border-transparent rounded-md pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:bg-white transition-colors placeholder:text-zinc-400 shadow-sm" />
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 lg:gap-3">
+          {/* UPDATED: Added flex-1 to the grid so it takes the remaining space */}
+          <div className="flex-1 grid grid-cols-2 sm:grid-cols-4 gap-2 lg:gap-3">
             <Select value={filterHead} onChange={setFilterHead}
               options={[{ value: '', label: 'All Heads' }, ...heads.map(h => ({ value: String(h.id), label: h.name }))]} />
             <Select value={filterStatus} onChange={setFilterStatus}
@@ -291,7 +293,8 @@ export default function InventoryAssets() {
                         </div>
                       </td>
                       <td className="px-5 py-3">
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-zinc-50 text-zinc-700 ring-1 ring-inset ring-zinc-600/20">
+                        {/* UPDATED: Added whitespace-nowrap to prevent the pill text from breaking onto two lines */}
+                        <span className="inline-flex items-center whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-zinc-50 text-zinc-700 ring-1 ring-inset ring-zinc-600/20">
                           {r.head_name || 'Unassigned'}
                         </span>
                       </td>
@@ -301,7 +304,8 @@ export default function InventoryAssets() {
                       <td className="px-5 py-3 text-sm font-semibold text-zinc-700 truncate">{r.room_no || '-'}</td>
                       <td className="px-5 py-3 text-sm text-zinc-600 whitespace-nowrap">{fmtDate(r.purchase_date) || '-'}</td>
                       <td className="px-5 py-3">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ring-1 ring-inset ${ss.bg} ${ss.text} ${ss.ring}`}>
+                        {/* UPDATED: Added whitespace-nowrap here as well for safety */}
+                        <span className={`inline-flex items-center whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ring-1 ring-inset ${ss.bg} ${ss.text} ${ss.ring}`}>
                           {r.status}
                         </span>
                       </td>
@@ -437,10 +441,10 @@ function AssetDetailModal({ asset, onClose, onEdit, onDelete }) {
           <div className="min-w-0">
             <h2 className="text-lg font-semibold text-zinc-900 truncate">{asset.item_name}</h2>
             <div className="flex flex-wrap items-center gap-2 mt-2">
-              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-zinc-50 text-zinc-700 ring-1 ring-inset ring-zinc-600/20">
+              <span className="inline-flex items-center whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-zinc-50 text-zinc-700 ring-1 ring-inset ring-zinc-600/20">
                 {asset.head_name || 'Unassigned'}
               </span>
-              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ring-1 ring-inset ${ss.bg} ${ss.text} ${ss.ring}`}>
+              <span className={`inline-flex items-center whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ring-1 ring-inset ${ss.bg} ${ss.text} ${ss.ring}`}>
                 {asset.status}
               </span>
             </div>

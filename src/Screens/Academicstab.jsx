@@ -7,9 +7,9 @@ const startOfDay = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); retur
 
 // DD/MM/YYYY
 const fmtDMY = (d) => {
-  if (!d) return '—';
+  if (!d) return '-';
   const x = new Date(d);
-  if (isNaN(x.getTime())) return '—';
+  if (isNaN(x.getTime())) return '-';
   const dd = String(x.getDate()).padStart(2, '0');
   const mm = String(x.getMonth() + 1).padStart(2, '0');
   return `${dd}/${mm}/${x.getFullYear()}`;
@@ -17,7 +17,7 @@ const fmtDMY = (d) => {
 
 // "Jun 2026" style for the card range
 const fmtMonth = (d) =>
-  d ? new Date(d).toLocaleDateString(undefined, { month: 'short', year: 'numeric' }) : '—';
+  d ? new Date(d).toLocaleDateString(undefined, { month: 'short', year: 'numeric' }) : '-';
 
 // Status of a year relative to today. The SAME logic the backend uses,
 // so banners here match notifications/dashboard later.
@@ -128,15 +128,15 @@ export default function AcademicsTab({ data, fetchData, user }) {
       </div>
 
       {/* ---- How the active year affects your data (always shown) -----
-           Explains that data (attendance, marks…) is anchored to the active
+           Explains that data (attendance, marks...) is anchored to the active
            year, that switching is non-destructive, and that deleting a year
            wipes its data permanently. */}
       <div className="rounded-lg ring-1 ring-inset ring-blue-500/15 bg-blue-50/60 px-4 py-3 flex items-start gap-3">
         <Info className="size-4 text-blue-600 shrink-0 mt-0.5" />
         <div className="text-[11px] text-blue-800 leading-relaxed">
-          <span className="font-semibold">Note — how academic years work:</span> The year-linked modules (<strong>Attendance,Timetable, Performance</strong> and <strong>Marks / Reports</strong>) always run on the <strong>active</strong> academic year.
-          When you switch the active year, those screens start <strong>empty</strong> for the new year. If you switch back to a previous year, its earlier data reappears exactly as you left it — nothing is lost by simply changing the active year.
-          <span className="block mt-1 font-semibold text-red-700">However, if you DELETE an academic year, every record linked to it (Attendance,Timetable,Reports and Performance) is gone forever and cannot be recovered.</span>
+          <span className="font-semibold">Note - how academic years work:</span> The year-linked modules (<strong>Attendance, Timetable, Performance</strong> and <strong>Marks / Reports</strong>) always run on the <strong>active</strong> academic year.
+          When you switch the active year, those screens start <strong>empty</strong> for the new year. If you switch back to a previous year, its earlier data reappears exactly as you left it - nothing is lost by simply changing the active year.
+          <span className="block mt-1 font-semibold text-red-700">However, if you DELETE an academic year, every record linked to it (Attendance, Timetable, Reports and Performance) is gone forever and cannot be recovered.</span>
           <span className="block mt-1">So if you want to delete a whole academic year, first download the files linked to that year to keep your data safe as copy, for that use <strong>Downloads</strong> tab. Once downloaded, that data stays safe in the downloaded file or in your local file even after the academic year is deleted.</span>
         </div>
       </div>
@@ -189,7 +189,7 @@ export default function AcademicsTab({ data, fetchData, user }) {
                   <Calendar className="size-4" />
                 </div>
 
-                {/* Actions — visible on touch screens, hover on desktop */}
+                {/* Actions - visible on touch screens, hover on desktop */}
                 <div className="flex gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
                   <button onClick={() => openEdit(y)} className="p-1.5 rounded text-zinc-400 hover:text-zinc-700 hover:bg-zinc-50 transition-colors" title="Edit">
                     <Edit className="size-4 shrink-0" />
@@ -202,7 +202,7 @@ export default function AcademicsTab({ data, fetchData, user }) {
 
               <h4 className="text-sm font-semibold text-zinc-900 leading-tight">{y.name}</h4>
               <p className="text-[10px] font-medium text-zinc-500 mt-1 uppercase tracking-wider whitespace-nowrap">
-                {fmtMonth(y.startDate)} &mdash; {fmtMonth(y.endDate)}
+                {fmtMonth(y.startDate)} - {fmtMonth(y.endDate)}
               </p>
 
               {/* Footer Row */}
@@ -305,7 +305,7 @@ export default function AcademicsTab({ data, fetchData, user }) {
 }
 
 // =====================================================================
-//  DeleteYearModal — the two-step guarded deletion.
+//  DeleteYearModal - the two-step guarded deletion.
 //    Step 1: download the year's archive (.xlsx). Delete stays locked
 //            until the file has actually downloaded in this session.
 //    Step 2: tick the acknowledgement.
@@ -382,8 +382,8 @@ function DeleteYearModal({ year, instId, onClose, onDeleted }) {
               <Trash2 className="size-5" />
             </div>
             <div>
-              <h2 className="text-base font-semibold text-zinc-900">Delete &ldquo;{year.name}&rdquo;</h2>
-              <p className="text-[11px] text-zinc-500 mt-0.5">This permanently removes the year&rsquo;s data.</p>
+              <h2 className="text-base font-semibold text-zinc-900">Delete "{year.name}"</h2>
+              <p className="text-[11px] text-zinc-500 mt-0.5">This permanently removes the year's data.</p>
             </div>
           </div>
           <button onClick={onClose} disabled={deleting} className="text-zinc-400 hover:text-zinc-700 transition-colors p-1 disabled:opacity-50">
@@ -401,7 +401,7 @@ function DeleteYearModal({ year, instId, onClose, onDeleted }) {
             </p>
           </div>
 
-          {/* Step 1 — download */}
+          {/* Step 1 - download */}
           <div className="rounded-md ring-1 ring-black/5 p-4">
             <div className="flex items-start gap-2.5">
               <span className={`size-6 rounded-full flex items-center justify-center text-[11px] font-bold shrink-0 ${downloaded ? 'bg-emerald-100 text-emerald-700' : 'bg-zinc-100 text-zinc-500'}`}>1</span>
@@ -424,7 +424,7 @@ function DeleteYearModal({ year, instId, onClose, onDeleted }) {
                     <button onClick={handleDownload} disabled={downloading}
                       className="h-9 px-4 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md text-xs font-semibold inline-flex items-center gap-2 shadow-sm transition-colors">
                       {downloading ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
-                      {downloading ? 'Preparing…' : `Download ${year.name} (.xlsx)`}
+                      {downloading ? 'Preparing...' : `Download ${year.name} (.xlsx)`}
                     </button>
                   )}
                 </div>
@@ -432,18 +432,18 @@ function DeleteYearModal({ year, instId, onClose, onDeleted }) {
             </div>
           </div>
 
-          {/* Step 2 — acknowledge (locked until downloaded) */}
+          {/* Step 2 - acknowledge (locked until downloaded) */}
           <div className={`rounded-md ring-1 ring-black/5 p-4 transition-opacity ${downloaded ? '' : 'opacity-50 pointer-events-none'}`}>
             <div className="flex items-start gap-2.5">
               <span className={`size-6 rounded-full flex items-center justify-center text-[11px] font-bold shrink-0 ${acknowledged ? 'bg-emerald-100 text-emerald-700' : 'bg-zinc-100 text-zinc-500'}`}>2</span>
               <div className="flex-1">
-                <p className="text-xs font-semibold text-zinc-800">Confirm you&rsquo;ve saved it</p>
+                <p className="text-xs font-semibold text-zinc-800">Confirm you've saved it</p>
                 <label className="flex items-start gap-2 mt-2 cursor-pointer">
                   <input type="checkbox" checked={acknowledged} disabled={!downloaded}
                     onChange={e => setAcknowledged(e.target.checked)}
                     className="mt-0.5 size-4 rounded border-zinc-300 text-primary focus:ring-2 focus:ring-primary/30" />
                   <span className="text-[11px] text-zinc-600 leading-relaxed">
-                    I have downloaded, saved and printed this data, and I understand the academic year&rsquo;s attendance and marks will be <strong>permanently deleted</strong> and cannot be recovered from the app.
+                    I have downloaded, saved and printed this data, and I understand the academic year's attendance and marks will be <strong>permanently deleted</strong> and cannot be recovered from the app.
                   </span>
                 </label>
               </div>
@@ -466,7 +466,7 @@ function DeleteYearModal({ year, instId, onClose, onDeleted }) {
           <button onClick={handleDelete} disabled={!canDelete}
             className="px-5 py-2 bg-red-600 hover:bg-red-700 disabled:bg-zinc-200 disabled:text-zinc-400 text-white rounded-md text-xs font-semibold inline-flex items-center gap-2 transition-colors disabled:cursor-not-allowed">
             {deleting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
-            {deleting ? 'Deleting…' : 'Delete Year Permanently'}
+            {deleting ? 'Deleting...' : 'Delete Year Permanently'}
           </button>
         </div>
       </div>

@@ -6,6 +6,7 @@ import {
   Search, BookOpen, Clock, ArrowLeft, User, FileText, PencilLine,
   HelpCircle, X, ShieldCheck
 } from 'lucide-react';
+
 // =====================================================================
 //  StudentLabs - a student browses the digital labs posted for their
 //  class, opens a lab, and watches videos / opens links / joins live
@@ -20,6 +21,7 @@ const fmtDateTime = (dt) => {
     hour: '2-digit', minute: '2-digit'
   });
 };
+
 // Render a UTC audit timestamp (Railway stores UTC) as IST for display.
 const fmtIST = (val) => {
   if (!val) return '';
@@ -36,13 +38,14 @@ const fmtIST = (val) => {
     hour: '2-digit', minute: '2-digit', hour12: true
   });
 };
+
 // Show the "updated" line only when it's meaningfully after creation.
 const wasUpdated = (lab) =>
   lab.updated_at && lab.updated_by_name &&
   (!lab.created_at || new Date(lab.updated_at) - new Date(lab.created_at) > 1000);
 
 // ---------------------------------------------------------------------
-//  openLabResource — open a lab resource in a new tab.
+//  openLabResource - open a lab resource in a new tab.
 //  File-backed resources (PDFs / uploaded videos) come from OUR backend
 //  behind the /api auth gate, so a plain <a target="_blank"> sends no
 //  token and gets "Please sign in to continue." We fetch the bytes (the
@@ -81,12 +84,14 @@ function resMeta(type) {
     default:      return { icon: LinkIcon, label: 'Link',       color: 'text-zinc-600', bg: 'bg-zinc-100' };
   }
 }
+
 export default function StudentLabs() {
   const { user } = useAuth();
   const [labs, setLabs]       = useState([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery]     = useState('');
   const [openLab, setOpenLab] = useState(null);   // lab object for detail view
+
   const load = useCallback(async () => {
     if (!user?.id) return;
     setLoading(true);
@@ -97,7 +102,9 @@ export default function StudentLabs() {
     } catch (e) { console.error(e); }
     setLoading(false);
   }, [user]);
+
   useEffect(() => { load(); }, [load]);
+
   const filtered = useMemo(() => {
     if (!query.trim()) return labs;
     const q = query.toLowerCase();
@@ -106,11 +113,13 @@ export default function StudentLabs() {
       (l.subject_name || '').toLowerCase().includes(q) ||
       (l.created_by_name || '').toLowerCase().includes(q));
   }, [labs, query]);
+
   if (openLab) {
     return <LabDetail lab={openLab} onBack={() => setOpenLab(null)} />;
   }
+
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
+    <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
 
       <header className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-2 sm:mb-0">
         <div className="flex flex-col">
@@ -124,6 +133,7 @@ export default function StudentLabs() {
         </div>
         <LabsHelp />
       </header>
+
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div className="relative w-full sm:w-72 shrink-0">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
@@ -132,6 +142,7 @@ export default function StudentLabs() {
             className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-4 text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors placeholder:text-zinc-400" />
         </div>
       </div>
+
       <div className="flex-1">
         {loading ? (
           <div className="h-64 flex items-center justify-center">
@@ -159,26 +170,29 @@ export default function StudentLabs() {
                   <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mt-1.5 line-clamp-1">
                     {lab.subject_name || 'General'}
                   </p>
+                  
                   {/* Created / Updated audit line */}
                   <div className="mt-2 space-y-0.5">
                     {lab.created_by_name && (
                       <div className="text-[10px] text-zinc-400 flex items-center gap-1 line-clamp-1">
                         <User className="size-3 shrink-0" /> {lab.created_by_name}
                         {lab.created_at && (
-                          <><span className="text-zinc-300">{'\u00b7'}</span> {fmtIST(lab.created_at)}</>
+                          <><span className="text-zinc-300">{'-'}</span> {fmtIST(lab.created_at)}</>
                         )}
                       </div>
                     )}
                     {wasUpdated(lab) && (
                       <div className="text-[10px] text-zinc-400 flex items-center gap-1 line-clamp-1">
                         <PencilLine className="size-3 shrink-0" /> {lab.updated_by_name}
-                        <span className="text-zinc-300">{'\u00b7'}</span> {fmtIST(lab.updated_at)}
+                        <span className="text-zinc-300">{'-'}</span> {fmtIST(lab.updated_at)}
                       </div>
                     )}
                   </div>
+
                   {lab.description && (
                     <p className="text-xs text-zinc-500 mt-3 line-clamp-2 leading-relaxed font-medium">{lab.description}</p>
                   )}
+                  
                   <div className="mt-auto pt-4 flex flex-wrap gap-1.5 w-full">
                     {['video', 'pdf', 'live', 'link'].map(t => counts[t] ? (
                       <ResourceTag key={t} type={t} count={counts[t]} />
@@ -196,19 +210,22 @@ export default function StudentLabs() {
     </div>
   );
 }
+
 // =====================================================================
 //  LAB DETAIL - all resources of one lab
 // =====================================================================
 function LabDetail({ lab, onBack }) {
   const resources = lab.resources || [];
+  
   // group: live classes first, then videos, then PDFs, then links
   const ordered = useMemo(() => {
     const rank = { live: 0, video: 1, pdf: 2, link: 3 };
     return [...resources].sort((a, b) =>
       (rank[a.resource_type] ?? 9) - (rank[b.resource_type] ?? 9));
   }, [resources]);
+
   return (
-    <div className="space-y-4 sm:space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300 p-4 sm:p-6 lg:p-8 max-w-[1440px] mx-auto w-full">
+    <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-4 sm:space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
 
       {/* UPDATED BACK BUTTON: Removed box styling, padding, and background */}
       <div className="flex items-center justify-between gap-4">
@@ -218,6 +235,7 @@ function LabDetail({ lab, onBack }) {
         </button>
         <LabsHelp />
       </div>
+
       {/* Lab header */}
       <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm p-5 sm:p-6">
         <div className="flex items-start gap-4">
@@ -233,13 +251,13 @@ function LabDetail({ lab, onBack }) {
               {lab.created_by_name && (
                 <span className="flex items-center gap-1.5 bg-zinc-100 px-2 py-1 rounded-md text-zinc-600">
                   <User className="size-3.5" /> {lab.created_by_name}
-                  {lab.created_at && <span className="text-zinc-400">{'\u00b7'} {fmtIST(lab.created_at)}</span>}
+                  {lab.created_at && <span className="text-zinc-400">{'-'} {fmtIST(lab.created_at)}</span>}
                 </span>
               )}
               {wasUpdated(lab) && (
                 <span className="flex items-center gap-1.5 bg-zinc-100 px-2 py-1 rounded-md text-zinc-600">
                   <PencilLine className="size-3.5" /> {lab.updated_by_name}
-                  <span className="text-zinc-400">{'\u00b7'} {fmtIST(lab.updated_at)}</span>
+                  <span className="text-zinc-400">{'-'} {fmtIST(lab.updated_at)}</span>
                 </span>
               )}
             </div>
@@ -251,6 +269,7 @@ function LabDetail({ lab, onBack }) {
           </div>
         )}
       </div>
+
       {/* Resources */}
       <div className="space-y-4">
         <h3 className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider pl-1">Resources</h3>
@@ -268,6 +287,7 @@ function LabDetail({ lab, onBack }) {
               const clickUrl = r.has_file
                 ? `${API_BASE_URL}/admin/labs/resource/${r.id}`
                 : r.url;
+              
               return (
                 <div key={r.id}
                   className="bg-white rounded-md ring-1 ring-black/5 shadow-sm p-4 flex flex-col sm:flex-row sm:items-center gap-4 hover:shadow-md transition-shadow group">
@@ -308,6 +328,7 @@ function LabDetail({ lab, onBack }) {
     </div>
   );
 }
+
 function ResourceTag({ type, count }) {
   const meta = resMeta(type);
   const Icon = meta.icon;
@@ -319,17 +340,17 @@ function ResourceTag({ type, count }) {
 }
 
 // =====================================================================
-//  LabsHelp — "How to use" guide (same theme as ReportsHelp).
+//  LabsHelp - "How to use" guide (same theme as ReportsHelp).
 // =====================================================================
 const STUDENT_GUIDE = {
   title: 'Digital Labs',
   steps: [
-    ['1 \u00b7 Browse your labs', 'Each card is a lab your teacher posted for your class, with its subject and a short description. Click one to open it.'],
-    ['2 \u00b7 Open resources', 'Inside a lab: Watch a video, Open a PDF or link, or Join a live class. The little tags on a card show what each lab contains.'],
-    ['3 \u00b7 Live classes', 'A live class shows its scheduled date and time \u2014 use Join at that time to enter the meeting.'],
-    ['4 \u00b7 Find a lab', 'Use the search box to find a lab by its title, subject or teacher.'],
+    ['1 - Browse your labs', 'Each card is a lab your teacher posted for your class, with its subject and a short description. Click one to open it.'],
+    ['2 - Open resources', 'Inside a lab: Watch a video, Open a PDF or link, or Join a live class. The little tags on a card show what each lab contains.'],
+    ['3 - Live classes', 'A live class shows its scheduled date and time - use Join at that time to enter the meeting.'],
+    ['4 - Find a lab', 'Use the search box to find a lab by its title, subject or teacher.'],
   ],
-  note: 'PDFs and videos your teacher uploaded open securely because you\u2019re signed in. This screen is read-only \u2014 teachers create and update the labs.'
+  note: 'PDFs and videos your teacher uploaded open securely because you\'re signed in. This screen is read-only - teachers create and update the labs.'
 };
 
 function LabsHelp({ className = '' }) {

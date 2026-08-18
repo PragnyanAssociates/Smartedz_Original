@@ -3,7 +3,7 @@ import { Plus, Edit, Trash2, X, Layers } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
 
 // Passed-out students (status 'alumni') have left the school, so they are
-// not counted in a class's live student tally — matches the Users screen.
+// not counted in a class's live student tally - matches the Users screen.
 const isAlumni = (u) => (u.status || '').toLowerCase() === 'alumni';
 
 export default function ClassesTab({ data, fetchData, user }) {
@@ -158,7 +158,7 @@ export default function ClassesTab({ data, fetchData, user }) {
           <h3 className="text-lg font-semibold text-zinc-900 tracking-tight">Class Settings</h3>
           <p className="text-[11px] text-zinc-500 max-w-2xl mt-1">
             Create the classes that exist in your institution. Toggle "Has Sections"
-            and add as many sections as you need in one go &mdash; A, B, C, D...
+            and add as many sections as you need in one go - A, B, C, D...
           </p>
         </div>
         <button onClick={openAdd}

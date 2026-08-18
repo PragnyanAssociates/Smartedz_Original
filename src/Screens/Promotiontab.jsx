@@ -13,7 +13,7 @@ export default function PromotionTab({ data, fetchData }) {
   const [selectedStudents, setSelectedStudents] = useState([]);
   const [search, setSearch]                     = useState('');
 
-  // No more "All Classes" option — each class promotes to a different
+  // No more "All Classes" option - each class promotes to a different
   // target, so a single real class must always be the source. We default
   // to the first available class once the class list has loaded, and
   // guard the list until that default lands (prevents a flash of every
@@ -27,7 +27,7 @@ export default function PromotionTab({ data, fetchData }) {
     }
   }, [classesLoaded, sourceClassId, data.classes]);
 
-  // Show only ACTIVE students — role-student AND not already passed out.
+  // Show only ACTIVE students - role-student AND not already passed out.
   const allStudents = useMemo(
     () => data.users.filter(u =>
       (u.role || '').toLowerCase().includes('student') &&
@@ -81,7 +81,7 @@ export default function PromotionTab({ data, fetchData }) {
   };
 
   // Resolve the ACTIVE academic year. The academic_years table uses
-  // `isActive` (tinyint) — earlier this looked for `is_active` and so
+  // `isActive` (tinyint) - earlier this looked for `is_active` and so
   // always fell back to the newest year. Check both to be safe.
   const activeYear = useMemo(() => {
     const years = data.academicYears || data.academic_years || [];
@@ -147,27 +147,27 @@ export default function PromotionTab({ data, fetchData }) {
     }
   };
 
-const handlePromote = async () => {
-  if (selectedStudents.length === 0) return alert('Select at least one student.');
-  if (!target.classId) return alert('Select a target class.');
+  const handlePromote = async () => {
+    if (selectedStudents.length === 0) return alert('Select at least one student.');
+    if (!target.classId) return alert('Select a target class.');
 
-  if (isAlumniTarget) {
-    if (!activeYear) {
-      return alert('No active academic year is set. Set one active in the Academics tab before moving students to Alumni.');
+    if (isAlumniTarget) {
+      if (!activeYear) {
+        return alert('No active academic year is set. Set one active in the Academics tab before moving students to Alumni.');
+      }
+      if (!window.confirm(`Move ${selectedStudents.length} student(s) to Alumni for ${activeYearName}? They will be marked as passed out.`)) return;
+      return promoteToAlumni();
     }
-    if (!window.confirm(`Move ${selectedStudents.length} student(s) to Alumni for ${activeYearName}? They will be marked as passed out.`)) return;
-    return promoteToAlumni();
-  }
 
-  // Warning for normal class promotion
-  const warningMsg =
-    `⚠️ Warning: Once promoted, the student will NOT come back to the same class. ` +
-    `This action is final and cannot be undone.\n\n` +
-    `Are you sure you want to promote ${selectedStudents.length} student(s) to the selected class?`;
+    // Warning for normal class promotion
+    const warningMsg =
+      `Warning: Once promoted, the student will NOT come back to the same class. ` +
+      `This action is final and cannot be undone.\n\n` +
+      `Are you sure you want to promote ${selectedStudents.length} student(s) to the selected class?`;
 
-  if (!window.confirm(warningMsg)) return;
-  return promoteToClass();
-};
+    if (!window.confirm(warningMsg)) return;
+    return promoteToClass();
+  };
 
   return (
     <div className="space-y-6">
@@ -175,22 +175,22 @@ const handlePromote = async () => {
         <h3 className="text-lg font-semibold text-zinc-900 tracking-tight">Student Promotion Engine</h3>
         <p className="text-[11px] text-zinc-500 max-w-3xl mt-1 leading-relaxed">
           Filter by source class, tick the students who passed (or use Select All), pick the destination
-          class and section, then execute. Students who failed simply stay unchecked &mdash; they remain in their current class.
+          class and section, then execute. Students who failed simply stay unchecked - they remain in their current class.
           To graduate a final-year class, pick <strong className="text-zinc-700 font-semibold">Alumni (Passout)</strong> as the destination.
         </p>
         {/* Ordering note: switch/activate the new academic year FIRST, then
-            promote — so the promotion lands in the new year and the previous
+            promote - so the promotion lands in the new year and the previous
             year keeps its own classes instead of overlapping. */}
         <div className="mt-3 rounded-md ring-1 ring-inset ring-blue-500/15 bg-blue-50/60 px-3 py-2 max-w-3xl">
           <p className="text-[11px] text-blue-800 leading-relaxed">
-            <span className="font-semibold">Important:</span> Change and set the next <strong>Academic Year</strong> active <strong>first</strong>, then promote the students — only then does it work correctly. If you promote before switching the year, the previous year and the new year can end up showing the same classes.
+            <span className="font-semibold">Important:</span> Change and set the next <strong>Academic Year</strong> active <strong>first</strong>, then promote the students - only then does it work correctly. If you promote before switching the year, the previous year and the new year can end up showing the same classes.
           </p>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
-        {/* LEFT — student list */}
+        {/* LEFT - student list */}
         <div className="ring-1 ring-black/5 rounded-lg bg-white p-6 flex flex-col h-full">
           <h4 className="text-[11px] font-semibold text-zinc-500 uppercase mb-5 tracking-wider flex items-center gap-2">
             <Users className="size-4 text-primary" /> Select Students to Move
@@ -259,7 +259,7 @@ const handlePromote = async () => {
                   <div className="flex flex-col">
                     <span className="font-semibold text-zinc-900 text-sm">{s.name}</span>
                     <span className="text-[10px] font-medium text-zinc-500 mt-0.5 uppercase tracking-wider">
-                      {cls ? classLabel(cls) : 'Unassigned'}{s.roll_no ? ` • Roll ${s.roll_no}` : ''}
+                      {cls ? classLabel(cls) : 'Unassigned'}{s.roll_no ? ` - Roll ${s.roll_no}` : ''}
                     </span>
                   </div>
                 </label>
@@ -272,7 +272,7 @@ const handlePromote = async () => {
           </div>
         </div>
 
-        {/* RIGHT — destination */}
+        {/* RIGHT - destination */}
         <div className="ring-1 ring-black/5 rounded-lg bg-white p-6 h-fit flex flex-col">
           <h4 className="text-[11px] font-semibold text-zinc-500 uppercase mb-5 tracking-wider flex items-center gap-2">
             <CircleArrowUp className="size-4 text-primary" /> Destination Settings
@@ -325,7 +325,7 @@ const handlePromote = async () => {
                 <GraduationCap className="size-5 text-accent shrink-0 mt-0.5" />
                 <p className="text-[11px] font-medium text-zinc-700 leading-relaxed">
                   These students will be snapshotted into <strong className="font-semibold text-accent">Alumni</strong> as passed out
-                  {activeYearName ? <> for <strong className="font-semibold">{activeYearName}</strong> (the current academic year)</> : <> — <strong className="font-semibold text-red-600">no active academic year is set</strong></>}
+                  {activeYearName ? <> for <strong className="font-semibold">{activeYearName}</strong> (the current academic year)</> : <> - <strong className="font-semibold text-red-600">no active academic year is set</strong></>}
                   , and removed from the active student roster. This action cannot be auto-undone.
                 </p>
               </div>

@@ -78,7 +78,8 @@ export default function DailyExpenses() {
 
   return (
     <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
-      <header className="mb-6 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+      {/* Removed mb-6 so it doesn't double-stack with space-y-6 */}
+      <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Daily Expenses</h1>
           <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">Record debit vouchers for day-to-day expenses and keep a running register.</p>
@@ -94,10 +95,11 @@ export default function DailyExpenses() {
         </div>
       </header>
 
-      <div className="flex flex-wrap items-center gap-2 mb-8 border-b border-zinc-200 pb-4">
+      {/* Removed mb-8 so it sits naturally against the content below it */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-zinc-200 pb-4">
         {tabs.map(t => (
           <button key={t.id} onClick={() => { if (t.id === 'voucher' && tab === 'register') setEditingId(null); setTab(t.id); }}
-            className={`inline-flex items-center gap-1.5 h-9 px-4 rounded-md text-xs font-medium transition-colors ${
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
               tab === t.id ? 'bg-primary text-white shadow-sm border border-primary' : 'bg-white text-zinc-600 hover:bg-zinc-50 border border-zinc-200 shadow-sm'
             }`}>
             <t.icon className="size-3.5 shrink-0" /> {t.label}

@@ -26,7 +26,7 @@ const fmtIST = (val) => {
 };
 
 // ---------------------------------------------------------------------
-//  openAuthedMedia — open a file served behind the /api auth gate (an
+//  openAuthedMedia - open a file served behind the /api auth gate (an
 //  UPLOADED recorded video at /admin/online-classes/video/:id) in a new
 //  tab. A plain window.open(url) is a navigation that sends NO token, so
 //  the backend replies "Please sign in to continue." (401). We fetch the
@@ -218,28 +218,20 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
 
   return (
     <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
-      <header className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-2 sm:mb-0">
-        <div className="flex flex-col">
+      
+      {/* Header and Controls */}
+      <header className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
+        <div className="flex flex-col shrink-0">
           <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
             <Video className="text-primary size-5" /> Online Classes
           </h1>
-          <p className="text-sm text-zinc-500 mt-1">Manage and join sessions.</p>
+          <p className="text-sm text-zinc-500 mt-1 font-medium">Manage and join sessions.</p>
         </div>
-        <OnlineClassesHelp canEdit={canEdit} />
-      </header>
 
-      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
-        <div className="flex bg-zinc-100/80 p-1 rounded-md overflow-x-auto custom-scrollbar w-full xl:w-auto shrink-0">
-          {['live', 'recorded'].map(t => (
-            <button key={t} onClick={() => setView(t)} className={`flex-1 xl:flex-none px-4 py-1.5 rounded-md text-[11px] font-semibold transition-colors uppercase ${view === t ? 'bg-primary text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}>
-              {t} Classes
-            </button>
-          ))}
-        </div>
-        <div className="flex flex-col sm:flex-row gap-3 w-full xl:w-auto">
+        <div className="flex flex-wrap items-center justify-start xl:justify-end gap-3 w-full xl:w-auto">
           {/* Class + Subject filters (apply to the current tab) */}
           <div className="grid grid-cols-2 sm:flex sm:flex-row gap-3 w-full sm:w-auto">
-            <div className="relative w-full sm:w-40">
+            <div className="relative w-full sm:w-36">
               <select value={classFilter} onChange={e => setClassFilter(e.target.value)}
                 className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm font-medium text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
                 <option value="">All Classes</option>
@@ -247,7 +239,7 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
               </select>
               <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
-            <div className="relative w-full sm:w-40">
+            <div className="relative w-full sm:w-36">
               <select value={subjectFilter} onChange={e => setSubjectFilter(e.target.value)}
                 className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm font-medium text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
                 <option value="">All Subjects</option>
@@ -256,16 +248,34 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
               <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
           </div>
-          <div className="relative w-full sm:w-72 shrink-0">
+          
+          <div className="relative w-full sm:flex-1 lg:w-56 lg:flex-none shrink-0">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
             <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search classes..." className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-4 text-sm outline-none focus:ring-2 focus:ring-primary/20 shadow-sm" />
           </div>
-          {canEdit && (
-            <button onClick={openCreate} className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm shrink-0">
-              <Plus className="size-3.5" /> Schedule Class
-            </button>
-          )}
+
+          <div className="flex items-center gap-3 w-full sm:w-auto">
+            <OnlineClassesHelp canEdit={canEdit} />
+            {canEdit && (
+              <button onClick={openCreate} className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm shrink-0 w-full sm:w-auto">
+                <Plus className="size-3.5" /> Schedule Class
+              </button>
+            )}
+          </div>
         </div>
+      </header>
+
+      {/* Segmented Tabs Component styled consistently with the rest of the app */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-zinc-200 pb-4">
+        {['live', 'recorded'].map(t => (
+          <button key={t} onClick={() => setView(t)}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+              view === t ? 'bg-primary text-white border border-primary shadow-sm' : 'bg-white text-zinc-600 hover:bg-zinc-50 border border-zinc-200 shadow-sm'
+            }`}>
+            {t === 'live' ? <Video className="size-3.5 shrink-0" /> : <PlayCircle className="size-3.5 shrink-0" />}
+            <span className="capitalize">{t} Classes</span>
+          </button>
+        ))}
       </div>
 
       <div className="flex-1">
@@ -312,7 +322,7 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
                       </td>
                       <td className="px-5 py-4 text-sm font-medium text-zinc-700">{c.teacher_name}</td>
                       <td className="px-5 py-4 whitespace-nowrap">
-                        <div className="font-medium text-zinc-800 text-sm">{c.created_by_name || '\u2014'}</div>
+                        <div className="font-medium text-zinc-800 text-sm">{c.created_by_name || '-'}</div>
                         {c.created_at && (
                           <div className="text-[11px] text-zinc-400 mt-0.5 flex items-center gap-1">
                             <Clock className="size-3" /> {fmtIST(c.created_at)}
@@ -408,29 +418,29 @@ function Field({ label, value, onChange, type = 'text', options, required, place
 }
 
 // =====================================================================
-//  OnlineClassesHelp — "How to use" guide (same theme as ReportsHelp).
+//  OnlineClassesHelp - "How to use" guide (same theme as ReportsHelp).
 //  Managers get the schedule/manage guide; read-only staff get the view one.
 // =====================================================================
 const GUIDES = {
   manage: {
     title: 'Online Classes',
     steps: [
-      ['1 \u00b7 Live vs Recorded', 'The two tabs. Live is a scheduled session with a meeting link students join at the set time; Recorded is an uploaded video or a video link they can watch anytime.'],
-      ['2 \u00b7 Schedule a class', 'Schedule Class opens the form \u2014 title, class group (or All Classes), subject, teacher, date & time and an optional topic. A live class needs a meeting link; a recorded one takes an uploaded video file or an external link.'],
-      ['3 \u00b7 Join / Watch', 'Join opens a live meeting; Watch plays a recorded video. A live class whose time has passed shows \u201cDate is Expired\u201d and Join is disabled.'],
-      ['4 \u00b7 Find classes', 'Search by title, subject, teacher or author, and narrow with the Class and Subject filters (they apply to the tab you\u2019re on).'],
-      ['5 \u00b7 Edit & delete', 'Hover a row for the edit and delete actions. Each row shows who created the class and when.'],
+      ['1 - Live vs Recorded', 'The two tabs. Live is a scheduled session with a meeting link students join at the set time; Recorded is an uploaded video or a video link they can watch anytime.'],
+      ['2 - Schedule a class', 'Schedule Class opens the form - title, class group (or All Classes), subject, teacher, date & time and an optional topic. A live class needs a meeting link; a recorded one takes an uploaded video file or an external link.'],
+      ['3 - Join / Watch', 'Join opens a live meeting; Watch plays a recorded video. A live class whose time has passed shows "Date is Expired" and Join is disabled.'],
+      ['4 - Find classes', 'Search by title, subject, teacher or author, and narrow with the Class and Subject filters (they apply to the tab you\'re on).'],
+      ['5 - Edit & delete', 'Hover a row for the edit and delete actions. Each row shows who created the class and when.'],
     ],
-    note: 'Uploaded videos are stored in the school\u2019s library and stream for signed-in users; external links (YouTube, Meet) open directly. Times display in your device\u2019s local time.'
+    note: 'Uploaded videos are stored in the school\'s library and stream for signed-in users; external links (YouTube, Meet) open directly. Times display in your device\'s local time.'
   },
   view: {
     title: 'Online Classes',
     steps: [
-      ['1 \u00b7 Live vs Recorded', 'The two tabs. Live sessions are joined at their scheduled time; recorded ones can be watched whenever.'],
-      ['2 \u00b7 Join / Watch', 'Join opens a live meeting; Watch plays a recorded video. A past live class shows \u201cDate is Expired\u201d and can\u2019t be joined.'],
-      ['3 \u00b7 Find a class', 'Search by title, subject or teacher, and use the Class and Subject filters to narrow the current tab.'],
+      ['1 - Live vs Recorded', 'The two tabs. Live sessions are joined at their scheduled time; recorded ones can be watched whenever.'],
+      ['2 - Join / Watch', 'Join opens a live meeting; Watch plays a recorded video. A past live class shows "Date is Expired" and can\'t be joined.'],
+      ['3 - Find a class', 'Search by title, subject or teacher, and use the Class and Subject filters to narrow the current tab.'],
     ],
-    note: 'This is a read-only view \u2014 classes are scheduled and edited by staff with edit rights. Times display in your device\u2019s local time.'
+    note: 'This is a read-only view - classes are scheduled and edited by staff with edit rights. Times display in your device\'s local time.'
   }
 };
 

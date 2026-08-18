@@ -100,7 +100,7 @@ export default function DeveloperDashboard() {
     return m;
   }, [institutions]);
 
-  // Top-level rows only (groups + standalone) — branches live inside groups.
+  // Top-level rows only (groups + standalone) - branches live inside groups.
   const topLevel = useMemo(() => (institutions || []).filter(i => !i.parent_id), [institutions]);
 
   const counts = useMemo(() => {
@@ -315,7 +315,7 @@ export default function DeveloperDashboard() {
               <BadgeIcon className="size-5 shrink-0" />
               <div className="flex flex-col min-w-0 flex-1">
                 <span className="text-[10px] font-semibold uppercase tracking-wider opacity-80 mb-0.5">
-                  {planLabel(inst.usage_plan || 'Full Time')} Plan{parentName ? ' · inherited' : ''}
+                  {planLabel(inst.usage_plan || 'Full Time')} Plan{parentName ? ' - inherited' : ''}
                 </span>
                 <span className="text-sm font-semibold leading-tight truncate">{badge.headline}</span>
                 {!isFullTime && (
@@ -331,7 +331,7 @@ export default function DeveloperDashboard() {
           </div>
 
           <div className="mt-3 w-full flex items-center justify-center text-[11px] font-semibold text-primary opacity-0 group-hover:opacity-100 transition-opacity">
-            {isGroupRow ? 'Open branches →' : 'View details →'}
+            {isGroupRow ? 'Open branches ->' : 'View details ->'}
           </div>
         </div>
       </div>
@@ -387,15 +387,15 @@ export default function DeveloperDashboard() {
             <div className="bg-white p-5">
               <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-3">Contact</p>
               <div className="space-y-2.5">
-                <div className="flex items-center gap-2.5 text-sm text-zinc-700"><Mail className="size-4 text-primary shrink-0" /> <span className="truncate">{inst.school_email || '—'}</span></div>
-                <div className="flex items-center gap-2.5 text-sm text-zinc-700"><Phone className="size-4 text-primary shrink-0" /> <span className="tabular-nums">{inst.phone || '—'}</span></div>
+                <div className="flex items-center gap-2.5 text-sm text-zinc-700"><Mail className="size-4 text-primary shrink-0" /> <span className="truncate">{inst.school_email || '-'}</span></div>
+                <div className="flex items-center gap-2.5 text-sm text-zinc-700"><Phone className="size-4 text-primary shrink-0" /> <span className="tabular-nums">{inst.phone || '-'}</span></div>
               </div>
             </div>
             <div className="bg-white p-5">
               <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-3">{parentName ? 'Branch Admin' : 'Master Admin'}</p>
               <div className="space-y-2.5">
-                <div className="flex items-center gap-2.5 text-sm text-zinc-700"><User className="size-4 text-primary shrink-0" /> <span className="truncate">{admin?.name || '—'}</span></div>
-                <div className="flex items-center gap-2.5 text-sm text-zinc-700"><Mail className="size-4 text-primary shrink-0" /> <span className="truncate">{admin?.email || '—'}</span></div>
+                <div className="flex items-center gap-2.5 text-sm text-zinc-700"><User className="size-4 text-primary shrink-0" /> <span className="truncate">{admin?.name || '-'}</span></div>
+                <div className="flex items-center gap-2.5 text-sm text-zinc-700"><Mail className="size-4 text-primary shrink-0" /> <span className="truncate">{admin?.email || '-'}</span></div>
               </div>
             </div>
           </div>
@@ -405,7 +405,7 @@ export default function DeveloperDashboard() {
             <div className={`rounded-md px-4 py-3 flex items-center gap-3 ${badge.wrap}`}>
               <BadgeIcon className="size-5 shrink-0" />
               <div className="flex flex-col">
-                <span className="text-[10px] font-semibold uppercase tracking-wider opacity-80">{planLabel(inst.usage_plan || 'Full Time')} Plan{parentName ? ' · inherited from group' : ''}</span>
+                <span className="text-[10px] font-semibold uppercase tracking-wider opacity-80">{planLabel(inst.usage_plan || 'Full Time')} Plan{parentName ? ' - inherited from group' : ''}</span>
                 <span className="text-sm font-semibold">{badge.headline}</span>
                 <span className="text-[10px] font-medium opacity-80 mt-0.5 tabular-nums">
                   {isFullTime ? `Since ${fmtDMY(inst.plan_start_date)}` : `${fmtDMY(inst.plan_start_date)} - ${fmtDMY(inst.planEndDate)}`}
@@ -585,7 +585,7 @@ export default function DeveloperDashboard() {
         </button>
       </header>
 
-      <main className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto flex-1 flex flex-col">
+      <main className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 flex-1 flex flex-col">
         {view.mode === 'list' && renderList()}
         {view.mode === 'group' && renderGroup()}
         {view.mode === 'detail' && renderDetail()}
@@ -598,7 +598,7 @@ export default function DeveloperDashboard() {
 
             <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 rounded-t-lg shrink-0">
               <h2 className="font-semibold text-lg text-zinc-900 tracking-tight">
-                {isEditMode ? (isExistingBranch ? `Update Branch · ${instituteName}` : 'Update Institution Profile') : branchAddMode ? `Add Branch to ${branchParent.name}` : 'Onboard New Client'}
+                {isEditMode ? (isExistingBranch ? `Update Branch - ${instituteName}` : 'Update Institution Profile') : branchAddMode ? `Add Branch to ${branchParent.name}` : 'Onboard New Client'}
               </h2>
               <button onClick={closeModal} className="text-zinc-400 hover:text-zinc-700 transition-colors p-1.5 hover:bg-zinc-100 rounded-md"><X className="size-4" /></button>
             </div>
@@ -631,7 +631,7 @@ export default function DeveloperDashboard() {
                       <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Institute</label>
                       <input value={instituteName} disabled readOnly
                         className="h-9 w-full bg-zinc-100 border border-zinc-200 rounded-md px-3 text-sm text-zinc-600 font-medium cursor-not-allowed outline-none" />
-                      <p className="text-[10px] text-zinc-400 font-medium">Fixed — you only name the branch below.</p>
+                      <p className="text-[10px] text-zinc-400 font-medium">Fixed - you only name the branch below.</p>
                     </div>
                   )}
 
@@ -675,7 +675,7 @@ export default function DeveloperDashboard() {
                   )}
 
                   {branchMode && (
-                    <p className="text-[11px] text-violet-700 font-medium">Runs on <span className="font-semibold">{instituteName}</span>&rsquo;s group plan — no separate subscription.</p>
+                    <p className="text-[11px] text-violet-700 font-medium">Runs on <span className="font-semibold">{instituteName}</span>'s group plan - no separate subscription.</p>
                   )}
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -724,7 +724,7 @@ export default function DeveloperDashboard() {
                       </div>
                     </div>
                     <p className="text-[11px] text-zinc-500 font-medium">
-                      {isGroupType ? 'Tip: A group\u2019s plan covers all its branches. "Life Time" never expires.' : 'Tip: "Life Time" never expires. Other plans count from the start date you pick.'}
+                      {isGroupType ? 'Tip: A group\'s plan covers all its branches. "Life Time" never expires.' : 'Tip: "Life Time" never expires. Other plans count from the start date you pick.'}
                     </p>
                   </div>
                 )}

@@ -86,7 +86,8 @@ export default function FeeManagement() {
 
   return (
     <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
-      <header className="mb-6 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+      {/* Removed mb-6 so it doesn't double-stack with the parent space-y-6 */}
+      <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Fee Management</h1>
           <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
@@ -109,7 +110,8 @@ export default function FeeManagement() {
         </div>
       </header>
 
-      <div className="flex flex-wrap items-center gap-2 mb-8 border-b border-zinc-200 pb-4">
+      {/* Removed mb-8 so it sits naturally against the content below it */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-zinc-200 pb-4">
         {tabs.map(t => (
           <button key={t.id} onClick={() => setActiveTab(t.id)}
             className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
@@ -258,5 +260,5 @@ function HelpModal({ tab, onClose }) {
         </div>
       </div>
     </div>
-  );
+  );  
 }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Save, ChevronUp, ChevronDown, RotateCcw, ListOrdered, Info, GripVertical } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
 import { MODULES } from './Modules';
@@ -8,12 +8,12 @@ import { MODULES } from './Modules';
 //  Lets each school's Super Admin decide the order of their own sidebar
 //  instead of inheriting the order hard-coded in Modules.js.
 //
-//  • Only modules that actually appear in the sidebar are listed
-//    (hideFromSidebar ones — Profile, Notifications, Academic Calendar —
+//  - Only modules that actually appear in the sidebar are listed
+//    (hideFromSidebar ones - Profile, Notifications, Academic Calendar -
 //    are reached from the header/footer, so they have no position).
-//  • Saved as a plain ordered list of module_name. Anything a school
+//  - Saved as a plain ordered list of module_name. Anything a school
 //    hasn't positioned yet falls in behind, in Modules.js order.
-//  • This is order only. Whether a role SEES a module is still decided
+//  - This is order only. Whether a role SEES a module is still decided
 //    entirely by the Permissions tab.
 //
 //  Props: { user }
@@ -24,7 +24,7 @@ const DEFAULT_ORDER = ORDERABLE.map(m => m.module_name);
 const byName = ORDERABLE.reduce((a, m) => { a[m.module_name] = m; return a; }, {});
 
 // Saved names first (in their saved order), then anything new that the
-// school has never positioned — so shipping a new module never breaks.
+// school has never positioned - so shipping a new module never breaks.
 const mergeWithDefaults = (saved) => {
   const known = (saved || []).filter(n => byName[n]);
   const rest = DEFAULT_ORDER.filter(n => !known.includes(n));
@@ -133,7 +133,7 @@ export default function MenuOrderTab({ user }) {
           <span className={`text-[10px] font-semibold uppercase tracking-wider shrink-0 ${
             saved && !dirty ? 'text-emerald-600' : 'text-zinc-400'
           }`}>
-            {saved && !dirty ? 'Saved \u2713' : dirty ? 'Unsaved changes' : `${order.length} modules`}
+            {saved && !dirty ? 'Saved' : dirty ? 'Unsaved changes' : `${order.length} modules`}
           </span>
         </div>
 
@@ -179,9 +179,9 @@ export default function MenuOrderTab({ user }) {
         <div className="px-5 py-4 bg-zinc-50/50 border-t border-zinc-100 flex gap-2 text-[11px] text-zinc-500 font-medium leading-relaxed">
           <Info className="size-3.5 shrink-0 mt-0.5 text-zinc-400" />
           <span>
-            Order only — a module still appears solely for roles that have permission for it in the
+            Order only - a module still appears solely for roles that have permission for it in the
             <strong className="text-zinc-700 font-semibold"> Permissions</strong> tab. Profile, Notifications and
-            Academic Calendar aren't listed here: they live in the header and footer, not the menu.
+            Academic Calendar are not listed here: they live in the header and footer, not the menu.
             Users see the new order the next time they load the dashboard.
           </span>
         </div>

@@ -4,11 +4,11 @@ import { API_BASE_URL } from '../apiConfig';
 
 // =====================================================================
 //  PermissionsTab
-//  • Super Admin: Read / Edit / Delete are always on and can't be
-//    unticked. The only lever is Hide — tick it to drop a module from
+//  - Super Admin: Read / Edit / Delete are always on and can't be
+//    unticked. The only lever is Hide - tick it to drop a module from
 //    their own sidebar. A module with no saved row counts as fully
 //    visible for this role.
-//  • Every other role: a module with no saved row counts as HIDDEN, so
+//  - Every other role: a module with no saved row counts as HIDDEN, so
 //    a freshly created role starts with nothing until it's granted here.
 //    Ticking Edit or Delete auto-enables Read; ticking Hide clears all.
 // =====================================================================
@@ -183,7 +183,7 @@ export default function PermissionsTab({ data }) {
             <div className="px-5 py-3 bg-accent/5 border-b border-accent/10 flex items-start sm:items-center gap-2 text-xs font-medium text-accent">
               <ShieldAlert className="size-4 shrink-0 mt-0.5 sm:mt-0" />
               <span className="leading-relaxed">
-                Super Admin keeps full Read, Edit and Delete on every module — those can't be turned off.
+                Super Admin keeps full Read, Edit and Delete on every module - those can't be turned off.
                 Tick <strong className="font-semibold">Hide</strong> on anything you don't want in your own sidebar, then Save.
               </span>
             </div>
@@ -275,7 +275,7 @@ export default function PermissionsTab({ data }) {
           <div className="px-5 py-4 bg-zinc-50/50 border-t border-zinc-100 text-[11px] text-zinc-500 font-medium leading-relaxed">
             <strong className="text-zinc-700 font-semibold">Rules:</strong> <em>Hide</em> removes the module from the user's sidebar entirely. <em>Read</em> lets them open the page. <em>Edit</em> and <em>Delete</em> reveal the matching row-action buttons and auto-enable Read.
             {isSuperAdmin
-              ? ' For Super Admin only Hide applies — the rest is always granted.'
+              ? ' For Super Admin only Hide applies - the rest is always granted.'
               : ' A module left untouched stays hidden.'}
           </div>
         </div>

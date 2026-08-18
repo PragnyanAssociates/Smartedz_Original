@@ -58,47 +58,30 @@ export default function StudentOnlineClasses() {
 
   const handleJoinOrWatch = (c) => {
     if (c.class_type === 'live' && c.meet_link) {
-      window.open(c.meet_link, '_blank');
+      window.open(c.meet_link, '_blank', 'noopener,noreferrer');
     } else if (c.class_type === 'recorded') {
       if (c.has_video_data) {
-        window.open(`${API_BASE_URL}/admin/online-classes/video/${c.id}`, '_blank');
+        window.open(`${API_BASE_URL}/admin/online-classes/video/${c.id}`, '_blank', 'noopener,noreferrer');
       } else if (c.meet_link) {
-        window.open(c.meet_link, '_blank');
+        window.open(c.meet_link, '_blank', 'noopener,noreferrer');
       }
     }
   };
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
+    <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
       
-      <header className="flex flex-col mb-2 sm:mb-0">
-        <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
-          <Video className="text-primary size-5" />
-          Online Classes
-        </h1>
-        <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
-          Join your live sessions or watch recorded lectures.
-        </p>
-      </header>
-
-      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
-        <div className="flex bg-zinc-100/80 p-1 rounded-md overflow-x-auto custom-scrollbar w-full xl:w-auto shrink-0">
-          <button onClick={() => setView('live')}
-            className={`flex-1 xl:flex-none px-4 py-1.5 rounded-md text-[11px] font-semibold transition-colors whitespace-nowrap ${
-              view === 'live' ? 'bg-primary text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50/50'
-            }`}>
-            Live Classes
-          </button>
-          <button onClick={() => setView('recorded')}
-            className={`flex-1 xl:flex-none px-4 py-1.5 rounded-md text-[11px] font-semibold transition-colors whitespace-nowrap ${
-              view === 'recorded' ? 'bg-primary text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50/50'
-            }`}>
-            Recorded Classes
-          </button>
+      {/* Header and Controls */}
+      <header className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
+        <div className="flex flex-col shrink-0">
+          <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
+            <Video className="text-primary size-5" /> Online Classes
+          </h1>
+          <p className="text-sm text-zinc-500 mt-1 font-medium">Join your live sessions or watch recorded lectures.</p>
         </div>
 
-        <div className="flex flex-col sm:flex-row gap-3 w-full xl:w-auto">
-          <div className="relative w-full sm:w-72 shrink-0">
+        <div className="flex flex-wrap items-center justify-start xl:justify-end gap-3 w-full xl:w-auto">
+          <div className="relative w-full sm:flex-1 lg:w-72 lg:flex-none shrink-0">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
             <input value={query} onChange={e => setQuery(e.target.value)}
               placeholder="Search classes..."
@@ -116,6 +99,19 @@ export default function StudentOnlineClasses() {
             Refresh
           </button>
         </div>
+      </header>
+
+      {/* Segmented Tabs Component */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-zinc-200 pb-4">
+        {['live', 'recorded'].map(t => (
+          <button key={t} onClick={() => setView(t)}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+              view === t ? 'bg-primary text-white border border-primary shadow-sm' : 'bg-white text-zinc-600 hover:bg-zinc-50 border border-zinc-200 shadow-sm'
+            }`}>
+            {t === 'live' ? <Video className="size-3.5 shrink-0" /> : <PlayCircle className="size-3.5 shrink-0" />}
+            <span className="capitalize">{t} Classes</span>
+          </button>
+        ))}
       </div>
 
       <div className="flex-1">
@@ -179,7 +175,7 @@ export default function StudentOnlineClasses() {
                         {c.teacher_name}
                       </td>
                       <td className="px-5 py-4 whitespace-nowrap">
-                        <div className="font-medium text-zinc-800 text-sm">{c.created_by_name || '—'}</div>
+                        <div className="font-medium text-zinc-800 text-sm">{c.created_by_name || '-'}</div>
                         {c.created_at && (
                           <div className="text-[11px] text-zinc-400 mt-0.5 flex items-center gap-1">
                             <Clock className="size-3" /> {fmtIST(c.created_at)}
