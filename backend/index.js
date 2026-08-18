@@ -759,62 +759,18 @@ app.post('/api/admin/archive-record/:instId/:yearId/:module', async (req, res) =
 //   its GROUP, so anything showing plan/days-left on the branch side
 //   reflects the inherited plan instead of the placeholder.
 // =====================================================================
-
-// Columns never sent to any client. profile_pic is the 26 MB problem.
-// (See the note at the bottom about adding 'password' here later.)
-const USER_HIDDEN_COLUMNS = new Set(['profile_pic']);
- 
-let _userListColumnsSql = null;
- 
-// Builds the column list once per process by reading the actual table schema,
-// so a renamed or newly added column can't silently break the query or vanish
-// from the API the way a hand-typed list would.
-async function getUserListColumnsSql() {
-  if (_userListColumnsSql) return _userListColumnsSql;
-  try {
-    const [cols] = await db.execute(
-      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users'`
-    );
-    const names = cols
-      .map(c => c.COLUMN_NAME)
-      .filter(n => !USER_HIDDEN_COLUMNS.has(n));
-    if (!names.length) throw new Error('No columns resolved for users table.');
-    _userListColumnsSql =
-      names.map(n => '`' + n + '`').join(', ') +
-      `, (profile_pic IS NOT NULL AND profile_pic <> '') AS has_profile_pic`;
-  } catch (e) {
-    // If the schema probe ever fails, fall back to a safe explicit list rather
-    // than taking the endpoint down.
-    console.warn('users column probe failed, using fallback list:', e.message);
-    _userListColumnsSql =
-      `id, name, email, username, password, role, institutionId, class_id, section,
-       roll_no, admission_no, status, phone_no, dob, gender, address,
-       (profile_pic IS NOT NULL AND profile_pic <> '') AS has_profile_pic`;
-  }
-  return _userListColumnsSql;
-}
- 
 app.get('/api/admin/data/:instId', async (req, res) => {
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     try {
         const includeFullUsers = req.query.fullUsers === 'true';
         let users;
         if (includeFullUsers) {
-            // CHANGED: was `SELECT *`, which pulled every user's profile_pic.
-            const userCols = await getUserListColumnsSql();
-            [users] = await db.execute(
-                `SELECT ${userCols} FROM users WHERE institutionId = ?`, [instId]);
+            [users] = await db.execute('SELECT * FROM users WHERE institutionId = ?', [instId]);
         } else {
-            // CHANGED: added has_profile_pic so the UI still knows who has a photo.
             [users] = await db.execute(
-                `SELECT id, name, email, username, role, institutionId, class_id, section, roll_no, status,
-                        (profile_pic IS NOT NULL AND profile_pic <> '') AS has_profile_pic
+                `SELECT id, name, email, username, role, institutionId, class_id, section, roll_no, status
                    FROM users WHERE institutionId = ?`, [instId]);
         }
- 
-        // ---- everything below is unchanged from your current handler ----
- 
         const [classes]  = await db.execute('SELECT * FROM classes WHERE institutionId = ? ORDER BY className, section', [instId]);
         const [years]    = await db.execute('SELECT * FROM academic_years WHERE institutionId = ? ORDER BY startDate DESC', [instId]);
         const [roles]    = await db.execute('SELECT * FROM roles WHERE institutionId = ? ORDER BY role_name', [instId]);
