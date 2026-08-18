@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuth } from '../context/AuthContext';
 import { API_BASE_URL } from '../apiConfig';
@@ -9,9 +9,9 @@ import {
 
 // Date display helper -> DD/MM/YYYY
 const fmtDMY = (val) => {
-  if (!val) return '—';
+  if (!val) return '\u2014';
   const d = new Date(val);
-  if (isNaN(d.getTime())) return '—';
+  if (isNaN(d.getTime())) return '\u2014';
   const dd = String(d.getDate()).padStart(2, '0');
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const yy = d.getFullYear();
@@ -28,30 +28,80 @@ const isoDate = (val) => {
 
 // Money display helper -> Rs 30,000 (Indian grouping)
 const fmtMoney = (val) => {
-  if (val === null || val === undefined || val === '') return '—';
+  if (val === null || val === undefined || val === '') return '\u2014';
   const n = Number(val);
-  if (isNaN(n)) return '—';
+  if (isNaN(n)) return '\u2014';
   return '\u20B9 ' + n.toLocaleString('en-IN');
 };
 
+/* ===================================================================
+   TOKEN — read the CURRENT token without guessing a single key.
+   The old code did `localStorage.getItem('token')` and handed the
+   result straight to login(). If the token is stored under a different
+   key (or only in memory), that read returns null, login(user, null)
+   blanks the token, the next /api call 401s, and the interceptor logs
+   the user out. We now check the common keys and only ever use a real,
+   non-empty token.
+   =================================================================== */
+const readStoredToken = () => {
+  try {
+    for (const k of ['token', 'authToken', 'jwt', 'smartedz_token', 'access_token']) {
+      const v = localStorage.getItem(k);
+      if (v && v.length > 20) return v.replace(/^"|"$/g, '');
+    }
+    for (const k of ['auth', 'user', 'session']) {
+      const raw = localStorage.getItem(k);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.token === 'string') return parsed.token;
+    }
+  } catch (e) { /* ignore */ }
+  return null;
+};
+
+const withAuth = (token, opts = {}) => ({
+  ...opts,
+  headers: { ...(opts.headers || {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) }
+});
+
 export default function Profile() {
-  const { user, login } = useAuth();
+  const auth = useAuth();
+  const { user, login } = auth;
+
+  // Prefer the token the context is already holding; fall back to a
+  // robust localStorage read. This is the value we reuse on save so we
+  // never overwrite the real token with a blank one.
+  const authToken = useMemo(() => auth.token || readStoredToken(), [auth.token]);
+
   const [profile, setProfile]   = useState(null);
   const [loading, setLoading]   = useState(true);
   const [editing, setEditing]   = useState(false);
   const [saving, setSaving]     = useState(false);
   const [form, setForm]         = useState({});
 
+  // Refresh the logged-in user (for the sidebar avatar/name) WITHOUT
+  // ever touching the token. Uses a context updater if one is exposed,
+  // and only falls back to login() when we actually have a valid token.
+  const applyUserToContext = useCallback((mergedUser) => {
+    if (typeof auth.updateUser === 'function') { auth.updateUser(mergedUser); return; }
+    if (typeof auth.setUser === 'function') { auth.setUser(mergedUser); return; }
+    const tok = auth.token || readStoredToken();
+    if (typeof login === 'function' && tok) { login(mergedUser, tok); }
+    // If no token can be found we deliberately do nothing here rather
+    // than call login(user, null) — the local view is already updated,
+    // and the sidebar will catch up on the next natural refresh.
+  }, [auth, login]);
+
   const fetchProfile = useCallback(async () => {
     if (!user?.id) return;
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/profile/${user.id}`);
+      const res = await fetch(`${API_BASE_URL}/profile/${user.id}`, withAuth(authToken));
       const data = await res.json();
       setProfile(data);
     } catch (e) { console.error('Profile load:', e); }
     setLoading(false);
-  }, [user]);
+  }, [user, authToken]);
 
   useEffect(() => { fetchProfile(); }, [fetchProfile]);
 
@@ -93,26 +143,26 @@ export default function Profile() {
     }
     setSaving(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/profile/${user.id}`, {
+      const res = await fetch(`${API_BASE_URL}/profile/${user.id}`, withAuth(authToken, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form)
-      });
+      }));
       const data = await res.json();
       if (!res.ok) {
         alert(data.error || 'Failed to update profile.');
       } else {
         setProfile(data.user);
 
-        // UPDATE AUTH CONTEXT IMMEDIATELY FOR SIDEBAR
-        if (login && user) {
-          login({
+        // Update the sidebar immediately — but keep the existing token.
+        if (user) {
+          applyUserToContext({
             ...user,
             name: data.user.name,
             email: data.user.email,
             username: data.user.username,
-            profile_pic: data.user.profile_pic // CRITICAL LINE
-          }, localStorage.getItem('token'));
+            profile_pic: data.user.profile_pic
+          });
         }
         setEditing(false);
       }
@@ -385,7 +435,7 @@ function Row({ label, value }) {
   return (
     <div className="flex justify-between items-center py-2.5 border-b border-zinc-100 last:border-0 last:pb-0">
       <span className="text-xs font-medium text-zinc-500">{label}</span>
-      <span className="text-sm font-medium text-zinc-900 max-w-[60%] text-right truncate">{value || '—'}</span>
+      <span className="text-sm font-medium text-zinc-900 max-w-[60%] text-right truncate">{value || '\u2014'}</span>
     </div>
   );
 }
