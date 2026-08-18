@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Plus, Edit, Trash2, X, Search, UserCircle2, BookOpen, Camera, AtSign, GraduationCap, ChevronDown, Info } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { Plus, Edit, Trash2, X, Search, UserCircle2, BookOpen, Camera, AtSign, GraduationCap, ChevronDown, Info, Eye } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
 
 export default function UserTab({ data, fetchData, user }) {
@@ -7,6 +8,7 @@ export default function UserTab({ data, fetchData, user }) {
   const [activeClass, setActiveClass]     = useState('');   // a real class id; the class filter is Student-only and has no "All Classes" option
   const [isModalOpen, setIsModalOpen]     = useState(false);
   const [editingUser, setEditingUser]     = useState(null);
+  const [viewingUser, setViewingUser]     = useState(null); // read-only "Eye" detail view
   const [search, setSearch]               = useState('');
   const [errors, setErrors]               = useState({});   // per-field validation messages
 
@@ -141,6 +143,14 @@ export default function UserTab({ data, fetchData, user }) {
     const dd = String(d.getDate()).padStart(2, '0');
     const mm = String(d.getMonth() + 1).padStart(2, '0');
     return `${dd}/${mm}/${d.getFullYear()}`;
+  };
+
+  // Money display -> Rs 30,000 (Indian grouping). Used by the read-only view.
+  const fmtMoney = (v) => {
+    if (v === null || v === undefined || v === '') return '-';
+    const n = Number(v);
+    if (isNaN(n)) return '-';
+    return '\u20B9 ' + n.toLocaleString('en-IN');
   };
 
   const openAdd = () => {
@@ -306,6 +316,16 @@ export default function UserTab({ data, fetchData, user }) {
   ) || activeYear;
   const academicYearLabel = displayYear ? displayYear.name : 'No active academic year';
 
+  // Same resolution, but for an arbitrary user (used by the read-only view).
+  const yearLabelFor = (u) => {
+    const yrs = data.academicYears || [];
+    const active = yrs.find(y => y.isActive) || null;
+    const y = (u && u.academic_year_id
+      ? yrs.find(z => String(z.id) === String(u.academic_year_id))
+      : active) || active;
+    return y ? y.name : 'No active academic year';
+  };
+
   return (
     <div className="space-y-6">
       {/* Note - how delete / inactive / alumni behave */}
@@ -418,13 +438,8 @@ export default function UserTab({ data, fetchData, user }) {
                       <span className="w-6 shrink-0 text-center text-xs font-semibold text-zinc-400 tabular-nums">
                         {isStudent ? (u.roll_no || '-') : (serialMap[u.id] || '-')}
                       </span>
-                      {u.profile_pic ? (
-                        <img src={u.profile_pic} alt={u.name} className="size-8 rounded-full object-cover shrink-0 ring-1 ring-black/5" />
-                      ) : (
-                        <div className="size-8 bg-zinc-100 rounded-full flex items-center justify-center text-zinc-400 shrink-0 ring-1 ring-black/5">
-                          <UserCircle2 className="size-4" />
-                        </div>
-                      )}
+                      {/* Click the DP to enlarge it (WhatsApp-style viewer). */}
+                      <ClickableAvatar src={u.profile_pic} name={u.name} size="sm" />
                       <div className="flex flex-col">
                         <span className="text-sm font-medium text-zinc-900">{u.name}</span>
                         <span className="text-[10px] text-zinc-500">
@@ -454,10 +469,15 @@ export default function UserTab({ data, fetchData, user }) {
                   </td>
                   <td className="px-5 py-4 text-right">
                     <div className="flex items-center justify-end gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                      <button onClick={() => openEdit(u)} className="p-1.5 text-zinc-400 hover:text-zinc-700 rounded transition-colors">
+                      {/* View full record (read-only) */}
+                      <button onClick={() => setViewingUser(u)} title="View full details"
+                        className="p-1.5 text-zinc-400 hover:text-primary rounded transition-colors">
+                        <Eye className="size-4 shrink-0" />
+                      </button>
+                      <button onClick={() => openEdit(u)} title="Edit" className="p-1.5 text-zinc-400 hover:text-zinc-700 rounded transition-colors">
                         <Edit className="size-4 shrink-0" />
                       </button>
-                      <button onClick={() => handleDelete(u)} className="p-1.5 text-zinc-400 hover:text-accent rounded transition-colors">
+                      <button onClick={() => handleDelete(u)} title="Delete" className="p-1.5 text-zinc-400 hover:text-accent rounded transition-colors">
                         <Trash2 className="size-4 shrink-0" />
                       </button>
                     </div>
@@ -470,6 +490,118 @@ export default function UserTab({ data, fetchData, user }) {
           </tbody>
         </table>
       </div>
+
+      {/* ================= READ-ONLY VIEW MODAL (Eye button) ================= */}
+      {viewingUser && (() => {
+        const u = viewingUser;
+        const vIsStudent = (u.role || '').toLowerCase().includes('student');
+        const vIsTeacher = (u.role || '').toLowerCase().includes('teacher');
+        const vIsStaff   = !vIsStudent;
+        const vCls = data.classes.find(c => c.id === u.class_id);
+        const vSubjects = teacherSubjectNames(u.id);
+        const vAssignment = vIsStudent
+          ? (vCls ? `${vCls.className}${u.section ? ` - ${u.section}` : ''}` : '-')
+          : '-';
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
+            <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-3xl p-5 sm:p-6 shadow-xl relative max-h-[90vh] overflow-y-auto custom-scrollbar">
+              <button onClick={() => setViewingUser(null)} className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-700 transition-colors">
+                <X className="size-5 shrink-0" />
+              </button>
+
+              {/* Header: avatar + identity */}
+              <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 mb-6 pr-8">
+                <ClickableAvatar src={u.profile_pic} name={u.name} size="lg" />
+                <div className="flex-1 min-w-0 text-center sm:text-left">
+                  <h2 className="text-lg font-semibold text-zinc-900 leading-tight">{u.name}</h2>
+                  {u.username && <p className="text-xs text-zinc-500 font-medium mt-0.5">@{u.username}</p>}
+                  <div className="mt-2 flex flex-wrap gap-2 justify-center sm:justify-start">
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium ring-1 ${
+                      u.role === 'Super Admin' ? 'bg-primary/10 text-primary ring-primary/20' : 'bg-zinc-50 text-zinc-700 ring-zinc-200'
+                    }`}>{u.role}</span>
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium ring-1 capitalize ${
+                      (u.status || 'active') === 'active' ? 'bg-green-50 text-green-700 ring-green-600/10' : 'bg-zinc-50 text-zinc-600 ring-zinc-600/10'
+                    }`}>{u.status || 'active'}</span>
+                  </div>
+                </div>
+                <button onClick={() => { setViewingUser(null); openEdit(u); }}
+                  className="bg-primary text-white px-4 py-2 rounded-md text-xs font-medium hover:bg-primary/90 transition-colors flex items-center gap-1.5 shrink-0">
+                  <Edit className="size-3.5 shrink-0" /> Edit
+                </button>
+              </div>
+
+              <div className="space-y-6">
+                <Section title="Account Credentials">
+                  <ViewGrid>
+                    <ViewRow label="Email Address" value={u.email} />
+                    <ViewRow label="Username" value={u.username ? `@${u.username}` : '-'} />
+                    <ViewRow label="Assigned Role" value={u.role} />
+                    <ViewRow label="Account Status" value={<span className="capitalize">{u.status || 'active'}</span>} />
+                    <ViewRow label="Academic Year" value={yearLabelFor(u)} />
+                  </ViewGrid>
+                </Section>
+
+                <Section title="Personal Information">
+                  <ViewGrid>
+                    <ViewRow label="Date of Birth" value={fmtDMY(u.dob)} />
+                    <ViewRow label="Gender" value={u.gender} />
+                    <ViewRow label="Phone Number" value={u.phone_no} />
+                    <ViewRow label="Full Address" value={u.address} />
+                  </ViewGrid>
+                </Section>
+
+                {vIsStaff && (
+                  <Section title="Employment Details">
+                    <ViewGrid>
+                      <ViewRow label="Aadhaar Number" value={u.aadhar_no} />
+                      <ViewRow label="Joining Date" value={fmtDMY(u.joining_date)} />
+                      <ViewRow label="Experience" value={u.experience} />
+                      <ViewRow label="Previous Salary" value={fmtMoney(u.prev_salary)} />
+                      <ViewRow label="Present Salary" value={fmtMoney(u.present_salary)} />
+                    </ViewGrid>
+                  </Section>
+                )}
+
+                {vIsTeacher && (
+                  <Section title="Teaching Assignments">
+                    {vSubjects
+                      ? <div className="flex flex-wrap gap-2">
+                          {vSubjects.split(', ').map((name, i) => (
+                            <span key={i} className="px-3 py-1.5 rounded text-xs font-medium bg-primary/10 text-primary ring-1 ring-primary/20">{name}</span>
+                          ))}
+                        </div>
+                      : <p className="text-xs italic text-zinc-400">No subjects assigned.</p>}
+                  </Section>
+                )}
+
+                {vIsStudent && (
+                  <Section title="Academic Details">
+                    <ViewGrid>
+                      <ViewRow label="Class Assignment" value={vAssignment} />
+                      <ViewRow label="Roll Number" value={u.roll_no} />
+                      <ViewRow label="Admission Number" value={u.admission_no} />
+                      <ViewRow label="Admission Date" value={fmtDMY(u.admission_date)} />
+                      <ViewRow label="Parent / Guardian" value={u.parent_name} />
+                      <ViewRow label="Aadhaar Number" value={u.aadhar_no} />
+                      <ViewRow label="PEN Number" value={u.pen_no} />
+                      <ViewRow label="School Joined Date" value={fmtDMY(u.school_joined_date)} />
+                      <ViewRow label="School Joined Grade" value={u.school_joined_grade} />
+                      <ViewRow label="TC Number" value={u.tc_number} />
+                    </ViewGrid>
+                  </Section>
+                )}
+              </div>
+
+              <div className="pt-6 mt-2 border-t border-zinc-100 flex justify-end">
+                <button type="button" onClick={() => setViewingUser(null)}
+                  className="text-zinc-700 px-4 py-2 border border-zinc-200 rounded-md text-xs font-medium hover:bg-zinc-50 transition-colors">
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Modal */}
       {isModalOpen && (
@@ -629,6 +761,51 @@ export default function UserTab({ data, fetchData, user }) {
   );
 }
 
+// =====================================================================
+// Avatar that enlarges on click (WhatsApp-style full-screen viewer).
+// Used both in the table rows (size="sm") and the read-only view header
+// (size="lg"). The initials/placeholder fallback is not clickable —
+// there is nothing to enlarge.
+// =====================================================================
+function ClickableAvatar({ src, name, size = 'sm' }) {
+  const [open, setOpen] = useState(false);
+  const dims = size === 'lg' ? 'size-20' : 'size-8';
+  const iconSize = size === 'lg' ? 'size-10' : 'size-4';
+
+  if (!src) {
+    return (
+      <div className={`${dims} bg-zinc-100 rounded-full flex items-center justify-center text-zinc-400 shrink-0 ring-1 ring-black/5`}>
+        <UserCircle2 className={iconSize} />
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <button type="button" title="View photo"
+        onClick={(e) => { e.stopPropagation(); setOpen(true); }}
+        className="shrink-0 block rounded-full">
+        <img src={src} alt={name}
+          className={`${dims} rounded-full object-cover ring-1 ring-black/5 cursor-pointer hover:opacity-90 transition-opacity`} />
+      </button>
+
+      {open && createPortal(
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/90 backdrop-blur-sm animate-in fade-in duration-200"
+          onClick={() => setOpen(false)}>
+          <button onClick={(e) => { e.stopPropagation(); setOpen(false); }}
+            className="absolute top-6 right-6 p-2 text-white/70 hover:text-white transition-colors bg-white/10 rounded-full">
+            <X className="size-6 shrink-0" />
+          </button>
+          <img src={src} alt={name}
+            className="max-w-full max-h-full object-contain p-4 rounded-lg"
+            onClick={(e) => e.stopPropagation()} />
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
+
 function Section({ title, children }) {
   return (
     <div className="ring-1 ring-black/5 rounded-md p-5 bg-zinc-50/30">
@@ -640,6 +817,21 @@ function Section({ title, children }) {
 
 function Grid({ children }) {
   return <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{children}</div>;
+}
+
+// Two-column label/value layout for the read-only view.
+function ViewGrid({ children }) {
+  return <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-0">{children}</div>;
+}
+
+function ViewRow({ label, value }) {
+  const empty = value === null || value === undefined || value === '';
+  return (
+    <div className="flex justify-between items-start gap-4 py-2.5 border-b border-zinc-100 last:border-0">
+      <span className="text-[11px] font-medium text-zinc-500 shrink-0">{label}</span>
+      <span className="text-xs font-medium text-zinc-900 text-right break-words max-w-[60%]">{empty ? '-' : value}</span>
+    </div>
+  );
 }
 
 function Field({ label, value, onChange, type = 'text', options, required, placeholder, error, hint, maxLength, inputMode, readOnly }) {
