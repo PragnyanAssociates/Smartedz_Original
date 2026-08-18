@@ -200,23 +200,30 @@ export default function Payments({ data, user, canEdit = true, years = [], yearI
         <DateField label="From" value={filters.from} onChange={v => setFilters(f => ({ ...f, from: v }))} />
         <DateField label="To" value={filters.to} onChange={v => setFilters(f => ({ ...f, to: v }))} />
         <div className="self-end pb-0.5"><FeeYearSelect years={years} value={yearId} onChange={setYearId} /></div>
-        <div className="flex flex-col gap-1 ml-auto">
-          <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Search</span>
-          <div className="relative">
-            <Search className="size-3.5 text-zinc-400 absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none" />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Student or roll..."
-              className="h-9 w-48 rounded border border-zinc-200 shadow-sm bg-white pl-7 pr-2 text-xs text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40" />
+
+        {/* Search + Download are kept together in one right-aligned cluster so
+            they always sit on a single line (the search box no longer carries
+            ml-auto on its own, which used to push it to the edge and force the
+            Download button onto a second row). */}
+        <div className="flex items-end gap-3 ml-auto">
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Search</span>
+            <div className="relative">
+              <Search className="size-3.5 text-zinc-400 absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Student or roll..."
+                className="h-9 w-44 sm:w-46 rounded border border-zinc-200 shadow-sm bg-white pl-7 pr-2 text-xs text-zinc-700 outline-none focus:ring-1 focus:ring-primary/40" />
+            </div>
           </div>
+          <button onClick={downloadXlsx} disabled={!rows.length || downloading} title="Download these payments as an Excel file"
+            className="inline-flex items-center justify-center gap-1.5 h-9 px-4 shrink-0 bg-primary text-white rounded-md text-xs font-semibold hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-50 self-end">
+            {downloading ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+            {downloading ? 'Preparing...' : 'Download'}
+          </button>
+          {(filters.from || filters.to || filters.class_id || filters.status || search) && (
+            <button onClick={() => { setFilters({ status: '', class_id: '', from: '', to: '' }); setSearch(''); }}
+              className="text-[11px] font-medium text-primary hover:underline self-end pb-2">Reset</button>
+          )}
         </div>
-        <button onClick={downloadXlsx} disabled={!rows.length || downloading} title="Download these payments as an Excel file"
-          className="inline-flex items-center justify-center gap-1.5 h-9 px-4 shrink-0 bg-primary text-white rounded-md text-xs font-semibold hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-50 self-end">
-          {downloading ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
-          {downloading ? 'Preparing...' : 'Download'}
-        </button>
-        {(filters.from || filters.to || filters.class_id || filters.status || search) && (
-          <button onClick={() => { setFilters({ status: '', class_id: '', from: '', to: '' }); setSearch(''); }}
-            className="text-[11px] font-medium text-primary hover:underline self-end pb-2">Reset</button>
-        )}
       </div>
 
       <div className="ring-1 ring-black/5 rounded-lg bg-white shadow-sm overflow-hidden">
