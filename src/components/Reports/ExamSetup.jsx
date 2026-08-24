@@ -4,15 +4,17 @@ import { API_BASE_URL } from '../../apiConfig';
 import {
   Plus, Edit, Trash2, X, Loader2, Save, GripVertical,
   ListChecks, Grid3x3, UserCog, Check, ChevronDown, BookOpen, Layers,
-  AlertTriangle, ShieldAlert, CalendarRange
+  AlertTriangle, ShieldAlert, CalendarRange, ListOrdered, ArrowUp, ArrowDown
 } from 'lucide-react';
 
 // =====================================================================
-//  ExamSetup - three sub-sections, switched by inner tabs:
+//  ExamSetup - four sub-sections, switched by inner tabs:
 //    1. Exam Types     - create/rename/reorder/delete exam types
 //    2. Max Marks      - per class: an "All Subjects" default OR
 //                        per-subject values (mutually exclusive), per exam
 //    3. Teacher Assign - per class, map each subject to a teacher
+//    4. Subject Order  - per class, order how subjects appear in Marks
+//                        Entry and on the Report Card
 //
 //  NOTE ON ACADEMIC YEARS: everything here is SHARED CONFIG, reused by
 //  every academic year — unlike marks, which are stamped with the active
@@ -27,7 +29,8 @@ export default function ExamSetup() {
   const sections = [
     { id: 'types',   label: 'Exam Types',        icon: ListChecks },
     { id: 'marks',   label: 'Max Marks',         icon: Grid3x3 },
-    { id: 'assign',  label: 'Teacher Assignment', icon: UserCog }
+    { id: 'assign',  label: 'Teacher Assignment', icon: UserCog },
+    { id: 'order',   label: 'Subject Order',     icon: ListOrdered }
   ];
 
   return (
@@ -55,6 +58,7 @@ export default function ExamSetup() {
         {section === 'types'  && <ExamTypesPanel />}
         {section === 'marks'  && <MaxMarksPanel />}
         {section === 'assign' && <TeacherAssignPanel />}
+        {section === 'order'  && <SubjectOrderPanel />}
       </div>
     </div>
   );
@@ -889,6 +893,192 @@ function TeacherAssignPanel() {
             );
           })}
         </div>
+      )}
+    </div>
+  );
+}
+
+// =====================================================================
+//  4. Subject Order — per class, control the order subjects appear in
+//     Marks Entry and on the Report Card.
+//
+//  Order is stored per class (class_subject_order) and applied by the
+//  backend, so Marks Entry / Report Card / export just render whatever
+//  order the API returns. A subject with no saved position (e.g. added
+//  later) falls to the bottom in A-Z order until the admin reorders.
+// =====================================================================
+function SubjectOrderPanel() {
+  const { user } = useAuth();
+  const [classes, setClasses]     = useState([]);
+  const [pickedClass, setPickedClass] = useState('');
+  const [list, setList]           = useState([]);   // ordered [{id, name, sort_order}]
+  const [loading, setLoading]     = useState(true);
+  const [listLoading, setListLoading] = useState(false);
+  const [saving, setSaving]       = useState(false);
+  const [dirty, setDirty]         = useState(false);
+
+  // Bootstrap classes, default to the first
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await fetch(`${API_BASE_URL}/admin/data/${user.institutionId}`);
+        const agg = await res.json();
+        const cls = agg.classes || [];
+        setClasses(cls);
+        if (cls.length > 0) setPickedClass(prev => (prev ? prev : String(cls[0].id)));
+      } catch (e) { console.error(e); }
+      setLoading(false);
+    })();
+  }, [user]);
+
+  const loadOrder = useCallback(async (classId) => {
+    if (!classId) { setList([]); return; }
+    setListLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/subject-order/${classId}`);
+      const d = await res.json();
+      setList(Array.isArray(d) ? d : []);
+      setDirty(false);
+    } catch (e) { console.error(e); }
+    setListLoading(false);
+  }, []);
+
+  useEffect(() => { loadOrder(pickedClass); }, [pickedClass, loadOrder]);
+
+  const move = (i, dir) => {
+    setList(prev => {
+      const j = i + dir;
+      if (j < 0 || j >= prev.length) return prev;
+      const next = [...prev];
+      const tmp = next[i]; next[i] = next[j]; next[j] = tmp;
+      return next;
+    });
+    setDirty(true);
+  };
+
+  const sortAZ = () => {
+    setList(prev => [...prev].sort((a, b) => (a.name || '').localeCompare(b.name || '')));
+    setDirty(true);
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/subject-order`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ class_id: parseInt(pickedClass, 10), subject_ids: list.map(s => s.id) })
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || 'Save failed'); }
+      setDirty(false);
+      loadOrder(pickedClass);
+    } catch (e) { alert(e.message); }
+    setSaving(false);
+  };
+
+  if (loading) {
+    return <div className="h-64 flex items-center justify-center"><Loader2 className="animate-spin size-8 text-primary" /></div>;
+  }
+
+  if (classes.length === 0) {
+    return (
+      <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
+        <ListOrdered className="size-10 text-zinc-300 mb-3" />
+        <p className="text-zinc-500 text-sm font-medium">Add classes first (Manage Logins).</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+        <div>
+          <h3 className="font-semibold text-zinc-900 text-sm">Subject Order per Class</h3>
+          <p className="text-[11px] text-zinc-500 mt-0.5 max-w-2xl">
+            Choose the order subjects appear for a class. This is the order used in <strong>Marks Entry</strong> and on the
+            <strong> Report Card</strong>. Each class has its own order — set it however you like and change it anytime.
+          </p>
+        </div>
+
+        {/* Class picker */}
+        <div className="relative w-full sm:w-64 shrink-0">
+          <select value={pickedClass} onChange={e => setPickedClass(e.target.value)}
+            className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
+            <option value="">Select a class...</option>
+            {classes.map(c => (
+              <option key={c.id} value={c.id}>
+                {c.className}{c.section ? ` - ${c.section}` : ''}
+              </option>
+            ))}
+          </select>
+          <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+        </div>
+      </div>
+
+      <div className="rounded-md bg-blue-50/60 ring-1 ring-inset ring-blue-500/15 px-4 py-3 flex items-start gap-2.5">
+        <ListOrdered className="size-4 text-blue-600 shrink-0 mt-0.5" />
+        <p className="text-[11px] text-blue-800 leading-relaxed">
+          Move subjects up or down, then <span className="font-semibold">Save Order</span>. Any subject without a saved
+          position (for example one added later) falls to the bottom in A-Z order until you reorder.
+        </p>
+      </div>
+
+      {listLoading ? (
+        <div className="h-40 flex items-center justify-center"><Loader2 className="animate-spin size-7 text-primary" /></div>
+      ) : !pickedClass ? (
+        <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
+          <ListOrdered className="size-10 text-zinc-300 mb-3" />
+          <p className="text-zinc-500 text-sm font-medium">Pick a class to order its subjects.</p>
+        </div>
+      ) : list.length === 0 ? (
+        <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
+          <BookOpen className="size-10 text-zinc-300 mb-3" />
+          <p className="text-zinc-500 text-sm font-medium">No subjects assigned to this class yet.</p>
+          <p className="text-zinc-400 text-xs mt-1">Add subjects (and link them to this class) in the Subjects tab.</p>
+        </div>
+      ) : (
+        <>
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+              {list.length} subject{list.length !== 1 ? 's' : ''}
+            </span>
+            <button onClick={sortAZ}
+              className="text-[11px] font-semibold text-zinc-500 hover:text-primary transition-colors">
+              Sort A-Z
+            </button>
+          </div>
+
+          <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm divide-y divide-zinc-100">
+            {list.map((s, i) => (
+              <div key={s.id} className="flex items-center gap-3 px-4 py-3">
+                <span className="size-7 rounded-md bg-primary/10 text-primary text-xs font-bold flex items-center justify-center tabular-nums shrink-0">
+                  {i + 1}
+                </span>
+                <GripVertical className="size-4 text-zinc-300 shrink-0" />
+                <span className="flex-1 min-w-0 text-sm font-semibold text-zinc-900 truncate">{s.name}</span>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button onClick={() => move(i, -1)} disabled={i === 0}
+                    className="size-7 rounded-md bg-white ring-1 ring-inset ring-zinc-200 text-zinc-500 hover:text-primary hover:bg-zinc-50 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center transition-colors" title="Move up">
+                    <ArrowUp className="size-3.5" />
+                  </button>
+                  <button onClick={() => move(i, 1)} disabled={i === list.length - 1}
+                    className="size-7 rounded-md bg-white ring-1 ring-inset ring-zinc-200 text-zinc-500 hover:text-primary hover:bg-zinc-50 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center transition-colors" title="Move down">
+                    <ArrowDown className="size-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex justify-end pt-2">
+            <button onClick={handleSave} disabled={saving || !dirty}
+              className="h-9 w-full sm:w-auto bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white px-6 rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors">
+              {saving ? <Loader2 className="size-3.5 animate-spin shrink-0" /> : <Save className="size-3.5 shrink-0" />}
+              {saving ? 'Saving...' : (dirty ? 'Save Order' : 'Saved')}
+            </button>
+          </div>
+        </>
       )}
     </div>
   );

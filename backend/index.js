@@ -4150,7 +4150,8 @@ app.post('/api/admin/attempts/:attemptId/grade', async (req, res) => {
 //   this institution's students/subjects/exam-types/classes (their unique
 //   keys don't include institutionId, so a foreign id could otherwise
 //   overwrite another school's rows).
-//   (Migrations unchanged — see your existing header block.)
+//   (Migrations unchanged — see your existing header block, plus the new
+//    class_subject_order table from subject_order_schema.sql.)
 // =====================================================================
 
 function buildMonthBuckets(startDateStr, endDateStr) {
@@ -4186,6 +4187,28 @@ function buildMaxMarksMap(rows) {
         else maxMarks[et].bySubject[r.subject_id] = r.max_marks;
     });
     return maxMarks;
+}
+
+// ---------------------------------------------------------------------
+//  orderedSubjects — sort a class's subjects by the admin-set display
+//  order (class_subject_order). Subjects WITH a saved position come
+//  first, in that order; anything without one falls to the bottom in
+//  A-Z order. Absence of any rows = pure A-Z (the historical behaviour),
+//  so existing classes are unaffected until an order is saved.
+// ---------------------------------------------------------------------
+function orderedSubjects(subjectRows, orderRows) {
+    const orderMap = {};
+    (orderRows || []).forEach(r => { orderMap[r.subject_id] = Number(r.sort_order); });
+    return [...(subjectRows || [])].sort((a, b) => {
+        const oa = orderMap[a.id];
+        const ob = orderMap[b.id];
+        const ha = oa !== undefined;
+        const hb = ob !== undefined;
+        if (ha && hb) return oa - ob;
+        if (ha) return -1;
+        if (hb) return 1;
+        return String(a.name || '').localeCompare(String(b.name || ''));
+    });
 }
 
 
@@ -4442,6 +4465,93 @@ app.delete('/api/admin/subject-teachers/:id', async (req, res) => {
 
 
 // =====================================================================
+// === 17.G SUBJECT DISPLAY ORDER (per class) ==========================
+//   Admin-controlled order of subjects within a class, stored in its own
+//   table (class_subject_order). We DON'T hang order off subject_classes
+//   because a subject with no link rows is "available to all classes" and
+//   so has no per-class row to carry an order. Absence of a row here =
+//   A-Z fallback, so existing data keeps working untouched.
+//   Consumed by class-data (Marks Entry), buildReportCard (Report Card)
+//   and the marks export.
+// =====================================================================
+
+// The class's subjects (same rule everywhere: no links = all classes),
+// returned in saved order with each subject's sort_order (null if unset).
+async function subjectsForClassOrdered(instId, classId) {
+    const [allSubjects] = await db.execute(
+        'SELECT id, name FROM subjects WHERE institutionId = ? ORDER BY name', [instId]);
+    const [scRows] = await db.execute(
+        `SELECT sc.subject_id, sc.class_id FROM subject_classes sc
+           JOIN subjects s ON s.id = sc.subject_id WHERE s.institutionId = ?`, [instId]);
+    const linkMap = {};
+    scRows.forEach(r => { (linkMap[r.subject_id] = linkMap[r.subject_id] || new Set()).add(r.class_id); });
+    const filtered = allSubjects.filter(s => {
+        const links = linkMap[s.id];
+        if (!links || links.size === 0) return true;
+        return links.has(parseInt(classId, 10));
+    });
+    const [ordRows] = await db.execute(
+        'SELECT subject_id, sort_order FROM class_subject_order WHERE class_id = ?', [classId]);
+    const orderMap = {};
+    ordRows.forEach(r => { orderMap[r.subject_id] = Number(r.sort_order); });
+    return orderedSubjects(filtered, ordRows).map(s => ({
+        id: s.id,
+        name: s.name,
+        sort_order: orderMap[s.id] !== undefined ? orderMap[s.id] : null
+    }));
+}
+
+app.get('/api/admin/subject-order/:classId', async (req, res) => {
+    try {
+        const [c] = await db.execute('SELECT institutionId FROM classes WHERE id = ?', [req.params.classId]);
+        if (c.length === 0) return res.json([]);
+        if (!sameTenant(req, c[0].institutionId)) {
+            return res.status(403).json({ error: 'That class belongs to another institution.' });
+        }
+        const list = await subjectsForClassOrdered(c[0].institutionId, req.params.classId);
+        res.json(list);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/admin/subject-order', async (req, res) => {
+    const institutionId = req.auth.institutionId;
+    const { class_id, subject_ids = [] } = req.body;
+    if (!class_id) return res.status(400).json({ error: 'class_id required.' });
+    if (!Array.isArray(subject_ids)) return res.status(400).json({ error: 'subject_ids[] required.' });
+    const conn = await db.getConnection();
+    try {
+        const [c] = await conn.execute('SELECT institutionId FROM classes WHERE id = ?', [class_id]);
+        if (c.length === 0 || !sameTenant(req, c[0].institutionId)) {
+            conn.release();
+            return res.status(403).json({ error: 'That class belongs to another institution.' });
+        }
+        // Only this institution's subjects may be ordered.
+        const [vSub] = await conn.execute('SELECT id FROM subjects WHERE institutionId = ?', [institutionId]);
+        const okSub = new Set(vSub.map(r => r.id));
+
+        await conn.beginTransaction();
+        // Rewrite the whole class in one shot so the stored set self-heals
+        // (drops subjects no longer present, re-numbers cleanly).
+        await conn.execute('DELETE FROM class_subject_order WHERE class_id = ?', [class_id]);
+        let i = 0;
+        for (const sid of subject_ids) {
+            if (!okSub.has(Number(sid))) continue;
+            await conn.execute(
+                `INSERT INTO class_subject_order (institutionId, class_id, subject_id, sort_order)
+                 VALUES (?, ?, ?, ?)`,
+                [institutionId, class_id, sid, i++]
+            );
+        }
+        await conn.commit();
+        res.json({ success: true });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally { conn.release(); }
+});
+
+
+// =====================================================================
 // === 17.D MARKS ENTRY ================================================
 // =====================================================================
 
@@ -4483,6 +4593,13 @@ app.get('/api/admin/reports/class-data/:classId', async (req, res) => {
             return links.has(parseInt(classId, 10));
         });
 
+        // Apply the admin-set display order for this class (A-Z fallback).
+        const [ordRows] = await db.execute(
+            'SELECT subject_id, sort_order FROM class_subject_order WHERE class_id = ?',
+            [classId]
+        );
+        const subjectsInOrder = orderedSubjects(subjects, ordRows);
+
         const [assignments] = await db.execute(
             `SELECT stm.subject_id, stm.teacher_id, u.name AS teacher_name
                FROM subject_teacher_map stm
@@ -4509,7 +4626,7 @@ app.get('/api/admin/reports/class-data/:classId', async (req, res) => {
             .filter(t => maxMarks[t.id] !== undefined)
             .map(t => ({ ...t, max_marks: maxMarks[t.id]?.default ?? null }));
 
-        const subjectsForClass = subjects.map(s => ({
+        const subjectsForClass = subjectsInOrder.map(s => ({
             ...s,
             teacher_id:   assignMap[s.id]?.teacher_id || null,
             teacher_name: assignMap[s.id]?.teacher_name || null
@@ -4747,11 +4864,18 @@ async function buildReportCard(studentId) {
         if (!linkMapRC[r.subject_id]) linkMapRC[r.subject_id] = new Set();
         linkMapRC[r.subject_id].add(r.class_id);
     });
-    const subjects = allSubjectsRC.filter(s => {
+    const subjectsFiltered = allSubjectsRC.filter(s => {
         const links = linkMapRC[s.id];
         if (!links || links.size === 0) return true;
         return links.has(student.class_id);
     });
+
+    // Apply the admin-set display order for this student's class (A-Z fallback).
+    const [ordRowsRC] = await db.execute(
+        'SELECT subject_id, sort_order FROM class_subject_order WHERE class_id = ?',
+        [student.class_id]
+    );
+    const subjects = orderedSubjects(subjectsFiltered, ordRowsRC);
 
     const [examTypes] = await db.execute(
         'SELECT * FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id',
@@ -4930,11 +5054,37 @@ app.get('/api/admin/marks-export/:instId', async (req, res) => {
                JOIN subjects s ON s.id = sc.subject_id WHERE s.institutionId = ?`, [instId]);
         const linkMap = {};
         scRows.forEach(r => { (linkMap[r.subject_id] = linkMap[r.subject_id] || new Set()).add(r.class_id); });
-        const subjectsForClass = (cid) => allSubjects.filter(s => {
-            const links = linkMap[s.id];
-            if (!links || links.size === 0) return true;
-            return links.has(cid);
+
+        // Per-class subject display order (A-Z fallback), so the export
+        // columns match Marks Entry and the Report Card.
+        const [orderAll] = await db.execute(
+            `SELECT o.class_id, o.subject_id, o.sort_order
+               FROM class_subject_order o
+               JOIN classes c ON c.id = o.class_id
+              WHERE c.institutionId = ?`, [instId]);
+        const orderByClass = {};
+        orderAll.forEach(r => {
+            (orderByClass[r.class_id] = orderByClass[r.class_id] || {})[r.subject_id] = Number(r.sort_order);
         });
+
+        const subjectsForClass = (cid) => {
+            const list = allSubjects.filter(s => {
+                const links = linkMap[s.id];
+                if (!links || links.size === 0) return true;
+                return links.has(cid);
+            });
+            const om = orderByClass[cid] || {};
+            return [...list].sort((a, b) => {
+                const oa = om[a.id];
+                const ob = om[b.id];
+                const ha = oa !== undefined;
+                const hb = ob !== undefined;
+                if (ha && hb) return oa - ob;
+                if (ha) return -1;
+                if (hb) return 1;
+                return String(a.name || '').localeCompare(String(b.name || ''));
+            });
+        };
 
         const [examTypes] = await db.execute('SELECT id, name, exam_order FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id', [instId]);
         const [maxAll] = await db.execute(
