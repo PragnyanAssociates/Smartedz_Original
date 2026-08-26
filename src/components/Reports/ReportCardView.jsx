@@ -13,7 +13,7 @@ import { GraduationCap, Printer } from 'lucide-react';
 //  exams are excluded and their "/max" hint hidden.
 //
 //  ONE-PAGE PRINT (robust):
-//  We do NOT rely on @page orientation or per-class CSS compression -
+//  We do NOT rely on @page orientation or per-class CSS compression —
 //  browsers honour those inconsistently, which was clipping the bottom
 //  of the card. Instead, on `beforeprint` we measure the card's real
 //  height/width and apply an INLINE `zoom` so the entire card (marks +
@@ -46,7 +46,7 @@ const fmtDateTime = (iso) => {
 };
 
 // ---------------------------------------------------------------------
-//  LastPrintedStamp - screen-only, rendered by the parent next to Print.
+//  LastPrintedStamp — screen-only, rendered by the parent next to Print.
 //  Records the moment per student in localStorage on any print (button
 //  or Ctrl/Cmd+P) and shows it back.
 // ---------------------------------------------------------------------
@@ -160,21 +160,56 @@ export default function ReportCardView({ card }) {
     return Number(t.max_marks || 0);
   };
 
+  // Grade for a percentage against an exam's bands: the highest band whose
+  // minimum % the score reaches. Bands ride along on each exam type.
+  const gradeFor = (pct, bands) => {
+    if (pct == null || isNaN(pct) || !Array.isArray(bands) || bands.length === 0) return null;
+    let best = null;
+    bands.forEach(b => {
+      const min = Number(b.min_pct);
+      if (!isNaN(min) && pct >= min && (best === null || min > Number(best.min_pct))) best = b;
+    });
+    return best ? best.label : null;
+  };
+
+  // "Result" exams are the graph leaves the backend flags (is_result) — the
+  // finals nothing else feeds into. Totals sum ONLY these so a derived chain
+  // (AT1 -> FA1 -> SA1 -> Final) is never counted twice. With no rules, every
+  // exam is a result, so this is identical to the old sum-everything total.
+  const resultExams = (examTypes || []).filter(t => t.is_result);
+  const totalExams = resultExams.length ? resultExams : (examTypes || []);
+
+  // The exam whose scale grades the overall result: the last result exam by
+  // order (the "final-most"), e.g. the Final.
+  const overallExam = totalExams.reduce(
+    (acc, t) => (acc == null || (t.exam_order || 0) >= (acc.exam_order || 0) ? t : acc),
+    null
+  );
+
   const examColumnTotal = (etId) =>
     (subjects || []).reduce((sum, s) => {
       const v = getMark(s.id, etId);
       return sum + (v != null ? Number(v) : 0);
     }, 0);
 
+  const examColumnMax = (t) =>
+    (subjects || []).reduce((sum, s) => sum + (isAttempted(t.id) ? maxFor(t, s.id) : 0), 0);
+
+  const examColumnGrade = (t) => {
+    const mx = examColumnMax(t);
+    if (mx <= 0) return null;
+    return gradeFor((examColumnTotal(t.id) / mx) * 100, t.grade_bands);
+  };
+
   const subjectRowTotal = (subjectId) =>
-    (examTypes || []).reduce((sum, t) => {
+    totalExams.reduce((sum, t) => {
       const v = getMark(subjectId, t.id);
       return sum + (v != null ? Number(v) : 0);
     }, 0);
 
-  // Row max - ONLY over exams actually sat, so the denominator is honest.
+  // Row max — ONLY over result exams actually sat, so the denominator is honest.
   const subjectRowMax = (subjectId) =>
-    (examTypes || []).reduce(
+    totalExams.reduce(
       (sum, t) => (isAttempted(t.id) ? sum + maxFor(t, subjectId) : sum),
       0
     );
@@ -182,6 +217,9 @@ export default function ReportCardView({ card }) {
   const grandTotal = (subjects || []).reduce((sum, s) => sum + subjectRowTotal(s.id), 0);
   const grandMax = (subjects || []).reduce((sum, s) => sum + subjectRowMax(s.id), 0);
   const grandPct = grandMax > 0 ? ((grandTotal / grandMax) * 100).toFixed(1) : '0.0';
+  const overallGrade = gradeFor(Number(grandPct), overallExam?.grade_bands);
+
+  const anyGrades = (examTypes || []).some(t => Array.isArray(t.grade_bands) && t.grade_bands.length > 0);
 
   const conductedCount = attemptedExamIds.size;
   const configuredCount = (examTypes || []).length;
@@ -200,7 +238,7 @@ export default function ReportCardView({ card }) {
 
   return (
     <>
-      {/* Minimal print rules - reveal ONLY the card and let the wide table
+      {/* Minimal print rules — reveal ONLY the card and let the wide table
           fit the page. The one-page fit itself is done by the inline zoom
           set in the effect above (unbypassable, orientation-independent). */}
       <style>{`
@@ -301,7 +339,7 @@ export default function ReportCardView({ card }) {
                         className={`border border-zinc-300 px-3 py-2.5 text-center font-semibold whitespace-nowrap ${
                           counted ? 'text-zinc-700' : 'text-zinc-400'
                         }`}
-                        title={counted ? undefined : 'Not conducted yet - excluded from Total & %'}>
+                        title={counted ? undefined : 'Not conducted yet — excluded from Total & %'}>
                         {t.name}
                       </th>
                     );
@@ -322,7 +360,7 @@ export default function ReportCardView({ card }) {
                         return (
                           <td key={t.id} className="border border-zinc-300 px-3 py-2.5 text-center tabular-nums whitespace-nowrap">
                             <span className={v != null ? 'font-semibold text-zinc-800' : 'text-zinc-300'}>
-                              {v != null ? fmtNum(v) : '-'}
+                              {v != null ? fmtNum(v) : '–'}
                             </span>
                             {counted && mx > 0 && (
                               <span className="text-zinc-400 text-[11px]">/{fmtNum(mx)}</span>
@@ -342,7 +380,7 @@ export default function ReportCardView({ card }) {
                   <td className="border border-zinc-300 px-3 py-2.5 font-bold text-zinc-800">Total</td>
                   {examTypes.map(t => (
                     <td key={t.id} className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-zinc-800 tabular-nums whitespace-nowrap">
-                      {fmtNum(examColumnTotal(t.id)) || '-'}
+                      {fmtNum(examColumnTotal(t.id)) || '–'}
                     </td>
                   ))}
                   <td className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-primary tabular-nums whitespace-nowrap">
@@ -350,6 +388,23 @@ export default function ReportCardView({ card }) {
                     {grandMax > 0 && <span className="text-[11px] font-semibold text-zinc-400"> / {fmtNum(grandMax)}</span>}
                   </td>
                 </tr>
+                {/* Grade row — per exam (from its scale) + overall */}
+                {anyGrades && (
+                  <tr className="bg-zinc-50/40">
+                    <td className="border border-zinc-300 px-3 py-2.5 font-bold text-zinc-700">Grade</td>
+                    {examTypes.map(t => {
+                      const g = examColumnGrade(t);
+                      return (
+                        <td key={t.id} className="border border-zinc-300 px-3 py-2.5 text-center font-bold tabular-nums whitespace-nowrap">
+                          {g ? <span className="text-primary">{g}</span> : <span className="text-zinc-300">–</span>}
+                        </td>
+                      );
+                    })}
+                    <td className="border border-zinc-300 px-3 py-2.5 text-center font-bold whitespace-nowrap">
+                      {overallGrade ? <span className="text-emerald-700">{overallGrade}</span> : <span className="text-zinc-300">–</span>}
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -368,6 +423,12 @@ export default function ReportCardView({ card }) {
                 <span className="font-semibold text-zinc-700">Percentage: </span>
                 <span className="font-bold text-emerald-700 tabular-nums">{grandPct}%</span>
               </div>
+              {overallGrade && (
+                <div className="bg-primary/5 rounded-md px-4 py-2.5 text-sm ring-1 ring-primary/20 flex items-center gap-1.5">
+                  <span className="font-semibold text-zinc-700">Grade: </span>
+                  <span className="font-bold text-primary tabular-nums">{overallGrade}</span>
+                </div>
+              )}
             </div>
             {someExcluded && (
               <p className="text-[11px] text-zinc-400 text-right mt-2 leading-relaxed print:hidden">
@@ -438,7 +499,7 @@ export default function ReportCardView({ card }) {
           </div>
         )}
 
-        {/* Signature line - Parent (left) - Class Teacher (centre) - Principal (right) */}
+        {/* Signature line — Parent (left) · Class Teacher (centre) · Principal (right) */}
         <div className="signatures flex justify-between items-end gap-4 mt-16 px-2 sm:px-8 text-sm font-medium text-zinc-500 pb-4">
           <div className="text-center">
             <div className="border-t border-zinc-300 w-24 sm:w-40 pt-2">Parent</div>

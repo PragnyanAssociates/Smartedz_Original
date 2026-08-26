@@ -4,17 +4,20 @@ import { API_BASE_URL } from '../../apiConfig';
 import {
   Plus, Edit, Trash2, X, Loader2, Save, GripVertical,
   ListChecks, Grid3x3, UserCog, Check, ChevronDown, BookOpen, Layers,
-  AlertTriangle, ShieldAlert, CalendarRange, ListOrdered, ArrowUp, ArrowDown
+  AlertTriangle, ShieldAlert, CalendarRange, ListOrdered, ArrowUp, ArrowDown,
+  Award, ClipboardList, Calculator
 } from 'lucide-react';
 
 // =====================================================================
-//  ExamSetup - four sub-sections, switched by inner tabs:
-//    1. Exam Types     - create/rename/reorder/delete exam types
+//  ExamSetup - sub-sections, switched by inner tabs:
+//    1. Exam Types     - create/rename/reorder/delete exam types, assign
+//                        a grade scale to each
 //    2. Max Marks      - per class: an "All Subjects" default OR
 //                        per-subject values (mutually exclusive), per exam
 //    3. Teacher Assign - per class, map each subject to a teacher
 //    4. Subject Order  - per class, order how subjects appear in Marks
 //                        Entry and on the Report Card
+//    5. Grade Scales   - reusable %-band grade tables (A1/A2..., A/B/C...)
 //
 //  NOTE ON ACADEMIC YEARS: everything here is SHARED CONFIG, reused by
 //  every academic year — unlike marks, which are stamped with the active
@@ -30,7 +33,8 @@ export default function ExamSetup() {
     { id: 'types',   label: 'Exam Types',        icon: ListChecks },
     { id: 'marks',   label: 'Max Marks',         icon: Grid3x3 },
     { id: 'assign',  label: 'Teacher Assignment', icon: UserCog },
-    { id: 'order',   label: 'Subject Order',     icon: ListOrdered }
+    { id: 'order',   label: 'Subject Order',     icon: ListOrdered },
+    { id: 'grades',  label: 'Grade Scales',      icon: Award }
   ];
 
   return (
@@ -59,56 +63,137 @@ export default function ExamSetup() {
         {section === 'marks'  && <MaxMarksPanel />}
         {section === 'assign' && <TeacherAssignPanel />}
         {section === 'order'  && <SubjectOrderPanel />}
+        {section === 'grades' && <GradeScalesPanel />}
       </div>
     </div>
   );
 }
 
 // =====================================================================
-//  1. Exam Types
+//  1. Exam Types — create, reorder (up/down), assign a grade scale.
+//
+//  Order is set here by moving rows and pressing Save Order (writes
+//  exam_types.exam_order, same idea as Subject Order). A grade scale is
+//  optional per exam and drives the grade shown on the report card.
 // =====================================================================
 function ExamTypesPanel() {
   const { user } = useAuth();
   const [types, setTypes] = useState([]);
+  const [scales, setScales] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ name: '', exam_order: 0 });
+  const [form, setForm] = useState({
+    name: '', exam_order: 0, grade_scale_id: '',
+    kind: 'entered', show_on_report: true, parts: []
+  });
   const [saving, setSaving] = useState(false);
+  const [loadingRules, setLoadingRules] = useState(false);
   const [deletingType, setDeletingType] = useState(null);   // exam type pending deletion
+  const [dirty, setDirty] = useState(false);                // unsaved reorder
+  const [savingOrder, setSavingOrder] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/exam-types/${user.institutionId}`);
-      const data = await res.json();
-      setTypes(Array.isArray(data) ? data : []);
+      const [tRes, gRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/admin/exam-types/${user.institutionId}`),
+        fetch(`${API_BASE_URL}/admin/grade-scales/${user.institutionId}`)
+      ]);
+      const tData = await tRes.json();
+      const gData = await gRes.json();
+      setTypes(Array.isArray(tData) ? tData : []);
+      setScales(Array.isArray(gData) ? gData : []);
+      setDirty(false);
     } catch (e) { console.error(e); }
     setLoading(false);
   }, [user]);
 
   useEffect(() => { load(); }, [load]);
 
+  const scaleName = (id) => {
+    if (!id) return null;
+    const s = scales.find(x => String(x.id) === String(id));
+    return s ? s.name : null;
+  };
+
   const openAdd = () => {
     setEditing(null);
-    setForm({ name: '', exam_order: types.length });
+    setForm({ name: '', exam_order: types.length, grade_scale_id: '', kind: 'entered', show_on_report: true, parts: [] });
     setShowModal(true);
   };
 
-  const openEdit = (t) => {
+  const openEdit = async (t) => {
     setEditing(t);
-    setForm({ name: t.name, exam_order: t.exam_order });
+    // exam_order is preserved in state (no visible field) so an edit never
+    // resets the row's position; ordering is done by the reorder buttons.
+    setForm({
+      name: t.name,
+      exam_order: t.exam_order,
+      grade_scale_id: t.grade_scale_id ? String(t.grade_scale_id) : '',
+      kind: t.kind === 'derived' ? 'derived' : 'entered',
+      show_on_report: t.show_on_report === 0 || t.show_on_report === false ? false : true,
+      parts: []
+    });
     setShowModal(true);
+    if (t.kind === 'derived') {
+      setLoadingRules(true);
+      try {
+        const res = await fetch(`${API_BASE_URL}/admin/exam-rules/${t.id}`);
+        const d = await res.json();
+        const parts = (d.parts || []).map(p => ({
+          mode: p.mode === 'scaled' ? 'scaled' : 'raw',
+          weight_max: p.weight_max ? String(p.weight_max) : '',
+          sources: (p.sources || []).map(Number)
+        }));
+        setForm(f => ({ ...f, parts }));
+      } catch (e) { console.error(e); }
+      setLoadingRules(false);
+    }
   };
+
+  // Source options = every OTHER exam type (an exam can't feed itself).
+  const sourceOptions = types.filter(t => !editing || t.id !== editing.id);
+
+  const addPart = () => setForm(f => ({ ...f, parts: [...f.parts, { mode: 'raw', weight_max: '', sources: [] }] }));
+  const removePart = (i) => setForm(f => ({ ...f, parts: f.parts.filter((_, idx) => idx !== i) }));
+  const setPart = (i, key, val) => setForm(f => ({ ...f, parts: f.parts.map((p, idx) => idx === i ? { ...p, [key]: val } : p) }));
+  const toggleSource = (i, sid) => setForm(f => ({
+    ...f,
+    parts: f.parts.map((p, idx) => {
+      if (idx !== i) return p;
+      const has = p.sources.includes(sid);
+      return { ...p, sources: has ? p.sources.filter(x => x !== sid) : [...p.sources, sid] };
+    })
+  }));
 
   const handleSave = async () => {
     if (!form.name.trim()) return alert('Name is required.');
+    const isDerived = form.kind === 'derived';
+    // Validate the formula before we create anything.
+    let cleanParts = [];
+    if (isDerived) {
+      cleanParts = form.parts
+        .map(p => ({
+          mode: p.mode === 'scaled' ? 'scaled' : 'raw',
+          weight_max: p.mode === 'scaled' ? (parseFloat(p.weight_max) || 0) : 0,
+          sources: [...new Set(p.sources.map(Number))]
+        }))
+        .filter(p => p.sources.length > 0);
+      if (cleanParts.length === 0) return alert('A derived exam needs at least one part with a source exam.');
+      const badScaled = cleanParts.find(p => p.mode === 'scaled' && p.weight_max <= 0);
+      if (badScaled) return alert('A "Scale to" part needs a marks value greater than 0.');
+    }
+
     setSaving(true);
     try {
       const body = {
         institutionId: user.institutionId,
         name: form.name.trim(),
-        exam_order: parseInt(form.exam_order, 10) || 0
+        exam_order: parseInt(form.exam_order, 10) || 0,
+        grade_scale_id: form.grade_scale_id ? parseInt(form.grade_scale_id, 10) : null,
+        kind: isDerived ? 'derived' : 'entered',
+        show_on_report: form.show_on_report ? 1 : 0
       };
       const url = editing
         ? `${API_BASE_URL}/admin/exam-types/${editing.id}`
@@ -120,10 +205,49 @@ function ExamTypesPanel() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Save failed');
+
+      const examId = editing ? editing.id : data.id;
+      if (isDerived && examId) {
+        const rRes = await fetch(`${API_BASE_URL}/admin/exam-rules`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ exam_type_id: examId, parts: cleanParts })
+        });
+        if (!rRes.ok) {
+          const rd = await rRes.json().catch(() => ({}));
+          throw new Error(rd.error || 'The exam was saved but its formula was rejected.');
+        }
+      }
       setShowModal(false);
       load();
     } catch (e) { alert(e.message); }
     setSaving(false);
+  };
+
+  const move = (i, dir) => {
+    setTypes(prev => {
+      const j = i + dir;
+      if (j < 0 || j >= prev.length) return prev;
+      const next = [...prev];
+      const tmp = next[i]; next[i] = next[j]; next[j] = tmp;
+      return next;
+    });
+    setDirty(true);
+  };
+
+  const saveOrder = async () => {
+    setSavingOrder(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/exam-types/reorder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: types.map(t => t.id) })
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || 'Save failed'); }
+      setDirty(false);
+      load();
+    } catch (e) { alert(e.message); }
+    setSavingOrder(false);
   };
 
   return (
@@ -132,13 +256,22 @@ function ExamTypesPanel() {
         <div>
           <h3 className="font-semibold text-zinc-900 text-sm">Exam Types</h3>
           <p className="text-[11px] text-zinc-500 mt-0.5">
-            Define the exams your school conducts. Order controls column order on report cards.
+            Define the exams your school conducts and the order they appear in. Assign a grade scale to show a grade on the report card.
           </p>
         </div>
-        <button onClick={openAdd}
-          className="h-9 w-full sm:w-auto bg-primary hover:bg-primary/90 text-white px-4 rounded-md font-semibold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-colors shrink-0">
-          <Plus className="size-3.5" /> Add Exam Type
-        </button>
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          {dirty && (
+            <button onClick={saveOrder} disabled={savingOrder}
+              className="h-9 bg-emerald-600 hover:bg-emerald-700 disabled:bg-zinc-300 disabled:text-zinc-500 text-white px-4 rounded-md font-semibold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-colors shrink-0">
+              {savingOrder ? <Loader2 className="size-3.5 animate-spin shrink-0" /> : <Save className="size-3.5 shrink-0" />}
+              Save Order
+            </button>
+          )}
+          <button onClick={openAdd}
+            className="h-9 w-full sm:w-auto bg-primary hover:bg-primary/90 text-white px-4 rounded-md font-semibold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-colors shrink-0">
+            <Plus className="size-3.5" /> Add Exam Type
+          </button>
+        </div>
       </div>
 
       {/* Exam types are shared across years — worth saying once, up front. */}
@@ -160,46 +293,77 @@ function ExamTypesPanel() {
         </div>
       ) : (
         <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-x-auto custom-scrollbar">
-          <table className="w-full text-left border-collapse min-w-[500px]">
+          <table className="w-full text-left border-collapse min-w-[560px]">
             <thead className="bg-zinc-50/80">
               <tr>
-                <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 w-20">Order</th>
+                <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 w-28">Order</th>
                 <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Exam Type</th>
+                <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Grade Scale</th>
                 <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100">
-              {types.map(t => (
-                <tr key={t.id} className="hover:bg-zinc-50/60 transition-colors group">
-                  <td className="px-5 py-4">
-                    <span className="inline-flex items-center gap-1.5 text-zinc-500 font-medium text-sm tabular-nums">
-                      <GripVertical className="size-4 text-zinc-300" /> {t.exam_order}
-                    </span>
-                  </td>
-                  <td className="px-5 py-4 font-semibold text-zinc-900 text-sm">{t.name}</td>
-                  <td className="px-5 py-4 text-right">
-                    <div className="flex justify-end gap-1.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                      <button onClick={() => openEdit(t)}
-                        className="p-1.5 text-zinc-400 hover:text-amber-600 hover:bg-amber-50 rounded-md transition-colors" title="Edit">
-                        <Edit className="size-4" />
-                      </button>
-                      <button onClick={() => setDeletingType(t)}
-                        className="p-1.5 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors" title="Delete">
-                        <Trash2 className="size-4" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {types.map((t, i) => {
+                const gs = scaleName(t.grade_scale_id);
+                return (
+                  <tr key={t.id} className="hover:bg-zinc-50/60 transition-colors group">
+                    <td className="px-5 py-4">
+                      <div className="flex items-center gap-2">
+                        <span className="size-6 rounded bg-primary/10 text-primary text-xs font-bold flex items-center justify-center tabular-nums shrink-0">
+                          {i + 1}
+                        </span>
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => move(i, -1)} disabled={i === 0}
+                            className="size-6 rounded bg-white ring-1 ring-inset ring-zinc-200 text-zinc-500 hover:text-primary hover:bg-zinc-50 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center transition-colors" title="Move up">
+                            <ArrowUp className="size-3" />
+                          </button>
+                          <button onClick={() => move(i, 1)} disabled={i === types.length - 1}
+                            className="size-6 rounded bg-white ring-1 ring-inset ring-zinc-200 text-zinc-500 hover:text-primary hover:bg-zinc-50 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center transition-colors" title="Move down">
+                            <ArrowDown className="size-3" />
+                          </button>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-5 py-4 font-semibold text-zinc-900 text-sm">{t.name}</td>
+                    <td className="px-5 py-4">
+                      {gs ? (
+                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-semibold bg-primary/10 text-primary ring-1 ring-primary/20 whitespace-nowrap">
+                          <Award className="size-3" /> {gs}
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-zinc-400 italic">No grade</span>
+                      )}
+                    </td>
+                    <td className="px-5 py-4 text-right">
+                      <div className="flex justify-end gap-1.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                        <button onClick={() => openEdit(t)}
+                          className="p-1.5 text-zinc-400 hover:text-amber-600 hover:bg-amber-50 rounded-md transition-colors" title="Edit">
+                          <Edit className="size-4" />
+                        </button>
+                        <button onClick={() => setDeletingType(t)}
+                          className="p-1.5 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors" title="Delete">
+                          <Trash2 className="size-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       )}
 
+      {dirty && (
+        <p className="text-[11px] text-amber-600 font-medium flex items-center gap-1.5">
+          <AlertTriangle className="size-3.5" /> You have an unsaved order. Press <strong>Save Order</strong> to keep it.
+        </p>
+      )}
+
       {showModal && (
         <div className="fixed inset-0 z-50 bg-zinc-900/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-md shadow-xl animate-in fade-in zoom-in-95 duration-200">
-            <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 rounded-t-lg">
+          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-xl shadow-xl relative max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
+            <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 rounded-t-lg shrink-0">
               <h2 className="text-sm font-semibold text-zinc-900">
                 {editing ? 'Edit Exam Type' : 'Add Exam Type'}
               </h2>
@@ -207,24 +371,155 @@ function ExamTypesPanel() {
                 <X className="size-4 shrink-0" />
               </button>
             </div>
-            <div className="p-5 sm:p-6 space-y-4">
+            <div className="p-5 sm:p-6 space-y-5 overflow-y-auto custom-scrollbar">
               <FormField label="Name" required>
                 <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
-                  placeholder="e.g. Unit Test 1" className={inputCls} />
+                  placeholder="e.g. Unit Test 1, FA1, SA1" className={inputCls} />
               </FormField>
-              <FormField label="Display Order">
-                <input type="number" value={form.exam_order}
-                  onChange={e => setForm({ ...form, exam_order: e.target.value })}
-                  className={inputCls} />
-                <p className="text-[11px] text-zinc-400 mt-1.5 font-medium">Lower numbers appear first.</p>
+
+              {/* Entered vs Derived */}
+              <FormField label="Type">
+                <div className="grid grid-cols-2 gap-2">
+                  <button type="button" onClick={() => setForm({ ...form, kind: 'entered' })}
+                    className={`rounded-md ring-1 p-3 text-left transition-colors ${form.kind === 'entered' ? 'ring-primary bg-primary/5' : 'ring-zinc-200 bg-white hover:bg-zinc-50'}`}>
+                    <span className="flex items-center gap-1.5 text-xs font-semibold text-zinc-900">
+                      <ClipboardList className="size-3.5 text-primary" /> Entered
+                    </span>
+                    <span className="block text-[10px] text-zinc-500 mt-1 leading-snug">Teachers type the marks.</span>
+                  </button>
+                  <button type="button" onClick={() => setForm({ ...form, kind: 'derived' })}
+                    className={`rounded-md ring-1 p-3 text-left transition-colors ${form.kind === 'derived' ? 'ring-primary bg-primary/5' : 'ring-zinc-200 bg-white hover:bg-zinc-50'}`}>
+                    <span className="flex items-center gap-1.5 text-xs font-semibold text-zinc-900">
+                      <Calculator className="size-3.5 text-primary" /> Derived
+                    </span>
+                    <span className="block text-[10px] text-zinc-500 mt-1 leading-snug">Computed from other exams.</span>
+                  </button>
+                </div>
               </FormField>
+
+              {/* Derived formula builder */}
+              {form.kind === 'derived' && (
+                <div className="rounded-md ring-1 ring-zinc-200 p-4 space-y-3 bg-zinc-50/40">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Formula</span>
+                    <button type="button" onClick={addPart}
+                      className="text-[11px] font-semibold text-primary hover:text-primary/80 inline-flex items-center gap-1 transition-colors">
+                      <Plus className="size-3.5" /> Add part
+                    </button>
+                  </div>
+
+                  {loadingRules ? (
+                    <div className="h-16 flex items-center justify-center"><Loader2 className="size-5 animate-spin text-primary" /></div>
+                  ) : form.parts.length === 0 ? (
+                    <p className="text-[11px] text-zinc-400 italic py-2">
+                      No parts yet. Add a part, pick the source exams, and choose whether to add their raw marks or scale them to a number of marks.
+                    </p>
+                  ) : (
+                    <div className="space-y-3">
+                      {form.parts.map((p, i) => (
+                        <div key={i} className="rounded-md ring-1 ring-zinc-200 bg-white p-3 space-y-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Part {i + 1}</span>
+                            <button type="button" onClick={() => removePart(i)}
+                              className="size-6 rounded text-zinc-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition-colors" title="Remove part">
+                              <Trash2 className="size-3.5" />
+                            </button>
+                          </div>
+
+                          {/* mode */}
+                          <div className="flex bg-zinc-100 p-1 rounded-md w-full sm:w-fit">
+                            <button type="button" onClick={() => setPart(i, 'mode', 'raw')}
+                              className={`flex-1 sm:flex-none px-3 py-1.5 rounded text-[10px] font-semibold uppercase tracking-wider transition-all ${p.mode === 'raw' ? 'bg-white shadow-sm text-zinc-900 ring-1 ring-black/5' : 'text-zinc-500 hover:text-zinc-700'}`}>
+                              Add raw marks
+                            </button>
+                            <button type="button" onClick={() => setPart(i, 'mode', 'scaled')}
+                              className={`flex-1 sm:flex-none px-3 py-1.5 rounded text-[10px] font-semibold uppercase tracking-wider transition-all ${p.mode === 'scaled' ? 'bg-white shadow-sm text-zinc-900 ring-1 ring-black/5' : 'text-zinc-500 hover:text-zinc-700'}`}>
+                              Scale to N
+                            </button>
+                          </div>
+
+                          {p.mode === 'scaled' && (
+                            <div className="flex items-center gap-2">
+                              <span className="text-[11px] text-zinc-500 font-medium">Contributes</span>
+                              <input value={p.weight_max} inputMode="decimal"
+                                onChange={e => { if (/^\d*\.?\d*$/.test(e.target.value)) setPart(i, 'weight_max', e.target.value); }}
+                                placeholder="20"
+                                className="h-8 w-20 rounded-md border border-zinc-200 bg-white px-2 text-sm text-center tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm" />
+                              <span className="text-[11px] text-zinc-500 font-medium">marks</span>
+                            </div>
+                          )}
+
+                          {/* sources */}
+                          <div>
+                            <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Source exams</span>
+                            <div className="flex flex-wrap gap-1.5 mt-1.5">
+                              {sourceOptions.length === 0 ? (
+                                <span className="text-[11px] text-zinc-400 italic">Create other exam types first.</span>
+                              ) : sourceOptions.map(opt => {
+                                const on = p.sources.includes(opt.id);
+                                return (
+                                  <button key={opt.id} type="button" onClick={() => toggleSource(i, opt.id)}
+                                    className={`px-2.5 py-1 rounded text-[11px] font-semibold ring-1 transition-colors ${on ? 'bg-primary text-white ring-primary' : 'bg-white text-zinc-600 ring-zinc-200 hover:bg-zinc-50'}`}>
+                                    {opt.name}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          <p className="text-[10px] text-zinc-400 leading-snug">
+                            {p.mode === 'raw'
+                              ? 'Adds the selected exams\u2019 marks (out of their combined max).'
+                              : `Scales the selected exams to ${p.weight_max || 'N'} marks: N \u00d7 achieved \u00f7 their max.`}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="rounded-md bg-blue-50/60 ring-1 ring-inset ring-blue-500/15 px-3 py-2.5 flex items-start gap-2">
+                    <Calculator className="size-3.5 text-blue-600 shrink-0 mt-0.5" />
+                    <p className="text-[11px] text-blue-800 leading-relaxed">
+                      The exam's total is the sum of its parts, computed per student and per subject. A missing source shows as
+                      pending until it's entered. Derived exams are read-only in Marks Entry.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <FormField label="Grade Scale">
+                <div className="relative">
+                  <select value={form.grade_scale_id}
+                    onChange={e => setForm({ ...form, grade_scale_id: e.target.value })}
+                    className={`${inputCls} pr-8 appearance-none cursor-pointer`}>
+                    <option value="">No grade</option>
+                    {scales.map(s => (
+                      <option key={s.id} value={String(s.id)}>{s.name}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+                <p className="text-[11px] text-zinc-400 mt-1.5 font-medium">
+                  Optional. Shows a grade for this exam on the report card. Create scales in the Grade Scales tab.
+                </p>
+              </FormField>
+
+              <label className="flex items-start gap-2 rounded-md ring-1 ring-zinc-200 p-3 cursor-pointer">
+                <input type="checkbox" checked={form.show_on_report}
+                  onChange={e => setForm({ ...form, show_on_report: e.target.checked })}
+                  className="mt-0.5 size-4 rounded border-zinc-300 text-primary focus:ring-2 focus:ring-primary/30" />
+                <span className="text-[11px] text-zinc-600 leading-relaxed">
+                  <span className="font-semibold text-zinc-800">Show on report card.</span> Turn off to hide a feeder exam
+                  (e.g. a written paper that only exists inside a derived exam) so the card shows just the results.
+                </span>
+              </label>
             </div>
-            <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg">
+            <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
               <button onClick={() => setShowModal(false)} disabled={saving}
                 className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 rounded-md font-semibold text-xs hover:bg-zinc-50 transition-colors">
                 Cancel
               </button>
-              <button onClick={handleSave} disabled={saving}
+              <button onClick={handleSave} disabled={saving || loadingRules}
                 className="h-9 px-6 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors min-w-[100px]">
                 {saving ? <Loader2 className="size-3.5 animate-spin shrink-0" /> : <Save className="size-3.5 shrink-0" />}
                 {editing ? 'Save' : 'Add'}
@@ -1084,8 +1379,242 @@ function SubjectOrderPanel() {
   );
 }
 
+// =====================================================================
+//  5. Grade Scales — reusable %-band grade tables.
+//
+//  A scale is a name plus a list of bands; each band is a minimum % and a
+//  label. A mark's grade is the band with the HIGHEST min% it reaches.
+//  Because matching is on percentage (achieved / max), one scale works no
+//  matter what an exam is out of. Scales are assigned to exam types in the
+//  Exam Types tab and shown on the report card (report-card rendering
+//  arrives with the computation engine).
+// =====================================================================
+function GradeScalesPanel() {
+  const { user } = useAuth();
+  const [scales, setScales] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showModal, setShowModal] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [name, setName] = useState('');
+  const [bands, setBands] = useState([{ min_pct: '', label: '' }]);
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/grade-scales/${user.institutionId}`);
+      const d = await res.json();
+      setScales(Array.isArray(d) ? d : []);
+    } catch (e) { console.error(e); }
+    setLoading(false);
+  }, [user]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const openAdd = () => {
+    setEditing(null);
+    setName('');
+    setBands([{ min_pct: '', label: '' }]);
+    setShowModal(true);
+  };
+
+  const openEdit = (s) => {
+    setEditing(s);
+    setName(s.name);
+    const b = (s.bands || []).map(x => ({ min_pct: String(x.min_pct), label: x.label }));
+    setBands(b.length ? b : [{ min_pct: '', label: '' }]);
+    setShowModal(true);
+  };
+
+  const setBand = (i, key, val) => setBands(prev => prev.map((b, idx) => idx === i ? { ...b, [key]: val } : b));
+  const addBand = () => setBands(prev => [...prev, { min_pct: '', label: '' }]);
+  const removeBand = (i) => setBands(prev => (prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev));
+
+  const handleSave = async () => {
+    if (!name.trim()) return alert('Scale name is required.');
+    const clean = bands
+      .map(b => ({ min_pct: b.min_pct === '' ? null : parseFloat(b.min_pct), label: (b.label || '').trim() }))
+      .filter(b => b.label && b.min_pct !== null && !isNaN(b.min_pct));
+    if (clean.length === 0) return alert('Add at least one band with a minimum % and a label.');
+    setSaving(true);
+    try {
+      const body = { institutionId: user.institutionId, name: name.trim(), bands: clean };
+      const url = editing
+        ? `${API_BASE_URL}/admin/grade-scales/${editing.id}`
+        : `${API_BASE_URL}/admin/grade-scales`;
+      const res = await fetch(url, {
+        method: editing ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || 'Save failed'); }
+      setShowModal(false);
+      load();
+    } catch (e) { alert(e.message); }
+    setSaving(false);
+  };
+
+  const handleDelete = async (s) => {
+    if (!window.confirm(`Delete grade scale "${s.name}"? Exam types using it will fall back to no grade.`)) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/grade-scales/${s.id}`, { method: 'DELETE' });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || 'Delete failed'); }
+      load();
+    } catch (e) { alert(e.message); }
+  };
+
+  const sortedBands = (b) => [...(b || [])].sort((x, y) => Number(y.min_pct) - Number(x.min_pct));
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h3 className="font-semibold text-zinc-900 text-sm">Grade Scales</h3>
+          <p className="text-[11px] text-zinc-500 mt-0.5 max-w-2xl">
+            Build reusable grade tables (A1/A2/B1..., or A/B/C/D). Assign one to any exam type in the Exam Types tab.
+            Grades match on percentage, so a scale works for an exam out of 20, 80 or 100 alike.
+          </p>
+        </div>
+        <button onClick={openAdd}
+          className="h-9 w-full sm:w-auto bg-primary hover:bg-primary/90 text-white px-4 rounded-md font-semibold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-colors shrink-0">
+          <Plus className="size-3.5" /> Add Grade Scale
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="h-64 flex items-center justify-center"><Loader2 className="animate-spin size-8 text-primary" /></div>
+      ) : scales.length === 0 ? (
+        <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
+          <Award className="size-10 text-zinc-300 mb-3" />
+          <p className="text-zinc-500 text-sm font-medium">No grade scales yet.</p>
+          <p className="text-zinc-400 text-xs mt-1">Add one, then assign it to your exam types.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {scales.map(s => (
+            <div key={s.id} className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm p-4 flex flex-col gap-3">
+              <div className="flex items-start justify-between gap-3">
+                <span className="inline-flex items-center gap-1.5 font-semibold text-zinc-900 text-sm">
+                  <Award className="size-4 text-primary" /> {s.name}
+                </span>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button onClick={() => openEdit(s)}
+                    className="p-1.5 text-zinc-400 hover:text-amber-600 hover:bg-amber-50 rounded-md transition-colors" title="Edit">
+                    <Edit className="size-4" />
+                  </button>
+                  <button onClick={() => handleDelete(s)}
+                    className="p-1.5 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors" title="Delete">
+                    <Trash2 className="size-4" />
+                  </button>
+                </div>
+              </div>
+              {sortedBands(s.bands).length === 0 ? (
+                <p className="text-[11px] text-zinc-400 italic">No bands.</p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {sortedBands(s.bands).map((b, i) => (
+                    <span key={i} className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-semibold bg-zinc-100 text-zinc-700 ring-1 ring-zinc-200 tabular-nums">
+                      <span className="text-primary">{b.label}</span>
+                      <span className="text-zinc-400">{fmtPct(b.min_pct)}%+</span>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showModal && (
+        <div className="fixed inset-0 z-50 bg-zinc-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg shadow-xl relative max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
+            <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 rounded-t-lg shrink-0">
+              <h2 className="text-sm font-semibold text-zinc-900">
+                {editing ? 'Edit Grade Scale' : 'Add Grade Scale'}
+              </h2>
+              <button onClick={() => setShowModal(false)} className="text-zinc-400 hover:text-zinc-700 transition-colors">
+                <X className="size-4 shrink-0" />
+              </button>
+            </div>
+
+            <div className="p-5 sm:p-6 space-y-5 overflow-y-auto custom-scrollbar">
+              <FormField label="Scale Name" required>
+                <input value={name} onChange={e => setName(e.target.value)}
+                  placeholder="e.g. Standard (A1-E)" className={inputCls} />
+              </FormField>
+
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Bands</label>
+                  <button onClick={addBand}
+                    className="text-[11px] font-semibold text-primary hover:text-primary/80 inline-flex items-center gap-1 transition-colors">
+                    <Plus className="size-3.5" /> Add band
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-[1fr_1.4fr_auto] gap-2 items-center mb-1.5 px-1">
+                  <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Min %</span>
+                  <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Grade Label</span>
+                  <span></span>
+                </div>
+
+                <div className="space-y-2">
+                  {bands.map((b, i) => (
+                    <div key={i} className="grid grid-cols-[1fr_1.4fr_auto] gap-2 items-center">
+                      <input value={b.min_pct} inputMode="decimal"
+                        onChange={e => { if (/^\d*\.?\d*$/.test(e.target.value)) setBand(i, 'min_pct', e.target.value); }}
+                        placeholder="91"
+                        className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 text-center tabular-nums placeholder:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
+                      <input value={b.label}
+                        onChange={e => setBand(i, 'label', e.target.value)}
+                        placeholder="A1"
+                        className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
+                      <button onClick={() => removeBand(i)} disabled={bands.length <= 1}
+                        className="size-9 rounded-md text-zinc-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center transition-colors" title="Remove band">
+                        <Trash2 className="size-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="rounded-md bg-blue-50/60 ring-1 ring-inset ring-blue-500/15 px-3 py-2.5 mt-3 flex items-start gap-2">
+                  <Award className="size-3.5 text-blue-600 shrink-0 mt-0.5" />
+                  <p className="text-[11px] text-blue-800 leading-relaxed">
+                    A mark's grade is the band with the highest minimum % it reaches. Example: 91+ = A1, 81+ = A2, and so on
+                    down to your lowest band. You don't set a maximum — each band runs up to the next one.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
+              <button onClick={() => setShowModal(false)} disabled={saving}
+                className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 rounded-md font-semibold text-xs hover:bg-zinc-50 transition-colors">
+                Cancel
+              </button>
+              <button onClick={handleSave} disabled={saving}
+                className="h-9 px-6 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors min-w-[100px]">
+                {saving ? <Loader2 className="size-3.5 animate-spin shrink-0" /> : <Save className="size-3.5 shrink-0" />}
+                {editing ? 'Save' : 'Add'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // -----------------------------------------------------------------
 const inputCls = 'h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm';
+
+// Trim trailing decimals: 91.00 -> 91, 90.50 -> 90.5
+const fmtPct = (v) => {
+  if (v === null || v === undefined || v === '') return '';
+  const n = Number(v);
+  if (isNaN(n)) return String(v);
+  return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(2)));
+};
 
 function FormField({ label, required, children }) {
   return (
