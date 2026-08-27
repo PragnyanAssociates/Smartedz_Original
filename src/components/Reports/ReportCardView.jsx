@@ -160,16 +160,17 @@ export default function ReportCardView({ card }) {
     return Number(t.max_marks || 0);
   };
 
-  // Grade for a percentage against an exam's bands: the band whose From-To
-  // range the score falls in (max_pct null = up to 100). Bands ride along
-  // on each exam type from the backend (per class + exam).
-  const gradeFor = (pct, bands) => {
-    if (pct == null || isNaN(pct) || !Array.isArray(bands) || bands.length === 0) return null;
+  // Grade for an exam's TOTAL marks (the number in the Total row) against
+  // its bands: the band whose From-To range the total falls in. A blank
+  // To on the top band means no upper limit. Bands ride along on each exam
+  // type from the backend (per class + exam).
+  const gradeFor = (total, bands) => {
+    if (total == null || isNaN(total) || !Array.isArray(bands) || bands.length === 0) return null;
     let best = null;
     bands.forEach(b => {
       const from = Number(b.min_pct);
-      const to = (b.max_pct === null || b.max_pct === undefined || b.max_pct === '') ? 100 : Number(b.max_pct);
-      if (!isNaN(from) && pct >= from && pct <= to + 1e-9 && (best === null || from > Number(best.min_pct))) best = b;
+      const to = (b.max_pct === null || b.max_pct === undefined || b.max_pct === '') ? Infinity : Number(b.max_pct);
+      if (!isNaN(from) && total >= from && total <= to + 1e-9 && (best === null || from > Number(best.min_pct))) best = b;
     });
     return best ? best.label : null;
   };
@@ -190,9 +191,11 @@ export default function ReportCardView({ card }) {
     (subjects || []).reduce((sum, s) => sum + (getMark(s.id, t.id) != null ? maxFor(t, s.id) : 0), 0);
 
   const examColumnGrade = (t) => {
-    const mx = examColumnMax(t);
-    if (mx <= 0) return null;
-    return gradeFor((examColumnTotal(t.id) / mx) * 100, t.grade_bands);
+    // Grade matches the exam's TOTAL marks across all subjects (the Total
+    // row) against the bands — not a percentage. Only grade a column the
+    // student was actually marked in.
+    if (examColumnMax(t) <= 0) return null;
+    return gradeFor(examColumnTotal(t.id), t.grade_bands);
   };
 
   const anyGrades = (examTypes || []).some(t => Array.isArray(t.grade_bands) && t.grade_bands.length > 0);

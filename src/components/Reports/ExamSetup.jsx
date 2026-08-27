@@ -1550,8 +1550,9 @@ function GradingPanel() {
       <div>
         <h3 className="font-semibold text-zinc-900 text-sm">Grading</h3>
         <p className="text-[11px] text-zinc-500 mt-0.5 max-w-2xl">
-          Set grade ranges per class and per exam type. Pick a class, then an exam, then add the bands. Each class can grade the
-          same exam differently. The report card shows the grade for each exam from these ranges.
+          Set grade ranges in <strong>total marks</strong> per class and per exam type. Pick a class, then an exam, then add the
+          bands as total-marks ranges &mdash; the exam&rsquo;s total across all subjects. Each class can grade the same exam
+          differently. The report card shows the grade for each exam from these ranges.
         </p>
       </div>
 
@@ -1598,8 +1599,8 @@ function GradingPanel() {
             </div>
 
             <div className="grid grid-cols-[1fr_1fr_1.4fr_auto] gap-2 items-center mb-1.5 px-1">
-              <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">From %</span>
-              <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">To %</span>
+              <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">From (marks)</span>
+              <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">To (marks)</span>
               <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Grade Label</span>
               <span></span>
             </div>
@@ -1609,11 +1610,11 @@ function GradingPanel() {
                 <div key={i} className="grid grid-cols-[1fr_1fr_1.4fr_auto] gap-2 items-center">
                   <input value={b.min_pct} inputMode="decimal"
                     onChange={e => { if (/^\d*\.?\d*$/.test(e.target.value)) setBand(i, 'min_pct', e.target.value); }}
-                    placeholder="81"
+                    placeholder="101"
                     className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 text-center tabular-nums placeholder:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
                   <input value={b.max_pct} inputMode="decimal"
                     onChange={e => { if (/^\d*\.?\d*$/.test(e.target.value)) setBand(i, 'max_pct', e.target.value); }}
-                    placeholder="90"
+                    placeholder="120"
                     className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 text-center tabular-nums placeholder:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
                   <input value={b.label}
                     onChange={e => setBand(i, 'label', e.target.value)}
@@ -1630,8 +1631,10 @@ function GradingPanel() {
             <div className="rounded-md bg-blue-50/60 ring-1 ring-inset ring-blue-500/15 px-3 py-2.5 mt-3 flex items-start gap-2">
               <Award className="size-3.5 text-blue-600 shrink-0 mt-0.5" />
               <p className="text-[11px] text-blue-800 leading-relaxed">
-                Set the % range for each grade, e.g. <strong>91 to 100 = A1</strong>, <strong>81 to 90 = A2</strong>. A mark's grade
-                is the band its percentage falls inside. Leave <strong>To %</strong> blank on the top band to mean &ldquo;up to 100&rdquo;.
+                Enter each grade as a <strong>total-marks</strong> range for this exam &mdash; the exam&rsquo;s total across all
+                subjects. E.g. if AT1 totals 120: <strong>101 to 120 = A1</strong>, <strong>91 to 100 = A2</strong>. The report
+                card grades each exam by where its <strong>Total</strong> falls. Leave <strong>To</strong> blank on the top band to
+                mean &ldquo;and above&rdquo;.
               </p>
             </div>
 
