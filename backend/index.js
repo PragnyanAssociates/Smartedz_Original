@@ -5832,8 +5832,21 @@ app.get('/api/admin/marks-export/:instId', async (req, res) => {
 //
 //  institutionId comes from req.auth. Class/student/teacher reads verify
 //  the target belongs to the caller's institution via sameTenant.
-//  Reads entirely from the Reports tables (no new tables).
+//  Reads from the Reports tables and shares the SAME exam engine as the
+//  report cards (loadExamEngine / evalExamValue from Section 17), so
+//  DERIVED exams (FA1 = AT1+UT1, etc.) are computed here too.
+//
+//  Only exam types flagged show_in_performance appear in the dropdowns
+//  and count toward the numbers — untick an exam in
+//  Reports -> Exam Setup -> Exam Types and it disappears from here.
+//  (Untick the feeder exams if you don't want a derived exam and its
+//  sources both counting in "Overall".)
 // =====================================================================
+
+// An exam is shown in Performance unless its flag is explicitly 0.
+function perfVisible(t) {
+    return t.show_in_performance === undefined || t.show_in_performance === null || t.show_in_performance === 1;
+}
 
 function buildExamMaxMap(rows) {
     const map = {};
@@ -5888,18 +5901,15 @@ async function loadClassPerformance(classId, requestedYearId) {
         return links.has(parseInt(classId, 10));
     });
 
-    const [examTypes] = await db.execute(
-        'SELECT * FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id',
-        [instId]
-    );
+    // Shared exam engine (entered + derived, with the rule graph).
+    const eng = await loadExamEngine(instId);
+    const examTypesAll = eng.examTypes;
+
     const [maxRows] = await db.execute(
         'SELECT exam_type_id, subject_id, max_marks FROM exam_max_marks WHERE class_id = ?',
         [classId]
     );
     const maxMarks = buildExamMaxMap(maxRows);
-    const examTypesForClass = examTypes
-        .filter(t => maxMarks[t.id] !== undefined)
-        .map(t => ({ ...t, max_marks: maxMarks[t.id]?.default ?? null }));
 
     const [assignments] = await db.execute(
         `SELECT stm.subject_id, stm.teacher_id, u.name AS teacher_name, u.email AS teacher_email
@@ -5909,12 +5919,52 @@ async function loadClassPerformance(classId, requestedYearId) {
         [classId]
     );
 
-    const [marks] = await db.execute(
+    const [marksRows] = await db.execute(
         `SELECT student_id, subject_id, exam_type_id, marks_obtained
            FROM student_marks
           WHERE class_id = ? AND academic_year_id = ?`,
         [classId, yearId]
     );
+
+    // --- Compute derived exams per student x subject (same as report card) ---
+    const obtMap = {};
+    marksRows.forEach(r => {
+        if (r.marks_obtained !== null && r.marks_obtained !== undefined)
+            obtMap[`${r.student_id}:${r.subject_id}:${r.exam_type_id}`] = Number(r.marks_obtained);
+    });
+    const enteredMaxFor = (eid, sid) => { const v = resolveExamMax(maxMarks[eid], sid); return v === undefined ? 0 : v; };
+
+    const combined = marksRows.slice();
+    const derivedMaxBySub = {};
+    if (examTypesAll.some(t => t.kind === 'derived')) {
+        students.forEach(stu => {
+            subjects.forEach(sub => {
+                const memo = {}; const stack = new Set();
+                const getObt = (eid) => { const v = obtMap[`${stu.id}:${sub.id}:${eid}`]; return v === undefined ? null : v; };
+                const getMax = (eid) => enteredMaxFor(eid, sub.id);
+                examTypesAll.forEach(et => {
+                    if (et.kind !== 'derived') return;
+                    const rr = evalExamValue(et.id, eng.graph, getObt, getMax, memo, stack);
+                    (derivedMaxBySub[et.id] = derivedMaxBySub[et.id] || {})[sub.id] = rr.max;
+                    if (rr.obt !== null) combined.push({ student_id: stu.id, subject_id: sub.id, exam_type_id: et.id, marks_obtained: rr.obt });
+                });
+            });
+        });
+        Object.keys(derivedMaxBySub).forEach(eid => {
+            if (!maxMarks[eid]) maxMarks[eid] = { default: null, bySubject: {} };
+            Object.keys(derivedMaxBySub[eid]).forEach(sid => { maxMarks[eid].bySubject[sid] = derivedMaxBySub[eid][sid]; });
+        });
+    }
+
+    // --- Performance set: visible in performance AND relevant to this class ---
+    const perfSet = examTypesAll.filter(t => perfVisible(t) && (
+        t.kind === 'derived'
+            ? subjects.some(s => (derivedMaxBySub[t.id]?.[s.id] || 0) > 0)
+            : (maxMarks[t.id] !== undefined)
+    ));
+    const perfIds = new Set(perfSet.map(t => t.id));
+    const examTypesForClass = perfSet.map(t => ({ ...t, max_marks: maxMarks[t.id]?.default ?? null }));
+    const marks = combined.filter(m => perfIds.has(m.exam_type_id));
 
     return {
         class: cls[0],
@@ -5996,10 +6046,10 @@ app.get('/api/admin/performance/teachers/:instId', async (req, res) => {
     try {
         const yearId = await resolveYearId(instId, req.query.academic_year_id);
 
-        const [examTypeRows] = await db.execute(
-            'SELECT id, name, exam_order FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id',
-            [instId]
-        );
+        // Engine gives us exam types (with kind + performance flag) and the graph.
+        const eng = await loadExamEngine(instId);
+        const perfExamRows = eng.examTypes.filter(perfVisible);
+        const hasDerived = eng.examTypes.some(t => t.kind === 'derived');
 
         const [assignments] = await db.execute(
             `SELECT stm.class_id, stm.subject_id, stm.teacher_id,
@@ -6042,12 +6092,13 @@ app.get('/api/admin/performance/teachers/:instId', async (req, res) => {
         studentCounts.forEach(r => { studentCountMap[r.class_id] = r.cnt; });
 
         const [allMarks] = await db.execute(
-            `SELECT sm.class_id, sm.subject_id, sm.exam_type_id, sm.marks_obtained
+            `SELECT sm.student_id, sm.class_id, sm.subject_id, sm.exam_type_id, sm.marks_obtained
                FROM student_marks sm
               WHERE sm.institutionId = ? AND sm.academic_year_id = ?`,
             [instId, yearId]
         );
 
+        // Entered marks -> class:subject:exam aggregate (obtained/possible).
         const agg = {};
         allMarks.forEach(m => {
             const max = resolveExamMax(maxByClass[m.class_id]?.[m.exam_type_id], m.subject_id);
@@ -6060,6 +6111,38 @@ app.get('/api/admin/performance/teachers/:instId', async (req, res) => {
             agg[k].possible += max;
         });
 
+        // Derived exams: compute per class x student x subject, fold into agg.
+        if (hasDerived) {
+            const obtMapT = {};
+            const clsStudents = {};
+            const clsSubjects = {};
+            allMarks.forEach(m => {
+                if (m.marks_obtained !== null && m.marks_obtained !== undefined)
+                    obtMapT[`${m.class_id}:${m.student_id}:${m.subject_id}:${m.exam_type_id}`] = Number(m.marks_obtained);
+                (clsStudents[m.class_id] = clsStudents[m.class_id] || new Set()).add(m.student_id);
+                (clsSubjects[m.class_id] = clsSubjects[m.class_id] || new Set()).add(m.subject_id);
+            });
+            Object.keys(clsStudents).forEach(cid => {
+                const enteredMaxFor = (eid, sid) => { const v = resolveExamMax(maxByClass[cid]?.[eid], sid); return v === undefined ? 0 : v; };
+                clsStudents[cid].forEach(stu => {
+                    (clsSubjects[cid] || new Set()).forEach(sub => {
+                        const memo = {}; const stack = new Set();
+                        const getObt = (eid) => { const v = obtMapT[`${cid}:${stu}:${sub}:${eid}`]; return v === undefined ? null : v; };
+                        const getMax = (eid) => enteredMaxFor(eid, sub);
+                        eng.examTypes.forEach(et => {
+                            if (et.kind !== 'derived') return;
+                            const rr = evalExamValue(et.id, eng.graph, getObt, getMax, memo, stack);
+                            if (rr.obt !== null && rr.max > 0) {
+                                const k = `${cid}:${sub}:${et.id}`;
+                                if (!agg[k]) agg[k] = { obtained: 0, possible: 0 };
+                                agg[k].obtained += rr.obt; agg[k].possible += rr.max;
+                            }
+                        });
+                    });
+                });
+            });
+        }
+
         const teachers = {};
         for (const a of assignments) {
             if (!teachers[a.teacher_id]) {
@@ -6070,7 +6153,7 @@ app.get('/api/admin/performance/teachers/:instId', async (req, res) => {
                     detail: []
                 };
             }
-            const exams = examTypeRows.map(t => {
+            const exams = perfExamRows.map(t => {
                 const e = agg[`${a.class_id}:${a.subject_id}:${t.id}`] || { obtained: 0, possible: 0 };
                 return {
                     exam_type_id: t.id,
@@ -6091,7 +6174,7 @@ app.get('/api/admin/performance/teachers/:instId', async (req, res) => {
         }
 
         res.json({
-            examTypes: examTypeRows.map(t => ({ id: t.id, name: t.name })),
+            examTypes: perfExamRows.map(t => ({ id: t.id, name: t.name })),
             teachers: Object.values(teachers)
         });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -6111,10 +6194,8 @@ app.get('/api/admin/performance/teacher/:teacherId', async (req, res) => {
         if (!sameTenant(req, instId)) return res.status(403).json({ error: 'This teacher belongs to another institution.' });
         const yearId = await resolveYearId(instId, req.query.academic_year_id);
 
-        const [examTypeRows] = await db.execute(
-            'SELECT id, name, exam_order FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id',
-            [instId]
-        );
+        const eng = await loadExamEngine(instId);
+        const perfExamRows = eng.examTypes.filter(perfVisible);
 
         const [assignments] = await db.execute(
             `SELECT stm.class_id, stm.subject_id,
@@ -6147,20 +6228,40 @@ app.get('/api/admin/performance/teacher/:teacherId', async (req, res) => {
         let overallObtained = 0, overallPossible = 0;
 
         for (const a of assignments) {
-            const [marks] = await db.execute(
-                `SELECT exam_type_id, marks_obtained
+            const [mrows] = await db.execute(
+                `SELECT student_id, exam_type_id, marks_obtained
                    FROM student_marks
                   WHERE class_id = ? AND subject_id = ? AND academic_year_id = ?`,
                 [a.class_id, a.subject_id, yearId]
             );
-            const exams = examTypeRows.map(t => {
+            const enteredMaxFor = (eid) => { const v = resolveExamMax(maxByClass[a.class_id]?.[eid], a.subject_id); return v === undefined ? 0 : v; };
+
+            // Per-student entered lookup, for computing derived exams.
+            const obt = {};
+            const studs = new Set();
+            mrows.forEach(m => {
+                if (m.marks_obtained !== null && m.marks_obtained !== undefined) obt[`${m.student_id}:${m.exam_type_id}`] = Number(m.marks_obtained);
+                studs.add(m.student_id);
+            });
+
+            const exams = perfExamRows.map(t => {
+                if (t.kind === 'derived') {
+                    let o = 0, p = 0;
+                    studs.forEach(stu => {
+                        const memo = {}; const stack = new Set();
+                        const getObt = (eid) => { const v = obt[`${stu}:${eid}`]; return v === undefined ? null : v; };
+                        const getMax = (eid) => enteredMaxFor(eid);
+                        const rr = evalExamValue(t.id, eng.graph, getObt, getMax, memo, stack);
+                        if (rr.obt !== null && rr.max > 0) { o += rr.obt; p += rr.max; }
+                    });
+                    return { exam_type_id: t.id, exam_name: t.name, obtained: o, possible: p };
+                }
                 let o = 0, p = 0;
-                const max = resolveExamMax(maxByClass[a.class_id]?.[t.id], a.subject_id);
-                marks.forEach(m => {
+                const max = enteredMaxFor(t.id);
+                mrows.forEach(m => {
                     if (m.exam_type_id !== t.id) return;
                     const val = parseFloat(m.marks_obtained);
-                    if (isNaN(val)) return;
-                    if (max === undefined || max === null) return;
+                    if (isNaN(val) || max <= 0) return;
                     o += val; p += max;
                 });
                 return { exam_type_id: t.id, exam_name: t.name, obtained: o, possible: p };
@@ -6190,7 +6291,7 @@ app.get('/api/admin/performance/teacher/:teacherId', async (req, res) => {
             overall_possible: overallPossible,
             overall_percentage: overallPossible > 0
                 ? (overallObtained / overallPossible) * 100 : null,
-            examTypes: examTypeRows.map(t => ({ id: t.id, name: t.name })),
+            examTypes: perfExamRows.map(t => ({ id: t.id, name: t.name })),
             detail
         });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -6260,7 +6361,11 @@ app.get('/api/admin/performance-export/:instId', async (req, res) => {
             return links.has(cid);
         });
 
-        const [examTypes] = await db.execute('SELECT id, name, exam_order FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id', [instId]);
+        // Only entered exam types the school marks by hand, and only those
+        // ticked to appear in Performance.
+        const [examTypesRaw] = await db.execute(
+            'SELECT id, name, exam_order, kind, show_in_performance FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id', [instId]);
+        const examTypes = examTypesRaw.filter(t => perfVisible(t) && t.kind !== 'derived');
         const examName = {}; examTypes.forEach(t => { examName[t.id] = t.name; });
 
         const [maxAll] = await db.execute(

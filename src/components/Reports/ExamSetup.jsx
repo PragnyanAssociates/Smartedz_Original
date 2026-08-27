@@ -818,7 +818,9 @@ function MaxMarksPanel() {
       const mData = await mRes.json();
 
       const cls = aggData.classes || [];
-      setTypes(Array.isArray(tData) ? tData : []);
+      // Derived exams compute their own max from their sources, so they're
+      // not part of Max Marks setup — only entered exams appear here.
+      setTypes(Array.isArray(tData) ? tData.filter(t => t.kind !== 'derived') : []);
       setClasses(cls);
       setSubjects(aggData.subjects || []);
       setSubjectClasses(aggData.subjectClasses || {});
