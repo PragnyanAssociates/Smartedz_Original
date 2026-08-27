@@ -4848,8 +4848,8 @@ app.post('/api/admin/exam-rules', async (req, res) => {
         let i = 0;
         for (const p of clean) {
             const [r] = await conn.execute(
-                'INSERT INTO exam_rule_parts (institutionId, derived_exam_type_id, part_order, percent, divisor) VALUES (?, ?, ?, ?, ?)',
-                [institutionId, exam_type_id, i++, p.percent, p.divisor]);
+                'INSERT INTO exam_rule_parts (institutionId, derived_exam_type_id, part_order, mode, weight_max, percent, divisor) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                [institutionId, exam_type_id, i++, 'raw', 0, p.percent, p.divisor]);
             const partId = r.insertId;
             for (const sid of p.sources) {
                 await conn.execute(

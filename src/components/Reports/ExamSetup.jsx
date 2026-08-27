@@ -126,11 +126,16 @@ function ExamTypesPanel() {
       try {
         const res = await fetch(`${API_BASE_URL}/admin/exam-rules/${t.id}`);
         const d = await res.json();
-        const parts = (d.parts || []).map(p => ({
-          sources: (p.sources || []).map(Number),
-          percent: p.percent != null ? String(p.percent) : '100',
-          divisor: p.divisor != null ? String(p.divisor) : '1'
-        }));
+        const parts = (d.parts || []).map(p => {
+          const hasPct = p.percent != null && Number(p.percent) !== 100;
+          const hasDiv = p.divisor != null && Number(p.divisor) !== 1;
+          return {
+            sources: (p.sources || []).map(Number),
+            percent: hasPct ? String(p.percent) : '',
+            divisor: hasDiv ? String(p.divisor) : '',
+            adv: hasPct || hasDiv
+          };
+        });
         setForm(f => ({ ...f, parts }));
       } catch (e) { console.error(e); }
       setLoadingRules(false);
@@ -141,9 +146,11 @@ function ExamTypesPanel() {
   const sourceOptions = types.filter(t => !editing || t.id !== editing.id);
   const nameOf = (id) => { const t = types.find(x => x.id === id); return t ? t.name : `#${id}`; };
 
-  const addPart = () => setForm(f => ({ ...f, parts: [...f.parts, { sources: [], percent: '100', divisor: '1' }] }));
+  const addPart = () => setForm(f => ({ ...f, parts: [...f.parts, { sources: [], percent: '', divisor: '', adv: false }] }));
   const removePart = (i) => setForm(f => ({ ...f, parts: f.parts.filter((_, idx) => idx !== i) }));
   const setPart = (i, key, val) => setForm(f => ({ ...f, parts: f.parts.map((p, idx) => idx === i ? { ...p, [key]: val } : p) }));
+  // Toggle the optional percentage/division controls; clearing resets them.
+  const setAdv = (i, on) => setForm(f => ({ ...f, parts: f.parts.map((p, idx) => idx === i ? { ...p, adv: on, percent: on ? p.percent : '', divisor: on ? p.divisor : '' } : p) }));
   const addSource = (i, sid) => setForm(f => ({
     ...f,
     parts: f.parts.map((p, idx) => (idx === i && !p.sources.includes(sid)) ? { ...p, sources: [...p.sources, sid] } : p)
@@ -161,13 +168,13 @@ function ExamTypesPanel() {
       cleanParts = form.parts
         .map(p => ({
           sources: [...new Set(p.sources.map(Number))],
-          percent: p.percent === '' ? 100 : (parseFloat(p.percent) || 0),
-          divisor: p.divisor === '' ? 1 : (parseFloat(p.divisor) || 0)
+          percent: (p.adv && p.percent !== '') ? (parseFloat(p.percent) || 0) : 100,
+          divisor: (p.adv && p.divisor !== '') ? (parseFloat(p.divisor) || 0) : 1
         }))
         .filter(p => p.sources.length > 0);
       if (cleanParts.length === 0) return alert('A derived exam needs at least one part with a source exam.');
-      if (cleanParts.some(p => p.percent <= 0)) return alert('Each part\u2019s percentage must be greater than 0.');
-      if (cleanParts.some(p => p.divisor <= 0)) return alert('Each part\u2019s divide-by must be greater than 0.');
+      if (cleanParts.some(p => p.percent <= 0)) return alert('A percentage must be greater than 0.');
+      if (cleanParts.some(p => p.divisor <= 0)) return alert('A divide-by must be greater than 0.');
     }
 
     setSaving(true);
@@ -413,8 +420,8 @@ function ExamTypesPanel() {
                     <div className="space-y-3">
                       {form.parts.map((p, i) => {
                         const remaining = sourceOptions.filter(o => !p.sources.includes(o.id));
-                        const pct = p.percent === '' ? 100 : parseFloat(p.percent);
-                        const div = p.divisor === '' ? 1 : parseFloat(p.divisor);
+                        const pct = (p.adv && p.percent !== '') ? parseFloat(p.percent) : 100;
+                        const div = (p.adv && p.divisor !== '') ? parseFloat(p.divisor) : 1;
                         const sumLabel = p.sources.length ? p.sources.map(nameOf).join(' + ') : 'exams';
                         let formula = `(${sumLabel})`;
                         if (!isNaN(pct) && pct !== 100) formula += ` \u00d7 ${p.percent || 0}%`;
@@ -457,24 +464,43 @@ function ExamTypesPanel() {
                               </div>
                             </div>
 
-                            {/* percent + divisor */}
-                            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-[11px] text-zinc-500 font-medium">Take</span>
-                                <input value={p.percent} inputMode="decimal"
-                                  onChange={e => { if (/^\d*\.?\d*$/.test(e.target.value)) setPart(i, 'percent', e.target.value); }}
-                                  placeholder="100"
-                                  className="h-8 w-16 rounded-md border border-zinc-200 bg-white px-2 text-sm text-center tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm" />
-                                <span className="text-[11px] text-zinc-500 font-medium">%</span>
+                            {/* optional: percentage / division */}
+                            {!p.adv ? (
+                              <button type="button" onClick={() => setAdv(i, true)}
+                                className="text-[11px] font-semibold text-primary hover:text-primary/80 inline-flex items-center gap-1 transition-colors">
+                                <Plus className="size-3.5" /> Take a percentage or divide (optional)
+                              </button>
+                            ) : (
+                              <div className="rounded-md bg-zinc-50 ring-1 ring-inset ring-zinc-200 p-2.5 space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Adjust (optional)</span>
+                                  <button type="button" onClick={() => setAdv(i, false)}
+                                    className="text-[10px] font-semibold text-zinc-400 hover:text-red-600 transition-colors">
+                                    Remove
+                                  </button>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-[11px] text-zinc-500 font-medium">Take</span>
+                                    <input value={p.percent} inputMode="decimal"
+                                      onChange={e => { if (/^\d*\.?\d*$/.test(e.target.value)) setPart(i, 'percent', e.target.value); }}
+                                      placeholder="100"
+                                      className="h-8 w-16 rounded-md border border-zinc-200 bg-white px-2 text-sm text-center tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm" />
+                                    <span className="text-[11px] text-zinc-500 font-medium">%</span>
+                                  </div>
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-[11px] text-zinc-500 font-medium">Divide by</span>
+                                    <input value={p.divisor} inputMode="decimal"
+                                      onChange={e => { if (/^\d*\.?\d*$/.test(e.target.value)) setPart(i, 'divisor', e.target.value); }}
+                                      placeholder="1"
+                                      className="h-8 w-16 rounded-md border border-zinc-200 bg-white px-2 text-sm text-center tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm" />
+                                  </div>
+                                </div>
+                                <p className="text-[10px] text-zinc-400 leading-snug">
+                                  Leave blank for none. Percentage takes a share of the marks (e.g. 20%); divide-by splits them (e.g. by 2 for an average).
+                                </p>
                               </div>
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-[11px] text-zinc-500 font-medium">Divide by</span>
-                                <input value={p.divisor} inputMode="decimal"
-                                  onChange={e => { if (/^\d*\.?\d*$/.test(e.target.value)) setPart(i, 'divisor', e.target.value); }}
-                                  placeholder="1"
-                                  className="h-8 w-16 rounded-md border border-zinc-200 bg-white px-2 text-sm text-center tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm" />
-                              </div>
-                            </div>
+                            )}
 
                             <p className="text-[11px] text-zinc-500 leading-snug">
                               This part = <span className="font-semibold text-zinc-700">{formula}</span>
