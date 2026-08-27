@@ -4216,10 +4216,11 @@ function orderedSubjects(subjectRows, orderRows) {
 //
 //  An exam type is 'entered' (teachers type marks) or 'derived' (computed
 //  from other exams). A derived exam is an ordered list of PARTS; each
-//  part is either:
-//    'raw'    - add the source exams' marks (part max = sum of source max)
-//    'scaled' - normalise the sources to weight_max marks
-//               (contribution = weight_max * achieved / source_max)
+//  part takes a set of source exams and contributes:
+//        (sum of the sources) x percent% / divisor
+//  e.g. "SA1-W" (100%, /1), or "20% of (FA1+FA2)" (20%, /1), or
+//       "(SA1+SA2)/2" (100%, /2). A part max uses the same factor on the
+//       sources' combined max.
 //  A derived exam may feed another (FA -> SA -> Final), so values are
 //  resolved over a dependency graph, memoised per (student, subject).
 //  Any missing source makes the value PENDING (null) rather than a
@@ -4233,7 +4234,7 @@ function buildExamGraph(examTypes, partRows, sourceRows) {
     const partById = {};
     const partsByExam = {};
     (partRows || []).forEach(p => {
-        const part = { id: p.id, mode: p.mode, weight_max: Number(p.weight_max) || 0, sources: [] };
+        const part = { id: p.id, percent: (p.percent == null ? 100 : Number(p.percent)), divisor: (p.divisor == null ? 1 : Number(p.divisor)), sources: [] };
         partById[p.id] = part;
         (partsByExam[p.derived_exam_type_id] = partsByExam[p.derived_exam_type_id] || []).push(part);
     });
@@ -4269,9 +4270,11 @@ function evalExamValue(examId, graph, getObt, getMax, memo, stack) {
             if (r.obt === null) sNull = true; else sObt += r.obt;
             sMax += r.max;
         }
-        let pObt, pMax;
-        if (p.mode === 'raw') { pMax = sMax; pObt = sNull ? null : sObt; }
-        else { pMax = p.weight_max; pObt = (sNull || sMax <= 0) ? null : (pMax * (sObt / sMax)); }
+        // contribution = (sum of the chosen exams) x percent% / divisor
+        const div = (p.divisor && p.divisor > 0) ? p.divisor : 1;
+        const factor = ((Number(p.percent) || 0) / 100) / div;
+        const pMax = sMax * factor;
+        const pObt = sNull ? null : (sObt * factor);
         tMax += pMax;
         if (pObt === null) pending = true; else tObt += pObt;
     }
@@ -4287,7 +4290,7 @@ async function loadExamEngine(instId) {
     const [examTypes] = await db.execute(
         'SELECT * FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id', [instId]);
     const [partRows] = await db.execute(
-        'SELECT id, derived_exam_type_id, part_order, mode, weight_max FROM exam_rule_parts WHERE institutionId = ? ORDER BY part_order, id',
+        'SELECT id, derived_exam_type_id, part_order, percent, divisor FROM exam_rule_parts WHERE institutionId = ? ORDER BY part_order, id',
         [instId]);
     let sourceRows = [];
     if (partRows.length) {
@@ -4347,17 +4350,26 @@ app.post('/api/admin/exam-types', async (req, res) => {
 });
 
 app.put('/api/admin/exam-types/:id', async (req, res) => {
-    const { name, exam_order, grade_scale_id } = req.body;
+    const { name, exam_order, kind, show_on_report } = req.body;
     try {
         const [own] = await db.execute('SELECT institutionId FROM exam_types WHERE id = ?', [req.params.id]);
         if (own.length === 0) return res.status(404).json({ error: 'Exam type not found.' });
         if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This exam type belongs to another institution.' });
-        const gsId = (grade_scale_id === '' || grade_scale_id === null || grade_scale_id === undefined)
-            ? null : parseInt(grade_scale_id, 10);
+        const examKind = (kind === 'derived') ? 'derived' : 'entered';
+        const showRC = (show_on_report === 0 || show_on_report === false) ? 0 : 1;
         await db.execute(
-            'UPDATE exam_types SET name = ?, exam_order = ?, grade_scale_id = ? WHERE id = ?',
-            [name.trim(), parseInt(exam_order, 10) || 0, gsId, req.params.id]
+            'UPDATE exam_types SET name = ?, exam_order = ?, kind = ?, show_on_report = ? WHERE id = ?',
+            [name.trim(), parseInt(exam_order, 10) || 0, examKind, showRC, req.params.id]
         );
+        // Switching back to Entered discards any derived formula it had.
+        if (examKind === 'entered') {
+            const [op] = await db.execute('SELECT id FROM exam_rule_parts WHERE derived_exam_type_id = ?', [req.params.id]);
+            if (op.length) {
+                const ph = op.map(() => '?').join(',');
+                await db.execute(`DELETE FROM exam_rule_part_sources WHERE part_id IN (${ph})`, op.map(p => p.id));
+                await db.execute('DELETE FROM exam_rule_parts WHERE derived_exam_type_id = ?', [req.params.id]);
+            }
+        }
         res.json({ success: true });
     } catch (err) {
         if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
@@ -4733,7 +4745,7 @@ app.get('/api/admin/exam-rules/:examTypeId', async (req, res) => {
         if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This exam type belongs to another institution.' });
 
         const [partRows] = await db.execute(
-            'SELECT id, mode, weight_max, part_order FROM exam_rule_parts WHERE derived_exam_type_id = ? ORDER BY part_order, id',
+            'SELECT id, percent, divisor, part_order FROM exam_rule_parts WHERE derived_exam_type_id = ? ORDER BY part_order, id',
             [req.params.examTypeId]);
         let srcByPart = {};
         if (partRows.length) {
@@ -4747,8 +4759,8 @@ app.get('/api/admin/exam-rules/:examTypeId', async (req, res) => {
             exam_type_id: Number(req.params.examTypeId),
             kind: own[0].kind,
             parts: partRows.map(p => ({
-                mode: p.mode,
-                weight_max: Number(p.weight_max) || 0,
+                percent: Number(p.percent),
+                divisor: Number(p.divisor),
                 sources: srcByPart[p.id] || []
             }))
         });
@@ -4776,15 +4788,13 @@ app.post('/api/admin/exam-rules', async (req, res) => {
         // Clean + validate the incoming parts.
         const clean = [];
         for (const p of parts) {
-            const mode = (p.mode === 'scaled') ? 'scaled' : 'raw';
             const sources = [...new Set((p.sources || []).map(Number).filter(id => okExam.has(id) && id !== Number(exam_type_id)))];
             if (sources.length === 0) continue;                       // a part needs at least one source
-            const weight = mode === 'scaled' ? (parseFloat(p.weight_max) || 0) : 0;
-            if (mode === 'scaled' && weight <= 0) {
-                conn.release();
-                return res.status(400).json({ error: 'A "scale to" part needs a marks value greater than 0.' });
-            }
-            clean.push({ mode, weight_max: weight, sources });
+            let percent = parseFloat(p.percent);
+            if (isNaN(percent) || percent <= 0) percent = 100;
+            let divisor = parseFloat(p.divisor);
+            if (isNaN(divisor) || divisor <= 0) divisor = 1;
+            clean.push({ percent, divisor, sources });
         }
         if (clean.length === 0) {
             conn.release();
@@ -4838,14 +4848,64 @@ app.post('/api/admin/exam-rules', async (req, res) => {
         let i = 0;
         for (const p of clean) {
             const [r] = await conn.execute(
-                'INSERT INTO exam_rule_parts (institutionId, derived_exam_type_id, part_order, mode, weight_max) VALUES (?, ?, ?, ?, ?)',
-                [institutionId, exam_type_id, i++, p.mode, p.weight_max]);
+                'INSERT INTO exam_rule_parts (institutionId, derived_exam_type_id, part_order, percent, divisor) VALUES (?, ?, ?, ?, ?)',
+                [institutionId, exam_type_id, i++, p.percent, p.divisor]);
             const partId = r.insertId;
             for (const sid of p.sources) {
                 await conn.execute(
                     'INSERT INTO exam_rule_part_sources (part_id, source_exam_type_id) VALUES (?, ?)',
                     [partId, sid]);
             }
+        }
+        await conn.commit();
+        res.json({ success: true });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally { conn.release(); }
+});
+
+
+// =====================================================================
+// === 17.L GRADING (per class + per exam type) ========================
+//   Each class can grade each exam on its own %-bands. A mark's grade is
+//   the band with the highest minimum % it reaches. Saving REPLACES the
+//   bands for that (class, exam) pair.
+// =====================================================================
+
+app.get('/api/admin/exam-grades/:classId/:examTypeId', async (req, res) => {
+    try {
+        const instId = req.auth.institutionId;
+        const [rows] = await db.execute(
+            'SELECT min_pct, label FROM exam_grade_bands WHERE institutionId = ? AND class_id = ? AND exam_type_id = ? ORDER BY min_pct DESC',
+            [instId, req.params.classId, req.params.examTypeId]);
+        res.json(rows.map(r => ({ min_pct: Number(r.min_pct), label: r.label })));
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/admin/exam-grades', async (req, res) => {
+    const institutionId = req.auth.institutionId;
+    const { class_id, exam_type_id, bands = [] } = req.body;
+    if (!class_id || !exam_type_id) return res.status(400).json({ error: 'class_id and exam_type_id required.' });
+    const conn = await db.getConnection();
+    try {
+        const [own] = await conn.execute('SELECT institutionId FROM exam_types WHERE id = ?', [exam_type_id]);
+        if (own.length === 0 || !sameTenant(req, own[0].institutionId)) {
+            conn.release();
+            return res.status(403).json({ error: 'That exam type belongs to another institution.' });
+        }
+        await conn.beginTransaction();
+        await conn.execute(
+            'DELETE FROM exam_grade_bands WHERE institutionId = ? AND class_id = ? AND exam_type_id = ?',
+            [institutionId, class_id, exam_type_id]);
+        let i = 0;
+        for (const b of (bands || [])) {
+            const mp = parseFloat(b.min_pct);
+            const label = (b.label || '').trim();
+            if (isNaN(mp) || !label) continue;
+            await conn.execute(
+                'INSERT INTO exam_grade_bands (institutionId, class_id, exam_type_id, band_order, min_pct, label) VALUES (?, ?, ?, ?, ?, ?)',
+                [institutionId, class_id, exam_type_id, i++, mp, label]);
         }
         await conn.commit();
         res.json({ success: true });
@@ -5311,6 +5371,12 @@ async function buildReportCard(studentId) {
 
     const eng = await loadExamEngine(student.institutionId);
     const examTypes = eng.examTypes;
+    // Per class + exam grade bands for this student's class.
+    const [gbRows] = await db.execute(
+        'SELECT exam_type_id, min_pct, label FROM exam_grade_bands WHERE institutionId = ? AND class_id = ? ORDER BY exam_type_id, min_pct DESC',
+        [student.institutionId, student.class_id]);
+    const bandsByExam = {};
+    gbRows.forEach(b => { (bandsByExam[b.exam_type_id] = bandsByExam[b.exam_type_id] || []).push({ min_pct: Number(b.min_pct), label: b.label }); });
     const [maxRows] = await db.execute(
         'SELECT exam_type_id, subject_id, max_marks FROM exam_max_marks WHERE class_id = ?',
         [student.class_id]
@@ -5373,7 +5439,7 @@ async function buildReportCard(studentId) {
             ...t,
             max_marks: maxMarks[t.id]?.default ?? null,
             is_result: !eng.graph.usedAsSource.has(t.id),
-            grade_bands: eng.bandsByScale[t.grade_scale_id] || null
+            grade_bands: bandsByExam[t.id] || null
         }));
 
     let attendance = [];
