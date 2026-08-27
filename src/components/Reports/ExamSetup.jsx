@@ -84,7 +84,7 @@ function ExamTypesPanel() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({
     name: '', exam_order: 0,
-    kind: 'entered', show_on_report: true, parts: []
+    kind: 'entered', show_on_report: true, show_on_marks_entry: true, show_in_performance: true, parts: []
   });
   const [saving, setSaving] = useState(false);
   const [loadingRules, setLoadingRules] = useState(false);
@@ -107,7 +107,7 @@ function ExamTypesPanel() {
 
   const openAdd = () => {
     setEditing(null);
-    setForm({ name: '', exam_order: types.length, kind: 'entered', show_on_report: true, parts: [] });
+    setForm({ name: '', exam_order: types.length, kind: 'entered', show_on_report: true, show_on_marks_entry: true, show_in_performance: true, parts: [] });
     setShowModal(true);
   };
 
@@ -118,6 +118,8 @@ function ExamTypesPanel() {
       exam_order: t.exam_order,
       kind: t.kind === 'derived' ? 'derived' : 'entered',
       show_on_report: t.show_on_report === 0 || t.show_on_report === false ? false : true,
+      show_on_marks_entry: t.show_on_marks_entry === 0 || t.show_on_marks_entry === false ? false : true,
+      show_in_performance: t.show_in_performance === 0 || t.show_in_performance === false ? false : true,
       parts: []
     });
     setShowModal(true);
@@ -184,7 +186,9 @@ function ExamTypesPanel() {
         name: form.name.trim(),
         exam_order: parseInt(form.exam_order, 10) || 0,
         kind: isDerived ? 'derived' : 'entered',
-        show_on_report: form.show_on_report ? 1 : 0
+        show_on_report: form.show_on_report ? 1 : 0,
+        show_on_marks_entry: form.show_on_marks_entry ? 1 : 0,
+        show_in_performance: form.show_in_performance ? 1 : 0
       };
       const url = editing
         ? `${API_BASE_URL}/admin/exam-types/${editing.id}`
@@ -522,15 +526,44 @@ function ExamTypesPanel() {
                 </div>
               )}
 
-              <label className="flex items-start gap-2 rounded-md ring-1 ring-zinc-200 p-3 cursor-pointer">
-                <input type="checkbox" checked={form.show_on_report}
-                  onChange={e => setForm({ ...form, show_on_report: e.target.checked })}
-                  className="mt-0.5 size-4 rounded border-zinc-300 text-primary focus:ring-2 focus:ring-primary/30" />
-                <span className="text-[11px] text-zinc-600 leading-relaxed">
-                  <span className="font-semibold text-zinc-800">Show on report card.</span> Turn off to hide a feeder exam
-                  (e.g. a written paper that only exists inside a derived exam) so the card shows just the results.
-                </span>
-              </label>
+              <div className="space-y-2">
+                <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Show this exam in</span>
+
+                {form.kind === 'derived' ? (
+                  <div className="rounded-md bg-zinc-50 ring-1 ring-inset ring-zinc-200 px-3 py-2 flex items-center gap-2">
+                    <ClipboardList className="size-3.5 text-zinc-400 shrink-0" />
+                    <span className="text-[11px] text-zinc-500">Marks Entry &mdash; derived exams are computed, so they never appear in Marks Entry.</span>
+                  </div>
+                ) : (
+                  <label className="flex items-start gap-2 rounded-md ring-1 ring-zinc-200 p-3 cursor-pointer">
+                    <input type="checkbox" checked={form.show_on_marks_entry}
+                      onChange={e => setForm({ ...form, show_on_marks_entry: e.target.checked })}
+                      className="mt-0.5 size-4 rounded border-zinc-300 text-primary focus:ring-2 focus:ring-primary/30" />
+                    <span className="text-[11px] text-zinc-600 leading-relaxed">
+                      <span className="font-semibold text-zinc-800">Marks Entry.</span> Teachers can enter marks for this exam.
+                    </span>
+                  </label>
+                )}
+
+                <label className="flex items-start gap-2 rounded-md ring-1 ring-zinc-200 p-3 cursor-pointer">
+                  <input type="checkbox" checked={form.show_on_report}
+                    onChange={e => setForm({ ...form, show_on_report: e.target.checked })}
+                    className="mt-0.5 size-4 rounded border-zinc-300 text-primary focus:ring-2 focus:ring-primary/30" />
+                  <span className="text-[11px] text-zinc-600 leading-relaxed">
+                    <span className="font-semibold text-zinc-800">Report Card.</span> Appears as a column on the report card. Turn
+                    off to hide a feeder exam so the card shows just the results.
+                  </span>
+                </label>
+
+                <label className="flex items-start gap-2 rounded-md ring-1 ring-zinc-200 p-3 cursor-pointer">
+                  <input type="checkbox" checked={form.show_in_performance}
+                    onChange={e => setForm({ ...form, show_in_performance: e.target.checked })}
+                    className="mt-0.5 size-4 rounded border-zinc-300 text-primary focus:ring-2 focus:ring-primary/30" />
+                  <span className="text-[11px] text-zinc-600 leading-relaxed">
+                    <span className="font-semibold text-zinc-800">Performance.</span> Included in performance analytics (coming soon).
+                  </span>
+                </label>
+              </div>
             </div>
             <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
               <button onClick={() => setShowModal(false)} disabled={saving}
@@ -1421,7 +1454,8 @@ function GradingPanel() {
   const [examTypes, setExamTypes] = useState([]);
   const [pickedClass, setPickedClass] = useState('');
   const [pickedExam, setPickedExam]   = useState('');
-  const [bands, setBands]       = useState([{ min_pct: '', label: '' }]);
+  const [bands, setBands]       = useState([{ min_pct: '', max_pct: '', label: '' }]);
+  const [savedInfo, setSavedInfo] = useState(null);   // { saved_by, saved_at }
   const [loading, setLoading]   = useState(true);
   const [bandsLoading, setBandsLoading] = useState(false);
   const [saving, setSaving]     = useState(false);
@@ -1449,13 +1483,19 @@ function GradingPanel() {
 
   // Load bands whenever class or exam changes.
   const loadBands = useCallback(async (classId, examId) => {
-    if (!classId || !examId) { setBands([{ min_pct: '', label: '' }]); return; }
+    if (!classId || !examId) { setBands([{ min_pct: '', max_pct: '', label: '' }]); setSavedInfo(null); return; }
     setBandsLoading(true);
     try {
       const res = await fetch(`${API_BASE_URL}/admin/exam-grades/${classId}/${examId}`);
       const d = await res.json();
-      const b = (Array.isArray(d) ? d : []).map(x => ({ min_pct: String(x.min_pct), label: x.label }));
-      setBands(b.length ? b : [{ min_pct: '', label: '' }]);
+      const arr = Array.isArray(d) ? d : (d.bands || []);
+      const b = arr.map(x => ({
+        min_pct: String(x.min_pct),
+        max_pct: (x.max_pct === null || x.max_pct === undefined) ? '' : String(x.max_pct),
+        label: x.label
+      }));
+      setBands(b.length ? b : [{ min_pct: '', max_pct: '', label: '' }]);
+      setSavedInfo((d && d.saved_at) ? { saved_by: d.saved_by, saved_at: d.saved_at } : null);
     } catch (e) { console.error(e); }
     setBandsLoading(false);
   }, []);
@@ -1463,23 +1503,26 @@ function GradingPanel() {
   useEffect(() => { loadBands(pickedClass, pickedExam); }, [pickedClass, pickedExam, loadBands]);
 
   const setBand = (i, key, val) => setBands(prev => prev.map((b, idx) => idx === i ? { ...b, [key]: val } : b));
-  const addBand = () => setBands(prev => [...prev, { min_pct: '', label: '' }]);
+  const addBand = () => setBands(prev => [...prev, { min_pct: '', max_pct: '', label: '' }]);
   const removeBand = (i) => setBands(prev => (prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev));
 
   const handleSave = async () => {
     if (!pickedClass || !pickedExam) return alert('Pick a class and an exam type first.');
     const clean = bands
-      .map(b => ({ min_pct: b.min_pct === '' ? null : parseFloat(b.min_pct), label: (b.label || '').trim() }))
+      .map(b => ({
+        min_pct: b.min_pct === '' ? null : parseFloat(b.min_pct),
+        max_pct: b.max_pct === '' ? null : parseFloat(b.max_pct),
+        label: (b.label || '').trim()
+      }))
       .filter(b => b.label && b.min_pct !== null && !isNaN(b.min_pct));
     setSaving(true);
     try {
       const res = await fetch(`${API_BASE_URL}/admin/exam-grades`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ class_id: parseInt(pickedClass, 10), exam_type_id: parseInt(pickedExam, 10), bands: clean })
+        body: JSON.stringify({ class_id: parseInt(pickedClass, 10), exam_type_id: parseInt(pickedExam, 10), bands: clean, saved_by: user.name })
       });
       if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || 'Save failed'); }
-      alert('Grading saved.');
       loadBands(pickedClass, pickedExam);
     } catch (e) { alert(e.message); }
     setSaving(false);
@@ -1552,22 +1595,27 @@ function GradingPanel() {
               </button>
             </div>
 
-            <div className="grid grid-cols-[1fr_1.4fr_auto] gap-2 items-center mb-1.5 px-1">
-              <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Min %</span>
+            <div className="grid grid-cols-[1fr_1fr_1.4fr_auto] gap-2 items-center mb-1.5 px-1">
+              <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">From %</span>
+              <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">To %</span>
               <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Grade Label</span>
               <span></span>
             </div>
 
             <div className="space-y-2">
               {bands.map((b, i) => (
-                <div key={i} className="grid grid-cols-[1fr_1.4fr_auto] gap-2 items-center">
+                <div key={i} className="grid grid-cols-[1fr_1fr_1.4fr_auto] gap-2 items-center">
                   <input value={b.min_pct} inputMode="decimal"
                     onChange={e => { if (/^\d*\.?\d*$/.test(e.target.value)) setBand(i, 'min_pct', e.target.value); }}
-                    placeholder="91"
+                    placeholder="81"
+                    className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 text-center tabular-nums placeholder:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
+                  <input value={b.max_pct} inputMode="decimal"
+                    onChange={e => { if (/^\d*\.?\d*$/.test(e.target.value)) setBand(i, 'max_pct', e.target.value); }}
+                    placeholder="90"
                     className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 text-center tabular-nums placeholder:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
                   <input value={b.label}
                     onChange={e => setBand(i, 'label', e.target.value)}
-                    placeholder="A1"
+                    placeholder="A2"
                     className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
                   <button onClick={() => removeBand(i)} disabled={bands.length <= 1}
                     className="size-9 rounded-md text-zinc-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center transition-colors" title="Remove band">
@@ -1580,12 +1628,17 @@ function GradingPanel() {
             <div className="rounded-md bg-blue-50/60 ring-1 ring-inset ring-blue-500/15 px-3 py-2.5 mt-3 flex items-start gap-2">
               <Award className="size-3.5 text-blue-600 shrink-0 mt-0.5" />
               <p className="text-[11px] text-blue-800 leading-relaxed">
-                A mark's grade is the band with the highest minimum % it reaches (e.g. 91+ = A1, 81+ = A2). You don't set a
-                maximum &mdash; each band runs up to the next one. Leave the bands empty to show no grade for this class/exam.
+                Set the % range for each grade, e.g. <strong>91 to 100 = A1</strong>, <strong>81 to 90 = A2</strong>. A mark's grade
+                is the band its percentage falls inside. Leave <strong>To %</strong> blank on the top band to mean &ldquo;up to 100&rdquo;.
               </p>
             </div>
 
-            <div className="flex justify-end pt-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-4">
+              <span className="text-[11px] text-zinc-400">
+                {savedInfo
+                  ? <>Last saved by <span className="font-semibold text-zinc-600">{savedInfo.saved_by || 'someone'}</span> on {fmtSavedAt(savedInfo.saved_at)}</>
+                  : 'Not saved yet for this class and exam.'}
+              </span>
               <button onClick={handleSave} disabled={saving}
                 className="h-9 w-full sm:w-auto bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white px-6 rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors">
                 {saving ? <Loader2 className="size-3.5 animate-spin shrink-0" /> : <Save className="size-3.5 shrink-0" />}
@@ -1608,6 +1661,20 @@ const fmtPct = (v) => {
   const n = Number(v);
   if (isNaN(n)) return String(v);
   return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(2)));
+};
+
+// Format a stored UTC timestamp for display in IST.
+const fmtSavedAt = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return String(iso);
+  try {
+    return d.toLocaleString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      day: 'numeric', month: 'short', year: 'numeric',
+      hour: 'numeric', minute: '2-digit', hour12: true
+    });
+  } catch (e) { return d.toLocaleString(); }
 };
 
 function FormField({ label, required, children }) {

@@ -160,64 +160,40 @@ export default function ReportCardView({ card }) {
     return Number(t.max_marks || 0);
   };
 
-  // Grade for a percentage against an exam's bands: the highest band whose
-  // minimum % the score reaches. Bands ride along on each exam type.
+  // Grade for a percentage against an exam's bands: the band whose From-To
+  // range the score falls in (max_pct null = up to 100). Bands ride along
+  // on each exam type from the backend (per class + exam).
   const gradeFor = (pct, bands) => {
     if (pct == null || isNaN(pct) || !Array.isArray(bands) || bands.length === 0) return null;
     let best = null;
     bands.forEach(b => {
-      const min = Number(b.min_pct);
-      if (!isNaN(min) && pct >= min && (best === null || min > Number(best.min_pct))) best = b;
+      const from = Number(b.min_pct);
+      const to = (b.max_pct === null || b.max_pct === undefined || b.max_pct === '') ? 100 : Number(b.max_pct);
+      if (!isNaN(from) && pct >= from && pct <= to + 1e-9 && (best === null || from > Number(best.min_pct))) best = b;
     });
     return best ? best.label : null;
   };
 
-  // "Result" exams are the graph leaves the backend flags (is_result) — the
-  // finals nothing else feeds into. Totals sum ONLY these so a derived chain
-  // (AT1 -> FA1 -> SA1 -> Final) is never counted twice. With no rules, every
-  // exam is a result, so this is identical to the old sum-everything total.
-  const resultExams = (examTypes || []).filter(t => t.is_result);
-  const totalExams = resultExams.length ? resultExams : (examTypes || []);
-
-  // The exam whose scale grades the overall result: the last result exam by
-  // order (the "final-most"), e.g. the Final.
-  const overallExam = totalExams.reduce(
-    (acc, t) => (acc == null || (t.exam_order || 0) >= (acc.exam_order || 0) ? t : acc),
-    null
-  );
-
+  // Per-exam COLUMN totals across subjects (each exam counted once, on its
+  // own column). We deliberately do NOT total across exams per subject:
+  // derived exams already fold their sources in, so a per-row total would
+  // double-count. Only the column count is meaningful.
   const examColumnTotal = (etId) =>
     (subjects || []).reduce((sum, s) => {
       const v = getMark(s.id, etId);
       return sum + (v != null ? Number(v) : 0);
     }, 0);
 
+  // Column max uses ONLY the subjects the student was actually marked in for
+  // that exam, so the grade % isn't diluted by not-yet-conducted subjects.
   const examColumnMax = (t) =>
-    (subjects || []).reduce((sum, s) => sum + (isAttempted(t.id) ? maxFor(t, s.id) : 0), 0);
+    (subjects || []).reduce((sum, s) => sum + (getMark(s.id, t.id) != null ? maxFor(t, s.id) : 0), 0);
 
   const examColumnGrade = (t) => {
     const mx = examColumnMax(t);
     if (mx <= 0) return null;
     return gradeFor((examColumnTotal(t.id) / mx) * 100, t.grade_bands);
   };
-
-  const subjectRowTotal = (subjectId) =>
-    totalExams.reduce((sum, t) => {
-      const v = getMark(subjectId, t.id);
-      return sum + (v != null ? Number(v) : 0);
-    }, 0);
-
-  // Row max — ONLY over result exams actually sat, so the denominator is honest.
-  const subjectRowMax = (subjectId) =>
-    totalExams.reduce(
-      (sum, t) => (isAttempted(t.id) ? sum + maxFor(t, subjectId) : sum),
-      0
-    );
-
-  const grandTotal = (subjects || []).reduce((sum, s) => sum + subjectRowTotal(s.id), 0);
-  const grandMax = (subjects || []).reduce((sum, s) => sum + subjectRowMax(s.id), 0);
-  const grandPct = grandMax > 0 ? ((grandTotal / grandMax) * 100).toFixed(1) : '0.0';
-  const overallGrade = gradeFor(Number(grandPct), overallExam?.grade_bands);
 
   const anyGrades = (examTypes || []).some(t => Array.isArray(t.grade_bands) && t.grade_bands.length > 0);
 
@@ -344,12 +320,10 @@ export default function ReportCardView({ card }) {
                       </th>
                     );
                   })}
-                  <th className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-primary whitespace-nowrap">Total / Max</th>
                 </tr>
               </thead>
               <tbody>
                 {(subjects || []).map(s => {
-                  const rowMax = subjectRowMax(s.id);
                   return (
                     <tr key={s.id} className="hover:bg-zinc-50/50 transition-colors">
                       <td className="border border-zinc-300 px-3 py-2.5 font-semibold text-zinc-800">{s.name}</td>
@@ -368,14 +342,10 @@ export default function ReportCardView({ card }) {
                           </td>
                         );
                       })}
-                      <td className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-primary tabular-nums whitespace-nowrap">
-                        {fmtNum(subjectRowTotal(s.id)) || '0'}
-                        {rowMax > 0 && <span className="text-[11px] font-semibold text-zinc-400"> / {fmtNum(rowMax)}</span>}
-                      </td>
                     </tr>
                   );
                 })}
-                {/* Column totals */}
+                {/* Column totals (each exam counted once, on its column) */}
                 <tr className="bg-zinc-50/80">
                   <td className="border border-zinc-300 px-3 py-2.5 font-bold text-zinc-800">Total</td>
                   {examTypes.map(t => (
@@ -383,12 +353,8 @@ export default function ReportCardView({ card }) {
                       {fmtNum(examColumnTotal(t.id)) || '–'}
                     </td>
                   ))}
-                  <td className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-primary tabular-nums whitespace-nowrap">
-                    {fmtNum(grandTotal) || '0'}
-                    {grandMax > 0 && <span className="text-[11px] font-semibold text-zinc-400"> / {fmtNum(grandMax)}</span>}
-                  </td>
                 </tr>
-                {/* Grade row — per exam (from its scale) + overall */}
+                {/* Grade row — per exam, from that class+exam's ranges */}
                 {anyGrades && (
                   <tr className="bg-zinc-50/40">
                     <td className="border border-zinc-300 px-3 py-2.5 font-bold text-zinc-700">Grade</td>
@@ -400,42 +366,10 @@ export default function ReportCardView({ card }) {
                         </td>
                       );
                     })}
-                    <td className="border border-zinc-300 px-3 py-2.5 text-center font-bold whitespace-nowrap">
-                      {overallGrade ? <span className="text-emerald-700">{overallGrade}</span> : <span className="text-zinc-300">–</span>}
-                    </td>
                   </tr>
                 )}
               </tbody>
             </table>
-          </div>
-        )}
-
-        {/* Grand total + percentage summary */}
-        {(examTypes || []).length > 0 && (
-          <div className="mb-10">
-            <div className="flex flex-wrap justify-end gap-2">
-              <div className="bg-primary/5 rounded-md px-4 py-2.5 text-sm ring-1 ring-primary/20 flex items-center gap-1.5">
-                <span className="font-semibold text-zinc-700">Grand Total: </span>
-                <span className="font-bold text-primary tabular-nums">{fmtNum(grandTotal)}</span>
-                <span className="text-zinc-500 tabular-nums">/ {fmtNum(grandMax)}</span>
-              </div>
-              <div className="bg-emerald-50 rounded-md px-4 py-2.5 text-sm ring-1 ring-emerald-600/20 flex items-center gap-1.5">
-                <span className="font-semibold text-zinc-700">Percentage: </span>
-                <span className="font-bold text-emerald-700 tabular-nums">{grandPct}%</span>
-              </div>
-              {overallGrade && (
-                <div className="bg-primary/5 rounded-md px-4 py-2.5 text-sm ring-1 ring-primary/20 flex items-center gap-1.5">
-                  <span className="font-semibold text-zinc-700">Grade: </span>
-                  <span className="font-bold text-primary tabular-nums">{overallGrade}</span>
-                </div>
-              )}
-            </div>
-            {someExcluded && (
-              <p className="text-[11px] text-zinc-400 text-right mt-2 leading-relaxed print:hidden">
-                Total &amp; percentage count only the {conductedCount} of {configuredCount} exams marked so far.
-                Not-yet-conducted exams are excluded.
-              </p>
-            )}
           </div>
         )}
 

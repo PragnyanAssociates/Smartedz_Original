@@ -4328,7 +4328,7 @@ app.get('/api/admin/exam-types/:instId', async (req, res) => {
 });
 
 app.post('/api/admin/exam-types', async (req, res) => {
-    const { name, exam_order, grade_scale_id, kind, show_on_report } = req.body;
+    const { name, exam_order, grade_scale_id, kind, show_on_report, show_on_marks_entry, show_in_performance } = req.body;
     const institutionId = req.auth.institutionId;
     if (!name) return res.status(400).json({ error: 'name required.' });
     try {
@@ -4336,9 +4336,11 @@ app.post('/api/admin/exam-types', async (req, res) => {
             ? null : parseInt(grade_scale_id, 10);
         const examKind = (kind === 'derived') ? 'derived' : 'entered';
         const showRC = (show_on_report === 0 || show_on_report === false) ? 0 : 1;
+        const showME = (show_on_marks_entry === 0 || show_on_marks_entry === false) ? 0 : 1;
+        const showPF = (show_in_performance === 0 || show_in_performance === false) ? 0 : 1;
         const [result] = await db.execute(
-            'INSERT INTO exam_types (institutionId, name, exam_order, kind, grade_scale_id, show_on_report) VALUES (?, ?, ?, ?, ?, ?)',
-            [institutionId, name.trim(), parseInt(exam_order, 10) || 0, examKind, gsId, showRC]
+            'INSERT INTO exam_types (institutionId, name, exam_order, kind, grade_scale_id, show_on_report, show_on_marks_entry, show_in_performance) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            [institutionId, name.trim(), parseInt(exam_order, 10) || 0, examKind, gsId, showRC, showME, showPF]
         );
         res.json({ success: true, id: result.insertId });
     } catch (err) {
@@ -4350,16 +4352,18 @@ app.post('/api/admin/exam-types', async (req, res) => {
 });
 
 app.put('/api/admin/exam-types/:id', async (req, res) => {
-    const { name, exam_order, kind, show_on_report } = req.body;
+    const { name, exam_order, kind, show_on_report, show_on_marks_entry, show_in_performance } = req.body;
     try {
         const [own] = await db.execute('SELECT institutionId FROM exam_types WHERE id = ?', [req.params.id]);
         if (own.length === 0) return res.status(404).json({ error: 'Exam type not found.' });
         if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This exam type belongs to another institution.' });
         const examKind = (kind === 'derived') ? 'derived' : 'entered';
         const showRC = (show_on_report === 0 || show_on_report === false) ? 0 : 1;
+        const showME = (show_on_marks_entry === 0 || show_on_marks_entry === false) ? 0 : 1;
+        const showPF = (show_in_performance === 0 || show_in_performance === false) ? 0 : 1;
         await db.execute(
-            'UPDATE exam_types SET name = ?, exam_order = ?, kind = ?, show_on_report = ? WHERE id = ?',
-            [name.trim(), parseInt(exam_order, 10) || 0, examKind, showRC, req.params.id]
+            'UPDATE exam_types SET name = ?, exam_order = ?, kind = ?, show_on_report = ?, show_on_marks_entry = ?, show_in_performance = ? WHERE id = ?',
+            [name.trim(), parseInt(exam_order, 10) || 0, examKind, showRC, showME, showPF, req.params.id]
         );
         // Switching back to Entered discards any derived formula it had.
         if (examKind === 'entered') {
@@ -4613,15 +4617,16 @@ app.delete('/api/admin/subject-teachers/:id', async (req, res) => {
 //   shared matcher, exported for that phase.
 // =====================================================================
 
-// Given a percentage and a scale's bands, return the label of the highest
-// band whose min_pct the percentage reaches, else null.
+// Given a percentage and a scale's bands, return the label of the band
+// whose From-To range the percentage falls in (max_pct null = up to 100).
 function gradeForPct(pct, bands) {
     if (pct === null || pct === undefined || isNaN(pct)) return null;
     let best = null;
     (bands || []).forEach(b => {
-        const min = Number(b.min_pct);
-        if (!isNaN(min) && pct >= min) {
-            if (best === null || min > Number(best.min_pct)) best = b;
+        const from = Number(b.min_pct);
+        const to = (b.max_pct === null || b.max_pct === undefined || b.max_pct === '') ? 100 : Number(b.max_pct);
+        if (!isNaN(from) && pct >= from && pct <= to + 1e-9) {
+            if (best === null || from > Number(best.min_pct)) best = b;
         }
     });
     return best ? best.label : null;
@@ -4877,16 +4882,28 @@ app.get('/api/admin/exam-grades/:classId/:examTypeId', async (req, res) => {
     try {
         const instId = req.auth.institutionId;
         const [rows] = await db.execute(
-            'SELECT min_pct, label FROM exam_grade_bands WHERE institutionId = ? AND class_id = ? AND exam_type_id = ? ORDER BY min_pct DESC',
+            `SELECT min_pct, max_pct, label, saved_by,
+                    DATE_FORMAT(saved_at, '%Y-%m-%dT%H:%i:%sZ') AS saved_at
+               FROM exam_grade_bands
+              WHERE institutionId = ? AND class_id = ? AND exam_type_id = ?
+              ORDER BY min_pct DESC`,
             [instId, req.params.classId, req.params.examTypeId]);
-        res.json(rows.map(r => ({ min_pct: Number(r.min_pct), label: r.label })));
+        const bands = rows.map(r => ({
+            min_pct: Number(r.min_pct),
+            max_pct: (r.max_pct === null || r.max_pct === undefined) ? null : Number(r.max_pct),
+            label: r.label
+        }));
+        const saved_by = rows.length ? rows[0].saved_by : null;
+        const saved_at = rows.length ? rows[0].saved_at : null;
+        res.json({ bands, saved_by, saved_at });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.post('/api/admin/exam-grades', async (req, res) => {
     const institutionId = req.auth.institutionId;
-    const { class_id, exam_type_id, bands = [] } = req.body;
+    const { class_id, exam_type_id, bands = [], saved_by } = req.body;
     if (!class_id || !exam_type_id) return res.status(400).json({ error: 'class_id and exam_type_id required.' });
+    const savedBy = (saved_by && String(saved_by).trim()) ? String(saved_by).trim().slice(0, 120) : (req.auth.name || 'Someone');
     const conn = await db.getConnection();
     try {
         const [own] = await conn.execute('SELECT institutionId FROM exam_types WHERE id = ?', [exam_type_id]);
@@ -4901,14 +4918,15 @@ app.post('/api/admin/exam-grades', async (req, res) => {
         let i = 0;
         for (const b of (bands || [])) {
             const mp = parseFloat(b.min_pct);
+            const xp = (b.max_pct === '' || b.max_pct === null || b.max_pct === undefined) ? null : parseFloat(b.max_pct);
             const label = (b.label || '').trim();
             if (isNaN(mp) || !label) continue;
             await conn.execute(
-                'INSERT INTO exam_grade_bands (institutionId, class_id, exam_type_id, band_order, min_pct, label) VALUES (?, ?, ?, ?, ?, ?)',
-                [institutionId, class_id, exam_type_id, i++, mp, label]);
+                'INSERT INTO exam_grade_bands (institutionId, class_id, exam_type_id, band_order, min_pct, max_pct, label, saved_by, saved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP())',
+                [institutionId, class_id, exam_type_id, i++, mp, (xp === null || isNaN(xp)) ? null : xp, label, savedBy]);
         }
         await conn.commit();
-        res.json({ success: true });
+        res.json({ success: true, saved_by: savedBy });
     } catch (err) {
         await conn.rollback();
         res.status(500).json({ error: err.message });
@@ -5062,7 +5080,9 @@ app.get('/api/admin/reports/class-data/:classId', async (req, res) => {
         const assignMap = {};
         assignments.forEach(a => { assignMap[a.subject_id] = a; });
 
-        // ---- Exam engine: entered + derived, with per-class display set --
+        // ---- Marks Entry shows ENTERED exams only (teachers type these).
+        //      Derived exams are computed, so they never appear here. An
+        //      exam can also be hidden from Marks Entry via its flag.
         const eng = await loadExamEngine(instId);
         const examTypes = eng.examTypes;
         const [maxRows] = await db.execute(
@@ -5083,53 +5103,11 @@ app.get('/api/admin/reports/class-data/:classId', async (req, res) => {
             [classId, yearId]
         );
 
-        const enteredMaxFor = (examId, subjectId) => {
-            const m = maxMarks[examId];
-            if (!m) return 0;
-            const sp = m.bySubject ? m.bySubject[subjectId] : undefined;
-            if (sp !== undefined && sp !== null) return Number(sp);
-            if (m.default !== undefined && m.default !== null) return Number(m.default);
-            return 0;
-        };
-        const obtMap = {};
-        marks.forEach(r => {
-            if (r.marks_obtained !== null && r.marks_obtained !== undefined)
-                obtMap[`${r.student_id}:${r.subject_id}:${r.exam_type_id}`] = Number(r.marks_obtained);
-        });
-
-        // Compute derived exams for every student x subject; feed the values
-        // back into `marks` (so the grid shows them, read-only) and expose
-        // their per-subject max via maxMarks.bySubject.
-        const derivedMaxBySub = {};
-        if (examTypes.some(t => t.kind === 'derived')) {
-            students.forEach(stu => {
-                subjectsInOrder.forEach(sub => {
-                    const memo = {}; const stack = new Set();
-                    const getObt = (eid) => { const v = obtMap[`${stu.id}:${sub.id}:${eid}`]; return v === undefined ? null : v; };
-                    const getMax = (eid) => enteredMaxFor(eid, sub.id);
-                    examTypes.forEach(et => {
-                        if (et.kind !== 'derived') return;
-                        const rr = evalExamValue(et.id, eng.graph, getObt, getMax, memo, stack);
-                        (derivedMaxBySub[et.id] = derivedMaxBySub[et.id] || {})[sub.id] = rr.max;
-                        if (rr.obt !== null) marks.push({ student_id: stu.id, subject_id: sub.id, exam_type_id: et.id, marks_obtained: rr.obt });
-                    });
-                });
-            });
-            Object.keys(derivedMaxBySub).forEach(eid => {
-                if (!maxMarks[eid]) maxMarks[eid] = { default: null, bySubject: {} };
-                Object.keys(derivedMaxBySub[eid]).forEach(sid => { maxMarks[eid].bySubject[sid] = derivedMaxBySub[eid][sid]; });
-            });
-        }
-
         const examTypesForClass = examTypes
-            .filter(t => t.kind === 'derived'
-                ? subjectsInOrder.some(s => (derivedMaxBySub[t.id]?.[s.id] || 0) > 0)
-                : (maxMarks[t.id] !== undefined))
-            .map(t => ({
-                ...t,
-                max_marks: maxMarks[t.id]?.default ?? null,
-                is_result: !eng.graph.usedAsSource.has(t.id)
-            }));
+            .filter(t => t.kind !== 'derived'
+                && (t.show_on_marks_entry === undefined || t.show_on_marks_entry === null || t.show_on_marks_entry === 1)
+                && maxMarks[t.id] !== undefined)
+            .map(t => ({ ...t, max_marks: maxMarks[t.id]?.default ?? null }));
 
         res.json({
             class: cls[0],
@@ -5373,10 +5351,10 @@ async function buildReportCard(studentId) {
     const examTypes = eng.examTypes;
     // Per class + exam grade bands for this student's class.
     const [gbRows] = await db.execute(
-        'SELECT exam_type_id, min_pct, label FROM exam_grade_bands WHERE institutionId = ? AND class_id = ? ORDER BY exam_type_id, min_pct DESC',
+        'SELECT exam_type_id, min_pct, max_pct, label FROM exam_grade_bands WHERE institutionId = ? AND class_id = ? ORDER BY exam_type_id, min_pct DESC',
         [student.institutionId, student.class_id]);
     const bandsByExam = {};
-    gbRows.forEach(b => { (bandsByExam[b.exam_type_id] = bandsByExam[b.exam_type_id] || []).push({ min_pct: Number(b.min_pct), label: b.label }); });
+    gbRows.forEach(b => { (bandsByExam[b.exam_type_id] = bandsByExam[b.exam_type_id] || []).push({ min_pct: Number(b.min_pct), max_pct: (b.max_pct == null ? null : Number(b.max_pct)), label: b.label }); });
     const [maxRows] = await db.execute(
         'SELECT exam_type_id, subject_id, max_marks FROM exam_max_marks WHERE class_id = ?',
         [student.class_id]
