@@ -88,30 +88,47 @@ export default function ReportCardView({ card }) {
   //  Fit-to-one-page on print: measure and apply an inline zoom.
   // -----------------------------------------------------------------
   useEffect(() => {
-    const DESIGN_W = 896;               // card's max width (max-w-4xl)
-    const PAGE_W = 712, PAGE_H = 1035;  // A4 PORTRAIT usable px @96dpi (~10mm margins)
+    // Reduced side margins (5mm) so the sheet gives us as much width as
+    // possible; top/bottom stay a touch larger. Usable px @96dpi.
+    const PAGE_W = 752, PAGE_H = 1050;
 
     const fitToPage = () => {
       const el = document.getElementById('report-card-printable');
       if (!el) return;
-      // Measure the card's height at its fixed design width, so the print
-      // result never depends on the browser window size. We scale to FILL
-      // the page width (attractive, like the on-screen card) and only
-      // shrink further if the height would overflow the page.
-      el.style.transform = '';
-      const prevInlineW = el.style.width;
-      el.style.width = DESIGN_W + 'px';
+      el.style.transform = 'none';
+      el.style.transformOrigin = 'top left';
+      el.style.maxWidth = 'none';
+
+      // Measure each table's NATURAL width (its no-wrap content). A
+      // width:100% table otherwise just reports its container's width and
+      // hides the real horizontal overflow — which was leaving the last
+      // exam columns clipped. Temporarily switch each table to max-content,
+      // read its real width, then restore it.
+      let contentW = 0;
+      el.querySelectorAll('table').forEach(t => {
+        const prev = t.style.width;
+        t.style.width = 'max-content';
+        contentW = Math.max(contentW, t.scrollWidth || t.offsetWidth);
+        t.style.width = prev;
+      });
+      const W = Math.max(contentW + 44, 400);   // + the card's own side padding
+      el.style.width = W + 'px';
+
       const H = el.scrollHeight || el.offsetHeight;
-      el.style.width = prevInlineW;
-      if (!H) return;
-      const scale = Math.min(PAGE_W / DESIGN_W, PAGE_H / H);
-      // transform (not zoom) so it can scale from top-CENTER and stay
-      // centered on the sheet.
-      el.style.transform = 'scale(' + Math.max(0.3, Math.min(scale, 1)) + ')';
+      if (!W || !H) return;
+      const scale = Math.max(0.3, Math.min(PAGE_W / W, PAGE_H / H, 1));
+      // Centre the scaled card across the sheet.
+      el.style.left = Math.max(0, (PAGE_W - W * scale) / 2) + 'px';
+      el.style.transform = 'scale(' + scale + ')';
     };
     const reset = () => {
       const el = document.getElementById('report-card-printable');
-      if (el) el.style.transform = '';
+      if (!el) return;
+      el.style.transform = '';
+      el.style.transformOrigin = '';
+      el.style.width = '';
+      el.style.maxWidth = '';
+      el.style.left = '';
     };
     window.addEventListener('beforeprint', fitToPage);
     window.addEventListener('afterprint', reset);
@@ -222,7 +239,7 @@ export default function ReportCardView({ card }) {
           set in the effect above (unbypassable, orientation-independent). */}
       <style>{`
         @media print {
-          @page { size: A4 portrait; margin: 10mm; }
+          @page { size: A4 portrait; margin: 8mm 5mm; }
 
           html, body {
             height: auto !important;
@@ -236,19 +253,25 @@ export default function ReportCardView({ card }) {
           #report-card-printable * { visibility: visible !important; }
 
           /* fixed = anchored to the PAGE, not the sidebar-offset content
-             area (that offset was the big left gap). Placed at page-centre
-             and scaled from top-centre (see effect) so the card stays
-             centred on the sheet at any scale. */
+             area. Width, position and scale are set inline by the
+             fit-to-page effect (unbypassable, measured from real content). */
           #report-card-printable {
             position: fixed !important;
-            left: 50% !important;
+            left: 0 !important;
             top: 0 !important;
-            width: 896px !important;
             margin: 0 !important;
-            margin-left: -448px !important;
+            padding: 14px 18px !important;
             max-width: none !important;
             box-shadow: none !important;
-            transform-origin: top center;
+          }
+
+          /* Tighter cell padding so more columns fit before any scaling. */
+          #report-card-printable table th,
+          #report-card-printable table td {
+            padding-top: 4px !important;
+            padding-bottom: 4px !important;
+            padding-left: 5px !important;
+            padding-right: 5px !important;
           }
 
           #report-card-printable .overflow-x-auto { overflow: visible !important; }
@@ -269,10 +292,10 @@ export default function ReportCardView({ card }) {
         <div className="text-center border-b-2 border-zinc-200 pb-5 mb-6">
           {institution?.logo ? (
             <img src={institution.logo} alt="School logo"
-              className="h-24 sm:h-28 mx-auto object-contain mb-3" />
+              className="h-32 sm:h-40 mx-auto object-contain mb-3" />
           ) : (
-            <div className="size-24 sm:size-28 mx-auto mb-3 bg-zinc-100 rounded-lg flex items-center justify-center ring-1 ring-black/5">
-              <GraduationCap className="text-zinc-300 size-12 sm:size-14" />
+            <div className="size-32 sm:size-40 mx-auto mb-3 bg-zinc-100 rounded-lg flex items-center justify-center ring-1 ring-black/5">
+              <GraduationCap className="text-zinc-300 size-16 sm:size-20" />
             </div>
           )}
           <h1 className="text-xl sm:text-2xl font-bold text-zinc-900 tracking-tight uppercase">
