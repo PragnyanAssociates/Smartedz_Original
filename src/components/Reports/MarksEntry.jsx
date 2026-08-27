@@ -16,6 +16,10 @@ import {
 //  "Overall" view shows the per-subject sum across all exam types and
 //  is always read-only.
 //
+//  Only ENTERED exam types are shown/summed here — derived exams are
+//  computed elsewhere (report card / performance) and never counted in
+//  Marks Entry totals, so "Overall" is an entered-only total.
+//
 //  MAX MARKS are now per subject. The backend sends a maxMarks map:
 //    { [examTypeId]: { default: n|null, bySubject: { [subjectId]: n } } }
 //  Each subject's max for the selected exam = its own override, else the
@@ -85,6 +89,13 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // Entered-only exam types. The backend already sends entered exams here,
+  // but we filter defensively so a derived exam can never inflate a total.
+  const enteredTypes = useMemo(
+    () => (data?.examTypes || []).filter(t => t.kind !== 'derived'),
+    [data]
+  );
+
   // -----------------------------------------------------------------
   const canEditSubject = useCallback((subject) => {
     if (!canManage) return false;
@@ -110,12 +121,12 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
 
   // Max shown in a subject's column header. For a specific exam that's
   // the per-subject max; for Overall it's the sum of the subject's max
-  // across all exams (its grand max).
+  // across all ENTERED exams (its grand max).
   const subjectHeaderMax = (subjectId) => {
     if (!data) return undefined;
     if (isOverall) {
       let sum = 0, any = false;
-      data.examTypes.forEach(t => {
+      enteredTypes.forEach(t => {
         const mx = maxFor(t.id, subjectId);
         if (mx !== undefined) { sum += mx; any = true; }
       });
@@ -143,10 +154,10 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
   const getMark = (studentId, subjectId, etId) =>
     marks[`${studentId}:${subjectId}:${etId}`] ?? '';
 
-  // Per-subject sum across all exam types (Overall view)
+  // Per-subject sum across all ENTERED exam types (Overall view)
   const subjectOverall = (studentId, subjectId) => {
     if (!data) return 0;
-    return data.examTypes.reduce((sum, t) => {
+    return enteredTypes.reduce((sum, t) => {
       const v = parseFloat(getMark(studentId, subjectId, t.id));
       return sum + (isNaN(v) ? 0 : v);
     }, 0);
@@ -266,8 +277,8 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
 
   const sortOptions = [
     { id: 'roll', label: 'Roll wise' },
-    { id: 'high', label: 'High → Low' },
-    { id: 'low',  label: 'Low → High' }
+    { id: 'high', label: 'High \u2192 Low' },
+    { id: 'low',  label: 'Low \u2192 High' }
   ];
 
   return (

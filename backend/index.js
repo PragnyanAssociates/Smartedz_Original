@@ -5204,6 +5204,14 @@ app.get('/api/admin/reports/class-summaries/:instId', async (req, res) => {
             [instId]
         );
 
+        // Totals must count ENTERED exams only — never derived exams (whose
+        // marks may have been persisted by an older Marks Entry version).
+        const [derivedRows] = await db.execute(
+            "SELECT id FROM exam_types WHERE institutionId = ? AND kind = 'derived'", [instId]);
+        const derivedIds = derivedRows.map(r => r.id);
+        const derivedNotIn = derivedIds.length
+            ? ` AND sm.exam_type_id NOT IN (${derivedIds.map(() => '?').join(',')})` : '';
+
         const summaries = [];
 
         for (const c of classes) {
@@ -5212,9 +5220,9 @@ app.get('/api/admin/reports/class-summaries/:instId', async (req, res) => {
                    FROM student_marks sm
                    JOIN users u ON u.id = sm.student_id
                   WHERE sm.class_id = ?
-                    AND sm.academic_year_id = ?
+                    AND sm.academic_year_id = ?${derivedNotIn}
                     AND (u.status IS NULL OR LOWER(TRIM(u.status)) <> 'alumni')`,
-                [c.id, yearId]
+                [c.id, yearId, ...derivedIds]
             );
 
             const [topStudent] = await db.execute(
@@ -5224,14 +5232,14 @@ app.get('/api/admin/reports/class-summaries/:instId', async (req, res) => {
                    LEFT JOIN student_marks sm
                      ON sm.student_id = u.id
                     AND sm.class_id = ?
-                    AND sm.academic_year_id = ?
+                    AND sm.academic_year_id = ?${derivedNotIn}
                   WHERE u.class_id = ?
                     AND LOWER(TRIM(u.role)) = 'student'
                     AND (u.status IS NULL OR LOWER(TRIM(u.status)) <> 'alumni')
                   GROUP BY u.id, u.name
                   ORDER BY marks DESC
                   LIMIT 1`,
-                [c.id, yearId, c.id]
+                [c.id, yearId, ...derivedIds, c.id]
             );
 
             const [topSubject] = await db.execute(
@@ -5241,12 +5249,12 @@ app.get('/api/admin/reports/class-summaries/:instId', async (req, res) => {
                    JOIN subjects sub ON sub.id = sm.subject_id
                    JOIN users u ON u.id = sm.student_id
                   WHERE sm.class_id = ?
-                    AND sm.academic_year_id = ?
+                    AND sm.academic_year_id = ?${derivedNotIn}
                     AND (u.status IS NULL OR LOWER(TRIM(u.status)) <> 'alumni')
                   GROUP BY sub.id, sub.name
                   ORDER BY marks DESC
                   LIMIT 1`,
-                [c.id, yearId]
+                [c.id, yearId, ...derivedIds]
             );
 
             summaries.push({
