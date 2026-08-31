@@ -211,6 +211,31 @@ function AdminTimetable({ user, canEdit, canDelete, isManager, fullAccess }) {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // Per subject-class TIMETABLE scope: a subject is offered in a class's
+  // timetable only when its link says in_timetable = 1 (a subject with no
+  // class links at all is treated as available to every class).
+  const [ttScope, setTtScope] = useState({ any: {}, tt: {} });
+  useEffect(() => {
+    if (!user?.institutionId) return;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/admin/subject-classes/${user.institutionId}`);
+        const rows = await res.json();
+        const any = {}, tt = {};
+        (Array.isArray(rows) ? rows : []).forEach(r => {
+          (any[r.subject_id] = any[r.subject_id] || new Set()).add(Number(r.class_id));
+          if (Number(r.in_timetable) === 1) (tt[r.subject_id] = tt[r.subject_id] || new Set()).add(Number(r.class_id));
+        });
+        setTtScope({ any, tt });
+      } catch (e) { console.error('subject scope load:', e); }
+    })();
+  }, [user]);
+  const ttAllowed = useCallback((subjectId, classId) => {
+    const all = ttScope.any[subjectId];
+    if (!all || all.size === 0) return true;                 // unlinked → every class
+    return (ttScope.tt[subjectId] || new Set()).has(Number(classId));
+  }, [ttScope]);
+
   if (loading) {
     return (
       <div className="h-96 flex items-center justify-center">
@@ -245,7 +270,7 @@ function AdminTimetable({ user, canEdit, canDelete, isManager, fullAccess }) {
 
   const tabIds = tabs.map(t => t.id);
   const current = tabIds.includes(activeTab) ? activeTab : tabIds[0];
-  const tabProps = { data, fetchData, user, canEdit };
+  const tabProps = { data, fetchData, user, canEdit, ttAllowed };
 
   return (
     <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12">
@@ -554,7 +579,7 @@ function SetupTab({ data, fetchData, user, canEdit }) {
 // =====================================================================
 //  SUB-COMPONENT 2: GridTab — Class Timetable
 // =====================================================================
-function GridTab({ data, fetchData, user, canEdit }) {
+function GridTab({ data, fetchData, user, canEdit, ttAllowed }) {
   const workingDays = useMemo(
     () => data.days.filter(d => d.is_working).sort((a, b) => a.day_index - b.day_index),
     [data.days]
@@ -772,6 +797,13 @@ function GridTab({ data, fetchData, user, canEdit }) {
                     );
                   }
 
+                  // Subjects offered in THIS class's timetable (keep any already-set one).
+                  let subjectOptions = data.subjects.filter(s => ttAllowed(s.id, selectedClassId));
+                  if (cell.subject_id && !subjectOptions.some(s => String(s.id) === String(cell.subject_id))) {
+                    const cur = data.subjects.find(s => String(s.id) === String(cell.subject_id));
+                    if (cur) subjectOptions = [cur, ...subjectOptions];
+                  }
+
                   // Teachers eligible for the chosen subject...
                   let teacherOptions = teachersForSubject(cell.subject_id);
                   // ...but ALWAYS keep the already-assigned teacher in the list.
@@ -792,7 +824,7 @@ function GridTab({ data, fetchData, user, canEdit }) {
                             onChange={e => updateCell(d.id, p.id, 'subject_id', e.target.value)}
                             className="h-8 w-full rounded border border-zinc-200 bg-zinc-50 pl-2 pr-6 text-[11px] text-zinc-900 focus:outline-none focus:ring-1 focus:ring-primary/40 focus:border-primary/40 disabled:opacity-60 appearance-none cursor-pointer">
                             <option value="">Select Subject</option>
-                            {data.subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            {subjectOptions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                           </select>
                           <ChevronDown className="size-3 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
                         </div>
@@ -843,7 +875,7 @@ function GridTab({ data, fetchData, user, canEdit }) {
 // =====================================================================
 //  SUB-COMPONENT 3: TeachersTimetableTab — managers only
 // =====================================================================
-function TeachersTimetableTab({ data, fetchData, user, canEdit }) {
+function TeachersTimetableTab({ data, fetchData, user, canEdit, ttAllowed }) {
   const workingDays = useMemo(
     () => data.days.filter(d => d.is_working).sort((a, b) => a.day_index - b.day_index),
     [data.days]
@@ -1094,6 +1126,14 @@ function TeachersTimetableTab({ data, fetchData, user, canEdit }) {
 
                     const clash = classSlotClash(d.id, p.id, cell.class_id);
 
+                    // Subjects offered in the CHOSEN class's timetable (keep any already-set one).
+                    let subjOpts = eligibleSubjects.filter(s => ttAllowed(s.id, cell.class_id));
+                    if (cell.subject_id && !subjOpts.some(s => String(s.id) === String(cell.subject_id))) {
+                      const cur = eligibleSubjects.find(s => String(s.id) === String(cell.subject_id))
+                        || data.subjects.find(s => String(s.id) === String(cell.subject_id));
+                      if (cur) subjOpts = [cur, ...subjOpts];
+                    }
+
                     return (
                       <td key={p.id} className="p-2 sm:p-3 border-r border-zinc-100 align-top">
                         <div className="flex flex-col gap-1.5">
@@ -1119,7 +1159,7 @@ function TeachersTimetableTab({ data, fetchData, user, canEdit }) {
                                 onChange={e => updateCell(d.id, p.id, 'subject_id', e.target.value)}
                                 className="h-8 w-full rounded border border-zinc-200 bg-zinc-50 pl-2 pr-6 text-[11px] text-zinc-900 focus:outline-none focus:ring-1 focus:ring-primary/40 focus:border-primary/40 disabled:opacity-60 appearance-none cursor-pointer">
                                 <option value="">Select Subject</option>
-                                {eligibleSubjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                {subjOpts.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                               </select>
                               <ChevronDown className="size-3 text-zinc-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
                             </div>

@@ -2598,18 +2598,29 @@ app.post('/api/admin/timetable/teacher-entries/bulk', async (req, res) => {
 
 // =====================================================================
 // === 12. SUBJECTS ====================================================
+//  Each subject-class link carries a scope:
+//    in_timetable = 1 -> offered in the Timetable
+//    in_report    = 1 -> offered in Marks Entry / Report Cards / Performance
+//  Both default to 1 (shown everywhere) when not sent, so existing
+//  behaviour is preserved.
 // =====================================================================
+
+// Normalise a truthy/undefined scope flag to 1/0 (default 1 = shown).
+function scopeFlag(v) {
+    return (v === 0 || v === false || v === '0') ? 0 : 1;
+}
+
 app.post('/api/admin/subjects', async (req, res) => {
-    const { name, class_ids } = req.body;
+    const { name, class_ids, in_timetable, in_report } = req.body;
     const institutionId = req.auth.institutionId;
-    // 👇 === BOUNCER FOR CREATION === 👇
     if (!name || name.trim() === '') {
         return res.status(400).json({ error: 'Subject name is required.' });
     }
     if (!institutionId) {
         return res.status(400).json({ error: 'Institution ID is required.' });
     }
-    // 👆 ============================ 👆
+    const it = scopeFlag(in_timetable);
+    const ir = scopeFlag(in_report);
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
@@ -2622,8 +2633,8 @@ app.post('/api/admin/subjects', async (req, res) => {
             for (const cid of class_ids) {
                 if (!cid) continue;
                 await conn.execute(
-                    'INSERT IGNORE INTO subject_classes (subject_id, class_id) VALUES (?, ?)',
-                    [subjectId, parseInt(cid, 10)]
+                    'INSERT IGNORE INTO subject_classes (subject_id, class_id, in_timetable, in_report) VALUES (?, ?, ?, ?)',
+                    [subjectId, parseInt(cid, 10), it, ir]
                 );
             }
         }
@@ -2639,21 +2650,26 @@ app.post('/api/admin/subjects', async (req, res) => {
 });
 
 app.put('/api/admin/subjects/:id', async (req, res) => {
-    const { name, class_ids } = req.body;
+    const { name, class_ids, in_timetable, in_report } = req.body;
     const subjectId = parseInt(req.params.id, 10);
+    const it = scopeFlag(in_timetable);
+    const ir = scopeFlag(in_report);
     const conn = await db.getConnection();
     try {
         const [own] = await conn.execute('SELECT institutionId FROM subjects WHERE id = ?', [subjectId]);
         if (own.length === 0) return res.status(404).json({ error: 'Subject not found.' });
         if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This subject belongs to another institution.' });
- 
+
         await conn.beginTransaction();
         await conn.execute('UPDATE subjects SET name = ? WHERE id = ?', [name, subjectId]);
         if (Array.isArray(class_ids)) {
             await conn.execute('DELETE FROM subject_classes WHERE subject_id = ?', [subjectId]);
             for (const cid of class_ids) {
                 if (!cid) continue;
-                await conn.execute('INSERT IGNORE INTO subject_classes (subject_id, class_id) VALUES (?, ?)', [subjectId, parseInt(cid, 10)]);
+                await conn.execute(
+                    'INSERT IGNORE INTO subject_classes (subject_id, class_id, in_timetable, in_report) VALUES (?, ?, ?, ?)',
+                    [subjectId, parseInt(cid, 10), it, ir]
+                );
             }
         }
         await conn.commit();
@@ -2667,7 +2683,6 @@ app.put('/api/admin/subjects/:id', async (req, res) => {
     } finally { conn.release(); }
 });
 
-
 app.delete('/api/admin/subjects/:id', async (req, res) => {
     try {
         const [own] = await db.execute('SELECT institutionId FROM subjects WHERE id = ?', [req.params.id]);
@@ -2675,6 +2690,22 @@ app.delete('/api/admin/subjects/:id', async (req, res) => {
         if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This subject belongs to another institution.' });
         await db.execute('DELETE FROM subjects WHERE id = ?', [req.params.id]);
         res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Per subject-class scope, so the UI (and the Timetable) know where each
+// subject applies. Returns [{ subject_id, class_id, in_timetable, in_report }].
+app.get('/api/admin/subject-classes/:instId', async (req, res) => {
+    try {
+        const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+        const [rows] = await db.execute(
+            `SELECT sc.subject_id, sc.class_id, sc.in_timetable, sc.in_report
+               FROM subject_classes sc
+               JOIN subjects s ON s.id = sc.subject_id
+              WHERE s.institutionId = ?`,
+            [instId]
+        );
+        res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -4965,14 +4996,19 @@ async function subjectsForClassOrdered(instId, classId) {
     const [allSubjects] = await db.execute(
         'SELECT id, name FROM subjects WHERE institutionId = ? ORDER BY name', [instId]);
     const [scRows] = await db.execute(
-        `SELECT sc.subject_id, sc.class_id FROM subject_classes sc
+        `SELECT sc.subject_id, sc.class_id, sc.in_report FROM subject_classes sc
            JOIN subjects s ON s.id = sc.subject_id WHERE s.institutionId = ?`, [instId]);
-    const linkMap = {};
-    scRows.forEach(r => { (linkMap[r.subject_id] = linkMap[r.subject_id] || new Set()).add(r.class_id); });
+    const anyLink = {}, reportLink = {};
+    scRows.forEach(r => {
+        (anyLink[r.subject_id] = anyLink[r.subject_id] || new Set()).add(r.class_id);
+        if (r.in_report === undefined || r.in_report === null || Number(r.in_report) === 1)
+            (reportLink[r.subject_id] = reportLink[r.subject_id] || new Set()).add(r.class_id);
+    });
+    const cidNum = parseInt(classId, 10);
     const filtered = allSubjects.filter(s => {
-        const links = linkMap[s.id];
-        if (!links || links.size === 0) return true;
-        return links.has(parseInt(classId, 10));
+        const all = anyLink[s.id];
+        if (!all || all.size === 0) return true;         // unlinked → all classes
+        return (reportLink[s.id] || new Set()).has(cidNum); // linked → only if in_report
     });
     const [ordRows] = await db.execute(
         'SELECT subject_id, sort_order FROM class_subject_order WHERE class_id = ?', [classId]);
@@ -5063,18 +5099,20 @@ app.get('/api/admin/reports/class-data/:classId', async (req, res) => {
         );
 
         const [scRows] = await db.execute(
-            `SELECT sc.subject_id, sc.class_id FROM subject_classes sc
+            `SELECT sc.subject_id, sc.class_id, sc.in_report FROM subject_classes sc
                JOIN subjects s ON s.id = sc.subject_id WHERE s.institutionId = ?`, [instId]);
-        const linkMap = {};
+        const anyLink = {}, reportLink = {};
         scRows.forEach(r => {
-            if (!linkMap[r.subject_id]) linkMap[r.subject_id] = new Set();
-            linkMap[r.subject_id].add(r.class_id);
+            (anyLink[r.subject_id] = anyLink[r.subject_id] || new Set()).add(r.class_id);
+            if (r.in_report === undefined || r.in_report === null || Number(r.in_report) === 1)
+                (reportLink[r.subject_id] = reportLink[r.subject_id] || new Set()).add(r.class_id);
         });
 
+        const cidNum = parseInt(classId, 10);
         const subjects = allSubjects.filter(s => {
-            const links = linkMap[s.id];
-            if (!links || links.size === 0) return true;
-            return links.has(parseInt(classId, 10));
+            const all = anyLink[s.id];
+            if (!all || all.size === 0) return true;
+            return (reportLink[s.id] || new Set()).has(cidNum);
         });
 
         // Apply the admin-set display order for this class (A-Z fallback).
@@ -5348,19 +5386,20 @@ async function buildReportCard(studentId) {
         [student.institutionId]
     );
     const [scRowsRC] = await db.execute(
-        `SELECT sc.subject_id, sc.class_id FROM subject_classes sc
+        `SELECT sc.subject_id, sc.class_id, sc.in_report FROM subject_classes sc
            JOIN subjects s ON s.id = sc.subject_id WHERE s.institutionId = ?`,
         [student.institutionId]
     );
-    const linkMapRC = {};
+    const anyLinkRC = {}, reportLinkRC = {};
     scRowsRC.forEach(r => {
-        if (!linkMapRC[r.subject_id]) linkMapRC[r.subject_id] = new Set();
-        linkMapRC[r.subject_id].add(r.class_id);
+        (anyLinkRC[r.subject_id] = anyLinkRC[r.subject_id] || new Set()).add(r.class_id);
+        if (r.in_report === undefined || r.in_report === null || Number(r.in_report) === 1)
+            (reportLinkRC[r.subject_id] = reportLinkRC[r.subject_id] || new Set()).add(r.class_id);
     });
     const subjectsFiltered = allSubjectsRC.filter(s => {
-        const links = linkMapRC[s.id];
-        if (!links || links.size === 0) return true;
-        return links.has(student.class_id);
+        const all = anyLinkRC[s.id];
+        if (!all || all.size === 0) return true;
+        return (reportLinkRC[s.id] || new Set()).has(student.class_id);
     });
 
     // Apply the admin-set display order for this student's class (A-Z fallback).
@@ -5688,10 +5727,14 @@ app.get('/api/admin/marks-export/:instId', async (req, res) => {
 
         const [allSubjects] = await db.execute('SELECT id, name FROM subjects WHERE institutionId = ? ORDER BY name', [instId]);
         const [scRows] = await db.execute(
-            `SELECT sc.subject_id, sc.class_id FROM subject_classes sc
+            `SELECT sc.subject_id, sc.class_id, sc.in_report FROM subject_classes sc
                JOIN subjects s ON s.id = sc.subject_id WHERE s.institutionId = ?`, [instId]);
-        const linkMap = {};
-        scRows.forEach(r => { (linkMap[r.subject_id] = linkMap[r.subject_id] || new Set()).add(r.class_id); });
+        const anyLink = {}, reportLink = {};
+        scRows.forEach(r => {
+            (anyLink[r.subject_id] = anyLink[r.subject_id] || new Set()).add(r.class_id);
+            if (r.in_report === undefined || r.in_report === null || Number(r.in_report) === 1)
+                (reportLink[r.subject_id] = reportLink[r.subject_id] || new Set()).add(r.class_id);
+        });
 
         // Per-class subject display order (A-Z fallback), so the export
         // columns match Marks Entry and the Report Card.
@@ -5707,9 +5750,9 @@ app.get('/api/admin/marks-export/:instId', async (req, res) => {
 
         const subjectsForClass = (cid) => {
             const list = allSubjects.filter(s => {
-                const links = linkMap[s.id];
-                if (!links || links.size === 0) return true;
-                return links.has(cid);
+                const all = anyLink[s.id];
+                if (!all || all.size === 0) return true;
+                return (reportLink[s.id] || new Set()).has(cid);
             });
             const om = orderByClass[cid] || {};
             return [...list].sort((a, b) => {
@@ -6006,19 +6049,21 @@ async function loadClassPerformance(classId, requestedYearId) {
         [instId]
     );
     const [scRows] = await db.execute(
-        `SELECT sc.subject_id, sc.class_id FROM subject_classes sc
+        `SELECT sc.subject_id, sc.class_id, sc.in_report FROM subject_classes sc
            JOIN subjects s ON s.id = sc.subject_id WHERE s.institutionId = ?`,
         [instId]
     );
-    const linkMap = {};
+    const anyLink = {}, reportLink = {};
     scRows.forEach(r => {
-        if (!linkMap[r.subject_id]) linkMap[r.subject_id] = new Set();
-        linkMap[r.subject_id].add(r.class_id);
+        (anyLink[r.subject_id] = anyLink[r.subject_id] || new Set()).add(r.class_id);
+        if (r.in_report === undefined || r.in_report === null || Number(r.in_report) === 1)
+            (reportLink[r.subject_id] = reportLink[r.subject_id] || new Set()).add(r.class_id);
     });
+    const cidNum = parseInt(classId, 10);
     const subjects = allSubjects.filter(s => {
-        const links = linkMap[s.id];
-        if (!links || links.size === 0) return true;
-        return links.has(parseInt(classId, 10));
+        const all = anyLink[s.id];
+        if (!all || all.size === 0) return true;
+        return (reportLink[s.id] || new Set()).has(cidNum);
     });
 
     // Shared exam engine (entered + derived, with the rule graph).
@@ -6471,14 +6516,18 @@ app.get('/api/admin/performance-export/:instId', async (req, res) => {
         const [allSubjects] = await db.execute('SELECT id, name FROM subjects WHERE institutionId = ? ORDER BY name', [instId]);
         const subjectName = {}; allSubjects.forEach(s => { subjectName[s.id] = s.name; });
         const [scRows] = await db.execute(
-            `SELECT sc.subject_id, sc.class_id FROM subject_classes sc
+            `SELECT sc.subject_id, sc.class_id, sc.in_report FROM subject_classes sc
                JOIN subjects s ON s.id = sc.subject_id WHERE s.institutionId = ?`, [instId]);
-        const linkMap = {};
-        scRows.forEach(r => { (linkMap[r.subject_id] = linkMap[r.subject_id] || new Set()).add(r.class_id); });
+        const anyLink = {}, reportLink = {};
+        scRows.forEach(r => {
+            (anyLink[r.subject_id] = anyLink[r.subject_id] || new Set()).add(r.class_id);
+            if (r.in_report === undefined || r.in_report === null || Number(r.in_report) === 1)
+                (reportLink[r.subject_id] = reportLink[r.subject_id] || new Set()).add(r.class_id);
+        });
         const subjectsForClass = (cid) => allSubjects.filter(s => {
-            const links = linkMap[s.id];
-            if (!links || links.size === 0) return true;
-            return links.has(cid);
+            const all = anyLink[s.id];
+            if (!all || all.size === 0) return true;
+            return (reportLink[s.id] || new Set()).has(cid);
         });
 
         // Only entered exam types the school marks by hand, and only those
