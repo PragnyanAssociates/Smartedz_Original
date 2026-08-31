@@ -4319,19 +4319,31 @@ async function loadExamEngine(instId) {
 app.get('/api/admin/exam-types/:instId', async (req, res) => {
     try {
         const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
-        const [rows] = await db.execute(
-            'SELECT * FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id',
-            [instId]
-        );
+        const { class_id } = req.query;
+        let rows;
+        if (class_id) {
+            [rows] = await db.execute(
+                'SELECT * FROM exam_types WHERE institutionId = ? AND class_id = ? ORDER BY exam_order, id',
+                [instId, class_id]
+            );
+        } else {
+            [rows] = await db.execute(
+                'SELECT * FROM exam_types WHERE institutionId = ? ORDER BY exam_order, id',
+                [instId]
+            );
+        }
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.post('/api/admin/exam-types', async (req, res) => {
-    const { name, exam_order, grade_scale_id, kind, show_on_report, show_on_marks_entry, show_in_performance } = req.body;
+    const { name, exam_order, grade_scale_id, kind, show_on_report, show_on_marks_entry, show_in_performance, class_id } = req.body;
     const institutionId = req.auth.institutionId;
     if (!name) return res.status(400).json({ error: 'name required.' });
+    if (!class_id) return res.status(400).json({ error: 'Pick a class for this exam type.' });
     try {
+        const [c] = await db.execute('SELECT id FROM classes WHERE id = ? AND institutionId = ?', [class_id, institutionId]);
+        if (c.length === 0) return res.status(400).json({ error: 'That class does not belong to your institution.' });
         const gsId = (grade_scale_id === '' || grade_scale_id === null || grade_scale_id === undefined)
             ? null : parseInt(grade_scale_id, 10);
         const examKind = (kind === 'derived') ? 'derived' : 'entered';
@@ -4339,13 +4351,13 @@ app.post('/api/admin/exam-types', async (req, res) => {
         const showME = (show_on_marks_entry === 0 || show_on_marks_entry === false) ? 0 : 1;
         const showPF = (show_in_performance === 0 || show_in_performance === false) ? 0 : 1;
         const [result] = await db.execute(
-            'INSERT INTO exam_types (institutionId, name, exam_order, kind, grade_scale_id, show_on_report, show_on_marks_entry, show_in_performance) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-            [institutionId, name.trim(), parseInt(exam_order, 10) || 0, examKind, gsId, showRC, showME, showPF]
+            'INSERT INTO exam_types (institutionId, class_id, name, exam_order, kind, grade_scale_id, show_on_report, show_on_marks_entry, show_in_performance) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [institutionId, parseInt(class_id, 10), name.trim(), parseInt(exam_order, 10) || 0, examKind, gsId, showRC, showME, showPF]
         );
         res.json({ success: true, id: result.insertId });
     } catch (err) {
         if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
-            return res.status(400).json({ error: 'An exam type with that name already exists.' });
+            return res.status(400).json({ error: 'This class already has an exam type with that name.' });
         }
         res.status(500).json({ error: err.message });
     }
@@ -4780,14 +4792,16 @@ app.post('/api/admin/exam-rules', async (req, res) => {
 
     const conn = await db.getConnection();
     try {
-        const [own] = await conn.execute('SELECT institutionId FROM exam_types WHERE id = ?', [exam_type_id]);
+        const [own] = await conn.execute('SELECT institutionId, class_id FROM exam_types WHERE id = ?', [exam_type_id]);
         if (own.length === 0 || !sameTenant(req, own[0].institutionId)) {
             conn.release();
             return res.status(403).json({ error: 'That exam type belongs to another institution.' });
         }
 
-        // Only this institution's exam types may be sources.
-        const [vExam] = await conn.execute('SELECT id FROM exam_types WHERE institutionId = ?', [institutionId]);
+        // Sources must be exam types in the SAME class as this derived exam.
+        const [vExam] = await conn.execute(
+            'SELECT id FROM exam_types WHERE institutionId = ? AND class_id = ?',
+            [institutionId, own[0].class_id]);
         const okExam = new Set(vExam.map(r => r.id));
 
         // Clean + validate the incoming parts.
@@ -5104,7 +5118,8 @@ app.get('/api/admin/reports/class-data/:classId', async (req, res) => {
         );
 
         const examTypesForClass = examTypes
-            .filter(t => t.kind !== 'derived'
+            .filter(t => Number(t.class_id) === Number(classId)
+                && t.kind !== 'derived'
                 && (t.show_on_marks_entry === undefined || t.show_on_marks_entry === null || t.show_on_marks_entry === 1)
                 && maxMarks[t.id] !== undefined)
             .map(t => ({ ...t, max_marks: maxMarks[t.id]?.default ?? null }));
@@ -5417,6 +5432,7 @@ async function buildReportCard(studentId) {
     // Attach is_result (leaf of the graph) + the exam's grade bands.
     const examTypesForClass = examTypes
         .filter(t => {
+            if (Number(t.class_id) !== Number(student.class_id)) return false;
             if (!t.show_on_report) return false;
             if (t.kind === 'derived') return subjects.some(s => (derivedMaxBySubRC[t.id]?.[s.id] || 0) > 0);
             return maxMarks[t.id] !== undefined;
@@ -5965,7 +5981,7 @@ async function loadClassPerformance(classId, requestedYearId) {
     }
 
     // --- Performance set: visible in performance AND relevant to this class ---
-    const perfSet = examTypesAll.filter(t => perfVisible(t) && (
+    const perfSet = examTypesAll.filter(t => Number(t.class_id) === Number(classId) && perfVisible(t) && (
         t.kind === 'derived'
             ? subjects.some(s => (derivedMaxBySub[t.id]?.[s.id] || 0) > 0)
             : (maxMarks[t.id] !== undefined)

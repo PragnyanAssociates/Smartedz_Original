@@ -78,7 +78,9 @@ export default function ExamSetup() {
 // =====================================================================
 function ExamTypesPanel() {
   const { user } = useAuth();
-  const [types, setTypes] = useState([]);
+  const [classes, setClasses] = useState([]);
+  const [pickedClass, setPickedClass] = useState('');
+  const [types, setTypes] = useState([]);   // exam types for the picked class
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -92,18 +94,38 @@ function ExamTypesPanel() {
   const [dirty, setDirty] = useState(false);                // unsaved reorder
   const [savingOrder, setSavingOrder] = useState(false);
 
+  // Load the class list once.
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/admin/data/${user.institutionId}`);
+        const d = await res.json();
+        const cls = d.classes || [];
+        setClasses(cls);
+        setPickedClass(prev => (prev ? prev : (cls[0] ? String(cls[0].id) : '')));
+      } catch (e) { console.error(e); }
+    })();
+  }, [user]);
+
+  // Load exam types for the picked class.
   const load = useCallback(async () => {
+    if (!pickedClass) { setTypes([]); setLoading(false); return; }
     setLoading(true);
     try {
-      const tRes = await fetch(`${API_BASE_URL}/admin/exam-types/${user.institutionId}`);
+      const tRes = await fetch(`${API_BASE_URL}/admin/exam-types/${user.institutionId}?class_id=${pickedClass}`);
       const tData = await tRes.json();
       setTypes(Array.isArray(tData) ? tData : []);
       setDirty(false);
     } catch (e) { console.error(e); }
     setLoading(false);
-  }, [user]);
+  }, [user, pickedClass]);
 
   useEffect(() => { load(); }, [load]);
+
+  const classLabel = (id) => {
+    const c = classes.find(c => String(c.id) === String(id));
+    return c ? `${c.className}${c.section ? ` - ${c.section}` : ''}` : '';
+  };
 
   const openAdd = () => {
     setEditing(null);
@@ -183,6 +205,7 @@ function ExamTypesPanel() {
     try {
       const body = {
         institutionId: user.institutionId,
+        class_id: parseInt(pickedClass, 10),
         name: form.name.trim(),
         exam_order: parseInt(form.exam_order, 10) || 0,
         kind: isDerived ? 'derived' : 'entered',
@@ -251,10 +274,23 @@ function ExamTypesPanel() {
         <div>
           <h3 className="font-semibold text-zinc-900 text-sm">Exam Types</h3>
           <p className="text-[11px] text-zinc-500 mt-0.5">
-            Define the exams your school conducts and the order they appear in. Assign a grade scale to show a grade on the report card.
+            Each class has its own exams. Pick a class, then define the exams it conducts and the order they appear in.
           </p>
         </div>
-        <div className="flex items-center gap-2 w-full sm:w-auto">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto">
+          {/* Class picker */}
+          <div className="relative w-full sm:w-56 shrink-0">
+            <select value={pickedClass} onChange={e => { setPickedClass(e.target.value); setDirty(false); }}
+              className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
+              <option value="">Select a class...</option>
+              {classes.map(c => (
+                <option key={c.id} value={c.id}>
+                  {c.className}{c.section ? ` - ${c.section}` : ''}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
           {dirty && (
             <button onClick={saveOrder} disabled={savingOrder}
               className="h-9 bg-emerald-600 hover:bg-emerald-700 disabled:bg-zinc-300 disabled:text-zinc-500 text-white px-4 rounded-md font-semibold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-colors shrink-0">
@@ -262,29 +298,39 @@ function ExamTypesPanel() {
               Save Order
             </button>
           )}
-          <button onClick={openAdd}
-            className="h-9 w-full sm:w-auto bg-primary hover:bg-primary/90 text-white px-4 rounded-md font-semibold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-colors shrink-0">
+          <button onClick={openAdd} disabled={!pickedClass}
+            className="h-9 w-full sm:w-auto bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white px-4 rounded-md font-semibold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-colors shrink-0">
             <Plus className="size-3.5" /> Add Exam Type
           </button>
         </div>
       </div>
 
-      {/* Exam types are shared across years — worth saying once, up front. */}
+      {/* Exam types are per-class but shared across years. */}
       <div className="rounded-md bg-blue-50/60 ring-1 ring-inset ring-blue-500/15 px-4 py-3 flex items-start gap-2.5">
         <CalendarRange className="size-4 text-blue-600 shrink-0 mt-0.5" />
         <p className="text-[11px] text-blue-800 leading-relaxed">
-          <span className="font-semibold">These carry across every academic year.</span> Unlike marks, exam types aren't tied to
-          a year — the same list is reused each year, which is why you never have to rebuild it. The trade-off: deleting one
-          removes its marks from <strong>every year</strong>, not just the active one. You'll see exactly what's at stake before it happens.
+          <span className="font-semibold">Each class keeps its own exam list, and it carries across every academic year.</span> Exam
+          types aren't tied to a year, so you never rebuild them. The trade-off: deleting one removes its marks from
+          <strong> every year</strong> for this class, not just the active one. You'll see exactly what's at stake before it happens.
         </p>
       </div>
 
-      {loading ? (
+      {classes.length === 0 ? (
+        <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
+          <ListChecks className="size-10 text-zinc-300 mb-3" />
+          <p className="text-zinc-500 text-sm font-medium">Add classes first (Manage Logins), then set up each class's exams here.</p>
+        </div>
+      ) : !pickedClass ? (
+        <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
+          <ListChecks className="size-10 text-zinc-300 mb-3" />
+          <p className="text-zinc-500 text-sm font-medium">Pick a class to set up its exam types.</p>
+        </div>
+      ) : loading ? (
         <div className="h-64 flex items-center justify-center"><Loader2 className="animate-spin size-8 text-primary" /></div>
       ) : types.length === 0 ? (
         <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
           <ListChecks className="size-10 text-zinc-300 mb-3" />
-          <p className="text-zinc-500 text-sm font-medium">No exam types yet. Add one to begin.</p>
+          <p className="text-zinc-500 text-sm font-medium">No exam types for {classLabel(pickedClass)} yet. Add one to begin.</p>
         </div>
       ) : (
         <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-x-auto custom-scrollbar">
@@ -945,6 +991,8 @@ function MaxMarksPanel() {
     );
   }
 
+  const classTypes = types.filter(t => String(t.class_id) === String(pickedClass));
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
@@ -1000,7 +1048,7 @@ function MaxMarksPanel() {
             <thead className="bg-zinc-50/80">
               <tr>
                 <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider sticky left-0 bg-zinc-50/95 backdrop-blur z-10 border-b border-zinc-100 w-48">Subject</th>
-                {types.map(t => (
+                {classTypes.map(t => (
                   <th key={t.id} className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 text-center whitespace-nowrap">{t.name}</th>
                 ))}
               </tr>
@@ -1014,7 +1062,7 @@ function MaxMarksPanel() {
                   </span>
                   <span className="block text-[10px] font-medium text-primary/70 mt-0.5">One value for every subject</span>
                 </td>
-                {types.map(t => {
+                {classTypes.map(t => {
                   const locked = colMode[t.id]?.allLocked;
                   return (
                     <td key={t.id} className="p-2 border-r border-zinc-100 last:border-r-0">
@@ -1043,7 +1091,7 @@ function MaxMarksPanel() {
                   <td className="px-5 py-3 font-semibold text-zinc-900 text-sm sticky left-0 bg-white whitespace-nowrap border-r border-zinc-100 shadow-[1px_0_0_0_rgba(0,0,0,0.05)]">
                     {s.name}
                   </td>
-                  {types.map(t => {
+                  {classTypes.map(t => {
                     const locked = colMode[t.id]?.perSubjectLocked;
                     const inherit = grid[`${t.id}:${pickedClass}:0`];
                     return (
@@ -1504,6 +1552,14 @@ function GradingPanel() {
 
   useEffect(() => { loadBands(pickedClass, pickedExam); }, [pickedClass, pickedExam, loadBands]);
 
+  // Keep the exam selection inside the picked class's own exam list.
+  useEffect(() => {
+    const inClass = examTypes.filter(t => String(t.class_id) === String(pickedClass));
+    if (!inClass.some(t => String(t.id) === String(pickedExam))) {
+      setPickedExam(inClass[0] ? String(inClass[0].id) : '');
+    }
+  }, [pickedClass, examTypes]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const setBand = (i, key, val) => setBands(prev => prev.map((b, idx) => idx === i ? { ...b, [key]: val } : b));
   const addBand = () => setBands(prev => [...prev, { min_pct: '', max_pct: '', label: '' }]);
   const removeBand = (i) => setBands(prev => (prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev));
@@ -1545,6 +1601,8 @@ function GradingPanel() {
     );
   }
 
+  const classExams = examTypes.filter(t => String(t.class_id) === String(pickedClass));
+
   return (
     <div className="space-y-4">
       <div>
@@ -1575,7 +1633,8 @@ function GradingPanel() {
           <div className="relative mt-1.5">
             <select value={pickedExam} onChange={e => setPickedExam(e.target.value)}
               className={`${inputCls} pr-8 appearance-none cursor-pointer`}>
-              {examTypes.map(t => (
+              {classExams.length === 0 && <option value="">No exams for this class</option>}
+              {classExams.map(t => (
                 <option key={t.id} value={t.id}>{t.name}</option>
               ))}
             </select>
