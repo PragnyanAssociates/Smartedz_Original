@@ -1,15 +1,18 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
-  ArrowLeft, Loader2, Eye, Printer, Search, FileText
+  ArrowLeft, Loader2, Eye, Printer, Search, FileText, X
 } from 'lucide-react';
 import ReportCardView, { LastPrintedStamp } from './ReportCardView';
 
 // =====================================================================
 //  ReportCards - for one class, list students and open their report
-//  card. Printing uses the browser's print dialog scoped to the card;
-//  the print stylesheet (one-page landscape) lives in ReportCardView,
-//  so this screen no longer carries its own @media print block.
+//  card. Two print paths:
+//   • per-student  - open a card, Print (browser dialog, one page).
+//   • Print All    - fetches every student's card, stacks them one page
+//     each, and prints the whole class in a single job (24 students =
+//     24 pages). Each print is logged on the server (who + when).
 //  Students are listed roll-wise (numeric) by default.
 // =====================================================================
 
@@ -19,6 +22,7 @@ const rollNum = (s) => {
 };
 
 export default function ReportCards({ classInfo, onBack }) {
+  const { user } = useAuth();
   const [students, setStudents] = useState([]);   // [{id, name, roll_no}]
   const [loading, setLoading]   = useState(true);
   const [query, setQuery]       = useState('');
@@ -26,8 +30,11 @@ export default function ReportCards({ classInfo, onBack }) {
   const [card, setCard]         = useState(null);  // selected student's report card
   const [cardLoading, setCardLoading] = useState(false);
 
-  // -----------------------------------------------------------------
-  // Load class roster (reuse class-data endpoint - it returns students)
+  // Print All state
+  const [batch, setBatch] = useState(null);        // { cards: [...] } ready to print
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchProgress, setBatchProgress] = useState({ done: 0, total: 0 });
+
   // -----------------------------------------------------------------
   const load = useCallback(async () => {
     setLoading(true);
@@ -62,7 +69,6 @@ export default function ReportCards({ classInfo, onBack }) {
           (s.name || '').toLowerCase().includes(query.toLowerCase()) ||
           String(s.roll_no || '').toLowerCase().includes(query.toLowerCase()))
       : [...students];
-    // Roll-wise (numeric) default ordering
     base.sort((a, b) => {
       const r = rollNum(a) - rollNum(b);
       if (r !== 0) return r;
@@ -70,6 +76,47 @@ export default function ReportCards({ classInfo, onBack }) {
     });
     return base;
   }, [students, query]);
+
+  // -----------------------------------------------------------------
+  //  PRINT ALL — fetch every student's card, then print one page each.
+  // -----------------------------------------------------------------
+  const printAll = async () => {
+    if (batchBusy || students.length === 0) return;
+    const roster = [...students].sort((a, b) => {
+      const r = rollNum(a) - rollNum(b);
+      return r !== 0 ? r : (a.name || '').localeCompare(b.name || '');
+    });
+    setBatchBusy(true);
+    setBatchProgress({ done: 0, total: roster.length });
+    const cards = [];
+    for (let i = 0; i < roster.length; i++) {
+      try {
+        const res = await fetch(`${API_BASE_URL}/admin/reports/student/${roster[i].id}`);
+        const d = await res.json();
+        if (res.ok) cards.push(d);
+      } catch { /* skip a failed one */ }
+      setBatchProgress({ done: i + 1, total: roster.length });
+    }
+    setBatchBusy(false);
+    if (cards.length === 0) { alert('Could not load any report cards.'); return; }
+    setBatch({ cards });
+  };
+
+  // Once the batch is mounted, print, then log all prints, then clean up.
+  useEffect(() => {
+    if (!batch) return;
+    const ids = batch.cards.map(c => c.student?.id).filter(Boolean);
+    const t = setTimeout(() => {
+      window.print();
+      fetch(`${API_BASE_URL}/admin/report-card-prints`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ student_ids: ids, printed_by: user?.name })
+      }).catch(() => {});
+      setBatch(null);
+    }, 350); // let the DOM paint all cards first
+    return () => clearTimeout(t);
+  }, [batch, user]);
 
   // -----------------------------------------------------------------
   // Detail (single report card) view
@@ -103,12 +150,20 @@ export default function ReportCards({ classInfo, onBack }) {
   // -----------------------------------------------------------------
   return (
     <div className="space-y-4 sm:space-y-6 animate-in fade-in duration-300">
-      <button onClick={onBack}
-        className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
-        <ArrowLeft className="size-4" /> Back to classes
-      </button>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 print:hidden">
+        <button onClick={onBack}
+          className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors w-fit">
+          <ArrowLeft className="size-4" /> Back to classes
+        </button>
+        <button onClick={printAll} disabled={batchBusy || students.length === 0}
+          className="h-9 px-4 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors shrink-0 w-full sm:w-auto">
+          {batchBusy
+            ? <><Loader2 className="size-4 animate-spin" /> Preparing {batchProgress.done}/{batchProgress.total}...</>
+            : <><Printer className="size-4" /> Print All</>}
+        </button>
+      </div>
 
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 print:hidden">
         <div>
           <h2 className="text-xl font-semibold text-zinc-900 tracking-tight">{classInfo.class_group}</h2>
           <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider mt-1">Report Cards</p>
@@ -125,24 +180,24 @@ export default function ReportCards({ classInfo, onBack }) {
       </div>
 
       {cardLoading && (
-        <div className="flex justify-center py-4">
+        <div className="flex justify-center py-4 print:hidden">
           <Loader2 className="animate-spin size-6 text-primary" />
         </div>
       )}
 
       {loading ? (
-        <div className="h-64 flex items-center justify-center">
+        <div className="h-64 flex items-center justify-center print:hidden">
           <Loader2 className="animate-spin size-8 text-primary" />
         </div>
       ) : filtered.length === 0 ? (
-        <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
+        <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center print:hidden">
           <FileText className="size-10 text-zinc-300 mb-3" />
           <p className="text-zinc-500 text-sm font-medium">
             {students.length === 0 ? 'No students in this class.' : 'No students match your search.'}
           </p>
         </div>
       ) : (
-        <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-x-auto custom-scrollbar">
+        <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-x-auto custom-scrollbar print:hidden">
           <table className="w-full text-left border-collapse min-w-[500px]">
             <thead className="bg-zinc-50/80">
               <tr>
@@ -171,6 +226,62 @@ export default function ReportCards({ classInfo, onBack }) {
             </tbody>
           </table>
         </div>
+      )}
+
+      {/* Busy overlay while fetching all cards */}
+      {batchBusy && (
+        <div className="fixed inset-0 z-[130] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm print:hidden">
+          <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-xl px-6 py-5 flex items-center gap-3">
+            <Loader2 className="size-5 animate-spin text-primary" />
+            <div className="text-sm text-zinc-700">
+              Preparing report cards… <span className="font-semibold">{batchProgress.done}/{batchProgress.total}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Batch print container: hidden on screen, one card per page in print. */}
+      {batch && (
+        <>
+          <style>{`
+            @media print {
+              @page { size: A4 portrait; margin: 8mm 6mm; }
+              html, body { height:auto !important; min-height:0 !important; overflow:visible !important; background:#fff !important; }
+              body * { visibility: hidden !important; }
+              #rc-print-all, #rc-print-all * { visibility: visible !important; }
+              #rc-print-all { position: absolute !important; left: 0 !important; top: 0 !important; width: 100% !important; }
+
+              #rc-print-all .rc-print-page { page-break-after: always; break-after: page; }
+              #rc-print-all .rc-print-page:last-child { page-break-after: auto; break-after: auto; }
+
+              /* obtained marks only, compact, so every column + row fits one page */
+              #rc-print-all .rc-max { display: none !important; }
+              #rc-print-all .rc-logo { height: 96px !important; }
+              #rc-print-all .report-card { max-width: none !important; width: 100% !important; padding: 6px 6px !important; margin: 0 !important; }
+              #rc-print-all .overflow-x-auto { overflow: visible !important; }
+              #rc-print-all table { width: 100% !important; min-width: 0 !important; border-collapse: collapse !important; font-size: 10px !important; }
+              #rc-print-all th, #rc-print-all td { padding: 3px 3px !important; }
+              #rc-print-all thead { display: table-header-group; }
+
+              #rc-print-all .mb-8 { margin-bottom: 8px !important; }
+              #rc-print-all .mb-6 { margin-bottom: 6px !important; }
+              #rc-print-all .mb-4 { margin-bottom: 6px !important; }
+              #rc-print-all .mb-12 { margin-bottom: 6px !important; }
+              #rc-print-all .mt-16 { margin-top: 14px !important; }
+              #rc-print-all .pb-5 { padding-bottom: 6px !important; }
+
+              * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+            }
+            @media screen { #rc-print-all { display: none; } }
+          `}</style>
+          <div id="rc-print-all">
+            {batch.cards.map((c, i) => (
+              <div className="rc-print-page" key={c.student?.id || i}>
+                <ReportCardView card={c} batch />
+              </div>
+            ))}
+          </div>
+        </>
       )}
     </div>
   );

@@ -1,28 +1,28 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { GraduationCap, Printer } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
+import { API_BASE_URL } from '../../apiConfig';
 
 // =====================================================================
 //  ReportCardView - the printable report card layout for ONE student.
 //
+//  Two modes:
+//   • single (default) - the standalone card with its own one-page print
+//     stylesheet + fit-to-page. Used by Report Cards / My Report Card.
+//   • batch  (prop `batch`) - renders JUST the card body (no id, no print
+//     <style>, no fit effect) so a parent can stack many of them, one per
+//     page, for "Print All". The parent supplies the batch print CSS.
+//
 //  Receives a `card` shaped like buildReportCard():
 //    { student, institution, academicYear, subjects, examTypes, maxMarks, marks, attendance }
 //
-//  CONDUCTED-ONLY DENOMINATOR: exam types are shared config, so a class
-//  may have ten configured while only a few were held. Max and % count
-//  ONLY exams this student has marks for (a 0 counts). Never-conducted
-//  exams are excluded and their "/max" hint hidden.
-//
-//  ONE-PAGE PRINT (robust):
-//  We do NOT rely on @page orientation or per-class CSS compression —
-//  browsers honour those inconsistently, which was clipping the bottom
-//  of the card. Instead, on `beforeprint` we measure the card's real
-//  height/width and apply an INLINE `zoom` so the entire card (marks +
-//  attendance + signatures) scales down to fit a single sheet, in
-//  whatever orientation the browser uses. Inline zoom wins over every
-//  stylesheet, so nothing can override it. It's reset on `afterprint`.
+//  CONDUCTED-ONLY DENOMINATOR: exam types are per-class config; a class
+//  may have several configured while only a few were held. Max and grade
+//  count ONLY exams this student has marks for (a 0 counts).
 //
 //  LAST-PRINTED lives in the exported <LastPrintedStamp/>, placed by the
-//  parents BESIDE their Print button.
+//  parents BESIDE their Print button. It now reads/writes the SERVER, so
+//  "Last printed by <name> on <date>" is visible to everyone.
 // =====================================================================
 
 // Format a numeric mark without trailing decimals: 20.00 -> 20, 19.50 -> 19.5
@@ -45,51 +45,72 @@ const fmtDateTime = (iso) => {
   } catch { return null; }
 };
 
+// A DATETIME stored as UTC (UTC_TIMESTAMP) comes back without a zone; make
+// it explicit so the browser converts to IST correctly.
+const asUtcIso = (v) => {
+  if (!v) return null;
+  const s = String(v).replace(' ', 'T');
+  return /[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s : s + 'Z';
+};
+
 // ---------------------------------------------------------------------
-//  LastPrintedStamp — screen-only, rendered by the parent next to Print.
-//  Records the moment per student in localStorage on any print (button
-//  or Ctrl/Cmd+P) and shows it back.
+//  LastPrintedStamp — server-backed. Shows "Last printed by NAME on DATE",
+//  visible to everyone. Records the print (with the current user's name)
+//  on any print of this student (button or Ctrl/Cmd+P) via afterprint.
 // ---------------------------------------------------------------------
 export function LastPrintedStamp({ studentId, className = '' }) {
-  const storeKey = studentId ? `sedz:rc:lastprint:${studentId}` : null;
-  const [lastPrinted, setLastPrinted] = useState(null);
+  const { user } = useAuth();
+  const [info, setInfo] = useState(null); // { printed_by, printed_at }
+
+  const fetchInfo = useCallback(async () => {
+    if (!studentId) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/report-card-print/${studentId}`);
+      const d = await res.json();
+      if (res.ok && d && d.printed_at) setInfo(d);
+    } catch { /* ignore */ }
+  }, [studentId]);
+
+  useEffect(() => { fetchInfo(); }, [fetchInfo]);
 
   useEffect(() => {
-    if (!storeKey) return;
-    try {
-      const v = localStorage.getItem(storeKey);
-      if (v) setLastPrinted(v);
-    } catch { /* storage unavailable (private mode) */ }
-
-    const onAfterPrint = () => {
-      const now = new Date().toISOString();
-      try { localStorage.setItem(storeKey, now); } catch { /* ignore */ }
-      setLastPrinted(now);
+    if (!studentId) return;
+    const onAfterPrint = async () => {
+      try {
+        await fetch(`${API_BASE_URL}/admin/report-card-prints`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ student_ids: [studentId], printed_by: user?.name })
+        });
+      } catch { /* ignore */ }
+      fetchInfo();
     };
     window.addEventListener('afterprint', onAfterPrint);
     return () => window.removeEventListener('afterprint', onAfterPrint);
-  }, [storeKey]);
+  }, [studentId, user, fetchInfo]);
+
+  const when = fmtDateTime(asUtcIso(info?.printed_at));
 
   return (
     <span className={`inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-400 whitespace-nowrap ${className}`}>
       <Printer className="size-3.5 shrink-0" />
-      {lastPrinted
-        ? <>Last printed: <span className="text-zinc-500 font-semibold">{fmtDateTime(lastPrinted)}</span></>
+      {info && when
+        ? <>Last printed by <span className="text-zinc-600 font-semibold">{info.printed_by || 'Someone'}</span> on <span className="text-zinc-500 font-semibold">{when}</span></>
         : <span className="italic">Not printed yet</span>}
     </span>
   );
 }
 
-export default function ReportCardView({ card }) {
+export default function ReportCardView({ card, batch = false }) {
   const { student, institution, academicYear, subjects, examTypes, marks, attendance } = card;
   const maxMarks = card.maxMarks || {};
 
   // -----------------------------------------------------------------
-  //  Fit-to-one-page on print: measure and apply an inline zoom.
+  //  Fit-to-one-page on print (SINGLE mode only). Measures the real
+  //  content width so all exam columns fit, then scales the card.
   // -----------------------------------------------------------------
   useEffect(() => {
-    // Reduced side margins (5mm) so the sheet gives us as much width as
-    // possible; top/bottom stay a touch larger. Usable px @96dpi.
+    if (batch) return; // batch mode is laid out + fitted by the parent
     const PAGE_W = 752, PAGE_H = 1050;
 
     const fitToPage = () => {
@@ -99,11 +120,6 @@ export default function ReportCardView({ card }) {
       el.style.transformOrigin = 'top left';
       el.style.maxWidth = 'none';
 
-      // Measure each table's NATURAL width (its no-wrap content). A
-      // width:100% table otherwise just reports its container's width and
-      // hides the real horizontal overflow — which was leaving the last
-      // exam columns clipped. Temporarily switch each table to max-content,
-      // read its real width, then restore it.
       let contentW = 0;
       el.querySelectorAll('table').forEach(t => {
         const prev = t.style.width;
@@ -111,13 +127,12 @@ export default function ReportCardView({ card }) {
         contentW = Math.max(contentW, t.scrollWidth || t.offsetWidth);
         t.style.width = prev;
       });
-      const W = Math.max(contentW + 44, 400);   // + the card's own side padding
+      const W = Math.max(contentW + 44, 400);
       el.style.width = W + 'px';
 
       const H = el.scrollHeight || el.offsetHeight;
       if (!W || !H) return;
       const scale = Math.max(0.3, Math.min(PAGE_W / W, PAGE_H / H, 1));
-      // Centre the scaled card across the sheet.
       el.style.left = Math.max(0, (PAGE_W - W * scale) / 2) + 'px';
       el.style.transform = 'scale(' + scale + ')';
     };
@@ -136,7 +151,7 @@ export default function ReportCardView({ card }) {
       window.removeEventListener('beforeprint', fitToPage);
       window.removeEventListener('afterprint', reset);
     };
-  }, []);
+  }, [batch]);
 
   // Index marks by `${subjectId}:${examTypeId}` for O(1) lookup
   const markMap = useMemo(() => {
@@ -147,13 +162,10 @@ export default function ReportCardView({ card }) {
     return m;
   }, [marks]);
 
-  // Exam types this student actually sat (0 counts; only null/missing excluded).
   const attemptedExamIds = useMemo(() => {
     const s = new Set();
     (marks || []).forEach(r => {
-      if (r.marks_obtained !== null && r.marks_obtained !== undefined) {
-        s.add(Number(r.exam_type_id));
-      }
+      if (r.marks_obtained !== null && r.marks_obtained !== undefined) s.add(Number(r.exam_type_id));
     });
     return s;
   }, [marks]);
@@ -165,8 +177,6 @@ export default function ReportCardView({ card }) {
     return v != null ? v : null;
   };
 
-  // Per-subject max for an exam: subject override -> All-Subjects default
-  // -> the exam's default field (so old data without maxMarks still works).
   const maxFor = (t, subjectId) => {
     const m = maxMarks[t.id];
     if (m) {
@@ -177,10 +187,7 @@ export default function ReportCardView({ card }) {
     return Number(t.max_marks || 0);
   };
 
-  // Grade for an exam's TOTAL marks (the number in the Total row) against
-  // its bands: the band whose From-To range the total falls in. A blank
-  // To on the top band means no upper limit. Bands ride along on each exam
-  // type from the backend (per class + exam).
+  // Grade for an exam's TOTAL marks (the Total row) against its bands.
   const gradeFor = (total, bands) => {
     if (total == null || isNaN(total) || !Array.isArray(bands) || bands.length === 0) return null;
     let best = null;
@@ -192,34 +199,21 @@ export default function ReportCardView({ card }) {
     return best ? best.label : null;
   };
 
-  // Per-exam COLUMN totals across subjects (each exam counted once, on its
-  // own column). We deliberately do NOT total across exams per subject:
-  // derived exams already fold their sources in, so a per-row total would
-  // double-count. Only the column count is meaningful.
   const examColumnTotal = (etId) =>
     (subjects || []).reduce((sum, s) => {
       const v = getMark(s.id, etId);
       return sum + (v != null ? Number(v) : 0);
     }, 0);
 
-  // Column max uses ONLY the subjects the student was actually marked in for
-  // that exam, so the grade % isn't diluted by not-yet-conducted subjects.
   const examColumnMax = (t) =>
     (subjects || []).reduce((sum, s) => sum + (getMark(s.id, t.id) != null ? maxFor(t, s.id) : 0), 0);
 
   const examColumnGrade = (t) => {
-    // Grade matches the exam's TOTAL marks across all subjects (the Total
-    // row) against the bands — not a percentage. Only grade a column the
-    // student was actually marked in.
     if (examColumnMax(t) <= 0) return null;
     return gradeFor(examColumnTotal(t.id), t.grade_bands);
   };
 
   const anyGrades = (examTypes || []).some(t => Array.isArray(t.grade_bands) && t.grade_bands.length > 0);
-
-  const conductedCount = attemptedExamIds.size;
-  const configuredCount = (examTypes || []).length;
-  const someExcluded = conductedCount > 0 && conductedCount < configuredCount;
 
   const attTotals = (attendance || []).reduce(
     (acc, m) => ({
@@ -232,11 +226,205 @@ export default function ReportCardView({ card }) {
     ? ((attTotals.present / attTotals.working) * 100).toFixed(1)
     : '0.0';
 
+  // --- The card body (identical in single + batch) ------------------
+  const body = (
+    <>
+      {/* ---- School header ---- */}
+      <div className="text-center border-b-2 border-zinc-200 pb-5 mb-6">
+        {institution?.logo ? (
+          <img src={institution.logo} alt="School logo"
+            className="rc-logo h-32 sm:h-40 mx-auto object-contain mb-3" />
+        ) : (
+          <div className="rc-logo size-32 sm:size-40 mx-auto mb-3 bg-zinc-100 rounded-lg flex items-center justify-center ring-1 ring-black/5">
+            <GraduationCap className="text-zinc-300 size-16 sm:size-20" />
+          </div>
+        )}
+        <h1 className="text-xl sm:text-2xl font-bold text-zinc-900 tracking-tight uppercase">
+          {institution?.name || 'School'}
+        </h1>
+        {institution?.school_email && (
+          <p className="text-sm text-zinc-500 mt-1">{institution.school_email}</p>
+        )}
+        {institution?.phone && (
+          <p className="text-xs text-zinc-400 mt-0.5">Phone: {institution.phone}</p>
+        )}
+      </div>
+
+      {/* ---- Student info ---- */}
+      <div className="bg-zinc-50 rounded-lg border border-zinc-200 p-4 sm:p-5 mb-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3 text-sm">
+          <InfoRow label="Name"  value={student.name} />
+          <InfoRow label="Class" value={`${student.className || '-'}${student.section ? ' - ' + student.section : ''}`} />
+          <InfoRow label="Roll No" value={student.roll_no || '-'} />
+          <InfoRow label="Year" value={academicYear || '-'} />
+        </div>
+      </div>
+
+      {/* ---- Progress card ---- */}
+      <h2 className="text-sm sm:text-base font-semibold text-zinc-800 text-center mb-4 uppercase tracking-wider">
+        Progress Card
+      </h2>
+
+      {(examTypes || []).length === 0 ? (
+        <div className="border border-dashed border-zinc-300 rounded-lg p-6 text-center text-zinc-400 text-sm italic mb-8">
+          No exams configured for this class yet.
+        </div>
+      ) : (
+        <div className="overflow-x-auto custom-scrollbar mb-8">
+          <table className="w-full border-collapse border border-zinc-300 text-sm min-w-[500px]">
+            <thead className="bg-zinc-100/80">
+              <tr>
+                <th className="border border-zinc-300 px-3 py-2.5 text-left font-semibold text-zinc-700">Subject</th>
+                {examTypes.map(t => {
+                  const counted = isAttempted(t.id);
+                  return (
+                    <th key={t.id}
+                      className={`border border-zinc-300 px-3 py-2.5 text-center font-semibold whitespace-nowrap ${
+                        counted ? 'text-zinc-700' : 'text-zinc-400'
+                      }`}
+                      title={counted ? undefined : 'Not conducted yet — excluded from Total & grade'}>
+                      {t.name}
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {(subjects || []).map(s => (
+                <tr key={s.id} className="hover:bg-zinc-50/50 transition-colors">
+                  <td className="border border-zinc-300 px-3 py-2.5 font-semibold text-zinc-800">{s.name}</td>
+                  {examTypes.map(t => {
+                    const v = getMark(s.id, t.id);
+                    const mx = maxFor(t, s.id);
+                    const counted = isAttempted(t.id);
+                    return (
+                      <td key={t.id} className="border border-zinc-300 px-3 py-2.5 text-center tabular-nums whitespace-nowrap">
+                        <span className={v != null ? 'font-semibold text-zinc-800' : 'text-zinc-300'}>
+                          {v != null ? fmtNum(v) : '–'}
+                        </span>
+                        {counted && mx > 0 && (
+                          <span className="rc-max text-zinc-400 text-[11px]">/{fmtNum(mx)}</span>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+              {/* Column totals (each exam counted once, on its column) */}
+              <tr className="bg-zinc-50/80">
+                <td className="border border-zinc-300 px-3 py-2.5 font-bold text-zinc-800">Total</td>
+                {examTypes.map(t => (
+                  <td key={t.id} className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-zinc-800 tabular-nums whitespace-nowrap">
+                    {fmtNum(examColumnTotal(t.id)) || '–'}
+                  </td>
+                ))}
+              </tr>
+              {/* Grade row — per exam, from that class+exam's ranges */}
+              {anyGrades && (
+                <tr className="bg-zinc-50/40">
+                  <td className="border border-zinc-300 px-3 py-2.5 font-bold text-zinc-700">Grade</td>
+                  {examTypes.map(t => {
+                    const g = examColumnGrade(t);
+                    return (
+                      <td key={t.id} className="border border-zinc-300 px-3 py-2.5 text-center font-bold tabular-nums whitespace-nowrap">
+                        {g ? <span className="text-primary">{g}</span> : <span className="text-zinc-300">–</span>}
+                      </td>
+                    );
+                  })}
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* ---- Attendance ---- */}
+      <h2 className="text-sm sm:text-base font-semibold text-zinc-800 text-center mb-4 uppercase tracking-wider">
+        Attendance Particulars
+      </h2>
+
+      {(attendance || []).length === 0 ? (
+        <div className="border border-dashed border-zinc-300 rounded-lg p-6 text-center text-zinc-400 text-sm italic">
+          No active academic year - attendance unavailable.
+        </div>
+      ) : (
+        <div className="overflow-x-auto custom-scrollbar mb-4">
+          <table className="w-full border-collapse border border-zinc-300 text-sm min-w-[500px]">
+            <thead className="bg-zinc-100/80">
+              <tr>
+                <th className="border border-zinc-300 px-3 py-2.5 text-left font-semibold text-zinc-700">Month</th>
+                {attendance.map((m, i) => (
+                  <th key={i} className="border border-zinc-300 px-3 py-2.5 text-center font-semibold text-zinc-700">
+                    {m.month.slice(0, 3)}
+                  </th>
+                ))}
+                <th className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-primary">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="hover:bg-zinc-50/50 transition-colors">
+                <td className="border border-zinc-300 px-3 py-2.5 font-semibold text-zinc-800">Working Days</td>
+                {attendance.map((m, i) => (
+                  <td key={i} className="border border-zinc-300 px-3 py-2.5 text-center text-zinc-700 tabular-nums">
+                    {m.working_days}
+                  </td>
+                ))}
+                <td className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-primary tabular-nums">
+                  {attTotals.working}
+                </td>
+              </tr>
+              <tr className="hover:bg-zinc-50/50 transition-colors">
+                <td className="border border-zinc-300 px-3 py-2.5 font-semibold text-zinc-800">Present Days</td>
+                {attendance.map((m, i) => (
+                  <td key={i} className="border border-zinc-300 px-3 py-2.5 text-center text-zinc-700 tabular-nums">
+                    {m.present_days}
+                  </td>
+                ))}
+                <td className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-primary tabular-nums">
+                  {attTotals.present}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {(attendance || []).length > 0 && (
+        <div className="flex justify-end mt-4 mb-12">
+          <div className="bg-emerald-50 rounded-md px-4 py-2.5 text-sm ring-1 ring-emerald-600/20 flex items-center gap-1.5">
+            <span className="font-semibold text-zinc-700">Attendance: </span>
+            <span className="font-bold text-emerald-700 tabular-nums">{attPct}%</span>
+          </div>
+        </div>
+      )}
+
+      {/* Signature line */}
+      <div className="signatures flex justify-between items-end gap-4 mt-16 px-2 sm:px-8 text-sm font-medium text-zinc-500 pb-4">
+        <div className="text-center">
+          <div className="border-t border-zinc-300 w-24 sm:w-40 pt-2">Parent</div>
+        </div>
+        <div className="text-center">
+          <div className="border-t border-zinc-300 w-24 sm:w-40 pt-2">Class Teacher</div>
+        </div>
+        <div className="text-center">
+          <div className="border-t border-zinc-300 w-24 sm:w-40 pt-2">Principal</div>
+        </div>
+      </div>
+    </>
+  );
+
+  // --- Batch mode: just the body, in normal flow (parent handles print) ---
+  if (batch) {
+    return (
+      <div className="report-card bg-white p-6 sm:p-8 max-w-4xl mx-auto">
+        {body}
+      </div>
+    );
+  }
+
+  // --- Single mode: own print stylesheet + fit-to-page ---
   return (
     <>
-      {/* Minimal print rules — reveal ONLY the card and let the wide table
-          fit the page. The one-page fit itself is done by the inline zoom
-          set in the effect above (unbypassable, orientation-independent). */}
       <style>{`
         @media print {
           @page { size: A4 portrait; margin: 8mm 5mm; }
@@ -252,9 +440,6 @@ export default function ReportCardView({ card }) {
           #report-card-printable,
           #report-card-printable * { visibility: visible !important; }
 
-          /* fixed = anchored to the PAGE, not the sidebar-offset content
-             area. Width, position and scale are set inline by the
-             fit-to-page effect (unbypassable, measured from real content). */
           #report-card-printable {
             position: fixed !important;
             left: 0 !important;
@@ -265,7 +450,6 @@ export default function ReportCardView({ card }) {
             box-shadow: none !important;
           }
 
-          /* Tighter cell padding so more columns fit before any scaling. */
           #report-card-printable table th,
           #report-card-printable table td {
             padding-top: 4px !important;
@@ -287,190 +471,7 @@ export default function ReportCardView({ card }) {
       `}</style>
 
       <div className="report-card bg-white p-6 sm:p-8 max-w-4xl mx-auto" id="report-card-printable">
-
-        {/* ---- School header ---- */}
-        <div className="text-center border-b-2 border-zinc-200 pb-5 mb-6">
-          {institution?.logo ? (
-            <img src={institution.logo} alt="School logo"
-              className="h-32 sm:h-40 mx-auto object-contain mb-3" />
-          ) : (
-            <div className="size-32 sm:size-40 mx-auto mb-3 bg-zinc-100 rounded-lg flex items-center justify-center ring-1 ring-black/5">
-              <GraduationCap className="text-zinc-300 size-16 sm:size-20" />
-            </div>
-          )}
-          <h1 className="text-xl sm:text-2xl font-bold text-zinc-900 tracking-tight uppercase">
-            {institution?.name || 'School'}
-          </h1>
-          {institution?.school_email && (
-            <p className="text-sm text-zinc-500 mt-1">{institution.school_email}</p>
-          )}
-          {institution?.phone && (
-            <p className="text-xs text-zinc-400 mt-0.5">Phone: {institution.phone}</p>
-          )}
-        </div>
-
-        {/* ---- Student info ---- */}
-        <div className="bg-zinc-50 rounded-lg border border-zinc-200 p-4 sm:p-5 mb-8">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3 text-sm">
-            <InfoRow label="Name"  value={student.name} />
-            <InfoRow label="Class" value={`${student.className || '-'}${student.section ? ' - ' + student.section : ''}`} />
-            <InfoRow label="Roll No" value={student.roll_no || '-'} />
-            <InfoRow label="Year" value={academicYear || '-'} />
-          </div>
-        </div>
-
-        {/* ---- Progress card ---- */}
-        <h2 className="text-sm sm:text-base font-semibold text-zinc-800 text-center mb-4 uppercase tracking-wider">
-          Progress Card
-        </h2>
-
-        {(examTypes || []).length === 0 ? (
-          <div className="border border-dashed border-zinc-300 rounded-lg p-6 text-center text-zinc-400 text-sm italic mb-8">
-            No exams configured for this class yet.
-          </div>
-        ) : (
-          <div className="overflow-x-auto custom-scrollbar mb-8">
-            <table className="w-full border-collapse border border-zinc-300 text-sm min-w-[500px]">
-              <thead className="bg-zinc-100/80">
-                <tr>
-                  <th className="border border-zinc-300 px-3 py-2.5 text-left font-semibold text-zinc-700">Subject</th>
-                  {examTypes.map(t => {
-                    const counted = isAttempted(t.id);
-                    return (
-                      <th key={t.id}
-                        className={`border border-zinc-300 px-3 py-2.5 text-center font-semibold whitespace-nowrap ${
-                          counted ? 'text-zinc-700' : 'text-zinc-400'
-                        }`}
-                        title={counted ? undefined : 'Not conducted yet — excluded from Total & %'}>
-                        {t.name}
-                      </th>
-                    );
-                  })}
-                </tr>
-              </thead>
-              <tbody>
-                {(subjects || []).map(s => {
-                  return (
-                    <tr key={s.id} className="hover:bg-zinc-50/50 transition-colors">
-                      <td className="border border-zinc-300 px-3 py-2.5 font-semibold text-zinc-800">{s.name}</td>
-                      {examTypes.map(t => {
-                        const v = getMark(s.id, t.id);
-                        const mx = maxFor(t, s.id);
-                        const counted = isAttempted(t.id);
-                        return (
-                          <td key={t.id} className="border border-zinc-300 px-3 py-2.5 text-center tabular-nums whitespace-nowrap">
-                            <span className={v != null ? 'font-semibold text-zinc-800' : 'text-zinc-300'}>
-                              {v != null ? fmtNum(v) : '–'}
-                            </span>
-                            {counted && mx > 0 && (
-                              <span className="text-zinc-400 text-[11px]">/{fmtNum(mx)}</span>
-                            )}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  );
-                })}
-                {/* Column totals (each exam counted once, on its column) */}
-                <tr className="bg-zinc-50/80">
-                  <td className="border border-zinc-300 px-3 py-2.5 font-bold text-zinc-800">Total</td>
-                  {examTypes.map(t => (
-                    <td key={t.id} className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-zinc-800 tabular-nums whitespace-nowrap">
-                      {fmtNum(examColumnTotal(t.id)) || '–'}
-                    </td>
-                  ))}
-                </tr>
-                {/* Grade row — per exam, from that class+exam's ranges */}
-                {anyGrades && (
-                  <tr className="bg-zinc-50/40">
-                    <td className="border border-zinc-300 px-3 py-2.5 font-bold text-zinc-700">Grade</td>
-                    {examTypes.map(t => {
-                      const g = examColumnGrade(t);
-                      return (
-                        <td key={t.id} className="border border-zinc-300 px-3 py-2.5 text-center font-bold tabular-nums whitespace-nowrap">
-                          {g ? <span className="text-primary">{g}</span> : <span className="text-zinc-300">–</span>}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {/* ---- Attendance ---- */}
-        <h2 className="text-sm sm:text-base font-semibold text-zinc-800 text-center mb-4 uppercase tracking-wider">
-          Attendance Particulars
-        </h2>
-
-        {(attendance || []).length === 0 ? (
-          <div className="border border-dashed border-zinc-300 rounded-lg p-6 text-center text-zinc-400 text-sm italic">
-            No active academic year - attendance unavailable.
-          </div>
-        ) : (
-          <div className="overflow-x-auto custom-scrollbar mb-4">
-            <table className="w-full border-collapse border border-zinc-300 text-sm min-w-[500px]">
-              <thead className="bg-zinc-100/80">
-                <tr>
-                  <th className="border border-zinc-300 px-3 py-2.5 text-left font-semibold text-zinc-700">Month</th>
-                  {attendance.map((m, i) => (
-                    <th key={i} className="border border-zinc-300 px-3 py-2.5 text-center font-semibold text-zinc-700">
-                      {m.month.slice(0, 3)}
-                    </th>
-                  ))}
-                  <th className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-primary">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr className="hover:bg-zinc-50/50 transition-colors">
-                  <td className="border border-zinc-300 px-3 py-2.5 font-semibold text-zinc-800">Working Days</td>
-                  {attendance.map((m, i) => (
-                    <td key={i} className="border border-zinc-300 px-3 py-2.5 text-center text-zinc-700 tabular-nums">
-                      {m.working_days}
-                    </td>
-                  ))}
-                  <td className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-primary tabular-nums">
-                    {attTotals.working}
-                  </td>
-                </tr>
-                <tr className="hover:bg-zinc-50/50 transition-colors">
-                  <td className="border border-zinc-300 px-3 py-2.5 font-semibold text-zinc-800">Present Days</td>
-                  {attendance.map((m, i) => (
-                    <td key={i} className="border border-zinc-300 px-3 py-2.5 text-center text-zinc-700 tabular-nums">
-                      {m.present_days}
-                    </td>
-                  ))}
-                  <td className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-primary tabular-nums">
-                    {attTotals.present}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {(attendance || []).length > 0 && (
-          <div className="flex justify-end mt-4 mb-12">
-            <div className="bg-emerald-50 rounded-md px-4 py-2.5 text-sm ring-1 ring-emerald-600/20 flex items-center gap-1.5">
-              <span className="font-semibold text-zinc-700">Attendance: </span>
-              <span className="font-bold text-emerald-700 tabular-nums">{attPct}%</span>
-            </div>
-          </div>
-        )}
-
-        {/* Signature line — Parent (left) · Class Teacher (centre) · Principal (right) */}
-        <div className="signatures flex justify-between items-end gap-4 mt-16 px-2 sm:px-8 text-sm font-medium text-zinc-500 pb-4">
-          <div className="text-center">
-            <div className="border-t border-zinc-300 w-24 sm:w-40 pt-2">Parent</div>
-          </div>
-          <div className="text-center">
-            <div className="border-t border-zinc-300 w-24 sm:w-40 pt-2">Class Teacher</div>
-          </div>
-          <div className="text-center">
-            <div className="border-t border-zinc-300 w-24 sm:w-40 pt-2">Principal</div>
-          </div>
-        </div>
+        {body}
       </div>
     </>
   );

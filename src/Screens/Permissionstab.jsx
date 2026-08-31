@@ -184,7 +184,7 @@ export default function PermissionsTab({ data }) {
               <ShieldAlert className="size-4 shrink-0 mt-0.5 sm:mt-0" />
               <span className="leading-relaxed">
                 Super Admin keeps full Read, Edit and Delete on every module - those can't be turned off.
-                Tick <strong className="font-semibold">Hide</strong> on anything you don't want in your own sidebar, then Save.
+                Tick <strong className="font-semibold">Hide</strong> on anything you don't want in your own sidebar, then Save & Refresh the browser to update.
               </span>
             </div>
           ) : (

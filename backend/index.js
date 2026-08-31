@@ -5514,6 +5514,67 @@ app.get('/api/reports/my-report-card/:studentId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ---- Report-card print log: who printed a card and when (server-side, so
+//      the stamp is visible to everyone, not just the printer's browser) ----
+
+// Record a print (one or many students at once — used by Print and Print All).
+app.post('/api/admin/report-card-prints', async (req, res) => {
+    try {
+        const instId = req.auth.institutionId;
+        const { student_ids = [], printed_by } = req.body;
+        if (!Array.isArray(student_ids) || student_ids.length === 0) {
+            return res.status(400).json({ error: 'student_ids[] required.' });
+        }
+        const by = (printed_by || req.auth.name || 'Someone').toString().slice(0, 120);
+        // Only stamp students that belong to the caller's institution.
+        const ph = student_ids.map(() => '?').join(',');
+        const [own] = await db.execute(
+            `SELECT id FROM users WHERE institutionId = ? AND id IN (${ph})`,
+            [instId, ...student_ids]
+        );
+        const okIds = own.map(r => r.id);
+        for (const sid of okIds) {
+            await db.execute(
+                `INSERT INTO report_card_print_log (student_id, institutionId, printed_by, printed_at)
+                 VALUES (?, ?, ?, UTC_TIMESTAMP())
+                 ON DUPLICATE KEY UPDATE printed_by = VALUES(printed_by), printed_at = VALUES(printed_at), institutionId = VALUES(institutionId)`,
+                [sid, instId, by]
+            );
+        }
+        res.json({ success: true, recorded: okIds.length });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Last print for one student.
+app.get('/api/admin/report-card-print/:studentId', async (req, res) => {
+    try {
+        const instId = req.auth.institutionId;
+        const [rows] = await db.execute(
+            `SELECT l.student_id, l.printed_by, l.printed_at
+               FROM report_card_print_log l
+               JOIN users u ON u.id = l.student_id
+              WHERE l.student_id = ? AND u.institutionId = ?`,
+            [req.params.studentId, instId]
+        );
+        res.json(rows[0] || null);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Last-print map for a whole class (Report Cards list can show it per row).
+app.get('/api/admin/report-card-prints/class/:classId', async (req, res) => {
+    try {
+        const instId = req.auth.institutionId;
+        const [rows] = await db.execute(
+            `SELECT l.student_id, l.printed_by, l.printed_at
+               FROM report_card_print_log l
+               JOIN users u ON u.id = l.student_id
+              WHERE u.class_id = ? AND u.institutionId = ?`,
+            [req.params.classId, instId]
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.get('/api/admin/reports/class-cards/:classId', async (req, res) => {
     try {
         const [co] = await db.execute('SELECT institutionId FROM classes WHERE id = ?', [req.params.classId]);
