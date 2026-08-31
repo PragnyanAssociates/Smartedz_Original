@@ -5659,6 +5659,7 @@ app.get('/api/admin/marks-export/:instId', async (req, res) => {
             return enteredMaxExport(cid, etId, subId);
         };
         const examTypesForClass = (cid) => examTypes.filter(t => {
+            if (Number(t.class_id) !== Number(cid)) return false;
             if (t.show_on_report === 0) return false;
             if (t.kind === 'derived') {
                 const byE = derivedMaxExport[cid] && derivedMaxExport[cid][t.id];
