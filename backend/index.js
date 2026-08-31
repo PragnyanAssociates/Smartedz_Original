@@ -5575,6 +5575,40 @@ app.get('/api/admin/report-card-prints/class/:classId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Record a "Print All" for a class (who printed the whole class + when).
+app.post('/api/admin/report-card-class-print', async (req, res) => {
+    try {
+        const instId = req.auth.institutionId;
+        const { class_id, printed_by } = req.body;
+        if (!class_id) return res.status(400).json({ error: 'class_id required.' });
+        const [c] = await db.execute('SELECT id FROM classes WHERE id = ? AND institutionId = ?', [class_id, instId]);
+        if (c.length === 0) return res.status(403).json({ error: 'This class belongs to another institution.' });
+        const by = (printed_by || req.auth.name || 'Someone').toString().slice(0, 120);
+        await db.execute(
+            `INSERT INTO report_card_class_print_log (class_id, institutionId, printed_by, printed_at)
+             VALUES (?, ?, ?, UTC_TIMESTAMP())
+             ON DUPLICATE KEY UPDATE printed_by = VALUES(printed_by), printed_at = VALUES(printed_at), institutionId = VALUES(institutionId)`,
+            [class_id, instId, by]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Last "Print All" for a class (for the stamp beside the button).
+app.get('/api/admin/report-card-class-print/:classId', async (req, res) => {
+    try {
+        const instId = req.auth.institutionId;
+        const [rows] = await db.execute(
+            `SELECT l.class_id, l.printed_by, l.printed_at
+               FROM report_card_class_print_log l
+               JOIN classes c ON c.id = l.class_id
+              WHERE l.class_id = ? AND c.institutionId = ?`,
+            [req.params.classId, instId]
+        );
+        res.json(rows[0] || null);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.get('/api/admin/reports/class-cards/:classId', async (req, res) => {
     try {
         const [co] = await db.execute('SELECT institutionId FROM classes WHERE id = ?', [req.params.classId]);
