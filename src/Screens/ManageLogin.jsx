@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { usePermissions } from './PermissionsContext';
 import {
   Users, ShieldCheck, Calendar, Layers, CircleArrowUp, CircleCheck, BookOpen,
-  Download, UserX, ListOrdered, HelpCircle, X, ShieldAlert
+  Download, UserX, ListOrdered, HelpCircle, X, ShieldAlert, CreditCard
 } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
 import UserTab        from './UserTab';
@@ -16,6 +16,7 @@ import Classestab     from './Classestab';
 import Promotiontab   from './Promotiontab';
 import SubjectsTab    from './SubjectsTab';
 import DownloadsTab   from './DownloadsTab';
+import SubscriptionTab from './SubscriptionTab';
 
 const MODULE_NAME = 'Manage Logins';
 
@@ -68,6 +69,7 @@ export default function ManageLogin() {
     { id: 'academics',   label: 'Academics Year', icon: Calendar },
     { id: 'inactive',    label: 'Inactive',       icon: UserX },
     { id: 'downloads',   label: 'Downloads',      icon: Download },
+    { id: 'subscription',label: 'Subscription',   icon: CreditCard },
   ];
   const tabProps = { data, fetchData, user };
 
@@ -89,12 +91,12 @@ export default function ManageLogin() {
         )}
       </header>
       {/* Segmented Tabs (Matches Timetable style) */}
-      <div className="flex flex-wrap items-center gap-2 mb-8 border-b border-zinc-200 pb-4">
+      <div className="flex items-center gap-2 mb-8 border-b border-zinc-200 pb-4 overflow-x-auto custom-scrollbar w-full">
         {tabs.map(t => (
           <button
             key={t.id}
             onClick={() => setActiveTab(t.id)}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
               activeTab === t.id
                 ? 'bg-primary text-white'
                 : 'text-zinc-600 hover:bg-zinc-50 border border-zinc-200'
@@ -121,6 +123,7 @@ export default function ManageLogin() {
             {activeTab === 'classes'     && <Classestab {...tabProps} />}
             {activeTab === 'subjects'    && <SubjectsTab {...tabProps} />}
             {activeTab === 'promotion'   && <Promotiontab {...tabProps} />}
+            {activeTab === 'subscription'&& <SubscriptionTab {...tabProps} />}
             {activeTab === 'downloads'   && <DownloadsTab {...tabProps} />}
           </>
         )}
@@ -196,6 +199,16 @@ const GUIDES = {
       ['3 \u00b7 Map to teachers', 'Assign teachers to the subjects they take. This is what makes a teacher\'s own screens \u2014 their homework, their marks, their performance \u2014 show the right subjects.'],
     ],
     note: 'If a subject is missing from a dropdown elsewhere in the app, the mapping here is almost always the reason.'
+  },
+  subscription: {
+    title: 'Subscription',
+    steps: [
+      ['1 \u00b7 Your plan at a glance', 'The banner shows whether you are on a Life Time plan or a dated one, and for dated plans how many days remain before it expires.'],
+      ['2 \u00b7 Watch the colour', 'Green means comfortable, amber means under a month left, red means a week or less \u2014 or already expired. Renew before red to avoid any interruption.'],
+      ['3 \u00b7 Groups', 'If your institution is a branch of a group, the plan is held by the group and renewed for the whole group together \u2014 the screen tells you which group.'],
+      ['4 \u00b7 Renewing', 'Plans are set by SmartEdz, so this screen is read-only. Contact your SmartEdz representative to renew or extend; in-app chat with them is coming here.'],
+    ],
+    note: 'If the plan expires, logins are blocked until it is renewed. The dates here are the single source of truth \u2014 if one looks wrong, tell your representative.'
   },
   promotion: {
     title: 'Promotion',

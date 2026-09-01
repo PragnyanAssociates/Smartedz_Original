@@ -1,10 +1,11 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import {
   Building2, Plus, LogOut, Trash2, Edit3, Image as ImageIcon, Shield,
   Mail, Lock, User, Globe, Phone, Calendar, AlertTriangle, CheckCircle2,
   Infinity as InfinityIcon, ChevronDown, X, Loader2, ArrowLeft, KeyRound,
-  Users, Search, School, GraduationCap, BookOpen, Network, CornerDownRight, Eye, EyeOff
+  Users, Search, School, GraduationCap, BookOpen, Network, CornerDownRight, Eye, EyeOff,
+  Code2, ShieldCheck, UserPlus
 } from 'lucide-react';
 import smartedzLogo from '../assets/smartedzlogo.png';
 
@@ -51,7 +52,10 @@ const planBadgeStyle = (inst) => {
 };
 
 export default function DeveloperDashboard() {
-  const { institutions, usersList, logout, refreshData, API_URL } = useAuth();
+  const { user, institutions, usersList, logout, refreshData, API_URL } = useAuth();
+
+  // Top-level tabs: the default "List of Clients" flow, and the new "Developers".
+  const [topTab, setTopTab] = useState('clients');
 
   // Navigation: 'list' (groups + standalone) -> 'group' (a group's branches) -> 'detail' (one school/branch)
   const [view, setView] = useState({ mode: 'list' });
@@ -102,6 +106,23 @@ export default function DeveloperDashboard() {
 
   // Top-level rows only (groups + standalone) - branches live inside groups.
   const topLevel = useMemo(() => (institutions || []).filter(i => !i.parent_id), [institutions]);
+
+  // ---- Developer-tier lookups (for the Developers tab) --------------
+  const developers = useMemo(
+    () => (usersList || []).filter(u => u.role === 'Developer' && !u.institutionId),
+    [usersList]
+  );
+  const me = useMemo(
+    () => (usersList || []).find(u => String(u.id) === String(user?.id)) || null,
+    [usersList, user]
+  );
+  const iAmSuper = me ? Number(me.is_super_developer) === 1 : false;
+  // Total live users across every institution the platform manages
+  // (excludes developer accounts and alumni).
+  const totalInstitutionUsers = useMemo(
+    () => (usersList || []).filter(u => u.institutionId && String(u.status || '').toLowerCase() !== 'alumni').length,
+    [usersList]
+  );
 
   const counts = useMemo(() => {
     const c = { total: (institutions || []).length, School: 0, College: 0, Tuition: 0, Group: 0 };
@@ -586,9 +607,38 @@ export default function DeveloperDashboard() {
       </header>
 
       <main className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 flex-1 flex flex-col">
-        {view.mode === 'list' && renderList()}
-        {view.mode === 'group' && renderGroup()}
-        {view.mode === 'detail' && renderDetail()}
+        {/* Top-level tabs: List of Clients (default) + Developers */}
+        <div className="flex items-center gap-2 mb-6 border-b border-zinc-200 pb-4 overflow-x-auto custom-scrollbar w-full">
+          <button onClick={() => setTopTab('clients')}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+              topTab === 'clients' ? 'bg-primary text-white' : 'text-zinc-600 hover:bg-zinc-50 border border-zinc-200'
+            }`}>
+            <Building2 className="size-3.5 shrink-0" /> List of Clients
+          </button>
+          <button onClick={() => setTopTab('developers')}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+              topTab === 'developers' ? 'bg-primary text-white' : 'text-zinc-600 hover:bg-zinc-50 border border-zinc-200'
+            }`}>
+            <Code2 className="size-3.5 shrink-0" /> Developers
+          </button>
+        </div>
+
+        {topTab === 'clients' ? (
+          <>
+            {view.mode === 'list' && renderList()}
+            {view.mode === 'group' && renderGroup()}
+            {view.mode === 'detail' && renderDetail()}
+          </>
+        ) : (
+          <DevelopersView
+            developers={developers}
+            currentUserId={user?.id}
+            iAmSuper={iAmSuper}
+            totalInstitutionUsers={totalInstitutionUsers}
+            apiUrl={API_URL}
+            refreshData={refreshData}
+          />
+        )}
       </main>
 
       {/* ============================== MODAL ============================== */}
@@ -780,6 +830,305 @@ export default function DeveloperDashboard() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// =====================================================================
+//  DEVELOPERS TAB — roster of developer accounts (role='Developer',
+//  institutionId=NULL). Any developer can view; only a Super Developer
+//  sees the Add / Edit / Delete controls (the backend enforces the same).
+// =====================================================================
+function DevelopersView({ developers, currentUserId, iAmSuper, totalInstitutionUsers, apiUrl, refreshData }) {
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [search, setSearch] = useState('');
+
+  const superCount = useMemo(
+    () => developers.filter(d => Number(d.is_super_developer) === 1).length,
+    [developers]
+  );
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return developers;
+    return developers.filter(d =>
+      (d.name || '').toLowerCase().includes(q) ||
+      (d.email || '').toLowerCase().includes(q) ||
+      (d.username || '').toLowerCase().includes(q));
+  }, [developers, search]);
+
+  const openAdd = () => { setEditing(null); setModalOpen(true); };
+  const openEdit = (d) => { setEditing(d); setModalOpen(true); };
+
+  const handleDelete = async (d) => {
+    if (!window.confirm(`Delete developer "${d.name}"? This permanently removes their account.`)) return;
+    try {
+      const res = await fetch(`${apiUrl}/api/developer/developers/${d.id}`, { method: 'DELETE' });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || 'Delete failed.');
+      refreshData();
+    } catch (e) { alert(e.message); }
+  };
+
+  const stats = [
+    { label: 'Developers',       value: developers.length,      Icon: Code2,      chip: 'bg-primary/10 text-primary',       box: 'bg-primary/5 ring-primary/20' },
+    { label: 'Super Developers', value: superCount,             Icon: ShieldCheck, chip: 'bg-violet-100 text-violet-700',    box: 'bg-violet-50 ring-violet-600/20' },
+    { label: 'Total Users',      value: totalInstitutionUsers,  Icon: Users,      chip: 'bg-emerald-100 text-emerald-700',  box: 'bg-emerald-50 ring-emerald-600/20' }
+  ];
+
+  return (
+    <>
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+        <div>
+          <h2 className="text-xl font-semibold text-zinc-900 tracking-tight">Developers</h2>
+          <p className="text-sm text-zinc-500 mt-1">
+            Developer accounts that manage every institution. A <span className="font-semibold text-violet-700">Super Developer</span> can add and remove developers.
+          </p>
+        </div>
+        {iAmSuper && (
+          <button onClick={openAdd} className="h-9 px-4 bg-primary hover:bg-primary/90 text-white shadow-sm rounded-md text-xs font-semibold flex items-center transition-colors w-full sm:w-auto justify-center shrink-0">
+            <UserPlus className="size-3.5 mr-1.5" /> Add Developer
+          </button>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-5">
+        {stats.map(s => (
+          <div key={s.label} className={`rounded-lg ring-1 p-3 sm:p-4 flex items-center gap-3 ${s.box}`}>
+            <div className={`size-9 sm:size-10 rounded-md flex items-center justify-center shrink-0 ${s.chip}`}><s.Icon className="size-4 sm:size-5" /></div>
+            <div className="flex flex-col min-w-0">
+              <span className="text-lg sm:text-2xl font-bold text-zinc-900 leading-none tabular-nums">{s.value}</span>
+              <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider truncate mt-1">{s.label}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="relative flex-1 sm:max-w-xs mb-6">
+        <Search className="size-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+        <input placeholder="Search developers..." value={search} onChange={(e) => setSearch(e.target.value)}
+          className="h-9 w-full rounded-md border border-zinc-200 bg-white pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
+      </div>
+
+      {!iAmSuper && (
+        <div className="bg-blue-50/60 border border-blue-100 rounded-md p-4 flex gap-3 text-[11px] text-blue-800 leading-relaxed mb-6">
+          <ShieldCheck className="size-4 shrink-0 text-blue-500 mt-0.5" />
+          <p>You're signed in as a <strong>Developer</strong>. Viewing the roster is fine, but only a <strong>Super Developer</strong> can add, edit or remove developer accounts.</p>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
+        {filtered.map(d => {
+          const isSuper = Number(d.is_super_developer) === 1;
+          const isMe = String(d.id) === String(currentUserId);
+          const inactive = String(d.status || 'active').toLowerCase() !== 'active';
+          return (
+            <div key={d.id} className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col group">
+              <div className="flex justify-between items-center bg-zinc-50/50 p-4 border-b border-zinc-100">
+                <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ring-1 ring-inset inline-flex items-center gap-1 ${
+                  isSuper ? 'bg-violet-100 text-violet-700 ring-violet-600/20' : 'bg-zinc-100 text-zinc-700 ring-black/5'
+                }`}>
+                  {isSuper && <ShieldCheck className="size-3" />}{isSuper ? 'Super Developer' : 'Developer'}
+                </span>
+                {iAmSuper && (
+                  <div className="flex items-center gap-1.5 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                    <button onClick={() => openEdit(d)} title="Edit"
+                      className="size-7 bg-white hover:bg-zinc-50 text-zinc-500 hover:text-primary rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5">
+                      <Edit3 className="size-3.5" />
+                    </button>
+                    {!isMe && (
+                      <button onClick={() => handleDelete(d)} title="Delete"
+                        className="size-7 bg-white hover:bg-red-50 text-zinc-500 hover:text-red-600 rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5">
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="p-5 flex flex-col items-center flex-1">
+                <div className={`size-16 rounded-full flex items-center justify-center mb-3 ring-1 ring-inset ${isSuper ? 'bg-violet-50 ring-violet-600/20 text-violet-500' : 'bg-zinc-50 ring-black/5 text-zinc-400'}`}>
+                  <User className="size-8" />
+                </div>
+                <h3 className="font-semibold text-sm text-zinc-900 text-center line-clamp-1 w-full flex items-center justify-center gap-1.5">
+                  {d.name}
+                  {isMe && <span className="text-[9px] font-semibold text-primary bg-primary/10 px-1.5 py-0.5 rounded uppercase tracking-wider">You</span>}
+                </h3>
+                <p className="text-[11px] text-zinc-500 mt-0.5 text-center line-clamp-1 w-full">{d.email}</p>
+                {d.username && <p className="text-[10px] text-zinc-400 mt-0.5">@{d.username}</p>}
+                {inactive && (
+                  <span className="mt-2 text-[9px] font-semibold text-zinc-500 bg-zinc-100 px-2 py-0.5 rounded uppercase tracking-wider">Inactive</span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+
+        {developers.length === 0 && (
+          <div className="col-span-full bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center justify-center">
+            <Code2 className="size-10 text-zinc-300 mb-3" />
+            <p className="text-zinc-500 font-medium text-sm">No developer accounts yet.</p>
+          </div>
+        )}
+        {developers.length > 0 && filtered.length === 0 && (
+          <div className="col-span-full bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center justify-center">
+            <Search className="size-10 text-zinc-300 mb-3" />
+            <p className="text-zinc-500 font-medium text-sm">No developers match your search.</p>
+          </div>
+        )}
+      </div>
+
+      {modalOpen && (
+        <DeveloperModal
+          editing={editing}
+          apiUrl={apiUrl}
+          onClose={() => setModalOpen(false)}
+          onSaved={() => { setModalOpen(false); refreshData(); }} />
+      )}
+    </>
+  );
+}
+
+// =====================================================================
+//  Add / edit a developer account (Super Developer only reaches this).
+// =====================================================================
+function DeveloperModal({ editing, apiUrl, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    name: editing?.name || '',
+    email: editing?.email || '',
+    username: editing?.username || '',
+    password: '',
+    is_super: editing ? Number(editing.is_super_developer) === 1 : false,
+    status: editing?.status || 'active'
+  });
+  const [saving, setSaving] = useState(false);
+  const [showPw, setShowPw] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!form.name.trim() || !form.email.trim()) return alert('Name and email are required.');
+    if (!editing && !form.password) return alert('A password is required for a new developer.');
+    setSaving(true);
+    try {
+      const url = editing
+        ? `${apiUrl}/api/developer/developers/${editing.id}`
+        : `${apiUrl}/api/developer/developers`;
+      const body = {
+        name: form.name.trim(),
+        email: form.email.trim(),
+        username: form.username || null,
+        is_super: form.is_super ? 1 : 0,
+        status: form.status
+      };
+      // Only send password when set (blank on edit = keep the current one).
+      if (form.password) body.password = form.password;
+      const res = await fetch(url, {
+        method: editing ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || 'Save failed.');
+      onSaved();
+    } catch (e2) { alert(e2.message); }
+    setSaving(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-zinc-900/40 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-md shadow-xl relative flex flex-col max-h-[92vh] animate-in zoom-in-95 duration-200">
+        <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 rounded-t-lg shrink-0">
+          <h2 className="font-semibold text-lg text-zinc-900 tracking-tight">{editing ? 'Edit Developer' : 'Add Developer'}</h2>
+          <button onClick={onClose} className="text-zinc-400 hover:text-zinc-700 transition-colors p-1.5 hover:bg-zinc-100 rounded-md"><X className="size-4" /></button>
+        </div>
+
+        <form onSubmit={submit} className="flex flex-col flex-1 overflow-hidden">
+          <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-4">
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Full Name <span className="text-red-500">*</span></label>
+              <div className="relative">
+                <User className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
+                <input required placeholder="Jane Developer" disabled={saving} value={form.name}
+                  onChange={e => setForm({ ...form, name: e.target.value })}
+                  className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Login Email <span className="text-red-500">*</span></label>
+              <div className="relative">
+                <Mail className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
+                <input required type="email" placeholder="dev@smartedz.com" disabled={saving} value={form.email}
+                  onChange={e => setForm({ ...form, email: e.target.value })}
+                  className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Username</label>
+              <div className="relative">
+                <User className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
+                <input placeholder="optional" disabled={saving} value={form.username}
+                  onChange={e => setForm({ ...form, username: e.target.value })}
+                  className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
+                Password {editing ? <span className="text-zinc-400 normal-case font-medium">(leave blank to keep current)</span> : <span className="text-red-500">*</span>}
+              </label>
+              <div className="relative">
+                <Lock className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
+                <input type={showPw ? 'text' : 'password'} placeholder={editing ? '••••••••' : 'Set a password'} disabled={saving} value={form.password}
+                  onChange={e => setForm({ ...form, password: e.target.value })}
+                  className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-10 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
+                <button type="button" onClick={() => setShowPw(v => !v)} tabIndex={-1}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 transition-colors p-0.5">
+                  {showPw ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Status</label>
+                <div className="relative">
+                  <select value={form.status} disabled={saving} onChange={e => setForm({ ...form, status: e.target.value })}
+                    className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 appearance-none shadow-sm transition-colors cursor-pointer">
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                  </select>
+                  <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+              </div>
+            </div>
+
+            <button type="button" onClick={() => setForm(f => ({ ...f, is_super: !f.is_super }))}
+              className={`w-full flex items-center gap-3 p-3 rounded-md ring-1 transition-colors text-left ${
+                form.is_super ? 'bg-violet-50 ring-violet-500/30' : 'bg-white ring-zinc-200 hover:bg-zinc-50'
+              }`}>
+              <span className={`size-4 rounded flex items-center justify-center shrink-0 ${form.is_super ? 'bg-violet-600 text-white' : 'ring-1 ring-zinc-300'}`}>
+                {form.is_super && <CheckCircle2 className="size-3" />}
+              </span>
+              <span className="flex flex-col">
+                <span className="text-xs font-semibold text-zinc-800 flex items-center gap-1"><ShieldCheck className="size-3.5 text-violet-500" /> Super Developer</span>
+                <span className="text-[10px] text-zinc-500">Can add, edit and remove other developer accounts.</span>
+              </span>
+            </button>
+          </div>
+
+          <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
+            <button type="button" onClick={onClose} disabled={saving}
+              className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 rounded-md font-semibold text-xs hover:bg-zinc-50 transition-colors">Cancel</button>
+            <button type="submit" disabled={saving}
+              className="h-9 px-6 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors min-w-[120px]">
+              {saving && <Loader2 className="size-3.5 animate-spin shrink-0" />}
+              {saving ? 'Saving...' : (editing ? 'Save Changes' : 'Create Developer')}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

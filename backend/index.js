@@ -323,35 +323,35 @@ app.post('/api/login', async (req, res) => {
 
 
 // =====================================================================
-// === REPLACE Section 2 — DEVELOPER ENDPOINTS =========================
+// === DEVELOPER ACCOUNTS — Super Developer vs Developer ===============
 //
-//   onboard / update now accept `parent_id` and a 'Group' type:
-//     • type='Group'  -> umbrella row, parent forced NULL, owns the plan,
-//                        admin user is created with role='Group Admin',
-//                        academic system roles are NOT seeded (no school).
-//     • otherwise      -> branch (if parent_id given) or standalone,
-//                        admin user role='Super Admin', system roles seeded.
+//  Splice this into index.js in the DEVELOPER section.
 //
-//   /developer/data decoration resolves each branch's plan from its group
-//   (so the dashboard shows the inherited plan, not the placeholder).
+//  Two parts:
+//    A) REPLACE your existing  GET /api/developer/data  with the version
+//       below — the ONLY change is that the users SELECT now also returns
+//       is_super_developer, so the dashboard knows who is a Super Developer.
+//    B) ADD the four developer-account routes (list / create / update /
+//       delete). Creating, editing and deleting developer accounts is
+//       restricted to SUPER DEVELOPERS; every developer can still onboard
+//       schools / colleges / groups exactly as before.
+//
+//  Base role stays 'Developer' for BOTH tiers — the /api/developer/* gate
+//  and all cross-tenant "role === 'Developer'" checks are untouched.
 // =====================================================================
 
-// Resolve the plan a row should DISPLAY: a branch shows its group's plan.
-function _effectivePlan(inst, byId) {
-    const src = (inst.parent_id && byId[inst.parent_id]) ? byId[inst.parent_id] : inst;
-    return { usage_plan: src.usage_plan, plan_start_date: src.plan_start_date };
-}
 
+// ---- A) REPLACE GET /api/developer/data (adds is_super_developer) ----
 app.get('/api/developer/data', async (req, res) => {
     try {
         const [insts] = await db.execute('SELECT * FROM institutions ORDER BY created_at DESC');
-        const [users] = await db.execute('SELECT id, name, email, username, role, institutionId, password, status FROM users');
+        const [users] = await db.execute(
+            'SELECT id, name, email, username, role, institutionId, password, status, is_super_developer FROM users'
+        );
         const byId = {};
         insts.forEach(i => { byId[i.id] = i; });
         const decorated = insts.map(inst => {
             const eff = _effectivePlan(inst, byId);
-            // Override the plan fields too, so branch cards read the group's
-            // plan (their own usage_plan column is just a placeholder).
             return { ...inst, usage_plan: eff.usage_plan, plan_start_date: eff.plan_start_date,
                      ...computePlanStatus(eff.usage_plan, eff.plan_start_date) };
         });
@@ -359,95 +359,120 @@ app.get('/api/developer/data', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- Onboard: group OR branch OR standalone --------------------------
-app.post('/api/developer/onboard', async (req, res) => {
-    const { name, type, parent_id, logo, schoolKey, school_email, phone,
-            usage_plan, plan_start_date,
-            superAdminName, superAdminEmail, superAdminPassword } = req.body;
 
-    const isGroup = type === 'Group';
-    const parentId = isGroup ? null : (parent_id || null);           // a group never has a parent
-    const plan = PLAN_DAYS.hasOwnProperty(usage_plan) ? usage_plan : 'Full Time';
-    const startDate = plan_start_date || new Date().toISOString().slice(0, 10);
-    const adminRole = isGroup ? 'Group Admin' : 'Super Admin';        // umbrella vs branch principal
+// ---- B) DEVELOPER-ACCOUNT MANAGEMENT (Super Developer only to mutate) ----
 
-    const conn = await db.getConnection();
+// The caller is a Super Developer? (base role is already 'Developer' — the
+// /developer gate guaranteed that — so we only need the flag.)
+async function _isSuperDeveloper(req) {
+    if (!req.auth || req.auth.role !== 'Developer') return false;
+    const [rows] = await db.execute('SELECT is_super_developer FROM users WHERE id = ?', [req.auth.userId]);
+    return rows.length > 0 && Number(rows[0].is_super_developer) === 1;
+}
+
+// List every developer account (any developer may view the roster).
+app.get('/api/developer/developers', async (req, res) => {
     try {
-        await conn.beginTransaction();
-        const [inst] = await conn.execute(
-            'INSERT INTO institutions (name, type, parent_id, logo, schoolKey, school_email, phone, usage_plan, plan_start_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [name, type, parentId, logo, schoolKey, school_email, phone, plan, startDate]
+        const [rows] = await db.execute(
+            `SELECT id, name, email, username, status, is_super_developer
+               FROM users
+              WHERE role = 'Developer' AND institutionId IS NULL
+              ORDER BY is_super_developer DESC, name`
         );
-        const instId = inst.insertId;
-
-        await conn.execute(
-            'INSERT INTO users (name, email, password, role, institutionId) VALUES (?, ?, ?, ?, ?)',
-            [superAdminName, superAdminEmail, superAdminPassword, adminRole, instId]
-        );
-
-        // Academic system roles only make sense for real schools, not the
-        // group umbrella (it owns no students/teachers/classes).
-        if (!isGroup) {
-            for (const roleName of SYSTEM_ROLES) {
-                await conn.execute('INSERT IGNORE INTO roles (role_name, institutionId) VALUES (?, ?)', [roleName, instId]);
-            }
-        }
-
-        await conn.commit();
-        res.json({ success: true, id: instId });
-    } catch (err) {
-        await conn.rollback();
-        res.status(500).json({ error: err.message });
-    } finally { conn.release(); }
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- Update institution (group / branch / standalone) ----------------
-app.put('/api/developer/institution/:id', async (req, res) => {
-    const { id } = req.params;
-    const { name, type, parent_id, logo, school_email, phone, usage_plan, plan_start_date,
-            superAdminName, superAdminEmail, superAdminPassword } = req.body;
-
-    const isGroup = type === 'Group';
-    const parentId = isGroup ? null : (parent_id || null);
-    const plan = PLAN_DAYS.hasOwnProperty(usage_plan) ? usage_plan : 'Full Time';
-    const startDate = plan_start_date || new Date().toISOString().slice(0, 10);
-
-    const conn = await db.getConnection();
+// Create a developer account — SUPER DEVELOPER ONLY.
+app.post('/api/developer/developers', async (req, res) => {
+    if (!(await _isSuperDeveloper(req))) {
+        return res.status(403).json({ error: 'Only a Super Developer can create developer accounts.' });
+    }
+    const { name, email, username, password, is_super } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required.' });
+    if (!email || !email.trim()) return res.status(400).json({ error: 'Email is required.' });
+    if (!password) return res.status(400).json({ error: 'Password is required.' });
     try {
-        await conn.beginTransaction();
-        await conn.execute(
-            'UPDATE institutions SET name=?, type=?, parent_id=?, logo=?, school_email=?, phone=?, usage_plan=?, plan_start_date=? WHERE id=?',
-            [name, type, parentId, logo, school_email, phone, plan, startDate, id]
+        await db.execute(
+            `INSERT INTO users (name, email, username, password, role, institutionId, is_super_developer, status)
+             VALUES (?, ?, ?, ?, 'Developer', NULL, ?, 'active')`,
+            [name.trim(), email.trim(), username || null, password, (is_super ? 1 : 0)]
         );
-        // Update whichever platform admin this institution has (group OR branch).
-        await conn.execute(
-            'UPDATE users SET name=?, email=?, password=? WHERE institutionId=? AND role IN ("Super Admin","Group Admin")',
-            [superAdminName, superAdminEmail, superAdminPassword, id]
-        );
-        if (!isGroup) {
-            for (const roleName of SYSTEM_ROLES) {
-                await conn.execute('INSERT IGNORE INTO roles (role_name, institutionId) VALUES (?, ?)', [roleName, id]);
-            }
-        }
-        await conn.commit();
         res.json({ success: true });
     } catch (err) {
-        await conn.rollback();
-        res.status(500).json({ error: err.message });
-    } finally { conn.release(); }
-});
-
-app.delete('/api/developer/institution/:id', async (req, res) => {
-    try {
-        await db.execute('DELETE FROM institutions WHERE id = ?', [req.params.id]);
-        res.json({ success: true });
-    } catch (err) {
-        // FK RESTRICT: deleting a group that still has branches is blocked.
-        if (err.code === 'ER_ROW_IS_REFERENCED_2' || err.errno === 1451) {
-            return res.status(400).json({ error: 'This group still has branches. Move or delete its branches first.' });
+        if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
+            return res.status(400).json({ error: 'That email or username is already in use.' });
         }
         res.status(500).json({ error: err.message });
     }
+});
+
+// Update a developer account — SUPER DEVELOPER ONLY.
+app.put('/api/developer/developers/:id', async (req, res) => {
+    if (!(await _isSuperDeveloper(req))) {
+        return res.status(403).json({ error: 'Only a Super Developer can edit developer accounts.' });
+    }
+    const { id } = req.params;
+    const { name, email, username, password, is_super, status } = req.body;
+    const superFlag = is_super ? 1 : 0;
+    // A Super Developer must not strip their OWN super access (avoids locking
+    // everyone out of developer management).
+    if (String(id) === String(req.auth.userId) && superFlag === 0) {
+        return res.status(400).json({ error: 'You cannot remove your own Super Developer access.' });
+    }
+    try {
+        const [own] = await db.execute(
+            "SELECT id FROM users WHERE id = ? AND role = 'Developer' AND institutionId IS NULL", [id]
+        );
+        if (own.length === 0) return res.status(404).json({ error: 'Developer account not found.' });
+
+        if (password) {
+            await db.execute(
+                'UPDATE users SET name=?, email=?, username=?, password=?, is_super_developer=?, status=? WHERE id=?',
+                [name, email, username || null, password, superFlag, status || 'active', id]
+            );
+        } else {
+            await db.execute(
+                'UPDATE users SET name=?, email=?, username=?, is_super_developer=?, status=? WHERE id=?',
+                [name, email, username || null, superFlag, status || 'active', id]
+            );
+        }
+        res.json({ success: true });
+    } catch (err) {
+        if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
+            return res.status(400).json({ error: 'That email or username is already in use.' });
+        }
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Delete a developer account — SUPER DEVELOPER ONLY.
+app.delete('/api/developer/developers/:id', async (req, res) => {
+    if (!(await _isSuperDeveloper(req))) {
+        return res.status(403).json({ error: 'Only a Super Developer can delete developer accounts.' });
+    }
+    const { id } = req.params;
+    if (String(id) === String(req.auth.userId)) {
+        return res.status(400).json({ error: 'You cannot delete your own account.' });
+    }
+    try {
+        const [own] = await db.execute(
+            "SELECT is_super_developer FROM users WHERE id = ? AND role = 'Developer' AND institutionId IS NULL", [id]
+        );
+        if (own.length === 0) return res.json({ success: true });   // already gone
+
+        // Never delete the LAST Super Developer — someone must keep the keys.
+        if (Number(own[0].is_super_developer) === 1) {
+            const [cnt] = await db.execute(
+                "SELECT COUNT(*) AS c FROM users WHERE role = 'Developer' AND institutionId IS NULL AND is_super_developer = 1"
+            );
+            if (cnt[0].c <= 1) {
+                return res.status(400).json({ error: 'This is the only Super Developer — promote another before deleting this one.' });
+            }
+        }
+        await db.execute('DELETE FROM users WHERE id = ?', [id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 
