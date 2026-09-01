@@ -345,9 +345,20 @@ app.post('/api/login', async (req, res) => {
 app.get('/api/developer/data', async (req, res) => {
     try {
         const [insts] = await db.execute('SELECT * FROM institutions ORDER BY created_at DESC');
-        const [users] = await db.execute(
-            'SELECT id, name, email, username, role, institutionId, password, status, is_super_developer FROM users'
-        );
+ 
+        let users;
+        try {
+            [users] = await db.execute(
+                'SELECT id, name, email, username, role, institutionId, password, status, is_super_developer FROM users'
+            );
+        } catch (colErr) {
+            // is_super_developer not on this database yet — degrade cleanly so
+            // the client list still loads. (Run the ALTER to enable the tier.)
+            [users] = await db.execute(
+                'SELECT id, name, email, username, role, institutionId, password, status FROM users'
+            );
+        }
+ 
         const byId = {};
         insts.forEach(i => { byId[i.id] = i; });
         const decorated = insts.map(inst => {
@@ -355,8 +366,12 @@ app.get('/api/developer/data', async (req, res) => {
             return { ...inst, usage_plan: eff.usage_plan, plan_start_date: eff.plan_start_date,
                      ...computePlanStatus(eff.usage_plan, eff.plan_start_date) };
         });
+ 
         res.json({ institutions: decorated, users });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) {
+        console.error('[developer/data]', err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 
