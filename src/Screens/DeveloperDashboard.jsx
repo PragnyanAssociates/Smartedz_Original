@@ -33,7 +33,32 @@ const fmtDMY = (val) => {
   return `${dd}/${mm}/${yy}`;
 };
 
+const fmtDateTimeIST = (val) => {
+  if (!val) return '';
+  const s = String(val).replace(' ', 'T');
+  const iso = /[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s : s + 'Z';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true
+  });
+};
+
 const planLabel = (p) => (p === 'Full Time' ? 'Life Time' : p);
+
+// Created-at as an IST date + time (institutions.created_at).
+const fmtCreated = (val) => {
+  if (!val) return '';
+  const d = (val instanceof Date) ? val : new Date(String(val).replace(' ', 'T'));
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: true
+  });
+};
 
 const planBadgeStyle = (inst) => {
   if (inst.usage_plan === 'Full Time' || inst.daysLeft === null) {
@@ -271,6 +296,8 @@ export default function DeveloperDashboard() {
     const parentName = inst.parent_id ? instById[inst.parent_id]?.name : null;
     // Each institution shows its OWN logo only (placeholder icon if none).
     const cardLogo = inst.logo;
+    // Which developer onboarded this client (name resolved from usersList).
+    const creator = inst.created_by ? (usersList || []).find(u => String(u.id) === String(inst.created_by)) : null;
     return (
       <div
         onClick={() => drillInto(inst)}
@@ -330,6 +357,13 @@ export default function DeveloperDashboard() {
               Key: <span className="font-semibold">{inst.schoolKey}</span>
             </span>
           </div>
+
+          {(creator || inst.created_at) && (
+            <div className="mt-2 text-[10px] text-zinc-400 text-center leading-relaxed">
+              Added by <span className="font-semibold text-zinc-500">{creator ? creator.name : 'Unknown'}</span>
+              {inst.created_at && <><br />{fmtCreated(inst.created_at)}</>}
+            </div>
+          )}
 
           <div className="mt-auto pt-6 w-full">
             <div className={`w-full rounded-md px-3 py-2.5 flex items-center gap-3 ${badge.wrap}`}>
@@ -842,6 +876,7 @@ export default function DeveloperDashboard() {
 function DevelopersView({ developers, currentUserId, iAmSuper, totalInstitutionUsers, apiUrl, refreshData }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [viewing, setViewing] = useState(null);
   const [search, setSearch] = useState('');
 
   const superCount = useMemo(
@@ -905,7 +940,7 @@ function DevelopersView({ developers, currentUserId, iAmSuper, totalInstitutionU
         ))}
       </div>
 
-      <div className="relative flex-1 sm:max-w-xs mb-6">
+      <div className="relative w-full sm:max-w-xs mb-6">
         <Search className="size-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
         <input placeholder="Search developers..." value={search} onChange={(e) => setSearch(e.target.value)}
           className="h-9 w-full rounded-md border border-zinc-200 bg-white pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
@@ -931,20 +966,26 @@ function DevelopersView({ developers, currentUserId, iAmSuper, totalInstitutionU
                 }`}>
                   {isSuper && <ShieldCheck className="size-3" />}{isSuper ? 'Super Developer' : 'Developer'}
                 </span>
-                {iAmSuper && (
-                  <div className="flex items-center gap-1.5 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                    <button onClick={() => openEdit(d)} title="Edit"
-                      className="size-7 bg-white hover:bg-zinc-50 text-zinc-500 hover:text-primary rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5">
-                      <Edit3 className="size-3.5" />
-                    </button>
-                    {!isMe && (
-                      <button onClick={() => handleDelete(d)} title="Delete"
-                        className="size-7 bg-white hover:bg-red-50 text-zinc-500 hover:text-red-600 rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5">
-                        <Trash2 className="size-3.5" />
+                <div className="flex items-center gap-1.5 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                  <button onClick={() => setViewing(d)} title="View details"
+                    className="size-7 bg-white hover:bg-zinc-50 text-zinc-500 hover:text-primary rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5">
+                    <Eye className="size-3.5" />
+                  </button>
+                  {iAmSuper && (
+                    <>
+                      <button onClick={() => openEdit(d)} title="Edit"
+                        className="size-7 bg-white hover:bg-zinc-50 text-zinc-500 hover:text-primary rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5">
+                        <Edit3 className="size-3.5" />
                       </button>
-                    )}
-                  </div>
-                )}
+                      {!isMe && (
+                        <button onClick={() => handleDelete(d)} title="Delete"
+                          className="size-7 bg-white hover:bg-red-50 text-zinc-500 hover:text-red-600 rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5">
+                          <Trash2 className="size-3.5" />
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
               <div className="p-5 flex flex-col items-center flex-1">
                 <div className={`size-16 rounded-full flex items-center justify-center mb-3 ring-1 ring-inset ${isSuper ? 'bg-violet-50 ring-violet-600/20 text-violet-500' : 'bg-zinc-50 ring-black/5 text-zinc-400'}`}>
@@ -977,6 +1018,40 @@ function DevelopersView({ developers, currentUserId, iAmSuper, totalInstitutionU
           </div>
         )}
       </div>
+
+      {viewing && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-zinc-900/40 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setViewing(null)}>
+          <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-sm shadow-xl relative animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+            <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 rounded-t-lg">
+              <h2 className="font-semibold text-lg text-zinc-900 tracking-tight">Developer</h2>
+              <button onClick={() => setViewing(null)} className="text-zinc-400 hover:text-zinc-700 transition-colors p-1.5 hover:bg-zinc-100 rounded-md"><X className="size-4" /></button>
+            </div>
+            <div className="p-6 flex flex-col items-center">
+              <div className={`size-16 rounded-full flex items-center justify-center mb-3 ring-1 ring-inset ${Number(viewing.is_super_developer) === 1 ? 'bg-violet-50 ring-violet-600/20 text-violet-500' : 'bg-zinc-50 ring-black/5 text-zinc-400'}`}>
+                <User className="size-8" />
+              </div>
+              <h3 className="font-semibold text-base text-zinc-900 text-center">{viewing.name}</h3>
+              <span className={`mt-2 px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ring-1 ring-inset inline-flex items-center gap-1 ${Number(viewing.is_super_developer) === 1 ? 'bg-violet-100 text-violet-700 ring-violet-600/20' : 'bg-zinc-100 text-zinc-700 ring-black/5'}`}>
+                {Number(viewing.is_super_developer) === 1 && <ShieldCheck className="size-3" />}{Number(viewing.is_super_developer) === 1 ? 'Super Developer' : 'Developer'}
+              </span>
+              <div className="w-full mt-5 space-y-2.5 text-sm">
+                <div className="flex items-center gap-2.5 text-zinc-700"><Mail className="size-4 text-primary shrink-0" /> <span className="truncate">{viewing.email || '-'}</span></div>
+                <div className="flex items-center gap-2.5 text-zinc-700"><User className="size-4 text-primary shrink-0" /> <span className="truncate">{viewing.username ? '@' + viewing.username : '-'}</span></div>
+                <div className="flex items-center gap-2.5 text-zinc-700 capitalize"><ShieldCheck className="size-4 text-primary shrink-0" /> {viewing.status || 'active'}</div>
+              </div>
+            </div>
+            <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg">
+              {iAmSuper && (
+                <button onClick={() => { const d = viewing; setViewing(null); openEdit(d); }}
+                  className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md font-semibold text-xs flex items-center gap-1.5 transition-colors">
+                  <Edit3 className="size-3.5" /> Edit
+                </button>
+              )}
+              <button onClick={() => setViewing(null)} className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 rounded-md font-semibold text-xs hover:bg-zinc-50 transition-colors">Close</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {modalOpen && (
         <DeveloperModal

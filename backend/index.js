@@ -323,29 +323,28 @@ app.post('/api/login', async (req, res) => {
 
 
 // =====================================================================
-// === DEVELOPER ACCOUNTS — Super Developer vs Developer ===============
+// === DEVELOPER SECTION — full block =================================
 //
-//  Splice this into index.js in the DEVELOPER section.
+//  Drop-in replacement for your current developer block. Contains, in order:
+//    1) GET    /api/developer/data                 (self-contained; no _effectivePlan)
+//    2) _isSuperDeveloper + developer-ACCOUNT CRUD  (/api/developer/developers)
+//    3) POST   /api/developer/onboard               (create — stamps created_by)
+//    4) PUT    /api/developer/institution/:id        (edit)
+//    5) DELETE /api/developer/institution/:id        (delete)
 //
-//  Two parts:
-//    A) REPLACE your existing  GET /api/developer/data  with the version
-//       below — the ONLY change is that the users SELECT now also returns
-//       is_super_developer, so the dashboard knows who is a Super Developer.
-//    B) ADD the four developer-account routes (list / create / update /
-//       delete). Creating, editing and deleting developer accounts is
-//       restricted to SUPER DEVELOPERS; every developer can still onboard
-//       schools / colleges / groups exactly as before.
+//  onboard records created_by = the logged-in developer, so each client card
+//  shows "Added by <developer> · <date>". Requires institutions.created_by
+//  (run institution_created_by_schema.sql once).
 //
-//  Base role stays 'Developer' for BOTH tiers — the /api/developer/* gate
-//  and all cross-tenant "role === 'Developer'" checks are untouched.
+//  Keep exactly ONE copy of each of these routes in index.js.
 // =====================================================================
 
 
-// ---- A) REPLACE GET /api/developer/data (adds is_super_developer) ----
+// ---- 1) GET /api/developer/data (adds is_super_developer, self-contained) ----
 app.get('/api/developer/data', async (req, res) => {
     try {
         const [insts] = await db.execute('SELECT * FROM institutions ORDER BY created_at DESC');
- 
+
         let users;
         try {
             [users] = await db.execute(
@@ -358,10 +357,10 @@ app.get('/api/developer/data', async (req, res) => {
                 'SELECT id, name, email, username, role, institutionId, password, status FROM users'
             );
         }
- 
+
         const byId = {};
         insts.forEach(i => { byId[i.id] = i; });
- 
+
         const decorated = insts.map(inst => {
             // Effective plan: a branch (has parent_id) shows its GROUP's plan;
             // a group / standalone shows its own. Inlined — no external helper.
@@ -373,7 +372,7 @@ app.get('/api/developer/data', async (req, res) => {
                 ...computePlanStatus(src.usage_plan, src.plan_start_date)
             };
         });
- 
+
         res.json({ institutions: decorated, users });
     } catch (err) {
         console.error('[developer/data]', err);
@@ -382,7 +381,7 @@ app.get('/api/developer/data', async (req, res) => {
 });
 
 
-// ---- B) DEVELOPER-ACCOUNT MANAGEMENT (Super Developer only to mutate) --
+// ---- 2) DEVELOPER-ACCOUNT MANAGEMENT (Super Developer only to mutate) --
 
 // The caller is a Super Developer? (base role is already 'Developer' — the
 // /developer gate guaranteed that — so we only need the flag.)
@@ -495,6 +494,105 @@ app.delete('/api/developer/developers/:id', async (req, res) => {
         await db.execute('DELETE FROM users WHERE id = ?', [id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// ---- 3) CREATE an institution — group / branch / standalone ----------
+//  Stamps created_by = the onboarding developer (drives the "Added by …"
+//  line on the client cards).
+app.post('/api/developer/onboard', async (req, res) => {
+    const { name, type, parent_id, logo, schoolKey, school_email, phone,
+            usage_plan, plan_start_date,
+            superAdminName, superAdminEmail, superAdminPassword } = req.body;
+
+    const isGroup = type === 'Group';
+    const parentId = isGroup ? null : (parent_id || null);           // a group never has a parent
+    const plan = PLAN_DAYS.hasOwnProperty(usage_plan) ? usage_plan : 'Full Time';
+    const startDate = plan_start_date || new Date().toISOString().slice(0, 10);
+    const adminRole = isGroup ? 'Group Admin' : 'Super Admin';        // umbrella vs branch principal
+    const createdBy = req.auth ? req.auth.userId : null;              // the onboarding developer
+
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        const [inst] = await conn.execute(
+            'INSERT INTO institutions (name, type, parent_id, logo, schoolKey, school_email, phone, usage_plan, plan_start_date, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [name, type, parentId, logo, schoolKey, school_email, phone, plan, startDate, createdBy]
+        );
+        const instId = inst.insertId;
+
+        await conn.execute(
+            'INSERT INTO users (name, email, password, role, institutionId) VALUES (?, ?, ?, ?, ?)',
+            [superAdminName, superAdminEmail, superAdminPassword, adminRole, instId]
+        );
+
+        // Academic system roles only make sense for real schools, not the
+        // group umbrella (it owns no students/teachers/classes).
+        if (!isGroup) {
+            for (const roleName of SYSTEM_ROLES) {
+                await conn.execute('INSERT IGNORE INTO roles (role_name, institutionId) VALUES (?, ?)', [roleName, instId]);
+            }
+        }
+
+        await conn.commit();
+        res.json({ success: true, id: instId });
+    } catch (err) {
+        await conn.rollback();
+        if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
+            return res.status(400).json({ error: 'That login email is already in use.' });
+        }
+        res.status(500).json({ error: err.message });
+    } finally { conn.release(); }
+});
+
+// ---- 4) EDIT an institution — group / branch / standalone -----------
+app.put('/api/developer/institution/:id', async (req, res) => {
+    const { id } = req.params;
+    const { name, type, parent_id, logo, school_email, phone, usage_plan, plan_start_date,
+            superAdminName, superAdminEmail, superAdminPassword } = req.body;
+
+    const isGroup = type === 'Group';
+    const parentId = isGroup ? null : (parent_id || null);
+    const plan = PLAN_DAYS.hasOwnProperty(usage_plan) ? usage_plan : 'Full Time';
+    const startDate = plan_start_date || new Date().toISOString().slice(0, 10);
+
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        await conn.execute(
+            'UPDATE institutions SET name=?, type=?, parent_id=?, logo=?, school_email=?, phone=?, usage_plan=?, plan_start_date=? WHERE id=?',
+            [name, type, parentId, logo, school_email, phone, plan, startDate, id]
+        );
+        // Update whichever platform admin this institution has (group OR branch).
+        await conn.execute(
+            'UPDATE users SET name=?, email=?, password=? WHERE institutionId=? AND role IN ("Super Admin","Group Admin")',
+            [superAdminName, superAdminEmail, superAdminPassword, id]
+        );
+        if (!isGroup) {
+            for (const roleName of SYSTEM_ROLES) {
+                await conn.execute('INSERT IGNORE INTO roles (role_name, institutionId) VALUES (?, ?)', [roleName, id]);
+            }
+        }
+        await conn.commit();
+        res.json({ success: true });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally { conn.release(); }
+});
+
+// ---- 5) DELETE an institution ---------------------------------------
+app.delete('/api/developer/institution/:id', async (req, res) => {
+    try {
+        await db.execute('DELETE FROM institutions WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) {
+        // FK RESTRICT: deleting a group that still has branches is blocked.
+        if (err.code === 'ER_ROW_IS_REFERENCED_2' || err.errno === 1451) {
+            return res.status(400).json({ error: 'This group still has branches. Move or delete its branches first.' });
+        }
+        res.status(500).json({ error: err.message });
+    }
 });
 
 
