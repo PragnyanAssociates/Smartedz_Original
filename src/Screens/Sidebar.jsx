@@ -137,7 +137,7 @@ export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMo
           </div>
 
           <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
-            Administrative Control
+             Dashboard Control
           </p>
         </div>
 
