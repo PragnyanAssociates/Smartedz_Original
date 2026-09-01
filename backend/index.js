@@ -361,10 +361,17 @@ app.get('/api/developer/data', async (req, res) => {
  
         const byId = {};
         insts.forEach(i => { byId[i.id] = i; });
+ 
         const decorated = insts.map(inst => {
-            const eff = _effectivePlan(inst, byId);
-            return { ...inst, usage_plan: eff.usage_plan, plan_start_date: eff.plan_start_date,
-                     ...computePlanStatus(eff.usage_plan, eff.plan_start_date) };
+            // Effective plan: a branch (has parent_id) shows its GROUP's plan;
+            // a group / standalone shows its own. Inlined — no external helper.
+            const src = (inst.parent_id && byId[inst.parent_id]) ? byId[inst.parent_id] : inst;
+            return {
+                ...inst,
+                usage_plan: src.usage_plan,
+                plan_start_date: src.plan_start_date,
+                ...computePlanStatus(src.usage_plan, src.plan_start_date)
+            };
         });
  
         res.json({ institutions: decorated, users });
