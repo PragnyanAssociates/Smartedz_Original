@@ -382,7 +382,7 @@ app.get('/api/developer/data', async (req, res) => {
 });
 
 
-// ---- B) DEVELOPER-ACCOUNT MANAGEMENT (Super Developer only to mutate) ----
+// ---- B) DEVELOPER-ACCOUNT MANAGEMENT (Super Developer only to mutate) --
 
 // The caller is a Super Developer? (base role is already 'Developer' — the
 // /developer gate guaranteed that — so we only need the flag.)
