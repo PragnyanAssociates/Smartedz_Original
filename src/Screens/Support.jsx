@@ -1,20 +1,14 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { API_BASE_URL } from '../apiConfig';
 import { MODULES } from './Modules';
 import {
   LifeBuoy, Plus, X, Send, Image as ImageIcon, Loader2, ArrowLeft,
-  MessageSquare, CheckCircle2, RefreshCw, Clock, ShieldCheck, RotateCcw, Info, ChevronDown
+  MessageSquare, CheckCircle2, RefreshCw, ShieldCheck, RotateCcw, Info, ChevronDown, Clock
 } from 'lucide-react';
 
 // =====================================================================
 //  Support — a school's window to the SmartEdz developers.
-//
-//  Raise a ticket (pick the module it's about, describe it, optionally
-//  attach an image), then chat with the developer assigned to it. A ticket
-//  starts as "Waiting" (queued for the SmartEdz team), becomes "In progress"
-//  once a developer picks it up, and "Closed" when resolved — which you can
-//  reopen. Everything is scoped to your institution by the backend.
 // =====================================================================
 
 const asUtcIso = (v) => {
@@ -32,15 +26,30 @@ const fmtWhen = (v) => {
     day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true
   });
 };
+// Relative "opened 2h ago" from a timestamp.
+const ago = (v) => {
+  const iso = asUtcIso(v);
+  if (!iso) return '';
+  const ms = Date.now() - new Date(iso).getTime();
+  const mins = Math.round(ms / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const h = Math.floor(mins / 60), m = mins % 60;
+  if (h < 24) return m ? `${h}h ${m}m ago` : `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+};
 
 const STATUS = {
   open:     { label: 'Waiting',     cls: 'bg-amber-50 text-amber-700 ring-amber-600/20' },
-  assigned: { label: 'In progress', cls: 'bg-blue-50 text-blue-700 ring-blue-600/20' },
+  assigned: { label: 'Assigned',    cls: 'bg-indigo-50 text-indigo-700 ring-indigo-600/20' },
+  active:   { label: 'In progress', cls: 'bg-blue-50 text-blue-700 ring-blue-600/20' },
   closed:   { label: 'Closed',      cls: 'bg-zinc-100 text-zinc-600 ring-black/5' }
 };
 const statusOf = (s) => STATUS[s] || STATUS.open;
 
-// Modules a school can file a ticket about (skip header-only + Support itself).
+// Friendly module label (e.g. "Fee Management" not "FeeManagement").
+const moduleLabelOf = (name) => (MODULES.find(m => m.module_name === name)?.label) || name || 'General';
+
 const MODULE_OPTIONS = [
   ...MODULES
     .filter(m => !m.hideFromSidebar && !m.alwaysVisible && m.module_name !== 'Support')
@@ -52,7 +61,7 @@ export default function Support() {
   const { user } = useAuth();
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [openId, setOpenId] = useState(null);     // ticket being chatted on
+  const [openId, setOpenId] = useState(null);
   const [showNew, setShowNew] = useState(false);
 
   const loadTickets = useCallback(async () => {
@@ -65,6 +74,8 @@ export default function Support() {
   }, []);
 
   useEffect(() => { loadTickets(); }, [loadTickets]);
+  // Light polling so status changes (assigned / closed) show up.
+  useEffect(() => { const iv = setInterval(loadTickets, 15000); return () => clearInterval(iv); }, [loadTickets]);
 
   if (openId) {
     return <TicketChat ticketId={openId} me={user} onBack={() => { setOpenId(null); loadTickets(); }} />;
@@ -121,13 +132,13 @@ export default function Support() {
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-semibold text-zinc-900 truncate">{t.subject || t.module}</span>
+                    <span className="text-sm font-semibold text-zinc-900 truncate">{t.subject || moduleLabelOf(t.module)}</span>
                     <span className="text-[10px] font-medium text-zinc-400">#{t.id}</span>
                   </div>
                   <div className="text-[11px] text-zinc-500 mt-0.5 truncate">
-                    <span className="font-medium text-zinc-600">{t.module}</span>
+                    <span className="font-medium text-zinc-600">{moduleLabelOf(t.module)}</span>
                     {t.assigned_name && <span> · with {t.assigned_name}</span>}
-                    {t.last_activity_at && <span> · {fmtWhen(t.last_activity_at)}</span>}
+                    {t.last_activity_at && <span> · {ago(t.last_activity_at)}</span>}
                   </div>
                 </div>
                 <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ring-1 ring-inset shrink-0 ${st.cls}`}>
@@ -148,9 +159,6 @@ export default function Support() {
   );
 }
 
-// ---------------------------------------------------------------------
-//  Raise a new ticket
-// ---------------------------------------------------------------------
 function NewTicketModal({ onClose, onCreated }) {
   const [module, setModule] = useState(MODULE_OPTIONS[0]?.value || 'General');
   const [subject, setSubject] = useState('');
@@ -174,8 +182,7 @@ function NewTicketModal({ onClose, onCreated }) {
     setSaving(true);
     try {
       const res = await fetch(`${API_BASE_URL}/support/tickets`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ module, subject: subject.trim(), body: body.trim(), image: image || null })
       });
       const d = await res.json().catch(() => ({}));
@@ -249,9 +256,6 @@ function NewTicketModal({ onClose, onCreated }) {
   );
 }
 
-// ---------------------------------------------------------------------
-//  Chat on one ticket (school view)
-// ---------------------------------------------------------------------
 function TicketChat({ ticketId, me, onBack }) {
   const [ticket, setTicket] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -276,12 +280,7 @@ function TicketChat({ ticketId, me, onBack }) {
   }, [ticketId]);
 
   useEffect(() => { loadAll(true); }, [loadAll]);
-
-  // Poll the thread while it's open.
-  useEffect(() => {
-    const iv = setInterval(() => loadAll(false), 4000);
-    return () => clearInterval(iv);
-  }, [loadAll]);
+  useEffect(() => { const iv = setInterval(() => loadAll(false), 4000); return () => clearInterval(iv); }, [loadAll]);
 
   const closed = ticket?.status === 'closed';
   const st = statusOf(ticket?.status);
@@ -301,8 +300,7 @@ function TicketChat({ ticketId, me, onBack }) {
     setSending(true);
     try {
       const res = await fetch(`${API_BASE_URL}/support/tickets/${ticketId}/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ body: text.trim(), image: image || null })
       });
       const d = await res.json().catch(() => ({}));
@@ -330,34 +328,38 @@ function TicketChat({ ticketId, me, onBack }) {
       </button>
 
       <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm flex flex-col flex-1 min-h-0 overflow-hidden">
-        {/* header */}
         <div className="px-5 py-4 border-b border-zinc-100 flex items-center justify-between gap-3 shrink-0">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h2 className="text-sm font-semibold text-zinc-900 truncate">{ticket?.subject || ticket?.module || 'Ticket'}</h2>
+              <h2 className="text-sm font-semibold text-zinc-900 truncate">{ticket?.subject || moduleLabelOf(ticket?.module)}</h2>
               <span className="text-[10px] font-medium text-zinc-400">#{ticketId}</span>
             </div>
-            <p className="text-[11px] text-zinc-500 mt-0.5">
-              <span className="font-medium text-zinc-600">{ticket?.module}</span>
-              {ticket?.assigned_developer?.name && <span> · with {ticket.assigned_developer.name}</span>}
+            <p className="text-[11px] text-zinc-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
+              <span className="font-medium text-zinc-600">{moduleLabelOf(ticket?.module)}</span>
+              {ticket?.assigned_developer?.name && <span>· with {ticket.assigned_developer.name}</span>}
+              {ticket?.created_at && <span className="inline-flex items-center gap-1"><Clock className="size-3" /> opened {ago(ticket.created_at)}</span>}
             </p>
           </div>
           <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ring-1 ring-inset shrink-0 ${st.cls}`}>{st.label}</span>
         </div>
 
-        {/* thread */}
         <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-4 sm:p-5 space-y-3 bg-zinc-50/40">
-          {messages.length === 0 && (
-            <p className="text-center text-xs text-zinc-400 italic py-8">No messages yet.</p>
-          )}
+          {messages.length === 0 && (<p className="text-center text-xs text-zinc-400 italic py-8">No messages yet.</p>)}
           {messages.map(m => {
-            const mine = String(m.sender_id) === String(me?.id);
+            if (m.sender_side === 'system') {
+              return (
+                <div key={m.id} className="flex justify-center">
+                  <span className="text-[10px] text-zinc-500 bg-zinc-100 rounded-full px-3 py-1 ring-1 ring-inset ring-black/5 text-center">
+                    {m.body} · {fmtWhen(m.created_at)}
+                  </span>
+                </div>
+              );
+            }
+            const mine = String(m.sender_id) === String(me?.id) && m.sender_side === 'school';
             const isDev = m.sender_side === 'developer';
             return (
               <div key={m.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[80%] rounded-lg px-3 py-2 text-sm shadow-sm ring-1 ${
-                  mine ? 'bg-primary text-white ring-primary/20' : 'bg-white text-zinc-800 ring-black/5'
-                }`}>
+                <div className={`max-w-[80%] rounded-lg px-3 py-2 text-sm shadow-sm ring-1 ${mine ? 'bg-primary text-white ring-primary/20' : 'bg-white text-zinc-800 ring-black/5'}`}>
                   {!mine && (
                     <div className={`text-[10px] font-semibold mb-0.5 flex items-center gap-1 ${isDev ? 'text-primary' : 'text-zinc-500'}`}>
                       {isDev && <ShieldCheck className="size-3" />}{m.sender_name || (isDev ? 'SmartEdz' : 'You')}
@@ -372,7 +374,6 @@ function TicketChat({ ticketId, me, onBack }) {
           })}
         </div>
 
-        {/* composer / closed banner */}
         {closed ? (
           <div className="p-4 border-t border-zinc-100 bg-zinc-50/60 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
             <span className="inline-flex items-center gap-1.5 text-xs font-medium text-zinc-500">

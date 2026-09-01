@@ -4,10 +4,11 @@ import {
   Building2, Plus, LogOut, Trash2, Edit3, Image as ImageIcon, Shield,
   Mail, Lock, User, Globe, Phone, Calendar, AlertTriangle, CheckCircle2,
   Infinity as InfinityIcon, ChevronDown, X, Loader2, ArrowLeft, KeyRound,
-  Users, Search, School, GraduationCap, BookOpen, Network, CornerDownRight, Eye, EyeOff,
+  Users, Search, School, GraduationCap, BookOpen, Network, CornerDownRight,Clock, Eye, EyeOff,
   Code2, ShieldCheck, UserPlus, LifeBuoy, Send, MessageSquare, RefreshCw
 } from 'lucide-react';
 import smartedzLogo from '../assets/smartedzlogo.png';
+import { MODULES } from './Modules';
 
 const PLAN_OPTIONS = ['7 days', '30 days', '90 days', '180 days', '1 year', '3 years', 'Full Time'];
 const CATEGORIES = ['School', 'College', 'Tuition', 'Group'];
@@ -1217,28 +1218,39 @@ function DeveloperModal({ editing, apiUrl, onClose, onSaved }) {
 }
 
 // =====================================================================
-//  SUPPORT TAB — developer side: queue, assignment, and ticket chat.
-//  Super Developer sees every ticket (queue / in-progress / closed),
-//  assigns from an availability list, and can join any chat. A plain
-//  Developer sees only the tickets assigned to them.
+//  SUPPORT TAB — developer side (v2: accept/reject, reassign, durations)
 // =====================================================================
+const _supIso = (v) => {
+  const s = String(v).replace(' ', 'T');
+  return /[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s : s + 'Z';
+};
 const fmtSupport = (val) => {
   if (!val) return '';
-  const s = String(val).replace(' ', 'T');
-  const iso = /[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s : s + 'Z';
-  const d = new Date(iso);
+  const d = new Date(_supIso(val));
   if (isNaN(d.getTime())) return '';
   return d.toLocaleString('en-IN', {
     timeZone: 'Asia/Kolkata',
     day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true
   });
 };
+const supAgo = (val) => {
+  if (!val) return '';
+  const ms = Date.now() - new Date(_supIso(val)).getTime();
+  const mins = Math.round(ms / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const h = Math.floor(mins / 60), m = mins % 60;
+  if (h < 24) return m ? `${h}h ${m}m ago` : `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+};
 const SUP_STATUS = {
   open:     { label: 'Waiting',     cls: 'bg-amber-50 text-amber-700 ring-amber-600/20' },
-  assigned: { label: 'In progress', cls: 'bg-blue-50 text-blue-700 ring-blue-600/20' },
+  assigned: { label: 'Assigned',    cls: 'bg-indigo-50 text-indigo-700 ring-indigo-600/20' },
+  active:   { label: 'In progress', cls: 'bg-blue-50 text-blue-700 ring-blue-600/20' },
   closed:   { label: 'Closed',      cls: 'bg-zinc-100 text-zinc-600 ring-black/5' }
 };
 const supStatus = (s) => SUP_STATUS[s] || SUP_STATUS.open;
+const moduleLabelOf = (name) => (MODULES.find(m => m.module_name === name)?.label) || name || 'General';
 
 function SupportView({ apiUrl, currentUserId, iAmSuper }) {
   const [data, setData] = useState({ isSuper: false, tickets: [] });
@@ -1257,7 +1269,7 @@ function SupportView({ apiUrl, currentUserId, iAmSuper }) {
   }, [apiUrl]);
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { const iv = setInterval(load, 10000); return () => clearInterval(iv); }, [load]);
+  useEffect(() => { const iv = setInterval(load, 8000); return () => clearInterval(iv); }, [load]);
 
   if (openId) {
     return (
@@ -1268,23 +1280,24 @@ function SupportView({ apiUrl, currentUserId, iAmSuper }) {
 
   const isSuper = data.isSuper;
   const tickets = data.tickets;
+  const inProg = (t) => t.status === 'assigned' || t.status === 'active';
   const counts = {
-    queue:    tickets.filter(t => t.status === 'open').length,
-    assigned: tickets.filter(t => t.status === 'assigned').length,
-    closed:   tickets.filter(t => t.status === 'closed').length,
-    all:      tickets.length
+    queue:      tickets.filter(t => t.status === 'open').length,
+    inprogress: tickets.filter(inProg).length,
+    closed:     tickets.filter(t => t.status === 'closed').length,
+    all:        tickets.length
   };
   const visible = !isSuper ? tickets
-    : filter === 'all'      ? tickets
-    : filter === 'queue'    ? tickets.filter(t => t.status === 'open')
-    : filter === 'assigned' ? tickets.filter(t => t.status === 'assigned')
+    : filter === 'all'        ? tickets
+    : filter === 'queue'      ? tickets.filter(t => t.status === 'open')
+    : filter === 'inprogress' ? tickets.filter(inProg)
     : tickets.filter(t => t.status === 'closed');
 
   const tabs = [
-    { id: 'queue',    label: `Queue (${counts.queue})` },
-    { id: 'assigned', label: `In Progress (${counts.assigned})` },
-    { id: 'closed',   label: `Closed (${counts.closed})` },
-    { id: 'all',      label: `All (${counts.all})` }
+    { id: 'queue',      label: `Queue (${counts.queue})` },
+    { id: 'inprogress', label: `In Progress (${counts.inprogress})` },
+    { id: 'closed',     label: `Closed (${counts.closed})` },
+    { id: 'all',        label: `All (${counts.all})` }
   ];
 
   return (
@@ -1293,7 +1306,7 @@ function SupportView({ apiUrl, currentUserId, iAmSuper }) {
         <div>
           <h2 className="text-xl font-semibold text-zinc-900 tracking-tight">Support</h2>
           <p className="text-sm text-zinc-500 mt-1">
-            {isSuper ? 'Assign incoming tickets to a developer, and jump into any chat.' : 'Support tickets assigned to you.'}
+            {isSuper ? 'Assign incoming tickets to a free developer, and jump into any chat.' : 'Support tickets assigned to you.'}
           </p>
         </div>
         <button onClick={load} title="Refresh"
@@ -1330,14 +1343,14 @@ function SupportView({ apiUrl, currentUserId, iAmSuper }) {
                   <div className="size-9 rounded-md bg-primary/10 text-primary flex items-center justify-center shrink-0"><MessageSquare className="size-4" /></div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-zinc-900 truncate">{t.subject || t.module}</span>
+                      <span className="text-sm font-semibold text-zinc-900 truncate">{t.subject || moduleLabelOf(t.module)}</span>
                       <span className="text-[10px] font-medium text-zinc-400">#{t.id}</span>
                     </div>
                     <div className="text-[11px] text-zinc-500 mt-0.5 truncate">
                       <span className="font-medium text-zinc-600">{t.institution_name || 'School'}</span>
                       {t.opener_name && <span> · {t.opener_name}{t.opener_role ? ` (${t.opener_role})` : ''}</span>}
-                      <span> · {t.module}</span>
-                      {t.last_activity_at && <span> · {fmtSupport(t.last_activity_at)}</span>}
+                      <span> · {moduleLabelOf(t.module)}</span>
+                      {t.last_activity_at && <span> · {supAgo(t.last_activity_at)}</span>}
                     </div>
                   </div>
                 </button>
@@ -1364,7 +1377,6 @@ function SupportView({ apiUrl, currentUserId, iAmSuper }) {
   );
 }
 
-// Super Developer picks a developer to handle a ticket. Free devs first.
 function AssignModal({ apiUrl, ticket, onClose, onAssigned }) {
   const [devs, setDevs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1400,7 +1412,7 @@ function AssignModal({ apiUrl, ticket, onClose, onAssigned }) {
         <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 rounded-t-lg">
           <div>
             <h2 className="font-semibold text-lg text-zinc-900 tracking-tight">Assign ticket #{ticket.id}</h2>
-            <p className="text-[11px] text-zinc-500 mt-0.5">Free developers first, with when they last worked a ticket.</p>
+            <p className="text-[11px] text-zinc-500 mt-0.5">Free developers first. Busy ones can't be assigned.</p>
           </div>
           <button onClick={onClose} className="text-zinc-400 hover:text-zinc-700 p-1.5 hover:bg-zinc-100 rounded-md"><X className="size-4" /></button>
         </div>
@@ -1410,9 +1422,9 @@ function AssignModal({ apiUrl, ticket, onClose, onAssigned }) {
           ) : devs.length === 0 ? (
             <p className="text-center text-xs text-zinc-400 italic py-8">No developer accounts.</p>
           ) : devs.map(d => {
-            const busy = Number(d.active_tickets) > 0;
+            const isBusy = Number(d.active_tickets) > 0;
             return (
-              <div key={d.id} className="flex items-center gap-3 p-3 rounded-md ring-1 ring-black/5 bg-white">
+              <div key={d.id} className={`flex items-center gap-3 p-3 rounded-md ring-1 ring-black/5 ${isBusy ? 'bg-zinc-50/70 opacity-70' : 'bg-white'}`}>
                 <div className={`size-9 rounded-full flex items-center justify-center shrink-0 ring-1 ring-inset ${Number(d.is_super_developer) === 1 ? 'bg-violet-50 ring-violet-600/20 text-violet-500' : 'bg-zinc-50 ring-black/5 text-zinc-400'}`}>
                   <User className="size-4" />
                 </div>
@@ -1421,15 +1433,19 @@ function AssignModal({ apiUrl, ticket, onClose, onAssigned }) {
                     {d.name}{Number(d.is_super_developer) === 1 && <ShieldCheck className="size-3 text-violet-500" />}
                   </div>
                   <div className="text-[11px] mt-0.5">
-                    <span className={busy ? 'text-amber-600 font-medium' : 'text-emerald-600 font-medium'}>
-                      {busy ? `${d.active_tickets} active` : 'Free'}
+                    <span className={isBusy ? 'text-amber-600 font-medium' : 'text-emerald-600 font-medium'}>
+                      {isBusy ? `${d.active_tickets} active` : 'Free'}
                     </span>
                     <span className="text-zinc-400"> · last worked {d.last_activity ? fmtSupport(d.last_activity) : 'never'}</span>
                   </div>
                 </div>
-                <button onClick={() => assign(d.id)} disabled={saving !== null}
-                  className="h-8 px-3 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 text-white rounded-md text-[11px] font-semibold flex items-center gap-1.5 transition-colors shrink-0">
-                  {saving === d.id ? <Loader2 className="size-3.5 animate-spin" /> : 'Assign'}
+                <button onClick={() => !isBusy && assign(d.id)} disabled={isBusy || saving !== null}
+                  title={isBusy ? 'Already working a ticket' : 'Assign this ticket'}
+                  className={`h-8 px-3 rounded-md text-[11px] font-semibold flex items-center gap-1.5 transition-colors shrink-0 ${
+                    isBusy ? 'bg-zinc-100 text-zinc-400 cursor-not-allowed ring-1 ring-black/5'
+                           : 'bg-primary hover:bg-primary/90 disabled:bg-zinc-300 text-white'
+                  }`}>
+                  {saving === d.id ? <Loader2 className="size-3.5 animate-spin" /> : (isBusy ? 'Busy' : 'Assign')}
                 </button>
               </div>
             );
@@ -1440,7 +1456,6 @@ function AssignModal({ apiUrl, ticket, onClose, onAssigned }) {
   );
 }
 
-// One ticket's chat (developer view) with the requester's context banner.
 function DevTicketChat({ apiUrl, ticketId, currentUserId, iAmSuper, onBack }) {
   const [ticket, setTicket] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -1468,12 +1483,27 @@ function DevTicketChat({ apiUrl, ticketId, currentUserId, iAmSuper, onBack }) {
   useEffect(() => { loadAll(true); }, [loadAll]);
   useEffect(() => { const iv = setInterval(() => loadAll(false), 4000); return () => clearInterval(iv); }, [loadAll]);
 
-  const closed = ticket?.status === 'closed';
-  const isOpen = ticket?.status === 'open';
-  const st = supStatus(ticket?.status);
-  const mineToClose = iAmSuper || String(ticket?.assigned_to) === String(currentUserId);
+  const status = ticket?.status;
+  const closed = status === 'closed';
+  const isOpen = status === 'open';
+  const inProg = status === 'assigned' || status === 'active';
+  const st = supStatus(status);
+  const mineAssigned = String(ticket?.assigned_to) === String(currentUserId);
+  const canAcceptReject = status === 'assigned' && mineAssigned;
+  const canClose = inProg && (iAmSuper || mineAssigned);
   const req = ticket?.requester;
   const inst = ticket?.institution;
+
+  const act = async (path, confirmMsg) => {
+    if (confirmMsg && !window.confirm(confirmMsg)) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`${apiUrl}/api/support/tickets/${ticketId}/${path}`, { method: 'POST' });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || 'Action failed.'); }
+      await loadAll(false);
+    } catch (e) { alert(e.message); }
+    setBusy(false);
+  };
 
   const onPic = (e) => {
     const f = e.target.files?.[0];
@@ -1500,30 +1530,35 @@ function DevTicketChat({ apiUrl, ticketId, currentUserId, iAmSuper, onBack }) {
     setSending(false);
   };
 
-  const closeTicket = async () => {
-    if (!window.confirm('Close this ticket? The school can reopen it if needed.')) return;
-    setBusy(true);
-    try {
-      const res = await fetch(`${apiUrl}/api/support/tickets/${ticketId}/close`, { method: 'POST' });
-      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || 'Failed'); }
-      await loadAll(false);
-    } catch (e) { alert(e.message); }
-    setBusy(false);
-  };
-
   return (
     <div className="animate-in fade-in duration-300">
-      <div className="flex items-center justify-between gap-3 mb-4">
+      <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
         <button onClick={onBack} className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
           <ArrowLeft className="size-4" /> Back to Support
         </button>
-        <div className="flex items-center gap-2">
-          {iAmSuper && isOpen && (
-            <button onClick={() => setAssignOpen(true)} className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold transition-colors">Assign</button>
+        <div className="flex items-center gap-2 flex-wrap">
+          {canAcceptReject && (
+            <>
+              <button onClick={() => act('accept')} disabled={busy}
+                className="h-9 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-xs font-semibold flex items-center gap-1.5 transition-colors">
+                {busy ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5" />} Accept
+              </button>
+              <button onClick={() => act('reject', 'Reject this ticket? It goes back to the queue.')} disabled={busy}
+                className="h-9 px-4 bg-white border border-red-200 text-red-600 hover:bg-red-50 rounded-md text-xs font-semibold flex items-center gap-1.5 transition-colors">
+                <X className="size-3.5" /> Reject
+              </button>
+            </>
           )}
-          {!closed && mineToClose && (
-            <button onClick={closeTicket} disabled={busy} className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 rounded-md text-xs font-semibold hover:bg-zinc-50 flex items-center gap-1.5 transition-colors">
-              {busy ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5" />} Close
+          {iAmSuper && (isOpen || inProg) && (
+            <button onClick={() => setAssignOpen(true)}
+              className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 hover:bg-zinc-50 rounded-md text-xs font-semibold transition-colors">
+              {isOpen ? 'Assign' : 'Reassign'}
+            </button>
+          )}
+          {canClose && (
+            <button onClick={() => act('close', 'Close this ticket? The school can reopen it if needed.')} disabled={busy}
+              className="h-9 px-4 bg-red-600 hover:bg-red-700 text-white rounded-md text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm">
+              {busy ? <Loader2 className="size-3.5 animate-spin" /> : <X className="size-3.5" />} Close the ticket
             </button>
           )}
         </div>
@@ -1534,12 +1569,13 @@ function DevTicketChat({ apiUrl, ticketId, currentUserId, iAmSuper, onBack }) {
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h2 className="text-sm font-semibold text-zinc-900 truncate">{ticket?.subject || ticket?.module || 'Ticket'}</h2>
+                <h2 className="text-sm font-semibold text-zinc-900 truncate">{ticket?.subject || moduleLabelOf(ticket?.module)}</h2>
                 <span className="text-[10px] font-medium text-zinc-400">#{ticketId}</span>
               </div>
-              <p className="text-[11px] text-zinc-500 mt-0.5">
-                <span className="font-medium text-zinc-600">{ticket?.module}</span>
-                {ticket?.assigned_developer?.name && <span> · {ticket.assigned_developer.name}</span>}
+              <p className="text-[11px] text-zinc-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
+                <span className="font-medium text-zinc-600">{moduleLabelOf(ticket?.module)}</span>
+                {ticket?.assigned_developer?.name && <span>· {ticket.assigned_developer.name}</span>}
+                {ticket?.created_at && <span className="inline-flex items-center gap-1"><Clock className="size-3" /> opened {supAgo(ticket.created_at)}</span>}
               </p>
             </div>
             <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ring-1 ring-inset shrink-0 ${st.cls}`}>{st.label}</span>
@@ -1556,6 +1592,15 @@ function DevTicketChat({ apiUrl, ticketId, currentUserId, iAmSuper, onBack }) {
         <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-4 sm:p-5 space-y-3 bg-zinc-50/40">
           {messages.length === 0 && <p className="text-center text-xs text-zinc-400 italic py-8">No messages yet.</p>}
           {messages.map(m => {
+            if (m.sender_side === 'system') {
+              return (
+                <div key={m.id} className="flex justify-center">
+                  <span className="text-[10px] text-zinc-500 bg-zinc-100 rounded-full px-3 py-1 ring-1 ring-inset ring-black/5 text-center">
+                    {m.body} · {fmtSupport(m.created_at)}
+                  </span>
+                </div>
+              );
+            }
             const mine = m.sender_side === 'developer' && String(m.sender_id) === String(currentUserId);
             const isDev = m.sender_side === 'developer';
             return (

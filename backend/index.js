@@ -14866,35 +14866,31 @@ app.get('/api/admin/assets/export/:instId', async (req, res) => {
 
 
 // =====================================================================
-// === SUPPORT — tickets + chat  (splice into index.js) ================
+// === SUPPORT — tickets + chat  (v2: accept/reject + durations) =======
 //
-//  Routes live under /api/support/* (NOT /api/developer/*) so BOTH a
-//  school's users and the developers can reach them; each route does its
-//  own role/participant check.
+//  Replaces the previous support block. Routes live under /api/support/*
+//  (both a school's users and the developers reach them; each route does
+//  its own role/participant check).
 //
-//  Requires: support_schema.sql (support_tickets, support_messages) and
-//  the developer tier (_isSuperDeveloper, is_super_developer) already in
-//  the file. Also add 'Support' to your DEFAULT_MODULES array so it shows
-//  up in the Permissions matrix, e.g.:
-//      const DEFAULT_MODULES = [ ... , 'Support' ];
+//  Lifecycle:
+//    open     -> queued for the Super Developer
+//    assigned -> given to a developer; they must Accept or Reject
+//    active   -> developer accepted; chat is live
+//    closed   -> resolved (school can reopen -> back to queue)
+//
+//  Requires: support_schema.sql + support_schema_v2.sql, and the developer
+//  tier (_isSuperDeveloper). Add 'Support' to DEFAULT_MODULES.
 // =====================================================================
-
-const SUPPORT_STATUSES = ['open', 'assigned', 'closed'];
 
 function _isDeveloperReq(req) {
     return !!req.auth && req.auth.role === 'Developer';
 }
 
-// Load a ticket row by id (or null).
 async function _loadTicket(id) {
     const [rows] = await db.execute('SELECT * FROM support_tickets WHERE id = ?', [id]);
     return rows[0] || null;
 }
 
-// May the caller see / act on this ticket?
-//   • Super Developer      -> any ticket
-//   • Assigned developer   -> their own ticket
-//   • School user          -> a ticket from their own institution
 async function _supportParticipant(req, ticket) {
     if (!ticket || !req.auth) return false;
     if (_isDeveloperReq(req)) {
@@ -14904,11 +14900,39 @@ async function _supportParticipant(req, ticket) {
     return String(ticket.institutionId) === String(req.auth.institutionId);
 }
 
+async function _userName(id) {
+    if (!id) return 'Unknown';
+    const [r] = await db.execute('SELECT name FROM users WHERE id = ?', [id]);
+    return (r[0] && r[0].name) || 'Unknown';
+}
+
+// A short human duration from a start datetime to now.
+function _humanDur(ms) {
+    if (!ms || ms < 0) ms = 0;
+    const mins = Math.round(ms / 60000);
+    if (mins < 1) return 'under a minute';
+    if (mins < 60) return `${mins} min`;
+    const h = Math.floor(mins / 60), m = mins % 60;
+    return m ? `${h}h ${m}m` : `${h}h`;
+}
+function _durText(startVal) {
+    if (!startVal) return 'a short while';
+    const ms = Date.now() - new Date(startVal).getTime();
+    return _humanDur(ms);
+}
+
+// Insert a centered "system" line into the thread (assigned / accepted / …).
+async function _sysMsg(ticketId, actorId, text) {
+    await db.execute(
+        "INSERT INTO support_messages (ticket_id, sender_id, sender_side, body, image) VALUES (?, ?, 'system', ?, NULL)",
+        [ticketId, actorId || 0, text]
+    );
+}
+
 // ---------------------------------------------------------------------
 //  SCHOOL SIDE
 // ---------------------------------------------------------------------
 
-// Raise a ticket. institutionId + opener come from the token, never the body.
 app.post('/api/support/tickets', async (req, res) => {
     const instId = req.auth.institutionId;
     if (_isDeveloperReq(req) || !instId) {
@@ -14940,7 +14964,6 @@ app.post('/api/support/tickets', async (req, res) => {
     } finally { conn.release(); }
 });
 
-// A school's own tickets (newest activity first; open/assigned before closed).
 app.get('/api/support/tickets', async (req, res) => {
     const instId = req.auth.institutionId;
     if (_isDeveloperReq(req) || !instId) return res.json([]);
@@ -14957,25 +14980,30 @@ app.get('/api/support/tickets', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Reopen a closed ticket -> back into the Super Developer queue.
+// School reopens a closed ticket -> back into the queue.
 app.post('/api/support/tickets/:id/reopen', async (req, res) => {
     try {
         const ticket = await _loadTicket(req.params.id);
         if (!ticket) return res.status(404).json({ error: 'Ticket not found.' });
-        if (!(await _supportParticipant(req, ticket))) return res.status(403).json({ error: 'Not your ticket.' });
+        if (_isDeveloperReq(req) || String(ticket.institutionId) !== String(req.auth.institutionId)) {
+            return res.status(403).json({ error: 'Not your ticket.' });
+        }
         await db.execute(
-            "UPDATE support_tickets SET status = 'open', closed_at = NULL, last_activity_at = UTC_TIMESTAMP() WHERE id = ?",
+            `UPDATE support_tickets
+                SET status = 'open', assigned_to = NULL, assigned_at = NULL, accepted_at = NULL,
+                    closed_at = NULL, last_activity_at = UTC_TIMESTAMP()
+              WHERE id = ?`,
             [ticket.id]
         );
+        await _sysMsg(ticket.id, req.auth.userId, `Reopened by ${await _userName(req.auth.userId)} — back in the queue.`);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ---------------------------------------------------------------------
-//  SHARED — ticket detail, messages (both sides, participant-checked)
+//  SHARED — ticket detail, messages
 // ---------------------------------------------------------------------
 
-// Full ticket + requester context (who / which school / which role).
 app.get('/api/support/tickets/:id', async (req, res) => {
     try {
         const ticket = await _loadTicket(req.params.id);
@@ -14998,7 +15026,6 @@ app.get('/api/support/tickets/:id', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// The chat thread.
 app.get('/api/support/tickets/:id/messages', async (req, res) => {
     try {
         const ticket = await _loadTicket(req.params.id);
@@ -15017,7 +15044,6 @@ app.get('/api/support/tickets/:id/messages', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Post a message. School user, the assigned developer, or a Super Developer.
 app.post('/api/support/tickets/:id/messages', async (req, res) => {
     try {
         const ticket = await _loadTicket(req.params.id);
@@ -15043,9 +15069,6 @@ app.post('/api/support/tickets/:id/messages', async (req, res) => {
 //  DEVELOPER SIDE
 // ---------------------------------------------------------------------
 
-// Tickets for the Admin Board.
-//   Super Developer -> everything (with a queue view via ?scope=queue)
-//   Developer       -> only tickets assigned to them
 app.get('/api/support/dev/tickets', async (req, res) => {
     if (!_isDeveloperReq(req)) return res.status(403).json({ error: 'Developer access only.' });
     try {
@@ -15055,9 +15078,8 @@ app.get('/api/support/dev/tickets', async (req, res) => {
         let where = '';
         const params = [];
         if (isSuper) {
-            if (scope === 'queue') where = "WHERE t.status = 'open'";       // waiting to be assigned
+            if (scope === 'queue') where = "WHERE t.status = 'open'";
             else if (scope === 'mine') { where = 'WHERE t.assigned_to = ?'; params.push(req.auth.userId); }
-            // else: all
         } else {
             where = 'WHERE t.assigned_to = ?';
             params.push(req.auth.userId);
@@ -15078,14 +15100,14 @@ app.get('/api/support/dev/tickets', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Super Developer: developers + availability (who's free, last worked when).
+// Availability: busy = has an assigned OR active ticket.
 app.get('/api/support/dev/available-developers', async (req, res) => {
     if (!(await _isSuperDeveloper(req))) return res.status(403).json({ error: 'Only a Super Developer can view this.' });
     try {
         const [rows] = await db.execute(
             `SELECT u.id, u.name, u.email, u.is_super_developer,
                     (SELECT COUNT(*) FROM support_tickets t
-                      WHERE t.assigned_to = u.id AND t.status = 'assigned') AS active_tickets,
+                      WHERE t.assigned_to = u.id AND t.status IN ('assigned','active')) AS active_tickets,
                     (SELECT MAX(t2.last_activity_at) FROM support_tickets t2
                       WHERE t2.assigned_to = u.id) AS last_activity
                FROM users u
@@ -15097,7 +15119,7 @@ app.get('/api/support/dev/available-developers', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Super Developer: assign a ticket to a developer.
+// Super Developer assigns / reassigns a ticket.
 app.post('/api/support/tickets/:id/assign', async (req, res) => {
     if (!(await _isSuperDeveloper(req))) return res.status(403).json({ error: 'Only a Super Developer can assign tickets.' });
     const { developer_id } = req.body;
@@ -15106,18 +15128,67 @@ app.post('/api/support/tickets/:id/assign', async (req, res) => {
         const ticket = await _loadTicket(req.params.id);
         if (!ticket) return res.status(404).json({ error: 'Ticket not found.' });
         const [dev] = await db.execute(
-            "SELECT id FROM users WHERE id = ? AND role = 'Developer' AND institutionId IS NULL", [developer_id]
-        );
+            "SELECT id, name FROM users WHERE id = ? AND role = 'Developer' AND institutionId IS NULL", [developer_id]);
         if (dev.length === 0) return res.status(400).json({ error: 'That developer account does not exist.' });
+
+        // Reassignment: if a different developer was already on it, end their chat with a note.
+        const wasBusy = (ticket.status === 'assigned' || ticket.status === 'active');
+        if (wasBusy && String(ticket.assigned_to) !== String(developer_id)) {
+            const prevName = await _userName(ticket.assigned_to);
+            const since = ticket.accepted_at || ticket.assigned_at || ticket.created_at;
+            await _sysMsg(ticket.id, req.auth.userId, `Chat ended by ${prevName} · chatted ${_durText(since)}. Reassigning…`);
+        }
+
         await db.execute(
-            "UPDATE support_tickets SET assigned_to = ?, status = 'assigned', last_activity_at = UTC_TIMESTAMP() WHERE id = ?",
+            `UPDATE support_tickets
+                SET assigned_to = ?, status = 'assigned', assigned_at = UTC_TIMESTAMP(),
+                    accepted_at = NULL, last_activity_at = UTC_TIMESTAMP()
+              WHERE id = ?`,
             [developer_id, ticket.id]
         );
+        await _sysMsg(ticket.id, req.auth.userId, `Assigned to ${dev[0].name} — awaiting their acceptance.`);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Assigned developer or Super Developer: close a ticket.
+// Assigned developer accepts the ticket -> chat goes live.
+app.post('/api/support/tickets/:id/accept', async (req, res) => {
+    if (!_isDeveloperReq(req)) return res.status(403).json({ error: 'Developer access only.' });
+    try {
+        const ticket = await _loadTicket(req.params.id);
+        if (!ticket) return res.status(404).json({ error: 'Ticket not found.' });
+        if (String(ticket.assigned_to) !== String(req.auth.userId)) return res.status(403).json({ error: 'This ticket is not assigned to you.' });
+        if (ticket.status !== 'assigned') return res.status(400).json({ error: 'This ticket is not awaiting acceptance.' });
+        await db.execute(
+            "UPDATE support_tickets SET status = 'active', accepted_at = UTC_TIMESTAMP(), last_activity_at = UTC_TIMESTAMP() WHERE id = ?",
+            [ticket.id]
+        );
+        await _sysMsg(ticket.id, req.auth.userId, `Accepted by ${await _userName(req.auth.userId)}.`);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Assigned developer rejects -> back into the queue for reassignment.
+app.post('/api/support/tickets/:id/reject', async (req, res) => {
+    if (!_isDeveloperReq(req)) return res.status(403).json({ error: 'Developer access only.' });
+    try {
+        const ticket = await _loadTicket(req.params.id);
+        if (!ticket) return res.status(404).json({ error: 'Ticket not found.' });
+        if (String(ticket.assigned_to) !== String(req.auth.userId)) return res.status(403).json({ error: 'This ticket is not assigned to you.' });
+        const name = await _userName(req.auth.userId);
+        await db.execute(
+            `UPDATE support_tickets
+                SET status = 'open', assigned_to = NULL, assigned_at = NULL, accepted_at = NULL,
+                    last_activity_at = UTC_TIMESTAMP()
+              WHERE id = ?`,
+            [ticket.id]
+        );
+        await _sysMsg(ticket.id, req.auth.userId, `Rejected by ${name} — back in the queue.`);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Assigned developer or Super Developer closes a ticket.
 app.post('/api/support/tickets/:id/close', async (req, res) => {
     if (!_isDeveloperReq(req)) return res.status(403).json({ error: 'Developer access only.' });
     try {
@@ -15127,10 +15198,12 @@ app.post('/api/support/tickets/:id/close', async (req, res) => {
         if (!isSuper && String(ticket.assigned_to) !== String(req.auth.userId)) {
             return res.status(403).json({ error: 'This ticket is not assigned to you.' });
         }
+        const since = ticket.accepted_at || ticket.assigned_at || ticket.created_at;
         await db.execute(
             "UPDATE support_tickets SET status = 'closed', closed_at = UTC_TIMESTAMP(), last_activity_at = UTC_TIMESTAMP() WHERE id = ?",
             [ticket.id]
         );
+        await _sysMsg(ticket.id, req.auth.userId, `Closed by ${await _userName(req.auth.userId)} · chatted ${_durText(since)}.`);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
