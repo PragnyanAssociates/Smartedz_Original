@@ -171,7 +171,8 @@ const DEFAULT_MODULES = [
     'GroupChat',
     'Alumni',
     'InventoryAssets',
-    'LessonPlan'
+    'LessonPlan',
+    'Support'
     
 ];
 
@@ -14860,6 +14861,278 @@ app.get('/api/admin/assets/export/:instId', async (req, res) => {
         console.error('Asset export failed:', err);
         res.status(500).json({ error: err.message });
     }
+});
+
+
+
+// =====================================================================
+// === SUPPORT — tickets + chat  (splice into index.js) ================
+//
+//  Routes live under /api/support/* (NOT /api/developer/*) so BOTH a
+//  school's users and the developers can reach them; each route does its
+//  own role/participant check.
+//
+//  Requires: support_schema.sql (support_tickets, support_messages) and
+//  the developer tier (_isSuperDeveloper, is_super_developer) already in
+//  the file. Also add 'Support' to your DEFAULT_MODULES array so it shows
+//  up in the Permissions matrix, e.g.:
+//      const DEFAULT_MODULES = [ ... , 'Support' ];
+// =====================================================================
+
+const SUPPORT_STATUSES = ['open', 'assigned', 'closed'];
+
+function _isDeveloperReq(req) {
+    return !!req.auth && req.auth.role === 'Developer';
+}
+
+// Load a ticket row by id (or null).
+async function _loadTicket(id) {
+    const [rows] = await db.execute('SELECT * FROM support_tickets WHERE id = ?', [id]);
+    return rows[0] || null;
+}
+
+// May the caller see / act on this ticket?
+//   • Super Developer      -> any ticket
+//   • Assigned developer   -> their own ticket
+//   • School user          -> a ticket from their own institution
+async function _supportParticipant(req, ticket) {
+    if (!ticket || !req.auth) return false;
+    if (_isDeveloperReq(req)) {
+        if (await _isSuperDeveloper(req)) return true;
+        return String(ticket.assigned_to) === String(req.auth.userId);
+    }
+    return String(ticket.institutionId) === String(req.auth.institutionId);
+}
+
+// ---------------------------------------------------------------------
+//  SCHOOL SIDE
+// ---------------------------------------------------------------------
+
+// Raise a ticket. institutionId + opener come from the token, never the body.
+app.post('/api/support/tickets', async (req, res) => {
+    const instId = req.auth.institutionId;
+    if (_isDeveloperReq(req) || !instId) {
+        return res.status(403).json({ error: 'Only an institution user can raise a support ticket.' });
+    }
+    const { module, subject, body, image } = req.body;
+    if (!module || !String(module).trim()) return res.status(400).json({ error: 'Pick the module your issue is about.' });
+    if ((!body || !String(body).trim()) && !image) return res.status(400).json({ error: 'Describe the problem (or attach an image).' });
+
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        const [t] = await conn.execute(
+            `INSERT INTO support_tickets (institutionId, opened_by, module, subject, status, last_activity_at)
+             VALUES (?, ?, ?, ?, 'open', UTC_TIMESTAMP())`,
+            [instId, req.auth.userId, String(module).trim(), (subject || '').trim() || null]
+        );
+        const ticketId = t.insertId;
+        await conn.execute(
+            `INSERT INTO support_messages (ticket_id, sender_id, sender_side, body, image)
+             VALUES (?, ?, 'school', ?, ?)`,
+            [ticketId, req.auth.userId, (body || '').trim() || null, image || null]
+        );
+        await conn.commit();
+        res.json({ success: true, id: ticketId });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally { conn.release(); }
+});
+
+// A school's own tickets (newest activity first; open/assigned before closed).
+app.get('/api/support/tickets', async (req, res) => {
+    const instId = req.auth.institutionId;
+    if (_isDeveloperReq(req) || !instId) return res.json([]);
+    try {
+        const [rows] = await db.execute(
+            `SELECT t.*, d.name AS assigned_name
+               FROM support_tickets t
+               LEFT JOIN users d ON d.id = t.assigned_to
+              WHERE t.institutionId = ?
+              ORDER BY (t.status = 'closed') ASC, t.last_activity_at DESC`,
+            [instId]
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Reopen a closed ticket -> back into the Super Developer queue.
+app.post('/api/support/tickets/:id/reopen', async (req, res) => {
+    try {
+        const ticket = await _loadTicket(req.params.id);
+        if (!ticket) return res.status(404).json({ error: 'Ticket not found.' });
+        if (!(await _supportParticipant(req, ticket))) return res.status(403).json({ error: 'Not your ticket.' });
+        await db.execute(
+            "UPDATE support_tickets SET status = 'open', closed_at = NULL, last_activity_at = UTC_TIMESTAMP() WHERE id = ?",
+            [ticket.id]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ---------------------------------------------------------------------
+//  SHARED — ticket detail, messages (both sides, participant-checked)
+// ---------------------------------------------------------------------
+
+// Full ticket + requester context (who / which school / which role).
+app.get('/api/support/tickets/:id', async (req, res) => {
+    try {
+        const ticket = await _loadTicket(req.params.id);
+        if (!ticket) return res.status(404).json({ error: 'Ticket not found.' });
+        if (!(await _supportParticipant(req, ticket))) return res.status(403).json({ error: 'Not allowed.' });
+
+        const [openerRows] = await db.execute(
+            'SELECT id, name, email, role, institutionId FROM users WHERE id = ?', [ticket.opened_by]);
+        const [instRows] = await db.execute(
+            'SELECT id, name, type FROM institutions WHERE id = ?', [ticket.institutionId]);
+        const [devRows] = await db.execute(
+            'SELECT id, name, email FROM users WHERE id = ?', [ticket.assigned_to || 0]);
+
+        res.json({
+            ...ticket,
+            requester: openerRows[0] || null,
+            institution: instRows[0] || null,
+            assigned_developer: devRows[0] || null
+        });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// The chat thread.
+app.get('/api/support/tickets/:id/messages', async (req, res) => {
+    try {
+        const ticket = await _loadTicket(req.params.id);
+        if (!ticket) return res.status(404).json({ error: 'Ticket not found.' });
+        if (!(await _supportParticipant(req, ticket))) return res.status(403).json({ error: 'Not allowed.' });
+        const [rows] = await db.execute(
+            `SELECT m.id, m.ticket_id, m.sender_id, m.sender_side, m.body, m.image, m.created_at,
+                    u.name AS sender_name
+               FROM support_messages m
+               LEFT JOIN users u ON u.id = m.sender_id
+              WHERE m.ticket_id = ?
+              ORDER BY m.id ASC`,
+            [ticket.id]
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Post a message. School user, the assigned developer, or a Super Developer.
+app.post('/api/support/tickets/:id/messages', async (req, res) => {
+    try {
+        const ticket = await _loadTicket(req.params.id);
+        if (!ticket) return res.status(404).json({ error: 'Ticket not found.' });
+        if (!(await _supportParticipant(req, ticket))) return res.status(403).json({ error: 'Not allowed.' });
+        if (ticket.status === 'closed') return res.status(400).json({ error: 'This ticket is closed. Reopen it to continue.' });
+
+        const { body, image } = req.body;
+        if ((!body || !String(body).trim()) && !image) return res.status(400).json({ error: 'Empty message.' });
+
+        const side = _isDeveloperReq(req) ? 'developer' : 'school';
+        await db.execute(
+            `INSERT INTO support_messages (ticket_id, sender_id, sender_side, body, image)
+             VALUES (?, ?, ?, ?, ?)`,
+            [ticket.id, req.auth.userId, side, (body || '').trim() || null, image || null]
+        );
+        await db.execute('UPDATE support_tickets SET last_activity_at = UTC_TIMESTAMP() WHERE id = ?', [ticket.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ---------------------------------------------------------------------
+//  DEVELOPER SIDE
+// ---------------------------------------------------------------------
+
+// Tickets for the Admin Board.
+//   Super Developer -> everything (with a queue view via ?scope=queue)
+//   Developer       -> only tickets assigned to them
+app.get('/api/support/dev/tickets', async (req, res) => {
+    if (!_isDeveloperReq(req)) return res.status(403).json({ error: 'Developer access only.' });
+    try {
+        const isSuper = await _isSuperDeveloper(req);
+        const scope = (req.query.scope || '').toString();
+
+        let where = '';
+        const params = [];
+        if (isSuper) {
+            if (scope === 'queue') where = "WHERE t.status = 'open'";       // waiting to be assigned
+            else if (scope === 'mine') { where = 'WHERE t.assigned_to = ?'; params.push(req.auth.userId); }
+            // else: all
+        } else {
+            where = 'WHERE t.assigned_to = ?';
+            params.push(req.auth.userId);
+        }
+
+        const [rows] = await db.execute(
+            `SELECT t.*, o.name AS opener_name, o.role AS opener_role,
+                    i.name AS institution_name, d.name AS assigned_name
+               FROM support_tickets t
+               LEFT JOIN users o ON o.id = t.opened_by
+               LEFT JOIN institutions i ON i.id = t.institutionId
+               LEFT JOIN users d ON d.id = t.assigned_to
+               ${where}
+              ORDER BY (t.status = 'closed') ASC, t.last_activity_at DESC`,
+            params
+        );
+        res.json({ isSuper, tickets: rows });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Super Developer: developers + availability (who's free, last worked when).
+app.get('/api/support/dev/available-developers', async (req, res) => {
+    if (!(await _isSuperDeveloper(req))) return res.status(403).json({ error: 'Only a Super Developer can view this.' });
+    try {
+        const [rows] = await db.execute(
+            `SELECT u.id, u.name, u.email, u.is_super_developer,
+                    (SELECT COUNT(*) FROM support_tickets t
+                      WHERE t.assigned_to = u.id AND t.status = 'assigned') AS active_tickets,
+                    (SELECT MAX(t2.last_activity_at) FROM support_tickets t2
+                      WHERE t2.assigned_to = u.id) AS last_activity
+               FROM users u
+              WHERE u.role = 'Developer' AND u.institutionId IS NULL
+                AND (u.status IS NULL OR LOWER(u.status) = 'active')
+              ORDER BY active_tickets ASC, (last_activity IS NULL) DESC, last_activity ASC, u.name ASC`
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Super Developer: assign a ticket to a developer.
+app.post('/api/support/tickets/:id/assign', async (req, res) => {
+    if (!(await _isSuperDeveloper(req))) return res.status(403).json({ error: 'Only a Super Developer can assign tickets.' });
+    const { developer_id } = req.body;
+    if (!developer_id) return res.status(400).json({ error: 'Pick a developer.' });
+    try {
+        const ticket = await _loadTicket(req.params.id);
+        if (!ticket) return res.status(404).json({ error: 'Ticket not found.' });
+        const [dev] = await db.execute(
+            "SELECT id FROM users WHERE id = ? AND role = 'Developer' AND institutionId IS NULL", [developer_id]
+        );
+        if (dev.length === 0) return res.status(400).json({ error: 'That developer account does not exist.' });
+        await db.execute(
+            "UPDATE support_tickets SET assigned_to = ?, status = 'assigned', last_activity_at = UTC_TIMESTAMP() WHERE id = ?",
+            [developer_id, ticket.id]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Assigned developer or Super Developer: close a ticket.
+app.post('/api/support/tickets/:id/close', async (req, res) => {
+    if (!_isDeveloperReq(req)) return res.status(403).json({ error: 'Developer access only.' });
+    try {
+        const ticket = await _loadTicket(req.params.id);
+        if (!ticket) return res.status(404).json({ error: 'Ticket not found.' });
+        const isSuper = await _isSuperDeveloper(req);
+        if (!isSuper && String(ticket.assigned_to) !== String(req.auth.userId)) {
+            return res.status(403).json({ error: 'This ticket is not assigned to you.' });
+        }
+        await db.execute(
+            "UPDATE support_tickets SET status = 'closed', closed_at = UTC_TIMESTAMP(), last_activity_at = UTC_TIMESTAMP() WHERE id = ?",
+            [ticket.id]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 

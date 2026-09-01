@@ -514,7 +514,6 @@ function PerformanceAnalytics({ perf, className = '' }) {
         <div className="min-w-0">
           <h2 className="text-base font-semibold text-zinc-900 tracking-tight">Performance Analytics</h2>
           <p className="text-sm text-zinc-500 mt-0.5">Visual breakdown of top achievers and overall Exam based class performance</p>
-          {examsLine && <p className="text-xs font-semibold text-zinc-700 mt-2">{examsLine} Completed</p>}
           <p className="text-[11px] italic text-primary mt-1">For more details view the "Performance Reports" screen.</p>
         </div>
         <div className="flex flex-wrap items-center gap-3 shrink-0">

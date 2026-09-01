@@ -1,11 +1,11 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import {
   Building2, Plus, LogOut, Trash2, Edit3, Image as ImageIcon, Shield,
   Mail, Lock, User, Globe, Phone, Calendar, AlertTriangle, CheckCircle2,
   Infinity as InfinityIcon, ChevronDown, X, Loader2, ArrowLeft, KeyRound,
   Users, Search, School, GraduationCap, BookOpen, Network, CornerDownRight, Eye, EyeOff,
-  Code2, ShieldCheck, UserPlus
+  Code2, ShieldCheck, UserPlus, LifeBuoy, Send, MessageSquare, RefreshCw
 } from 'lucide-react';
 import smartedzLogo from '../assets/smartedzlogo.png';
 
@@ -655,6 +655,12 @@ export default function DeveloperDashboard() {
             }`}>
             <Code2 className="size-3.5 shrink-0" /> Developers
           </button>
+          <button onClick={() => setTopTab('support')}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+              topTab === 'support' ? 'bg-primary text-white' : 'text-zinc-600 hover:bg-zinc-50 border border-zinc-200'
+            }`}>
+            <LifeBuoy className="size-3.5 shrink-0" /> Support
+          </button>
         </div>
 
         {topTab === 'clients' ? (
@@ -663,7 +669,7 @@ export default function DeveloperDashboard() {
             {view.mode === 'group' && renderGroup()}
             {view.mode === 'detail' && renderDetail()}
           </>
-        ) : (
+        ) : topTab === 'developers' ? (
           <DevelopersView
             developers={developers}
             currentUserId={user?.id}
@@ -672,6 +678,8 @@ export default function DeveloperDashboard() {
             apiUrl={API_URL}
             refreshData={refreshData}
           />
+        ) : (
+          <SupportView apiUrl={API_URL} currentUserId={user?.id} iAmSuper={iAmSuper} />
         )}
       </main>
 
@@ -1204,6 +1212,404 @@ function DeveloperModal({ editing, apiUrl, onClose, onSaved }) {
           </div>
         </form>
       </div>
+    </div>
+  );
+}
+
+// =====================================================================
+//  SUPPORT TAB — developer side: queue, assignment, and ticket chat.
+//  Super Developer sees every ticket (queue / in-progress / closed),
+//  assigns from an availability list, and can join any chat. A plain
+//  Developer sees only the tickets assigned to them.
+// =====================================================================
+const fmtSupport = (val) => {
+  if (!val) return '';
+  const s = String(val).replace(' ', 'T');
+  const iso = /[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s : s + 'Z';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true
+  });
+};
+const SUP_STATUS = {
+  open:     { label: 'Waiting',     cls: 'bg-amber-50 text-amber-700 ring-amber-600/20' },
+  assigned: { label: 'In progress', cls: 'bg-blue-50 text-blue-700 ring-blue-600/20' },
+  closed:   { label: 'Closed',      cls: 'bg-zinc-100 text-zinc-600 ring-black/5' }
+};
+const supStatus = (s) => SUP_STATUS[s] || SUP_STATUS.open;
+
+function SupportView({ apiUrl, currentUserId, iAmSuper }) {
+  const [data, setData] = useState({ isSuper: false, tickets: [] });
+  const [loading, setLoading] = useState(true);
+  const [openId, setOpenId] = useState(null);
+  const [assignFor, setAssignFor] = useState(null);
+  const [filter, setFilter] = useState('queue');
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiUrl}/api/support/dev/tickets`);
+      const d = await res.json();
+      if (res.ok) setData({ isSuper: !!d.isSuper, tickets: d.tickets || [] });
+    } catch (e) { console.error(e); }
+    setLoading(false);
+  }, [apiUrl]);
+
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { const iv = setInterval(load, 10000); return () => clearInterval(iv); }, [load]);
+
+  if (openId) {
+    return (
+      <DevTicketChat apiUrl={apiUrl} ticketId={openId} currentUserId={currentUserId} iAmSuper={data.isSuper}
+        onBack={() => { setOpenId(null); load(); }} />
+    );
+  }
+
+  const isSuper = data.isSuper;
+  const tickets = data.tickets;
+  const counts = {
+    queue:    tickets.filter(t => t.status === 'open').length,
+    assigned: tickets.filter(t => t.status === 'assigned').length,
+    closed:   tickets.filter(t => t.status === 'closed').length,
+    all:      tickets.length
+  };
+  const visible = !isSuper ? tickets
+    : filter === 'all'      ? tickets
+    : filter === 'queue'    ? tickets.filter(t => t.status === 'open')
+    : filter === 'assigned' ? tickets.filter(t => t.status === 'assigned')
+    : tickets.filter(t => t.status === 'closed');
+
+  const tabs = [
+    { id: 'queue',    label: `Queue (${counts.queue})` },
+    { id: 'assigned', label: `In Progress (${counts.assigned})` },
+    { id: 'closed',   label: `Closed (${counts.closed})` },
+    { id: 'all',      label: `All (${counts.all})` }
+  ];
+
+  return (
+    <>
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+        <div>
+          <h2 className="text-xl font-semibold text-zinc-900 tracking-tight">Support</h2>
+          <p className="text-sm text-zinc-500 mt-1">
+            {isSuper ? 'Assign incoming tickets to a developer, and jump into any chat.' : 'Support tickets assigned to you.'}
+          </p>
+        </div>
+        <button onClick={load} title="Refresh"
+          className="h-9 px-3 bg-white border border-zinc-200 text-zinc-600 hover:text-primary hover:bg-zinc-50 rounded-md flex items-center justify-center transition-colors shadow-sm shrink-0">
+          <RefreshCw className="size-4" />
+        </button>
+      </div>
+
+      {isSuper && (
+        <div className="flex items-center gap-2 mb-5 overflow-x-auto custom-scrollbar">
+          {tabs.map(t => (
+            <button key={t.id} onClick={() => setFilter(t.id)}
+              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
+                filter === t.id ? 'bg-primary text-white' : 'bg-white text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-50'
+              }`}>{t.label}</button>
+          ))}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="h-64 flex items-center justify-center"><Loader2 className="animate-spin size-8 text-primary" /></div>
+      ) : visible.length === 0 ? (
+        <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
+          <LifeBuoy className="size-10 text-zinc-300 mb-3" />
+          <p className="text-zinc-500 text-sm font-medium">No tickets here.</p>
+        </div>
+      ) : (
+        <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm divide-y divide-zinc-100 overflow-hidden">
+          {visible.map(t => {
+            const st = supStatus(t.status);
+            return (
+              <div key={t.id} className="px-5 py-4 hover:bg-zinc-50/60 transition-colors flex items-center gap-4">
+                <button onClick={() => setOpenId(t.id)} className="flex items-center gap-4 flex-1 min-w-0 text-left">
+                  <div className="size-9 rounded-md bg-primary/10 text-primary flex items-center justify-center shrink-0"><MessageSquare className="size-4" /></div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-zinc-900 truncate">{t.subject || t.module}</span>
+                      <span className="text-[10px] font-medium text-zinc-400">#{t.id}</span>
+                    </div>
+                    <div className="text-[11px] text-zinc-500 mt-0.5 truncate">
+                      <span className="font-medium text-zinc-600">{t.institution_name || 'School'}</span>
+                      {t.opener_name && <span> · {t.opener_name}{t.opener_role ? ` (${t.opener_role})` : ''}</span>}
+                      <span> · {t.module}</span>
+                      {t.last_activity_at && <span> · {fmtSupport(t.last_activity_at)}</span>}
+                    </div>
+                  </div>
+                </button>
+                <div className="flex items-center gap-2 shrink-0">
+                  {t.assigned_name && <span className="text-[10px] text-zinc-400 hidden sm:inline">{t.assigned_name}</span>}
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ring-1 ring-inset ${st.cls}`}>{st.label}</span>
+                  {isSuper && t.status === 'open' && (
+                    <button onClick={() => setAssignFor(t)}
+                      className="h-8 px-3 bg-primary hover:bg-primary/90 text-white rounded-md text-[11px] font-semibold transition-colors shrink-0">Assign</button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {assignFor && (
+        <AssignModal apiUrl={apiUrl} ticket={assignFor}
+          onClose={() => setAssignFor(null)}
+          onAssigned={() => { setAssignFor(null); load(); }} />
+      )}
+    </>
+  );
+}
+
+// Super Developer picks a developer to handle a ticket. Free devs first.
+function AssignModal({ apiUrl, ticket, onClose, onAssigned }) {
+  const [devs, setDevs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(`${apiUrl}/api/support/dev/available-developers`);
+        const d = await res.json();
+        if (res.ok) setDevs(Array.isArray(d) ? d : []);
+      } catch (e) { console.error(e); }
+      setLoading(false);
+    })();
+  }, [apiUrl]);
+
+  const assign = async (devId) => {
+    setSaving(devId);
+    try {
+      const res = await fetch(`${apiUrl}/api/support/tickets/${ticket.id}/assign`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ developer_id: devId })
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || 'Assign failed.');
+      onAssigned();
+    } catch (e) { alert(e.message); setSaving(null); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-zinc-900/40 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-md shadow-xl flex flex-col max-h-[85vh]" onClick={e => e.stopPropagation()}>
+        <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 rounded-t-lg">
+          <div>
+            <h2 className="font-semibold text-lg text-zinc-900 tracking-tight">Assign ticket #{ticket.id}</h2>
+            <p className="text-[11px] text-zinc-500 mt-0.5">Free developers first, with when they last worked a ticket.</p>
+          </div>
+          <button onClick={onClose} className="text-zinc-400 hover:text-zinc-700 p-1.5 hover:bg-zinc-100 rounded-md"><X className="size-4" /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-2">
+          {loading ? (
+            <div className="h-32 flex items-center justify-center"><Loader2 className="animate-spin size-6 text-primary" /></div>
+          ) : devs.length === 0 ? (
+            <p className="text-center text-xs text-zinc-400 italic py-8">No developer accounts.</p>
+          ) : devs.map(d => {
+            const busy = Number(d.active_tickets) > 0;
+            return (
+              <div key={d.id} className="flex items-center gap-3 p-3 rounded-md ring-1 ring-black/5 bg-white">
+                <div className={`size-9 rounded-full flex items-center justify-center shrink-0 ring-1 ring-inset ${Number(d.is_super_developer) === 1 ? 'bg-violet-50 ring-violet-600/20 text-violet-500' : 'bg-zinc-50 ring-black/5 text-zinc-400'}`}>
+                  <User className="size-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold text-zinc-900 truncate flex items-center gap-1.5">
+                    {d.name}{Number(d.is_super_developer) === 1 && <ShieldCheck className="size-3 text-violet-500" />}
+                  </div>
+                  <div className="text-[11px] mt-0.5">
+                    <span className={busy ? 'text-amber-600 font-medium' : 'text-emerald-600 font-medium'}>
+                      {busy ? `${d.active_tickets} active` : 'Free'}
+                    </span>
+                    <span className="text-zinc-400"> · last worked {d.last_activity ? fmtSupport(d.last_activity) : 'never'}</span>
+                  </div>
+                </div>
+                <button onClick={() => assign(d.id)} disabled={saving !== null}
+                  className="h-8 px-3 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 text-white rounded-md text-[11px] font-semibold flex items-center gap-1.5 transition-colors shrink-0">
+                  {saving === d.id ? <Loader2 className="size-3.5 animate-spin" /> : 'Assign'}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// One ticket's chat (developer view) with the requester's context banner.
+function DevTicketChat({ apiUrl, ticketId, currentUserId, iAmSuper, onBack }) {
+  const [ticket, setTicket] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [text, setText] = useState('');
+  const [image, setImage] = useState('');
+  const [sending, setSending] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [assignOpen, setAssignOpen] = useState(false);
+  const scrollRef = useRef(null);
+
+  const loadAll = useCallback(async (scroll = false) => {
+    try {
+      const [tRes, mRes] = await Promise.all([
+        fetch(`${apiUrl}/api/support/tickets/${ticketId}`),
+        fetch(`${apiUrl}/api/support/tickets/${ticketId}/messages`)
+      ]);
+      const t = await tRes.json();
+      const m = await mRes.json();
+      if (tRes.ok) setTicket(t);
+      if (mRes.ok) setMessages(Array.isArray(m) ? m : []);
+      if (scroll) setTimeout(() => scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight), 60);
+    } catch (e) { console.error(e); }
+  }, [apiUrl, ticketId]);
+
+  useEffect(() => { loadAll(true); }, [loadAll]);
+  useEffect(() => { const iv = setInterval(() => loadAll(false), 4000); return () => clearInterval(iv); }, [loadAll]);
+
+  const closed = ticket?.status === 'closed';
+  const isOpen = ticket?.status === 'open';
+  const st = supStatus(ticket?.status);
+  const mineToClose = iAmSuper || String(ticket?.assigned_to) === String(currentUserId);
+  const req = ticket?.requester;
+  const inst = ticket?.institution;
+
+  const onPic = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (f.size > 3 * 1024 * 1024) return alert('Image must be under 3 MB.');
+    const r = new FileReader();
+    r.onloadend = () => setImage(r.result);
+    r.readAsDataURL(f);
+  };
+
+  const send = async (e) => {
+    e?.preventDefault();
+    if (!text.trim() && !image) return;
+    setSending(true);
+    try {
+      const res = await fetch(`${apiUrl}/api/support/tickets/${ticketId}/messages`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body: text.trim(), image: image || null })
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || 'Could not send.');
+      setText(''); setImage(''); await loadAll(true);
+    } catch (e2) { alert(e2.message); }
+    setSending(false);
+  };
+
+  const closeTicket = async () => {
+    if (!window.confirm('Close this ticket? The school can reopen it if needed.')) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`${apiUrl}/api/support/tickets/${ticketId}/close`, { method: 'POST' });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || 'Failed'); }
+      await loadAll(false);
+    } catch (e) { alert(e.message); }
+    setBusy(false);
+  };
+
+  return (
+    <div className="animate-in fade-in duration-300">
+      <div className="flex items-center justify-between gap-3 mb-4">
+        <button onClick={onBack} className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
+          <ArrowLeft className="size-4" /> Back to Support
+        </button>
+        <div className="flex items-center gap-2">
+          {iAmSuper && isOpen && (
+            <button onClick={() => setAssignOpen(true)} className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold transition-colors">Assign</button>
+          )}
+          {!closed && mineToClose && (
+            <button onClick={closeTicket} disabled={busy} className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 rounded-md text-xs font-semibold hover:bg-zinc-50 flex items-center gap-1.5 transition-colors">
+              {busy ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5" />} Close
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm flex flex-col overflow-hidden h-[72vh]">
+        <div className="px-5 py-4 border-b border-zinc-100 shrink-0">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-semibold text-zinc-900 truncate">{ticket?.subject || ticket?.module || 'Ticket'}</h2>
+                <span className="text-[10px] font-medium text-zinc-400">#{ticketId}</span>
+              </div>
+              <p className="text-[11px] text-zinc-500 mt-0.5">
+                <span className="font-medium text-zinc-600">{ticket?.module}</span>
+                {ticket?.assigned_developer?.name && <span> · {ticket.assigned_developer.name}</span>}
+              </p>
+            </div>
+            <span className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ring-1 ring-inset shrink-0 ${st.cls}`}>{st.label}</span>
+          </div>
+          {(req || inst) && (
+            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-zinc-500 bg-zinc-50/60 rounded-md px-3 py-2 ring-1 ring-inset ring-black/5">
+              {inst?.name && <span className="inline-flex items-center gap-1"><School className="size-3.5 text-primary" /> {inst.name}</span>}
+              {req?.name && <span className="inline-flex items-center gap-1"><User className="size-3.5 text-primary" /> {req.name}{req.role ? ` · ${req.role}` : ''}</span>}
+              {req?.email && <span className="inline-flex items-center gap-1"><Mail className="size-3.5 text-primary" /> {req.email}</span>}
+            </div>
+          )}
+        </div>
+
+        <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-4 sm:p-5 space-y-3 bg-zinc-50/40">
+          {messages.length === 0 && <p className="text-center text-xs text-zinc-400 italic py-8">No messages yet.</p>}
+          {messages.map(m => {
+            const mine = m.sender_side === 'developer' && String(m.sender_id) === String(currentUserId);
+            const isDev = m.sender_side === 'developer';
+            return (
+              <div key={m.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-[80%] rounded-lg px-3 py-2 text-sm shadow-sm ring-1 ${mine ? 'bg-primary text-white ring-primary/20' : 'bg-white text-zinc-800 ring-black/5'}`}>
+                  {!mine && (
+                    <div className={`text-[10px] font-semibold mb-0.5 flex items-center gap-1 ${isDev ? 'text-violet-600' : 'text-zinc-500'}`}>
+                      {isDev && <ShieldCheck className="size-3" />}{m.sender_name || (isDev ? 'Developer' : 'School')}
+                    </div>
+                  )}
+                  {m.image && <img src={m.image} alt="attachment" className="rounded-md mb-1.5 max-h-56 ring-1 ring-black/10" />}
+                  {m.body && <p className="whitespace-pre-wrap leading-relaxed break-words">{m.body}</p>}
+                  <div className={`text-[9px] mt-1 ${mine ? 'text-white/70' : 'text-zinc-400'}`}>{fmtSupport(m.created_at)}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {closed ? (
+          <div className="p-4 border-t border-zinc-100 bg-zinc-50/60 text-center text-xs font-medium text-zinc-500 shrink-0">
+            <span className="inline-flex items-center gap-1.5"><CheckCircle2 className="size-4 text-emerald-500" /> Closed. The school can reopen it.</span>
+          </div>
+        ) : (
+          <form onSubmit={send} className="p-3 border-t border-zinc-100 bg-white shrink-0">
+            {image && (
+              <div className="relative inline-block mb-2">
+                <img src={image} alt="attachment" className="max-h-24 rounded-md ring-1 ring-black/5" />
+                <button type="button" onClick={() => setImage('')} className="absolute -top-2 -right-2 size-5 bg-white ring-1 ring-black/10 rounded-full flex items-center justify-center text-zinc-500 hover:text-red-600 shadow-sm"><X className="size-3" /></button>
+              </div>
+            )}
+            <div className="flex items-end gap-2">
+              <label className="size-9 shrink-0 rounded-md border border-zinc-200 bg-white flex items-center justify-center text-zinc-500 hover:text-primary hover:bg-zinc-50 cursor-pointer transition-colors" title="Attach image">
+                <ImageIcon className="size-4" />
+                <input type="file" accept="image/*" onChange={onPic} className="hidden" />
+              </label>
+              <textarea value={text} onChange={e => setText(e.target.value)} rows={1}
+                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(e); } }}
+                placeholder="Reply..."
+                className="flex-1 resize-none bg-white border border-zinc-200 rounded-md px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors max-h-32" />
+              <button type="submit" disabled={sending || (!text.trim() && !image)}
+                className="size-9 shrink-0 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 text-white rounded-md flex items-center justify-center shadow-sm transition-colors">
+                {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+
+      {assignOpen && (
+        <AssignModal apiUrl={apiUrl} ticket={ticket}
+          onClose={() => setAssignOpen(false)}
+          onAssigned={() => { setAssignOpen(false); loadAll(false); }} />
+      )}
     </div>
   );
 }

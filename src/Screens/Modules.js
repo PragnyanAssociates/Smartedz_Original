@@ -227,6 +227,14 @@ export const MODULES = [
     title: 'Alumni',
     imageSource: 'https://cdn-icons-png.flaticon.com/128/4696/4696859.png',
     navigateTo: '/Alumni'
+  },
+  {
+    id: 'Support',
+    module_name: 'Support', // Must match backend DEFAULT_MODULES exactly
+    label: 'Support',
+    title: 'Support',
+    imageSource: 'https://cdn-icons-png.flaticon.com/128/4961/4961759.png',
+    navigateTo: '/Support'
   }
 
 ];
