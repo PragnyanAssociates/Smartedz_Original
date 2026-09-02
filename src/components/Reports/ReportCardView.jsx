@@ -1,4 +1,5 @@
 import React, { useMemo, useState, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { GraduationCap, Printer } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
@@ -6,15 +7,15 @@ import { API_BASE_URL } from '../../apiConfig';
 // =====================================================================
 //  ReportCardView - the printable report card layout for ONE student.
 //
-//  Print is pure CSS (no JS scaling) so it prints identically on desktop,
-//  laptop and phone: anchored to the page top (leftover space falls to the
-//  bottom for remarks), columns size to content and never wrap, and text /
-//  borders / the GRADE are dark + bright, not faint.
+//  PRINTING (single mode) now goes through a <body>-level portal in normal
+//  flow — the SAME technique as "Print All" — instead of position:fixed.
+//  That prints identically on laptop AND phone (centered, full width), and
+//  shows obtained marks only (the /max is hidden to save space). Text,
+//  borders and the GRADE print dark + bright.
 //
-//  Two modes:
-//   • single (default) - standalone card with its own one-page print CSS.
-//   • batch  (prop `batch`) - just the card body; the parent (Print All)
-//     supplies the batch print CSS.
+//   • single (default) - on-screen card + a print-only body portal.
+//   • batch  (prop `batch`) - just the card body; the Print-All parent
+//     supplies its own portal + print CSS.
 // =====================================================================
 
 const fmtNum = (v) => {
@@ -84,6 +85,51 @@ export function LastPrintedStamp({ studentId, className = '' }) {
   );
 }
 
+// Shared print CSS for the single-card body portal — mirrors Print All so
+// laptop and phone produce the exact same page. Obtained marks only.
+const SINGLE_PRINT_CSS = `
+  @media screen { #rc-single-portal { display: none !important; } }
+  @media print {
+    @page { size: A4 portrait; margin: 6mm 5mm; }
+    html, body { height: auto !important; min-height: 0 !important; overflow: visible !important; margin: 0 !important; background: #fff !important; }
+
+    /* show ONLY the portal (display:none, not visibility, => centered, no blank) */
+    body > * { display: none !important; }
+    #rc-single-portal { display: block !important; }
+
+    #rc-single-portal .rc-max { display: none !important; }            /* obtained marks only */
+    #rc-single-portal .report-card { max-width: none !important; width: 100% !important; padding: 2px 4px !important; margin: 0 !important; color: #000 !important; }
+    #rc-single-portal .overflow-x-auto { overflow: visible !important; }
+
+    /* columns size to content, single line, fits every device the same */
+    #rc-single-portal table { width: 100% !important; min-width: 0 !important; border-collapse: collapse !important; }
+    #rc-single-portal th, #rc-single-portal td {
+      border: 1px solid #111827 !important; padding: 4px 5px !important;
+      font-size: 10px !important; line-height: 1.2 !important;
+      font-weight: 600 !important; color: #111827 !important;
+      white-space: nowrap !important;
+    }
+    #rc-single-portal thead th { font-weight: 800 !important; background: #e5e7eb !important; color: #000 !important; }
+    #rc-single-portal thead { display: table-header-group; }
+    #rc-single-portal .font-bold { font-weight: 800 !important; color: #000 !important; }
+
+    /* GRADE dark & bright */
+    #rc-single-portal .rc-grade, #rc-single-portal .text-primary { color: #1d4ed8 !important; font-weight: 800 !important; }
+    #rc-single-portal .text-emerald-700 { color: #047857 !important; font-weight: 800 !important; }
+
+    /* darken muted greys */
+    #rc-single-portal .text-zinc-400 { color: #374151 !important; }
+    #rc-single-portal .text-zinc-500 { color: #1f2937 !important; }
+    #rc-single-portal .text-zinc-700, #rc-single-portal .text-zinc-800, #rc-single-portal .text-zinc-900 { color: #000 !important; }
+
+    #rc-single-portal h1 { font-size: 22px !important; font-weight: 800 !important; color: #000 !important; }
+    #rc-single-portal h2 { font-size: 13px !important; font-weight: 800 !important; color: #000 !important; letter-spacing: .05em; }
+    #rc-single-portal .rc-logo { height: 120px !important; width: auto !important; }
+
+    * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+  }
+`;
+
 export default function ReportCardView({ card, batch = false }) {
   const { student, institution, academicYear, subjects, examTypes, marks, attendance } = card;
   const maxMarks = card.maxMarks || {};
@@ -118,7 +164,6 @@ export default function ReportCardView({ card, batch = false }) {
     return Number(t.max_marks || 0);
   };
 
-  // Grade for an exam's TOTAL marks (the Total row) against its bands.
   const gradeFor = (total, bands) => {
     if (total == null || isNaN(total) || !Array.isArray(bands) || bands.length === 0) return null;
     let best = null;
@@ -232,7 +277,6 @@ export default function ReportCardView({ card, batch = false }) {
                   })}
                 </tr>
               ))}
-              {/* Column totals (each exam counted once, on its column) */}
               <tr className="bg-zinc-50/80">
                 <td className="border border-zinc-300 px-3 py-2.5 font-bold text-zinc-800">Total</td>
                 {examTypes.map(t => (
@@ -241,7 +285,6 @@ export default function ReportCardView({ card, batch = false }) {
                   </td>
                 ))}
               </tr>
-              {/* Grade row — per exam, from that class+exam's ranges */}
               {anyGrades && (
                 <tr className="bg-zinc-50/40">
                   <td className="border border-zinc-300 px-3 py-2.5 font-bold text-zinc-700">Grade</td>
@@ -319,6 +362,7 @@ export default function ReportCardView({ card, batch = false }) {
     </>
   );
 
+  // --- Batch mode: just the body (Print-All parent handles the portal) ---
   if (batch) {
     return (
       <div className="report-card bg-white p-6 sm:p-8 max-w-4xl mx-auto">
@@ -327,72 +371,26 @@ export default function ReportCardView({ card, batch = false }) {
     );
   }
 
+  // --- Single mode: on-screen card + a body-level PRINT portal ----------
+  //  The portal prints identically on laptop and phone (normal flow, not
+  //  fixed) and is obtained-marks-only. On screen the portal is hidden.
   return (
     <>
-      <style>{`
-        @media print {
-          @page { size: A4 portrait; margin: 6mm 5mm; }
-
-          html, body {
-            height: auto !important; min-height: 0 !important;
-            overflow: visible !important; background: #fff !important;
-          }
-
-          body * { visibility: hidden !important; }
-          #report-card-printable,
-          #report-card-printable * { visibility: visible !important; }
-
-          /* Anchor to the PAGE top; leftover space falls to the bottom. */
-          #report-card-printable {
-            position: fixed !important;
-            left: 0 !important; top: 0 !important; right: 0 !important;
-            width: 100% !important; margin: 0 !important;
-            padding: 0 2mm !important; box-shadow: none !important;
-            background: #fff !important; color: #000 !important;
-          }
-
-          /* Columns size to content, single line — no wrap, no clip. */
-          #report-card-printable table {
-            width: 100% !important; min-width: 0 !important; border-collapse: collapse !important;
-          }
-          #report-card-printable th,
-          #report-card-printable td {
-            border: 1px solid #111827 !important;
-            padding: 4px 5px !important;
-            font-size: 10px !important; line-height: 1.2 !important;
-            font-weight: 600 !important; color: #111827 !important;
-            white-space: nowrap !important;
-          }
-          #report-card-printable thead th { font-weight: 800 !important; background: #e5e7eb !important; color: #000 !important; }
-          #report-card-printable .font-bold { font-weight: 800 !important; color: #000 !important; }
-          #report-card-printable .rc-max { color: #4b5563 !important; font-weight: 500 !important; }
-
-          /* GRADE — dark & bright so it clearly stands out. */
-          #report-card-printable .rc-grade,
-          #report-card-printable .text-primary { color: #1d4ed8 !important; font-weight: 800 !important; }
-          #report-card-printable .text-emerald-700 { color: #047857 !important; font-weight: 800 !important; }
-
-          /* Darken muted greys so nothing prints faint. */
-          #report-card-printable .text-zinc-400 { color: #374151 !important; }
-          #report-card-printable .text-zinc-500 { color: #1f2937 !important; }
-          #report-card-printable .text-zinc-700,
-          #report-card-printable .text-zinc-800,
-          #report-card-printable .text-zinc-900 { color: #000 !important; }
-
-          #report-card-printable h1 { font-size: 22px !important; font-weight: 800 !important; color: #000 !important; }
-          #report-card-printable h2 { font-size: 13px !important; font-weight: 800 !important; color: #000 !important; letter-spacing: .05em; }
-          #report-card-printable .rc-logo { height: 130px !important; width: auto !important; }
-
-          #report-card-printable .overflow-x-auto { overflow: visible !important; }
-          #report-card-printable thead { display: table-header-group; }
-
-          * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-        }
-      `}</style>
-
-      <div className="report-card bg-white p-6 sm:p-8 max-w-4xl mx-auto" id="report-card-printable">
+      <div className="report-card bg-white p-6 sm:p-8 max-w-4xl mx-auto">
         {body}
       </div>
+
+      {typeof document !== 'undefined' && createPortal(
+        <>
+          <style>{SINGLE_PRINT_CSS}</style>
+          <div id="rc-single-portal">
+            <div className="report-card bg-white">
+              {body}
+            </div>
+          </div>
+        </>,
+        document.body
+      )}
     </>
   );
 }
