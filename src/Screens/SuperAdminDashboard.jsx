@@ -31,11 +31,19 @@ import InventoryAssets from '../components/Assets/InventoryAssets';
 import Support from './Support';
 
 import { PermissionsProvider, usePermissions } from './PermissionsContext';
+import { useAuth } from '../context/AuthContext';
 import { MODULES } from './Modules';
 import { ShieldOff } from 'lucide-react';
 
+// The active tab is remembered PER LOGIN SESSION, keyed by the login token:
+//   • Refresh / reload  -> same token  -> you stay on the same module.
+//   • Fresh login (new token, or a different user) -> no match -> Overview.
+// Stored in sessionStorage so it never leaks to another tab or another user.
+const TAB_KEY = 'dashboard_active_tab';
+
 function DashboardShell() {
   const { isVisible, can, loading } = usePermissions();
+  const { token } = useAuth();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const firstAllowedTab = useMemo(() => {
@@ -43,25 +51,38 @@ function DashboardShell() {
     return first?.id || 'overview';
   }, [isVisible]);
 
-  // 1. Initialize state from localStorage, fallback to firstAllowedTab
+  // 1. Restore the tab ONLY if it was saved under the CURRENT login token
+  //    (i.e. this is a refresh, not a new login). Otherwise start at default.
   const [activeTab, setActiveTab] = useState(() => {
-    const savedTab = localStorage.getItem('dashboard_active_tab');
-    return savedTab || firstAllowedTab;
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(TAB_KEY) || 'null');
+      if (saved && saved.token && saved.token === token && saved.tab) return saved.tab;
+    } catch { /* ignore */ }
+    return firstAllowedTab;
   });
 
-  // 2. Save to localStorage whenever the user changes the tab
+  // One-time cleanup of the old shared localStorage key (which caused every
+  // login to reopen the previous person's tab).
   useEffect(() => {
-    localStorage.setItem('dashboard_active_tab', activeTab);
-  }, [activeTab]);
+    try { localStorage.removeItem(TAB_KEY); } catch { /* ignore */ }
+  }, []);
 
-  // 3. Fallback security check (already in your code, works perfectly with localStorage)
+  // 2. Persist the tab together with the current token, so only a refresh of
+  //    THIS session restores it.
+  useEffect(() => {
+    try {
+      if (token) sessionStorage.setItem(TAB_KEY, JSON.stringify({ token, tab: activeTab }));
+    } catch { /* ignore */ }
+  }, [activeTab, token]);
+
+  // 3. Fallback security check: if the restored/current tab isn't permitted
+  //    for this user, bounce them to the default.
   useEffect(() => {
     if (loading) return;
     const currentMod = MODULES.find(m => m.id === activeTab);
     if (!currentMod) return;
     if (currentMod.alwaysVisible) return;
-    
-    // If they saved a tab in localStorage but lost permission, kick them to default
+
     if (!isVisible(currentMod.module_name)) {
       setActiveTab(firstAllowedTab);
     }
@@ -114,7 +135,7 @@ function DashboardShell() {
       case 'InventoryAssets':   return <InventoryAssets/>;
       case 'Support':           return <Support/>;
       case 'notifications':     return <NotificationsScreen onNavigate={setActiveTab} />;
-    
+
       default:
         return (
           <div className="h-full flex items-center justify-center flex-col text-center opacity-60 p-6">
@@ -127,17 +148,17 @@ function DashboardShell() {
 
   return (
     <div className="flex flex-col h-[100dvh] bg-zinc-50 overflow-hidden w-full font-sans">
-      
+
       <div className="h-[2px] w-full bg-gradient-brand shrink-0 z-50" />
-      
+
       <div className="flex flex-1 overflow-hidden relative">
-        <Sidebar 
-          activeTab={activeTab} 
-          setActiveTab={setActiveTab} 
+        <Sidebar
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
           isMobileOpen={isMobileMenuOpen}
           setIsMobileOpen={setIsMobileMenuOpen}
         />
-        
+
         <div className="flex flex-col flex-1 min-w-0">
           <DashboardHeader onMenuClick={() => setIsMobileMenuOpen(true)} />
           <main className="flex-1 overflow-y-auto custom-scrollbar relative">
