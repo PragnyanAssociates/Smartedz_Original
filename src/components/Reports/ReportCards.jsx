@@ -308,7 +308,7 @@ export default function ReportCards({ classInfo, onBack }) {
           <style>{`
             @media screen { #rc-print-all-portal { display: none !important; } }
             @media print {
-              @page { size: A4 portrait; margin: 8mm 6mm; }
+              @page { size: A4 portrait; margin: 7mm 6mm; }
               html, body { height: auto !important; min-height: 0 !important; overflow: visible !important; margin: 0 !important; background: #fff !important; }
 
               /* show ONLY the batch; display:none (not visibility) => no blank pages */
@@ -318,20 +318,40 @@ export default function ReportCards({ classInfo, onBack }) {
               .rc-print-page { page-break-after: always; break-after: page; break-inside: avoid; }
               .rc-print-page:last-child { page-break-after: auto; break-after: auto; }
 
-              /* obtained marks only + compact, so each card fills one page */
+              /* obtained marks only + full-size so each card fills its page */
               #rc-print-all-portal .rc-max { display: none !important; }
-              #rc-print-all-portal .rc-logo { height: 96px !important; }
-              #rc-print-all-portal .report-card { max-width: none !important; width: 100% !important; padding: 6px 6px !important; margin: 0 !important; }
+              #rc-print-all-portal .rc-logo { height: 120px !important; width: auto !important; }
+              #rc-print-all-portal .report-card { max-width: none !important; width: 100% !important; padding: 4px 6px !important; margin: 0 !important; color: #000 !important; }
               #rc-print-all-portal .overflow-x-auto { overflow: visible !important; }
-              #rc-print-all-portal table { width: 100% !important; min-width: 0 !important; border-collapse: collapse !important; font-size: 10px !important; }
-              #rc-print-all-portal th, #rc-print-all-portal td { padding: 3px 3px !important; }
+
+              /* columns size to content, single line, never wrap — fits every device the same */
+              #rc-print-all-portal table { width: 100% !important; min-width: 0 !important; border-collapse: collapse !important; }
+              #rc-print-all-portal th, #rc-print-all-portal td {
+                border: 1px solid #111827 !important; padding: 4px 5px !important;
+                font-size: 10px !important; line-height: 1.2 !important;
+                font-weight: 500 !important; color: #111827 !important;
+                white-space: nowrap !important;
+              }
+              #rc-print-all-portal thead th { font-weight: 800 !important; background: #e5e7eb !important; color: #000 !important; }
               #rc-print-all-portal thead { display: table-header-group; }
-              #rc-print-all-portal .mb-8 { margin-bottom: 8px !important; }
-              #rc-print-all-portal .mb-6 { margin-bottom: 6px !important; }
-              #rc-print-all-portal .mb-4 { margin-bottom: 6px !important; }
-              #rc-print-all-portal .mb-12 { margin-bottom: 6px !important; }
-              #rc-print-all-portal .mt-16 { margin-top: 14px !important; }
-              #rc-print-all-portal .pb-5 { padding-bottom: 6px !important; }
+              #rc-print-all-portal .font-bold { font-weight: 800 !important; color: #000 !important; }
+
+              /* keep meaningful colours + darken muted greys so nothing is faint */
+              #rc-print-all-portal .text-primary { color: #1e66c7 !important; font-weight: 800 !important; }
+              #rc-print-all-portal .text-emerald-700 { color: #047857 !important; font-weight: 800 !important; }
+              #rc-print-all-portal .text-zinc-400 { color: #374151 !important; }
+              #rc-print-all-portal .text-zinc-500 { color: #1f2937 !important; }
+              #rc-print-all-portal .text-zinc-700, #rc-print-all-portal .text-zinc-800, #rc-print-all-portal .text-zinc-900 { color: #000 !important; }
+              #rc-print-all-portal h1 { font-size: 22px !important; font-weight: 800 !important; color: #000 !important; }
+              #rc-print-all-portal h2 { font-size: 13px !important; font-weight: 800 !important; color: #000 !important; letter-spacing: .06em; }
+
+              /* fill the sheet, leaving room at the bottom for handwritten remarks */
+              #rc-print-all-portal .mb-8 { margin-bottom: 10px !important; }
+              #rc-print-all-portal .mb-6 { margin-bottom: 8px !important; }
+              #rc-print-all-portal .mb-4 { margin-bottom: 8px !important; }
+              #rc-print-all-portal .mb-12 { margin-bottom: 10px !important; }
+              #rc-print-all-portal .mt-16 { margin-top: 26px !important; }
+              #rc-print-all-portal .pb-5 { padding-bottom: 8px !important; }
 
               * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
             }

@@ -6,26 +6,13 @@ import { API_BASE_URL } from '../../apiConfig';
 // =====================================================================
 //  ReportCardView - the printable report card layout for ONE student.
 //
-//  Two modes:
-//   • single (default) - the standalone card with its own one-page print
-//     stylesheet + fit-to-page. Used by Report Cards / My Report Card.
-//   • batch  (prop `batch`) - renders JUST the card body (no id, no print
-//     <style>, no fit effect) so a parent can stack many of them, one per
-//     page, for "Print All". The parent supplies the batch print CSS.
-//
-//  Receives a `card` shaped like buildReportCard():
-//    { student, institution, academicYear, subjects, examTypes, maxMarks, marks, attendance }
-//
-//  CONDUCTED-ONLY DENOMINATOR: exam types are per-class config; a class
-//  may have several configured while only a few were held. Max and grade
-//  count ONLY exams this student has marks for (a 0 counts).
-//
-//  LAST-PRINTED lives in the exported <LastPrintedStamp/>, placed by the
-//  parents BESIDE their Print button. It now reads/writes the SERVER, so
-//  "Last printed by <name> on <date>" is visible to everyone.
+//  Print is now pure CSS (no JS scaling), so it prints identically on
+//  desktop, laptop and phone: the card is anchored to the page top, the
+//  columns size to their content and never wrap to a second line, text and
+//  borders are dark/crisp (not faint), and the leftover space falls to the
+//  bottom of the sheet for handwritten remarks.
 // =====================================================================
 
-// Format a numeric mark without trailing decimals: 20.00 -> 20, 19.50 -> 19.5
 const fmtNum = (v) => {
   if (v === null || v === undefined || v === '') return '';
   const n = Number(v);
@@ -33,7 +20,6 @@ const fmtNum = (v) => {
   return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(2)));
 };
 
-// Human IST date-time for the "last printed" stamp.
 const fmtDateTime = (iso) => {
   if (!iso) return null;
   try {
@@ -45,22 +31,15 @@ const fmtDateTime = (iso) => {
   } catch { return null; }
 };
 
-// A DATETIME stored as UTC (UTC_TIMESTAMP) comes back without a zone; make
-// it explicit so the browser converts to IST correctly.
 const asUtcIso = (v) => {
   if (!v) return null;
   const s = String(v).replace(' ', 'T');
   return /[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s : s + 'Z';
 };
 
-// ---------------------------------------------------------------------
-//  LastPrintedStamp — server-backed. Shows "Last printed by NAME on DATE",
-//  visible to everyone. Records the print (with the current user's name)
-//  on any print of this student (button or Ctrl/Cmd+P) via afterprint.
-// ---------------------------------------------------------------------
 export function LastPrintedStamp({ studentId, className = '' }) {
   const { user } = useAuth();
-  const [info, setInfo] = useState(null); // { printed_by, printed_at }
+  const [info, setInfo] = useState(null);
 
   const fetchInfo = useCallback(async () => {
     if (!studentId) return;
@@ -105,60 +84,9 @@ export default function ReportCardView({ card, batch = false }) {
   const { student, institution, academicYear, subjects, examTypes, marks, attendance } = card;
   const maxMarks = card.maxMarks || {};
 
-  // -----------------------------------------------------------------
-  //  Fit-to-one-page on print (SINGLE mode only). Measures the real
-  //  content width so all exam columns fit, then scales the card.
-  // -----------------------------------------------------------------
-  useEffect(() => {
-    if (batch) return; // batch mode is laid out + fitted by the parent
-    const PAGE_W = 752, PAGE_H = 1050;
-
-    const fitToPage = () => {
-      const el = document.getElementById('report-card-printable');
-      if (!el) return;
-      el.style.transform = 'none';
-      el.style.transformOrigin = 'top left';
-      el.style.maxWidth = 'none';
-
-      let contentW = 0;
-      el.querySelectorAll('table').forEach(t => {
-        const prev = t.style.width;
-        t.style.width = 'max-content';
-        contentW = Math.max(contentW, t.scrollWidth || t.offsetWidth);
-        t.style.width = prev;
-      });
-      const W = Math.max(contentW + 44, 400);
-      el.style.width = W + 'px';
-
-      const H = el.scrollHeight || el.offsetHeight;
-      if (!W || !H) return;
-      const scale = Math.max(0.3, Math.min(PAGE_W / W, PAGE_H / H, 1));
-      el.style.left = Math.max(0, (PAGE_W - W * scale) / 2) + 'px';
-      el.style.transform = 'scale(' + scale + ')';
-    };
-    const reset = () => {
-      const el = document.getElementById('report-card-printable');
-      if (!el) return;
-      el.style.transform = '';
-      el.style.transformOrigin = '';
-      el.style.width = '';
-      el.style.maxWidth = '';
-      el.style.left = '';
-    };
-    window.addEventListener('beforeprint', fitToPage);
-    window.addEventListener('afterprint', reset);
-    return () => {
-      window.removeEventListener('beforeprint', fitToPage);
-      window.removeEventListener('afterprint', reset);
-    };
-  }, [batch]);
-
-  // Index marks by `${subjectId}:${examTypeId}` for O(1) lookup
   const markMap = useMemo(() => {
     const m = {};
-    (marks || []).forEach(r => {
-      m[`${r.subject_id}:${r.exam_type_id}`] = r.marks_obtained;
-    });
+    (marks || []).forEach(r => { m[`${r.subject_id}:${r.exam_type_id}`] = r.marks_obtained; });
     return m;
   }, [marks]);
 
@@ -171,7 +99,6 @@ export default function ReportCardView({ card, batch = false }) {
   }, [marks]);
 
   const isAttempted = (etId) => attemptedExamIds.has(Number(etId));
-
   const getMark = (subjectId, etId) => {
     const v = markMap[`${subjectId}:${etId}`];
     return v != null ? v : null;
@@ -187,7 +114,6 @@ export default function ReportCardView({ card, batch = false }) {
     return Number(t.max_marks || 0);
   };
 
-  // Grade for an exam's TOTAL marks (the Total row) against its bands.
   const gradeFor = (total, bands) => {
     if (total == null || isNaN(total) || !Array.isArray(bands) || bands.length === 0) return null;
     let best = null;
@@ -226,28 +152,23 @@ export default function ReportCardView({ card, batch = false }) {
     ? ((attTotals.present / attTotals.working) * 100).toFixed(1)
     : '0.0';
 
-  // --- The card body (identical in single + batch) ------------------
   const body = (
     <>
       {/* ---- School header ---- */}
-      <div className="text-center border-b-2 border-zinc-200 pb-5 mb-6">
+      <div className="text-center border-b-2 border-zinc-300 pb-5 mb-6">
         {institution?.logo ? (
           <img src={institution.logo} alt="School logo"
-            className="rc-logo h-32 sm:h-40 mx-auto object-contain mb-3" />
+            className="rc-logo h-36 sm:h-44 mx-auto object-contain mb-3" />
         ) : (
-          <div className="rc-logo size-32 sm:size-40 mx-auto mb-3 bg-zinc-100 rounded-lg flex items-center justify-center ring-1 ring-black/5">
-            <GraduationCap className="text-zinc-300 size-16 sm:size-20" />
+          <div className="rc-logo size-36 sm:size-44 mx-auto mb-3 bg-zinc-100 rounded-lg flex items-center justify-center ring-1 ring-black/5">
+            <GraduationCap className="text-zinc-300 size-20" />
           </div>
         )}
         <h1 className="text-xl sm:text-2xl font-bold text-zinc-900 tracking-tight uppercase">
           {institution?.name || 'School'}
         </h1>
-        {institution?.school_email && (
-          <p className="text-sm text-zinc-500 mt-1">{institution.school_email}</p>
-        )}
-        {institution?.phone && (
-          <p className="text-xs text-zinc-400 mt-0.5">Phone: {institution.phone}</p>
-        )}
+        {institution?.school_email && (<p className="text-sm text-zinc-500 mt-1">{institution.school_email}</p>)}
+        {institution?.phone && (<p className="text-xs text-zinc-400 mt-0.5">Phone: {institution.phone}</p>)}
       </div>
 
       {/* ---- Student info ---- */}
@@ -279,9 +200,7 @@ export default function ReportCardView({ card, batch = false }) {
                   const counted = isAttempted(t.id);
                   return (
                     <th key={t.id}
-                      className={`border border-zinc-300 px-3 py-2.5 text-center font-semibold whitespace-nowrap ${
-                        counted ? 'text-zinc-700' : 'text-zinc-400'
-                      }`}
+                      className={`border border-zinc-300 px-3 py-2.5 text-center font-semibold whitespace-nowrap ${counted ? 'text-zinc-700' : 'text-zinc-400'}`}
                       title={counted ? undefined : 'Not conducted yet — excluded from Total & grade'}>
                       {t.name}
                     </th>
@@ -302,15 +221,12 @@ export default function ReportCardView({ card, batch = false }) {
                         <span className={v != null ? 'font-semibold text-zinc-800' : 'text-zinc-300'}>
                           {v != null ? fmtNum(v) : '–'}
                         </span>
-                        {counted && mx > 0 && (
-                          <span className="rc-max text-zinc-400 text-[11px]">/{fmtNum(mx)}</span>
-                        )}
+                        {counted && mx > 0 && (<span className="rc-max text-zinc-400 text-[11px]">/{fmtNum(mx)}</span>)}
                       </td>
                     );
                   })}
                 </tr>
               ))}
-              {/* Column totals (each exam counted once, on its column) */}
               <tr className="bg-zinc-50/80">
                 <td className="border border-zinc-300 px-3 py-2.5 font-bold text-zinc-800">Total</td>
                 {examTypes.map(t => (
@@ -319,7 +235,6 @@ export default function ReportCardView({ card, batch = false }) {
                   </td>
                 ))}
               </tr>
-              {/* Grade row — per exam, from that class+exam's ranges */}
               {anyGrades && (
                 <tr className="bg-zinc-50/40">
                   <td className="border border-zinc-300 px-3 py-2.5 font-bold text-zinc-700">Grade</td>
@@ -354,9 +269,7 @@ export default function ReportCardView({ card, batch = false }) {
               <tr>
                 <th className="border border-zinc-300 px-3 py-2.5 text-left font-semibold text-zinc-700">Month</th>
                 {attendance.map((m, i) => (
-                  <th key={i} className="border border-zinc-300 px-3 py-2.5 text-center font-semibold text-zinc-700">
-                    {m.month.slice(0, 3)}
-                  </th>
+                  <th key={i} className="border border-zinc-300 px-3 py-2.5 text-center font-semibold text-zinc-700">{m.month.slice(0, 3)}</th>
                 ))}
                 <th className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-primary">Total</th>
               </tr>
@@ -365,24 +278,16 @@ export default function ReportCardView({ card, batch = false }) {
               <tr className="hover:bg-zinc-50/50 transition-colors">
                 <td className="border border-zinc-300 px-3 py-2.5 font-semibold text-zinc-800">Working Days</td>
                 {attendance.map((m, i) => (
-                  <td key={i} className="border border-zinc-300 px-3 py-2.5 text-center text-zinc-700 tabular-nums">
-                    {m.working_days}
-                  </td>
+                  <td key={i} className="border border-zinc-300 px-3 py-2.5 text-center text-zinc-700 tabular-nums">{m.working_days}</td>
                 ))}
-                <td className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-primary tabular-nums">
-                  {attTotals.working}
-                </td>
+                <td className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-primary tabular-nums">{attTotals.working}</td>
               </tr>
               <tr className="hover:bg-zinc-50/50 transition-colors">
                 <td className="border border-zinc-300 px-3 py-2.5 font-semibold text-zinc-800">Present Days</td>
                 {attendance.map((m, i) => (
-                  <td key={i} className="border border-zinc-300 px-3 py-2.5 text-center text-zinc-700 tabular-nums">
-                    {m.present_days}
-                  </td>
+                  <td key={i} className="border border-zinc-300 px-3 py-2.5 text-center text-zinc-700 tabular-nums">{m.present_days}</td>
                 ))}
-                <td className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-primary tabular-nums">
-                  {attTotals.present}
-                </td>
+                <td className="border border-zinc-300 px-3 py-2.5 text-center font-bold text-primary tabular-nums">{attTotals.present}</td>
               </tr>
             </tbody>
           </table>
@@ -400,20 +305,13 @@ export default function ReportCardView({ card, batch = false }) {
 
       {/* Signature line */}
       <div className="signatures flex justify-between items-end gap-4 mt-16 px-2 sm:px-8 text-sm font-medium text-zinc-500 pb-4">
-        <div className="text-center">
-          <div className="border-t border-zinc-300 w-24 sm:w-40 pt-2">Parent</div>
-        </div>
-        <div className="text-center">
-          <div className="border-t border-zinc-300 w-24 sm:w-40 pt-2">Class Teacher</div>
-        </div>
-        <div className="text-center">
-          <div className="border-t border-zinc-300 w-24 sm:w-40 pt-2">Principal</div>
-        </div>
+        <div className="text-center"><div className="border-t border-zinc-400 w-24 sm:w-40 pt-2">Parent</div></div>
+        <div className="text-center"><div className="border-t border-zinc-400 w-24 sm:w-40 pt-2">Class Teacher</div></div>
+        <div className="text-center"><div className="border-t border-zinc-400 w-24 sm:w-40 pt-2">Principal</div></div>
       </div>
     </>
   );
 
-  // --- Batch mode: just the body, in normal flow (parent handles print) ---
   if (batch) {
     return (
       <div className="report-card bg-white p-6 sm:p-8 max-w-4xl mx-auto">
@@ -422,49 +320,70 @@ export default function ReportCardView({ card, batch = false }) {
     );
   }
 
-  // --- Single mode: own print stylesheet + fit-to-page ---
   return (
     <>
       <style>{`
         @media print {
-          @page { size: A4 portrait; margin: 8mm 5mm; }
+          @page { size: A4 portrait; margin: 7mm 6mm; }
 
           html, body {
-            height: auto !important;
-            min-height: 0 !important;
-            overflow: visible !important;
-            background: #fff !important;
+            height: auto !important; min-height: 0 !important;
+            overflow: visible !important; background: #fff !important;
           }
 
           body * { visibility: hidden !important; }
           #report-card-printable,
           #report-card-printable * { visibility: visible !important; }
 
+          /* Anchor to the PAGE (fixed, not absolute) so content starts at the
+             top and the leftover space falls to the bottom for remarks. */
           #report-card-printable {
             position: fixed !important;
-            left: 0 !important;
-            top: 0 !important;
-            margin: 0 !important;
-            padding: 14px 18px !important;
-            max-width: none !important;
-            box-shadow: none !important;
+            left: 0 !important; top: 0 !important; right: 0 !important;
+            width: 100% !important; margin: 0 !important;
+            padding: 0 2mm !important; box-shadow: none !important;
+            background: #fff !important; color: #000 !important;
           }
 
-          #report-card-printable table th,
-          #report-card-printable table td {
-            padding-top: 4px !important;
-            padding-bottom: 4px !important;
-            padding-left: 5px !important;
-            padding-right: 5px !important;
-          }
-
-          #report-card-printable .overflow-x-auto { overflow: visible !important; }
+          /* Columns size to their content and never wrap to a second line;
+             a compact font keeps every exam column on one page width. */
           #report-card-printable table {
-            width: 100% !important;
-            min-width: 0 !important;
+            width: 100% !important; min-width: 0 !important;
             border-collapse: collapse !important;
           }
+          #report-card-printable th,
+          #report-card-printable td {
+            border: 1px solid #111827 !important;
+            padding: 4px 5px !important;
+            font-size: 10px !important; line-height: 1.2 !important;
+            font-weight: 500 !important; color: #111827 !important;
+            white-space: nowrap !important;
+          }
+          #report-card-printable thead th {
+            font-weight: 800 !important; background: #e5e7eb !important; color: #000 !important;
+          }
+          #report-card-printable .font-bold { font-weight: 800 !important; color: #000 !important; }
+          #report-card-printable .rc-max { color: #4b5563 !important; font-weight: 500 !important; }
+
+          /* Keep the meaningful colours crisp. */
+          #report-card-printable .text-primary { color: #1e66c7 !important; font-weight: 800 !important; }
+          #report-card-printable .text-emerald-700 { color: #047857 !important; font-weight: 800 !important; }
+
+          /* Darken the muted greys so nothing prints faint. */
+          #report-card-printable .text-zinc-400 { color: #374151 !important; }
+          #report-card-printable .text-zinc-500 { color: #1f2937 !important; }
+          #report-card-printable .text-zinc-700,
+          #report-card-printable .text-zinc-800,
+          #report-card-printable .text-zinc-900 { color: #000 !important; }
+
+          /* Headings + a bigger, clear logo. */
+          #report-card-printable h1 { font-size: 22px !important; font-weight: 800 !important; color: #000 !important; }
+          #report-card-printable h2 { font-size: 13px !important; font-weight: 800 !important; color: #000 !important; letter-spacing: .06em; }
+          #report-card-printable .rc-logo { height: 132px !important; width: auto !important; }
+
+          #report-card-printable .overflow-x-auto { overflow: visible !important; }
           #report-card-printable thead { display: table-header-group; }
+          #report-card-printable .signatures { margin-top: 22px !important; }
 
           * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
         }
