@@ -98,7 +98,14 @@ const SINGLE_PRINT_CSS = `
     #rc-single-portal { display: block !important; }
 
     #rc-single-portal .rc-max { display: none !important; }            /* obtained marks only */
-    #rc-single-portal .report-card { max-width: none !important; width: 100% !important; padding: 2px 4px !important; margin: 0 !important; color: #000 !important; }
+
+    /* LOCK the print to a fixed A4 layout so a phone prints EXACTLY like a
+       laptop — a fixed mm width + fixed font sizes ignore the device's own
+       print viewport, so nothing re-sizes on mobile. */
+    #rc-single-portal .report-card { width: 190mm !important; max-width: 190mm !important; margin: 0 auto !important; padding: 0 !important; color: #000 !important; font-size: 12px !important; }
+    #rc-single-portal .text-sm { font-size: 12px !important; }
+    #rc-single-portal .text-xs { font-size: 10.5px !important; }
+    #rc-single-portal .signatures > div > div { width: 150px !important; }
     #rc-single-portal .overflow-x-auto { overflow: visible !important; }
 
     /* columns size to content, single line, fits every device the same */

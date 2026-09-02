@@ -326,7 +326,13 @@ export default function ReportCards({ classInfo, onBack }) {
               #rc-print-all-portal .rc-info-row { display: flex !important; flex-direction: row !important; align-items: baseline !important; gap: .5rem !important; }
               #rc-print-all-portal .rc-info-label { width: auto !important; flex: 0 0 auto !important; white-space: nowrap !important; }
               #rc-print-all-portal .rc-info-value { flex: 1 1 auto !important; min-width: 0 !important; white-space: normal !important; overflow: visible !important; text-overflow: clip !important; }
-              #rc-print-all-portal .report-card { max-width: none !important; width: 100% !important; padding: 4px 6px !important; margin: 0 !important; color: #000 !important; }
+              /* LOCK the print to a fixed A4 layout so a phone prints EXACTLY
+                 like a laptop — fixed mm width + fixed font sizes ignore the
+                 device's own print viewport, so nothing re-sizes on mobile. */
+              #rc-print-all-portal .report-card { width: 190mm !important; max-width: 190mm !important; margin: 0 auto !important; padding: 0 !important; color: #000 !important; font-size: 12px !important; }
+              #rc-print-all-portal .text-sm { font-size: 12px !important; }
+              #rc-print-all-portal .text-xs { font-size: 10.5px !important; }
+              #rc-print-all-portal .signatures > div > div { width: 150px !important; }
               #rc-print-all-portal .overflow-x-auto { overflow: visible !important; }
 
               /* columns size to content, single line, never wrap — fits every device the same */
