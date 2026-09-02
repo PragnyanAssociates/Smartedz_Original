@@ -224,23 +224,23 @@ function NewTicketModal({ onClose, onCreated }) {
                 className="w-full bg-white border border-zinc-200 rounded-md px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors resize-none" />
             </div>
 
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Screenshot (optional)</label>
-              {image ? (
-                <div className="relative inline-block">
-                  <img src={image} alt="attachment" className="max-h-40 rounded-md ring-1 ring-black/5" />
-                  <button type="button" onClick={() => setImage('')}
-                    className="absolute -top-2 -right-2 size-6 bg-white ring-1 ring-black/10 rounded-full flex items-center justify-center text-zinc-500 hover:text-red-600 shadow-sm">
-                    <X className="size-3.5" />
-                  </button>
-                </div>
-              ) : (
-                <label className="cursor-pointer inline-flex items-center gap-1.5 text-zinc-700 px-3 py-2 border border-zinc-200 rounded-md text-xs font-medium hover:bg-zinc-50 transition-colors">
-                  <ImageIcon className="size-3.5" /> Attach image
-                  <input type="file" accept="image/*" onChange={onPic} className="hidden" />
-                </label>
-              )}
-            </div>
+            <div className="space-y-2">
+  <label className="block text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Screenshot (optional)</label>
+  {image ? (
+    <div className="relative inline-block">
+      <img src={image} alt="attachment" className="max-h-40 rounded-md ring-1 ring-black/5" />
+      <button type="button" onClick={() => setImage('')}
+        className="absolute -top-2 -right-2 size-6 bg-white ring-1 ring-black/10 rounded-full flex items-center justify-center text-zinc-500 hover:text-red-600 shadow-sm">
+        <X className="size-3.5" />
+      </button>
+    </div>
+  ) : (
+    <label className="cursor-pointer inline-flex items-center gap-1.5 text-zinc-700 px-3 py-2 border border-zinc-200 rounded-md text-xs font-medium hover:bg-zinc-50 transition-colors">
+      <ImageIcon className="size-3.5" /> Attach image
+      <input type="file" accept="image/*" onChange={onPic} className="hidden" />
+    </label>
+  )}
+</div>
           </div>
           <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg">
             <button type="button" onClick={onClose} disabled={saving}
