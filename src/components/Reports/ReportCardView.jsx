@@ -6,11 +6,15 @@ import { API_BASE_URL } from '../../apiConfig';
 // =====================================================================
 //  ReportCardView - the printable report card layout for ONE student.
 //
-//  Print is now pure CSS (no JS scaling), so it prints identically on
-//  desktop, laptop and phone: the card is anchored to the page top, the
-//  columns size to their content and never wrap to a second line, text and
-//  borders are dark/crisp (not faint), and the leftover space falls to the
-//  bottom of the sheet for handwritten remarks.
+//  Print is pure CSS (no JS scaling) so it prints identically on desktop,
+//  laptop and phone: anchored to the page top (leftover space falls to the
+//  bottom for remarks), columns size to content and never wrap, and text /
+//  borders / the GRADE are dark + bright, not faint.
+//
+//  Two modes:
+//   • single (default) - standalone card with its own one-page print CSS.
+//   • batch  (prop `batch`) - just the card body; the parent (Print All)
+//     supplies the batch print CSS.
 // =====================================================================
 
 const fmtNum = (v) => {
@@ -114,6 +118,7 @@ export default function ReportCardView({ card, batch = false }) {
     return Number(t.max_marks || 0);
   };
 
+  // Grade for an exam's TOTAL marks (the Total row) against its bands.
   const gradeFor = (total, bands) => {
     if (total == null || isNaN(total) || !Array.isArray(bands) || bands.length === 0) return null;
     let best = null;
@@ -227,6 +232,7 @@ export default function ReportCardView({ card, batch = false }) {
                   })}
                 </tr>
               ))}
+              {/* Column totals (each exam counted once, on its column) */}
               <tr className="bg-zinc-50/80">
                 <td className="border border-zinc-300 px-3 py-2.5 font-bold text-zinc-800">Total</td>
                 {examTypes.map(t => (
@@ -235,6 +241,7 @@ export default function ReportCardView({ card, batch = false }) {
                   </td>
                 ))}
               </tr>
+              {/* Grade row — per exam, from that class+exam's ranges */}
               {anyGrades && (
                 <tr className="bg-zinc-50/40">
                   <td className="border border-zinc-300 px-3 py-2.5 font-bold text-zinc-700">Grade</td>
@@ -242,7 +249,7 @@ export default function ReportCardView({ card, batch = false }) {
                     const g = examColumnGrade(t);
                     return (
                       <td key={t.id} className="border border-zinc-300 px-3 py-2.5 text-center font-bold tabular-nums whitespace-nowrap">
-                        {g ? <span className="text-primary">{g}</span> : <span className="text-zinc-300">–</span>}
+                        {g ? <span className="rc-grade text-primary">{g}</span> : <span className="text-zinc-300">–</span>}
                       </td>
                     );
                   })}
@@ -324,7 +331,7 @@ export default function ReportCardView({ card, batch = false }) {
     <>
       <style>{`
         @media print {
-          @page { size: A4 portrait; margin: 7mm 6mm; }
+          @page { size: A4 portrait; margin: 6mm 5mm; }
 
           html, body {
             height: auto !important; min-height: 0 !important;
@@ -335,8 +342,7 @@ export default function ReportCardView({ card, batch = false }) {
           #report-card-printable,
           #report-card-printable * { visibility: visible !important; }
 
-          /* Anchor to the PAGE (fixed, not absolute) so content starts at the
-             top and the leftover space falls to the bottom for remarks. */
+          /* Anchor to the PAGE top; leftover space falls to the bottom. */
           #report-card-printable {
             position: fixed !important;
             left: 0 !important; top: 0 !important; right: 0 !important;
@@ -345,45 +351,40 @@ export default function ReportCardView({ card, batch = false }) {
             background: #fff !important; color: #000 !important;
           }
 
-          /* Columns size to their content and never wrap to a second line;
-             a compact font keeps every exam column on one page width. */
+          /* Columns size to content, single line — no wrap, no clip. */
           #report-card-printable table {
-            width: 100% !important; min-width: 0 !important;
-            border-collapse: collapse !important;
+            width: 100% !important; min-width: 0 !important; border-collapse: collapse !important;
           }
           #report-card-printable th,
           #report-card-printable td {
             border: 1px solid #111827 !important;
             padding: 4px 5px !important;
             font-size: 10px !important; line-height: 1.2 !important;
-            font-weight: 500 !important; color: #111827 !important;
+            font-weight: 600 !important; color: #111827 !important;
             white-space: nowrap !important;
           }
-          #report-card-printable thead th {
-            font-weight: 800 !important; background: #e5e7eb !important; color: #000 !important;
-          }
+          #report-card-printable thead th { font-weight: 800 !important; background: #e5e7eb !important; color: #000 !important; }
           #report-card-printable .font-bold { font-weight: 800 !important; color: #000 !important; }
           #report-card-printable .rc-max { color: #4b5563 !important; font-weight: 500 !important; }
 
-          /* Keep the meaningful colours crisp. */
-          #report-card-printable .text-primary { color: #1e66c7 !important; font-weight: 800 !important; }
+          /* GRADE — dark & bright so it clearly stands out. */
+          #report-card-printable .rc-grade,
+          #report-card-printable .text-primary { color: #1d4ed8 !important; font-weight: 800 !important; }
           #report-card-printable .text-emerald-700 { color: #047857 !important; font-weight: 800 !important; }
 
-          /* Darken the muted greys so nothing prints faint. */
+          /* Darken muted greys so nothing prints faint. */
           #report-card-printable .text-zinc-400 { color: #374151 !important; }
           #report-card-printable .text-zinc-500 { color: #1f2937 !important; }
           #report-card-printable .text-zinc-700,
           #report-card-printable .text-zinc-800,
           #report-card-printable .text-zinc-900 { color: #000 !important; }
 
-          /* Headings + a bigger, clear logo. */
           #report-card-printable h1 { font-size: 22px !important; font-weight: 800 !important; color: #000 !important; }
-          #report-card-printable h2 { font-size: 13px !important; font-weight: 800 !important; color: #000 !important; letter-spacing: .06em; }
-          #report-card-printable .rc-logo { height: 132px !important; width: auto !important; }
+          #report-card-printable h2 { font-size: 13px !important; font-weight: 800 !important; color: #000 !important; letter-spacing: .05em; }
+          #report-card-printable .rc-logo { height: 130px !important; width: auto !important; }
 
           #report-card-printable .overflow-x-auto { overflow: visible !important; }
           #report-card-printable thead { display: table-header-group; }
-          #report-card-printable .signatures { margin-top: 22px !important; }
 
           * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
         }
