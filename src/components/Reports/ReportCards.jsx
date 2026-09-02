@@ -320,7 +320,12 @@ export default function ReportCards({ classInfo, onBack }) {
 
               /* obtained marks only + full-size so each card fills its page */
               #rc-print-all-portal .rc-max { display: none !important; }
-              #rc-print-all-portal .rc-logo { height: 120px !important; width: auto !important; }
+              #rc-print-all-portal .rc-logo { height: 100px !important; width: auto !important; margin-bottom: -14px !important; }
+              #rc-print-all-portal .rc-header { padding-bottom: 8px !important; margin-bottom: 10px !important; }
+              #rc-print-all-portal .rc-info-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; column-gap: 2rem !important; row-gap: .5rem !important; }
+              #rc-print-all-portal .rc-info-row { display: flex !important; flex-direction: row !important; align-items: baseline !important; gap: .5rem !important; }
+              #rc-print-all-portal .rc-info-label { width: auto !important; flex: 0 0 auto !important; white-space: nowrap !important; }
+              #rc-print-all-portal .rc-info-value { flex: 1 1 auto !important; min-width: 0 !important; white-space: normal !important; overflow: visible !important; text-overflow: clip !important; }
               #rc-print-all-portal .report-card { max-width: none !important; width: 100% !important; padding: 4px 6px !important; margin: 0 !important; color: #000 !important; }
               #rc-print-all-portal .overflow-x-auto { overflow: visible !important; }
 

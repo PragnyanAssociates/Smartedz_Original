@@ -124,7 +124,14 @@ const SINGLE_PRINT_CSS = `
 
     #rc-single-portal h1 { font-size: 22px !important; font-weight: 800 !important; color: #000 !important; }
     #rc-single-portal h2 { font-size: 13px !important; font-weight: 800 !important; color: #000 !important; letter-spacing: .05em; }
-    #rc-single-portal .rc-logo { height: 120px !important; width: auto !important; }
+    #rc-single-portal .rc-logo { height: 100px !important; width: auto !important; margin-bottom: -14px !important; }
+    #rc-single-portal .rc-header { padding-bottom: 8px !important; margin-bottom: 10px !important; }
+
+    /* student info: always 2 columns (2 rows × 2), label + value INLINE on one line */
+    #rc-single-portal .rc-info-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; column-gap: 2rem !important; row-gap: .5rem !important; }
+    #rc-single-portal .rc-info-row { display: flex !important; flex-direction: row !important; align-items: baseline !important; gap: .5rem !important; }
+    #rc-single-portal .rc-info-label { width: auto !important; flex: 0 0 auto !important; white-space: nowrap !important; }
+    #rc-single-portal .rc-info-value { flex: 1 1 auto !important; min-width: 0 !important; white-space: normal !important; overflow: visible !important; text-overflow: clip !important; }
 
     * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
   }
@@ -205,12 +212,12 @@ export default function ReportCardView({ card, batch = false }) {
   const body = (
     <>
       {/* ---- School header ---- */}
-      <div className="text-center border-b-2 border-zinc-300 pb-5 mb-6">
+      <div className="rc-header text-center border-b-2 border-zinc-300 pb-5 mb-6">
         {institution?.logo ? (
           <img src={institution.logo} alt="School logo"
-            className="rc-logo h-36 sm:h-44 mx-auto object-contain mb-3" />
+            className="rc-logo h-36 sm:h-44 mx-auto object-contain mb-1" />
         ) : (
-          <div className="rc-logo size-36 sm:size-44 mx-auto mb-3 bg-zinc-100 rounded-lg flex items-center justify-center ring-1 ring-black/5">
+          <div className="rc-logo size-36 sm:size-44 mx-auto mb-1 bg-zinc-100 rounded-lg flex items-center justify-center ring-1 ring-black/5">
             <GraduationCap className="text-zinc-300 size-20" />
           </div>
         )}
@@ -223,7 +230,7 @@ export default function ReportCardView({ card, batch = false }) {
 
       {/* ---- Student info ---- */}
       <div className="bg-zinc-50 rounded-lg border border-zinc-200 p-4 sm:p-5 mb-8">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3 text-sm">
+        <div className="rc-info-grid grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3 text-sm">
           <InfoRow label="Name"  value={student.name} />
           <InfoRow label="Class" value={`${student.className || '-'}${student.section ? ' - ' + student.section : ''}`} />
           <InfoRow label="Roll No" value={student.roll_no || '-'} />
@@ -397,9 +404,9 @@ export default function ReportCardView({ card, batch = false }) {
 
 function InfoRow({ label, value }) {
   return (
-    <div className="flex sm:grid sm:grid-cols-3 gap-2">
-      <span className="font-semibold text-zinc-500 w-20 sm:w-auto shrink-0 sm:col-span-1">{label}:</span>
-      <span className="text-zinc-900 font-medium sm:col-span-2 truncate">{value}</span>
+    <div className="rc-info-row flex sm:grid sm:grid-cols-3 gap-2">
+      <span className="rc-info-label font-semibold text-zinc-500 w-20 sm:w-auto shrink-0 sm:col-span-1">{label}:</span>
+      <span className="rc-info-value text-zinc-900 font-medium sm:col-span-2 truncate">{value}</span>
     </div>
   );
 }
