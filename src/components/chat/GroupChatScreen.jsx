@@ -611,39 +611,75 @@ useEffect(() => {
   
   const handleDeleteMessage = (messageId) => { socketRef.current?.emit("deleteMessage", { messageId, userId: user?.id, groupId: group.id }); };
 
+  // Map an extension to a MIME type. A blob with no type opens as a blank
+  // tab or a download instead of rendering.
+  const mimeFor = (fileName = '') => {
+    const ext = String(fileName).split('.').pop()?.toLowerCase();
+    switch (ext) {
+      case 'pdf':  return 'application/pdf';
+      case 'png':  return 'image/png';
+      case 'jpg': case 'jpeg': return 'image/jpeg';
+      case 'gif':  return 'image/gif';
+      case 'webp': return 'image/webp';
+      case 'svg':  return 'image/svg+xml';
+      case 'txt':  return 'text/plain';
+      case 'mp4':  return 'video/mp4';
+      case 'webm': return 'video/webm';
+      default:     return 'application/octet-stream';
+    }
+  };
+
+  const OFFICE_EXTS = ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'];
+  const INLINE_EXTS = ['pdf', 'txt', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'mp4', 'webm'];
+
   const downloadAndOpenFile = async (fileUrl, fileName, action) => {
     if (!fileUrl) return alert("No file available.");
-    
+
     const isBase64 = fileUrl.startsWith('data:');
     const fullUrl = isBase64 ? fileUrl : SERVER_URL + fileUrl;
-    
+    const ext = String(fileName || '').split('.').pop()?.toLowerCase();
+
     try {
       setOptionsModalVisible(false);
-      
-      if (action === 'view') {
-        const ext = fileName?.split('.').pop()?.toLowerCase();
-        const officeExts = ['xls', 'xlsx', 'doc', 'docx', 'ppt', 'pptx'];
 
-        if (['pdf', 'txt', 'jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
-            if (isBase64) {
-                const win = window.open();
-                if(win) win.document.write(`<iframe src="${fullUrl}" frameborder="0" style="border:0; top:0px; left:0px; bottom:0px; right:0px; width:100%; height:100%;" allowfullscreen></iframe>`);
-                return;
-            }
-            window.open(fullUrl, '_blank');
+      if (action === 'view') {
+        // Word / PowerPoint / Excel need an online viewer, which needs a
+        // public URL. A base64 file has none, so it downloads instead.
+        if (OFFICE_EXTS.includes(ext)) {
+          if (!isBase64) {
+            window.open(`https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(fullUrl)}`, '_blank');
             return;
-        } else if (!isBase64 && officeExts.includes(ext)) {
-          const googleViewerUrl = `https://docs.google.com/viewer?url=${encodeURIComponent(fullUrl)}&embedded=true`;
-          window.open(googleViewerUrl, '_blank');
+          }
+          alert('Word, PowerPoint and Excel files can\'t be previewed in the browser. Downloading it instead.');
+          action = 'download';
+        } else if (!INLINE_EXTS.includes(ext)) {
+          action = 'download';
+        } else if (isBase64) {
+          // Open the tab FIRST - a tab opened after an await is blocked as
+          // a pop-up - then point it at a blob URL. Writing the data: URL
+          // into an iframe is what produced the blank page: browsers refuse
+          // to navigate an iframe to a large data: URL.
+          const win = window.open('', '_blank');
+          if (!win) { alert('Please allow pop-ups to view this file.'); return; }
+          win.document.write('<title>Opening file</title><p style="font-family:sans-serif;padding:24px;color:#555">Opening file...</p>');
+
+          const res = await fetch(fullUrl);
+          const raw = await res.blob();
+          const blob = raw.type ? raw : new Blob([raw], { type: mimeFor(fileName) });
+          const objectUrl = URL.createObjectURL(blob);
+          win.location.href = objectUrl;
+          setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
           return;
         } else {
-          action = 'download'; 
+          window.open(fullUrl, '_blank');
+          return;
         }
       }
 
       if (action === 'download') {
         const res = await fetch(fullUrl);
-        const blob = await res.blob();
+        const raw = await res.blob();
+        const blob = raw.type ? raw : new Blob([raw], { type: mimeFor(fileName) });
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.style.display = 'none';
@@ -654,8 +690,9 @@ useEffect(() => {
         window.URL.revokeObjectURL(url);
         document.body.removeChild(a);
       }
-    } catch (err) { 
-      alert("Error downloading file."); 
+    } catch (err) {
+      console.error('Open/download failed:', err);
+      alert("Could not open this file. Please try downloading it instead.");
     }
   };
 
