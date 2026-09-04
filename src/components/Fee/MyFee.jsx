@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { IndianRupee, CalendarDays, Wallet, Info, CheckCircle2, Clock, Upload, X, CreditCard, Tag, History, Receipt, Eye, Download, BellRing, Zap, Send } from 'lucide-react';
+import { IndianRupee, CalendarDays, Wallet, Info, CheckCircle2, Clock, Upload, X, CreditCard, Tag, History, Receipt, Eye, Download, BellRing, Zap, Send, AlertTriangle } from 'lucide-react';
 import { API_BASE_URL } from '../../apiConfig';
 import { downloadDataUrl, downloadReceipt } from './paymentProof';
 
@@ -303,6 +303,17 @@ function FeeCard({ fee, category, payments, payCfg, user, student, academicYearI
   const paidFor    = (id) => mine.filter(p => p.status === 'paid'    && String(p.installment_id) === String(id)).reduce((s, p) => s + Number(p.amount || 0), 0);
   const pendingFor = (id) => mine.filter(p => p.status === 'pending' && String(p.installment_id) === String(id)).reduce((s, p) => s + Number(p.amount || 0), 0);
 
+  // ---- offline slip validation -------------------------------------
+  // An offline payment needs BOTH proofs before it can be submitted:
+  // the bank reference / UTR number AND the slip image. Blank or
+  // half-filled submissions are blocked.
+  const offRef   = (offline.reference_no || '').trim();
+  const hasRef   = offRef.length > 0;
+  const hasSlip  = !!offline.slip;
+  const proofOk  = hasRef && hasSlip;
+  const amountOk = offline.amount !== '' && Number(offline.amount) > 0;
+  const canSubmitOffline = amountOk && proofOk && !busy;
+
   const chooseMode = async (m) => {
     if (!allowModeChange || busy || m === mode) return;
     setBusy(true);
@@ -374,8 +385,15 @@ function FeeCard({ fee, category, payments, payCfg, user, student, academicYearI
     r.readAsDataURL(f);
   };
 
+  const clearSlip = () => setOffline(o => ({ ...o, slip: '' }));
+
   const submitOffline = async () => {
     if (!offline.amount || Number(offline.amount) <= 0) return alert('Enter a valid amount.');
+    // Re-check here as well, so the rule holds even if the button state is
+    // bypassed. Reference number AND slip image - both are required.
+    const refNo = (offline.reference_no || '').trim();
+    if (!refNo) return alert('Please enter the "Reference No / UTR / Receipt No" number of your payment.');
+    if (!offline.slip) return alert('Please upload the payment slip / screenshot.');
     setBusy(true);
     try {
       const res = await fetch(`${API_BASE_URL}/fees/pay/offline`, {
@@ -384,7 +402,7 @@ function FeeCard({ fee, category, payments, payCfg, user, student, academicYearI
           institutionId: user.institutionId, student_id: user.id,
           class_id: student?.class_id ?? null, plan_id: plan.id,
           installment_id: offline.installment_id ?? null, amount: Number(offline.amount),
-          slip_image: offline.slip || null, reference_no: offline.reference_no || null, note: offline.note || null
+          slip_image: offline.slip || null, reference_no: refNo || null, note: offline.note || null
         })
       });
       const j = await res.json().catch(() => ({}));
@@ -533,7 +551,7 @@ function FeeCard({ fee, category, payments, payCfg, user, student, academicYearI
 
       {offline.open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-lg border border-zinc-200 shadow-sm w-full max-w-md p-5">
+          <div className="bg-white rounded-lg border border-zinc-200 shadow-sm w-full max-w-md p-5 max-h-[90vh] overflow-y-auto custom-scrollbar">
             <div className="flex items-center justify-between mb-4">
               <h4 className="text-sm font-semibold text-zinc-900">Upload Payment Slip</h4>
               <button onClick={() => setOffline(o => ({ ...o, open: false }))} className="flex items-center justify-center size-8 rounded-md text-zinc-500 hover:text-zinc-700 hover:bg-zinc-100 transition-colors">
@@ -543,26 +561,55 @@ function FeeCard({ fee, category, payments, payCfg, user, student, academicYearI
             {payCfg.offline_instructions && (
               <p className="text-[11px] font-medium text-blue-800 bg-blue-50/60 border border-blue-100 rounded p-2.5 mb-4">{payCfg.offline_instructions}</p>
             )}
+
+            {/* Proof rule - shown up front so it isn't a surprise at the end */}
+            <div className={`flex items-start gap-2 rounded-md border p-2.5 mb-4 text-[11px] font-medium transition-colors ${proofOk ? 'text-emerald-800 bg-emerald-50/70 border-emerald-100' : 'text-amber-800 bg-amber-50/70 border-amber-100'}`}>
+              {proofOk
+                ? <CheckCircle2 className="size-4 shrink-0 mt-px text-emerald-600" />
+                : <AlertTriangle className="size-4 shrink-0 mt-px text-amber-600" />}
+              <span>
+                {proofOk
+                  ? 'Reference number and slip added. You can submit this payment for verification.'
+                  : 'Both are required: enter the Reference / UTR number and upload the payment slip.'}
+              </span>
+            </div>
+
             <div className="space-y-3">
               <Field label={`${plan.title || 'Fee'} - ${offline.label} - Amount`}>
                 <input type="number" min="0" value={offline.amount} onChange={e => setOffline(o => ({ ...o, amount: e.target.value }))}
                   className="w-full rounded-md border border-zinc-200 shadow-sm bg-white px-3 h-9 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40" />
+                {!amountOk && <p className="text-[10px] font-medium text-amber-600 mt-1">Enter the amount you paid.</p>}
               </Field>
-              <Field label="Reference / UTR (optional)">
+
+              <Field label="Reference No / UTR / Receipt No *">
                 <input value={offline.reference_no} onChange={e => setOffline(o => ({ ...o, reference_no: e.target.value }))} placeholder="Transaction reference"
-                  className="w-full rounded-md border border-zinc-200 shadow-sm bg-white px-3 h-9 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40" />
+                  className={`w-full rounded-md border shadow-sm bg-white px-3 h-9 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 ${hasRef ? 'border-zinc-200' : 'border-amber-300'}`} />
+                {!hasRef && <p className="text-[10px] font-medium text-amber-600 mt-1">Required - enter the transaction 'Reference No / UTR / Receipt No' number.</p>}
               </Field>
-              <Field label="Slip / Screenshot">
-                <label className="cursor-pointer inline-flex items-center justify-center gap-1.5 h-9 px-4 bg-white text-zinc-700 border border-zinc-200 shadow-sm rounded-md text-xs font-semibold hover:bg-zinc-50 transition-colors w-fit">
-                  <Upload className="size-3.5" /> {offline.slip ? 'Change image' : 'Choose image'}
-                  <input type="file" accept="image/*" onChange={onSlipFile} className="hidden" />
-                </label>
+
+              <Field label="Slip / Screenshot *">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <label className={`cursor-pointer inline-flex items-center justify-center gap-1.5 h-9 px-4 bg-white text-zinc-700 border shadow-sm rounded-md text-xs font-semibold hover:bg-zinc-50 transition-colors w-fit ${hasSlip ? 'border-zinc-200' : 'border-amber-300'}`}>
+                    <Upload className="size-3.5" /> {offline.slip ? 'Change image' : 'Choose image'}
+                    <input type="file" accept="image/*" onChange={onSlipFile} className="hidden" />
+                  </label>
+                  {offline.slip && (
+                    <button type="button" onClick={clearSlip}
+                      className="inline-flex items-center justify-center gap-1.5 h-9 px-3 bg-white text-zinc-600 border border-zinc-200 shadow-sm rounded-md text-xs font-semibold hover:text-red-600 hover:bg-red-50 transition-colors">
+                      <X className="size-3.5" /> Remove
+                    </button>
+                  )}
+                </div>
                 {offline.slip && <img src={offline.slip} alt="slip preview" className="mt-2 max-h-40 rounded-md border border-zinc-200 shadow-sm" />}
+                {!hasSlip && <p className="text-[10px] font-medium text-amber-600 mt-1">Required - attach the payment slip or screenshot.</p>}
                 <p className="text-[10px] font-medium text-zinc-400 mt-1">JPG/PNG - max 3 MB</p>
               </Field>
+
               <div className="flex justify-end gap-2 pt-4">
                 <button onClick={() => setOffline(o => ({ ...o, open: false }))} className="h-9 px-4 bg-white text-zinc-700 border border-zinc-200 shadow-sm rounded-md text-xs font-semibold hover:bg-zinc-50 transition-colors">Cancel</button>
-                <button onClick={submitOffline} disabled={busy} className="h-9 px-6 min-w-[120px] flex items-center justify-center bg-primary text-white rounded-md text-xs font-semibold hover:bg-primary/90 shadow-sm disabled:opacity-60 transition-colors">
+                <button onClick={submitOffline} disabled={!canSubmitOffline}
+                  title={!amountOk ? 'Enter the amount you paid.' : (!hasRef ? 'Enter the Reference / UTR number.' : (!hasSlip ? 'Upload the payment slip.' : ''))}
+                  className="h-9 px-6 min-w-[120px] flex items-center justify-center bg-primary text-white rounded-md text-xs font-semibold hover:bg-primary/90 shadow-sm transition-colors disabled:bg-zinc-200 disabled:text-zinc-400 disabled:hover:bg-zinc-200 disabled:cursor-not-allowed">
                   {busy ? 'Submitting...' : 'Submit for verification'}
                 </button>
               </div>

@@ -82,13 +82,13 @@ function StatusLine({ done, err, okText }) {
   return (
     <>
       {done && !err && (
-        <p className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700">
-          <CheckCircle2 className="size-4" /> {okText}
+        <p className="flex w-fit items-center gap-1.5 text-[11px] font-semibold text-emerald-700">
+          <CheckCircle2 className="size-4 shrink-0" /> {okText}
         </p>
       )}
       {err && (
-        <p className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-red-600">
-          <AlertTriangle className="size-4" /> {err}
+        <p className="flex w-fit items-center gap-1.5 text-[11px] font-semibold text-red-600">
+          <AlertTriangle className="size-4 shrink-0" /> {err}
         </p>
       )}
     </>
@@ -124,15 +124,15 @@ function FinalArchivePanel({ status, statusLoading, busy, err, again, setAgain, 
 
       <div className="text-[11px] text-amber-800 leading-relaxed space-y-1">{note}</div>
 
-      {/* freshness status */}
+      {/* freshness status - block-level so the button below always starts a new line */}
       {statusLoading ? (
-        <p className="inline-flex items-center gap-1.5 text-[11px] text-zinc-400">
-          <Loader2 className="size-3.5 animate-spin" /> Checking...
+        <p className="flex w-fit items-center gap-1.5 text-[11px] text-zinc-400">
+          <Loader2 className="size-3.5 shrink-0 animate-spin" /> Checking...
         </p>
       ) : fresh ? (
         <div className="flex flex-col gap-2">
-          <p className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700">
-            <CheckCircle2 className="size-4" /> Final archive saved{when ? ` on ${when}` : ''}.
+          <p className="flex w-fit items-center gap-1.5 text-[11px] font-semibold text-emerald-700">
+            <CheckCircle2 className="size-4 shrink-0" /> Final archive saved{when ? ` on ${when}` : ''}.
           </p>
           <label className="inline-flex items-center gap-2 cursor-pointer w-fit">
             <input type="checkbox" checked={again} onChange={e => setAgain(e.target.checked)}
@@ -141,25 +141,25 @@ function FinalArchivePanel({ status, statusLoading, busy, err, again, setAgain, 
           </label>
         </div>
       ) : stale ? (
-        <p className="inline-flex items-start gap-1.5 text-[11px] font-semibold text-amber-700">
+        <p className="flex items-start gap-1.5 text-[11px] font-semibold text-amber-700">
           <AlertTriangle className="size-4 shrink-0 mt-px" />
           New data has been added to this module since your last archive{when ? ` (${when})` : ''}. Please download it again so your saved copy stays current.
         </p>
       ) : (
-        <p className="inline-flex items-center gap-1.5 text-[11px] text-zinc-500">
-          <Info className="size-3.5" /> Not saved yet for this year.
+        <p className="flex w-fit items-center gap-1.5 text-[11px] text-zinc-500">
+          <Info className="size-3.5 shrink-0" /> Not saved yet for this year.
         </p>
       )}
 
       <button onClick={onDownload} disabled={!canDownload}
-        className="h-9 px-4 rounded-md bg-amber-600 hover:bg-amber-700 disabled:bg-zinc-200 disabled:text-zinc-400 text-white text-xs font-semibold inline-flex items-center gap-2 shadow-sm transition-colors disabled:cursor-not-allowed whitespace-nowrap">
-        {busy ? <Loader2 className="size-4 animate-spin" /> : (stale ? <RefreshCw className="size-4" /> : <Archive className="size-4" />)}
+        className="flex w-fit h-9 px-4 rounded-md bg-amber-600 hover:bg-amber-700 disabled:bg-zinc-200 disabled:text-zinc-400 text-white text-xs font-semibold items-center gap-2 shadow-sm transition-colors disabled:cursor-not-allowed whitespace-nowrap">
+        {busy ? <Loader2 className="size-4 shrink-0 animate-spin" /> : (stale ? <RefreshCw className="size-4 shrink-0" /> : <Archive className="size-4 shrink-0" />)}
         {busy ? 'Preparing...' : (stale ? 'Download again' : 'Download Final Archive (.xlsx)')}
       </button>
 
       {err && (
-        <p className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-red-600">
-          <AlertTriangle className="size-4" /> {err}
+        <p className="flex w-fit items-center gap-1.5 text-[11px] font-semibold text-red-600">
+          <AlertTriangle className="size-4 shrink-0" /> {err}
         </p>
       )}
     </div>

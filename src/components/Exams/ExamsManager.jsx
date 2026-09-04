@@ -32,6 +32,14 @@ const fmtIST = (val) => {
   });
 };
 
+// Format a mark without trailing decimals: 1.00 -> 1, 1.50 -> 1.5
+const fmtNum = (v) => {
+  if (v === null || v === undefined || v === '') return '';
+  const n = Number(v);
+  if (isNaN(n)) return String(v);
+  return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(2)));
+};
+
 export default function ExamsManager({ canManage }) {
   const { user } = useAuth();
   const [view, setView] = useState('list');     // list | create | submissions | grade
@@ -250,7 +258,7 @@ export default function ExamsManager({ canManage }) {
                   <td className="px-5 py-4">
                     <div className="flex flex-wrap gap-2 text-[10px] font-semibold">
                       <Pill icon={HelpCircle} color="primary" label={`${e.question_count} Qs`} />
-                      <Pill icon={CheckCircle2} color="emerald" label={`${e.total_marks} Marks`} />
+                      <Pill icon={CheckCircle2} color="emerald" label={`${fmtNum(e.total_marks)} Marks`} />
                       <Pill icon={Clock} color="amber" label={e.time_limit_mins > 0 ? `${e.time_limit_mins} min` : 'No limit'} />
                     </div>
                   </td>
@@ -334,7 +342,7 @@ function SubmissionsView({ exam, onBack, onGrade }) {
         <div className="p-4 sm:p-5 border-b border-zinc-100 flex flex-col sm:flex-row sm:items-center gap-4 justify-between bg-zinc-50/50">
           <div>
             <h2 className="font-semibold text-zinc-900 text-base">{exam.title}</h2>
-            <p className="text-[11px] text-zinc-500 font-medium mt-1">Student submissions | {exam.total_marks} total marks</p>
+            <p className="text-[11px] text-zinc-500 font-medium mt-1">Student submissions | {fmtNum(exam.total_marks)} total marks</p>
           </div>
           <div className="relative w-full sm:w-64 shrink-0">
             <Search className="size-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -385,8 +393,8 @@ function SubmissionsView({ exam, onBack, onGrade }) {
                       </span>
                     </td>
                     <td className="px-5 py-4 whitespace-nowrap">
-                      <div className="font-semibold text-zinc-700 text-sm">
-                        {s.status === 'graded' ? `${s.final_score} / ${exam.total_marks}` : '-'}
+                      <div className="font-semibold text-zinc-700 text-sm tabular-nums">
+                        {s.status === 'graded' ? `${fmtNum(s.final_score) || 0} / ${fmtNum(exam.total_marks)}` : '-'}
                       </div>
                     </td>
                     <td className="px-5 py-4 text-right">

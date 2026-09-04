@@ -53,6 +53,22 @@ const fmtTime = (t) => {
   return `${h12}:${m || '00'} ${ampm}`;
 };
 
+// A slot's start time as minutes past midnight, so meals order themselves
+// through the day (9:00 AM breakfast before 12:30 PM lunch) no matter what
+// order they were added in. Slots with no time set fall to the end.
+const timeRank = (t) => {
+  if (!t || typeof t !== 'string' || !t.includes(':')) return Number.POSITIVE_INFINITY;
+  const [h, m] = t.split(':');
+  const hh = parseInt(h, 10);
+  const mm = parseInt(m, 10);
+  if (isNaN(hh)) return Number.POSITIVE_INFINITY;
+  return hh * 60 + (isNaN(mm) ? 0 : mm);
+};
+
+// Sort is stable, so untimed slots keep the order the school listed them in.
+const sortSlotsByTime = (slots) =>
+  [...(slots || [])].sort((a, b) => timeRank(a.start_time) - timeRank(b.start_time));
+
 // Helpers for manual 12h time entry
 const parse24to12 = (t) => {
   if (!t) return { time: '09:00', period: 'AM' };
@@ -193,7 +209,7 @@ function MenuMeta({ meta }) {
 function SlotsTab({ data, fetchData, user, canEdit }) {
   const [slots, setSlots] = useState(() =>
     data.slots.length > 0
-      ? data.slots.map(s => {
+      ? sortSlotsByTime(data.slots).map(s => {
           const start = parse24to12(s.start_time);
           const end = parse24to12(s.end_time);
           return {
@@ -311,7 +327,7 @@ function SlotsTab({ data, fetchData, user, canEdit }) {
 
         <div className="flex flex-col-reverse sm:flex-row items-center justify-between gap-4 border-t border-zinc-100 pt-5 mt-2">
           <p className="text-[11px] text-zinc-400 text-center sm:text-left">
-            Removing a slot also clears its menu items. Times are optional.
+            Removing a slot also clears its menu items. Times are optional - the weekly menu orders meals by their start time.
           </p>
           
           <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto shrink-0">
@@ -335,6 +351,10 @@ function SlotsTab({ data, fetchData, user, canEdit }) {
 //  TAB 2 - Weekly Menu grid
 // =====================================================================
 function MenuTab({ data, fetchData, user, canEdit }) {
+  // Columns follow the clock, not the order the slots were created in, so
+  // a breakfast added after lunch still sits to the left of it.
+  const slots = useMemo(() => sortSlotsByTime(data.slots), [data.slots]);
+
   const initialCells = useMemo(() => {
     const map = {};
     data.menu.forEach(m => { map[`${m.slot_id}-${m.day_index}`] = m.items || ''; });
@@ -353,7 +373,7 @@ function MenuTab({ data, fetchData, user, canEdit }) {
 
   const handleSave = async () => {
     const entries = [];
-    data.slots.forEach(slot => {
+    slots.forEach(slot => {
       DAYS.forEach((_, dayIndex) => {
         entries.push({
           slot_id: slot.id,
@@ -376,7 +396,7 @@ function MenuTab({ data, fetchData, user, canEdit }) {
     setSaving(false);
   };
 
-  if (data.slots.length === 0) {
+  if (slots.length === 0) {
     return (
       <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center max-w-2xl mx-auto flex flex-col items-center">
         <AlertCircle className="text-amber-400 mb-3 size-10" />
@@ -401,7 +421,7 @@ function MenuTab({ data, fetchData, user, canEdit }) {
                 {day}
               </div>
               <div className="divide-y divide-zinc-100">
-                {data.slots.map(slot => {
+                {slots.map(slot => {
                   const Icon = slotIcon(slot.name);
                   const items = getCell(slot.id, dayIndex);
                   return (
@@ -447,7 +467,7 @@ function MenuTab({ data, fetchData, user, canEdit }) {
 
       <div className="bg-blue-50/50 border border-blue-100 rounded-md p-4 text-[11px] font-medium text-blue-700 leading-relaxed flex gap-2">
         <AlertCircle className="size-4 shrink-0 text-blue-500" />
-        <p>Type the food items for each meal, separated by commas. Leave a cell empty if there's no meal scheduled for that slot on that day.</p>
+        <p>Type the food items for each meal, separated by commas. Leave a cell empty if there's no meal scheduled for that slot on that day. Meals are shown in start-time order, from morning to night.</p>
       </div>
 
       <MenuMeta meta={data.menuMeta} />
@@ -459,7 +479,7 @@ function MenuTab({ data, fetchData, user, canEdit }) {
               <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider sticky left-0 bg-zinc-50/95 backdrop-blur z-10 border-b border-r border-zinc-100 w-24">
                 Day
               </th>
-              {data.slots.map(slot => {
+              {slots.map(slot => {
                 const Icon = slotIcon(slot.name);
                 return (
                   <th key={slot.id} className="p-4 text-center border-b border-r border-zinc-100 last:border-r-0 min-w-[200px]">
@@ -486,7 +506,7 @@ function MenuTab({ data, fetchData, user, canEdit }) {
                   <div>{DAYS_SHORT[dayIndex]}</div>
                   <div className="text-[10px] font-medium text-zinc-400 mt-0.5">{day}</div>
                 </td>
-                {data.slots.map(slot => (
+                {slots.map(slot => (
                   <td key={slot.id} className="p-3 border-r border-zinc-100 last:border-r-0 align-top">
                     <textarea
                       value={getCell(slot.id, dayIndex)}
@@ -522,7 +542,7 @@ const GUIDES = {
       ['2 \u00b7 Typing items', 'List the items separated by commas \u2014 e.g. Rice, Dal, Curd, Banana. Leave a cell empty if there\u2019s no meal for that slot that day (it shows as \u201cNot planned\u201d to everyone else).'],
       ['3 \u00b7 Save', 'Nothing is stored until you press Save Weekly Menu \u2014 it saves the whole grid in one go.'],
       ['4 \u00b7 Who sees it', 'Students, parents and staff see this same menu read-only, with a \u201cLast updated by\u201d line so they know it\u2019s current.'],
-      ['5 \u00b7 Changing the meals themselves', 'The columns come from the Meal Slots tab \u2014 add, rename or reorder slots there and this grid follows.'],
+      ['5 \u00b7 Changing the meals themselves', 'The columns come from the Meal Slots tab \u2014 add or rename slots there and this grid follows. They always run in start-time order, morning first.'],
     ],
     note: 'Meal times shown on each column come from the slot setup and are optional. Keep the menu current \u2014 the audit line tells everyone when you last changed it.'
   },
@@ -532,7 +552,7 @@ const GUIDES = {
       ['1 \u00b7 Define your meals', 'Add one to four slots \u2014 Breakfast, Lunch, Snacks, Dinner, whatever your school serves. Each slot needs a name.'],
       ['2 \u00b7 Times are optional', 'Set a start and end time in 12-hour format if you want them shown on the menu; leave them blank if not.'],
       ['3 \u00b7 Add & remove', 'Add Meal Slot creates another; the trash icon removes one. Removing a slot also clears its menu items across the whole week.'],
-      ['4 \u00b7 Order', 'Slots appear left-to-right on the Weekly Menu in the order you list them here.'],
+      ['4 \u00b7 Order', 'You don\u2019t have to add meals in order. The Weekly Menu sorts them by start time, so a 9:00 AM breakfast always sits before a 12:30 PM lunch. Slots with no time set go last.'],
       ['5 \u00b7 Save', 'Save Meal Slots writes them, and the Weekly Menu grid immediately uses them as its columns.'],
     ],
     note: 'Try to settle the slots at the start of the term \u2014 renaming or removing one changes what everyone sees on the weekly menu straight away.'
@@ -540,7 +560,7 @@ const GUIDES = {
   view: {
     title: 'Weekly Menu',
     steps: [
-      ['1 \u00b7 Your week of meals', 'Each card is a day. Inside it, every meal slot (Breakfast, Lunch\u2026) shows what\u2019s planned for that day.'],
+      ['1 \u00b7 Your week of meals', 'Each card is a day. Inside it, every meal slot (Breakfast, Lunch\u2026) shows what\u2019s planned for that day, in the order they\u2019re served.'],
       ['2 \u00b7 Reading it', '\u201cNot planned\u201d means nothing is scheduled for that meal that day. If the school set meal times, they show beside each slot.'],
       ['3 \u00b7 Always current', 'The \u201cLast updated\u201d line tells you when the kitchen last changed the menu, and by whom.'],
     ],

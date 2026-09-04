@@ -121,11 +121,17 @@ export default function DashboardHeader({ onMenuClick }) {
               <span className="text-accent">Edz</span>
             </p>
           </div>
-          <img
-            src={smartedzLogo}
-            alt="SmartEdz"
-            className="h-12 sm:h-16 w-auto object-contain shrink-0"
-          />
+          <a
+  href="https://smartedz.com/"
+  target="_blank"
+  rel="noopener noreferrer"
+>
+  <img
+    src={smartedzLogo}
+    alt="SmartEdz"
+    className="h-12 sm:h-16 w-auto object-contain shrink-0"
+  />
+</a>
         </div>
 
       </div>

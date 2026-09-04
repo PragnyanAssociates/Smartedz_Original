@@ -3,10 +3,10 @@ import { API_BASE_URL, SERVER_URL } from "../../apiConfig";
 import { useAuth } from "../../context/AuthContext";
 import { usePermissions } from "../../Screens/PermissionsContext";
 import {
-  Folder, Edit, Trash2, Download, ExternalLink, Plus,
+  Folder, FolderOpen, Edit, Trash2, Download, ExternalLink, Plus,
   Search, X, FileText, Video, MonitorPlay, FileSpreadsheet, Link,
   Loader2, ChevronDown, BookOpen, Save, Eye, User, Clock,
-  HelpCircle, ShieldCheck
+  HelpCircle, ShieldCheck, Info
 } from 'lucide-react';
 
 // Render a UTC timestamp (Railway stores UTC) as IST for display.
@@ -37,6 +37,126 @@ const getCardAesthetics = (type) => {
   }
 };
 
+// =====================================================================
+//  File helpers - shared by the card and the detail modal.
+//
+//  A material can carry a file, an external link, or BOTH, so the card
+//  only opens the detail view and every action lives inside it.
+// =====================================================================
+const isDataUrl = (p) => !!p && String(p).startsWith('data:');
+
+const dataMime = (p) => {
+  const m = /^data:([^;,]+)/i.exec(String(p || ''));
+  return m ? m[1].toLowerCase() : '';
+};
+
+// What kind of file is this? Drives whether a browser preview is possible.
+const fileKind = (filePath) => {
+  const p = String(filePath || '');
+  if (!p) return 'none';
+  if (isDataUrl(p)) {
+    const mime = dataMime(p);
+    if (mime === 'application/pdf') return 'pdf';
+    if (mime.startsWith('image/')) return 'image';
+    if (mime.startsWith('video/')) return 'video';
+    if (mime.startsWith('audio/')) return 'audio';
+    if (mime.startsWith('text/')) return 'text';
+    if (/word|excel|spreadsheet|presentation|powerpoint|officedocument|msword|ms-excel|ms-powerpoint|opendocument/.test(mime)) return 'office';
+    return 'other';
+  }
+  if (/\.pdf(\?|$)/i.test(p)) return 'pdf';
+  if (/\.(png|jpe?g|gif|webp|bmp|svg)(\?|$)/i.test(p)) return 'image';
+  if (/\.(mp4|webm|ogg|mov|m4v)(\?|$)/i.test(p)) return 'video';
+  if (/\.(mp3|wav|m4a|aac)(\?|$)/i.test(p)) return 'audio';
+  if (/\.(docx?|xlsx?|pptx?|odt|ods|odp)(\?|$)/i.test(p)) return 'office';
+  if (/\.(txt|csv|md|json)(\?|$)/i.test(p)) return 'text';
+  return 'other';
+};
+
+const fileUrlOf = (item) =>
+  isDataUrl(item.file_path) ? item.file_path : `${SERVER_URL.replace('/api', '')}${item.file_path}`;
+
+// Absolute URL, so an online Office viewer has something it can fetch.
+const absoluteUrl = (u) => {
+  if (!u) return '';
+  if (/^https?:\/\//i.test(u)) return u;
+  if (typeof window === 'undefined') return u;
+  return `${window.location.origin}${u.startsWith('/') ? '' : '/'}${u}`;
+};
+
+// The Microsoft / Google viewers fetch the file from the internet, so a
+// localhost or private-network address can never work.
+const isReachableOnline = (u) =>
+  /^https?:\/\//i.test(u) &&
+  !/^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])/i.test(u) &&
+  !/^https?:\/\/(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(u);
+
+// Office files can only be previewed when they sit on a public URL.
+const canPreviewFile = (item) => {
+  const kind = fileKind(item.file_path);
+  if (kind === 'none') return false;
+  if (kind === 'office') return !isDataUrl(item.file_path) && isReachableOnline(absoluteUrl(fileUrlOf(item)));
+  return kind !== 'other';
+};
+
+const downloadMaterialFile = (item) => {
+  const url = fileUrlOf(item);
+  if (isDataUrl(item.file_path)) {
+    fetch(url)
+      .then(res => res.blob())
+      .then(blob => {
+        const blobUrl = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.setAttribute('download', item.title || 'download');
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(blobUrl);
+      })
+      .catch(() => alert('Failed to prepare file for download.'));
+  } else {
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', item.title || 'download');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+};
+
+const viewMaterialFile = (item) => {
+  const kind = fileKind(item.file_path);
+  const raw = fileUrlOf(item);
+
+  // Word / PowerPoint / Excel need an online viewer, which needs a public
+  // URL. Anything else we can open directly.
+  if (kind === 'office') {
+    const abs = absoluteUrl(raw);
+    if (!isDataUrl(item.file_path) && isReachableOnline(abs)) {
+      window.open(`https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(abs)}`, '_blank');
+      return;
+    }
+    downloadMaterialFile(item);
+    return;
+  }
+
+  if (isDataUrl(item.file_path)) {
+    const win = window.open('', '_blank');
+    if (!win) return;
+    win.document.body.innerHTML = '<div style="font-family: sans-serif; padding: 20px; text-align: center;">Loading document...</div>';
+    fetch(raw)
+      .then(res => res.blob())
+      .then(blob => { win.location.href = URL.createObjectURL(blob); })
+      .catch(() => {
+        win.document.body.innerHTML = '<div style="font-family: sans-serif; padding: 20px; color: red; text-align: center;">Failed to load document.</div>';
+      });
+    return;
+  }
+
+  window.open(absoluteUrl(raw), '_blank');
+};
+
 export default function TeacherAdminMaterialsScreen() {
   const { user } = useAuth();
 
@@ -49,6 +169,7 @@ export default function TeacherAdminMaterialsScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [editingMaterial, setEditingMaterial] = useState(null);
+  const [viewingMaterial, setViewingMaterial] = useState(null);
   
   // List filters (client-side, over the already-loaded materials). '' = All.
   const [classFilter, setClassFilter] = useState("");
@@ -87,6 +208,7 @@ export default function TeacherAdminMaterialsScreen() {
     try {
       await fetch(`${API_BASE_URL}/admin/study-materials/${id}`, { method: 'DELETE' });
       setMaterials((prev) => prev.filter((m) => m.id !== id));
+      setViewingMaterial(prev => (prev && prev.id === id ? null : prev));
     } catch (error) { alert("Failed to delete."); }
   };
 
@@ -171,21 +293,21 @@ export default function TeacherAdminMaterialsScreen() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
             {filteredMaterials.map((item) => {
               const aesthetics = getCardAesthetics(item.material_type);
-              const isBase64 = item.file_path && String(item.file_path).startsWith('data:');
-              const fileUrl = isBase64 ? item.file_path : `${SERVER_URL.replace('/api','')}${item.file_path}`;
-              
+              const hasFile = !!item.file_path;
+              const hasLink = !!item.external_link;
+
               return (
                 <div key={item.id} className="group bg-white rounded-lg ring-1 ring-black/5 shadow-sm flex flex-col hover:ring-primary/30 hover:shadow-md transition-all overflow-hidden relative">
 
                   {/* Floating Action Buttons */}
                   <div className="absolute top-4 right-4 flex gap-1.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity z-10">
                     {(canEdit || isAdmin) && (
-                      <button onClick={() => openModal(item)} className="size-7 bg-white hover:bg-zinc-50 text-zinc-500 hover:text-primary rounded-md shadow-sm ring-1 ring-black/5 flex items-center justify-center transition-colors">
+                      <button onClick={() => openModal(item)} className="size-7 bg-white hover:bg-zinc-50 text-zinc-500 hover:text-primary rounded-md shadow-sm ring-1 ring-black/5 flex items-center justify-center transition-colors" title="Edit">
                         <Edit className="size-3.5"/>
                       </button>
                     )}
                     {(canDelete || isAdmin) && (
-                      <button onClick={() => handleDelete(item.id)} className="size-7 bg-white hover:bg-zinc-50 text-zinc-500 hover:text-red-600 rounded-md shadow-sm ring-1 ring-black/5 flex items-center justify-center transition-colors">
+                      <button onClick={() => handleDelete(item.id)} className="size-7 bg-white hover:bg-zinc-50 text-zinc-500 hover:text-red-600 rounded-md shadow-sm ring-1 ring-black/5 flex items-center justify-center transition-colors" title="Delete">
                         <Trash2 className="size-3.5"/>
                       </button>
                     )}
@@ -234,75 +356,19 @@ export default function TeacherAdminMaterialsScreen() {
 
                     {item.description && <p className="text-xs text-zinc-500 line-clamp-2 mb-4 leading-relaxed">{item.description}</p>}
 
-                    <div className="mt-auto pt-4 border-t border-zinc-100 flex gap-2">
-                      {item.file_path ? (
-                        <>
-                          <button
-                            onClick={() => {
-                              if (isBase64) {
-                                const win = window.open('', '_blank');
-                                if (win) {
-                                  win.document.body.innerHTML = '<div style="font-family: sans-serif; padding: 20px; text-align: center;">Loading document...</div>';
-                                  fetch(fileUrl)
-                                    .then(res => res.blob())
-                                    .then(blob => {
-                                      const blobUrl = URL.createObjectURL(blob);
-                                      win.location.href = blobUrl;
-                                    })
-                                    .catch(() => {
-                                      win.document.body.innerHTML = '<div style="font-family: sans-serif; padding: 20px; color: red; text-align: center;">Failed to load document.</div>';
-                                    });
-                                }
-                              } else {
-                                const isOfficeFile = item.file_path.match(/\.(xlsx|xls|doc|docx|ppt|pptx)$/i);
-                                const viewUrl = isOfficeFile
-                                  ? `https://docs.google.com/viewer?url=${encodeURIComponent(fileUrl)}&embedded=true`
-                                  : fileUrl;
-                                window.open(viewUrl, "_blank");
-                              }
-                            }}
-                            className="flex-1 h-9 bg-white hover:bg-zinc-50 text-zinc-700 font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 ring-1 ring-inset ring-zinc-200 shadow-sm transition-colors"
-                          >
-                            <Eye className="size-3.5" /> View
-                          </button>
-
-                          <button
-                            onClick={(e) => {
-                              e.preventDefault();
-                              if (isBase64) {
-                                fetch(fileUrl)
-                                  .then(res => res.blob())
-                                  .then(blob => {
-                                    const blobUrl = URL.createObjectURL(blob);
-                                    const link = document.createElement('a');
-                                    link.href = blobUrl;
-                                    link.setAttribute('download', item.title || 'download');
-                                    document.body.appendChild(link);
-                                    link.click();
-                                    document.body.removeChild(link);
-                                    URL.revokeObjectURL(blobUrl);
-                                  })
-                                  .catch(() => alert("Failed to prepare file for download."));
-                              } else {
-                                const link = document.createElement('a');
-                                link.href = fileUrl;
-                                link.setAttribute('download', item.title || 'download');
-                                document.body.appendChild(link);
-                                link.click();
-                                document.body.removeChild(link);
-                              }
-                            }}
-                            className="flex-1 h-9 bg-primary hover:bg-primary/90 text-white font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 shadow-sm transition-colors"
-                          >
-                            <Download className="size-3.5" /> Download
-                          </button>
-                        </>
-                      ) : item.external_link ? (
-                        <button onClick={() => window.open(item.external_link, "_blank")}
-                          className="w-full h-9 bg-white hover:bg-zinc-50 text-zinc-700 font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 ring-1 ring-inset ring-zinc-200 shadow-sm transition-colors">
-                          <ExternalLink className="size-3.5" /> Open Link
-                        </button>
-                      ) : null}
+                    {/* One Open button - everything this material carries is
+                        listed inside, so a file AND a link both show up. */}
+                    <div className="mt-auto pt-4 border-t border-zinc-100 space-y-2">
+                      <button onClick={() => setViewingMaterial(item)}
+                        className="w-full h-9 bg-primary hover:bg-primary/90 text-white font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 shadow-sm transition-colors">
+                        <FolderOpen className="size-3.5" /> Open
+                      </button>
+                      <p className="text-[10px] font-medium text-zinc-400 text-center">
+                        {hasFile && hasLink ? 'File and link attached'
+                          : hasFile ? 'File attached'
+                          : hasLink ? 'Link attached'
+                          : 'Details only'}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -311,6 +377,10 @@ export default function TeacherAdminMaterialsScreen() {
           </div>
         )}
       </div>
+
+      {viewingMaterial && (
+        <MaterialViewerModal item={viewingMaterial} onClose={() => setViewingMaterial(null)} />
+      )}
 
       {isModalVisible && (
         <MaterialFormModal
@@ -321,6 +391,118 @@ export default function TeacherAdminMaterialsScreen() {
           dbSubjects={dbSubjects}
         />
       )}
+    </div>
+  );
+}
+
+// =====================================================================
+//  MaterialViewerModal - the "Open" view.
+//  Shows the full details (no clamped description) and every action the
+//  material actually has: View, Download, Open Link.
+// =====================================================================
+function MaterialViewerModal({ item, onClose }) {
+  const aesthetics = getCardAesthetics(item.material_type);
+  const hasFile = !!item.file_path;
+  const hasLink = !!item.external_link;
+  const kind = fileKind(item.file_path);
+  const previewable = hasFile && canPreviewFile(item);
+  const isOffice = kind === 'office';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={onClose}>
+      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg max-h-[90vh] overflow-y-auto custom-scrollbar shadow-xl animate-in fade-in zoom-in-95 duration-200"
+        onClick={e => e.stopPropagation()}>
+
+        <div className="p-5 border-b border-zinc-100 flex items-start justify-between gap-3 bg-zinc-50/50 rounded-t-lg sticky top-0">
+          <div className="flex items-start gap-3 min-w-0">
+            <div className={`size-10 rounded-lg flex items-center justify-center shrink-0 ring-1 ring-inset ${aesthetics.bg}`}>
+              {aesthetics.icon}
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-base font-semibold text-zinc-900 leading-tight">{item.title}</h2>
+              <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">{item.material_type}</span>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-zinc-400 hover:text-zinc-700 transition-colors p-1.5 hover:bg-zinc-100 rounded-md shrink-0">
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          {(item.uploaded_by_name || item.created_at) && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-zinc-500">
+              {item.uploaded_by_name && (
+                <span className="inline-flex items-center gap-1"><User className="size-3 shrink-0" /> {item.uploaded_by_name}</span>
+              )}
+              {item.created_at && (
+                <span className="inline-flex items-center gap-1"><Clock className="size-3 shrink-0" /> {fmtIST(item.created_at)}</span>
+              )}
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-1.5">
+            {(item.className || item.section) && (
+              <span className="text-[10px] font-semibold uppercase tracking-wider bg-zinc-100 text-zinc-600 px-2 py-1 rounded">
+                {item.className} {item.section}
+              </span>
+            )}
+            {item.subject_name && (
+              <span className="text-[10px] font-semibold uppercase tracking-wider bg-zinc-100 text-zinc-600 px-2 py-1 rounded">
+                {item.subject_name}
+              </span>
+            )}
+          </div>
+
+          {item.description && (
+            <div>
+              <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1.5">Description</p>
+              <p className="text-sm text-zinc-700 leading-relaxed whitespace-pre-wrap">{item.description}</p>
+            </div>
+          )}
+
+          <div className="border-t border-zinc-100 pt-4 space-y-2">
+            <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Open this material</p>
+
+            {!hasFile && !hasLink && (
+              <p className="text-xs text-zinc-400 italic">No file or link was attached to this material.</p>
+            )}
+
+            {hasFile && previewable && (
+              <button onClick={() => viewMaterialFile(item)}
+                className="w-full h-10 bg-white hover:bg-zinc-50 text-zinc-700 font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 ring-1 ring-inset ring-zinc-200 shadow-sm transition-colors">
+                <Eye className="size-3.5" /> View file
+              </button>
+            )}
+
+            {hasFile && (
+              <button onClick={() => downloadMaterialFile(item)}
+                className="w-full h-10 bg-primary hover:bg-primary/90 text-white font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 shadow-sm transition-colors">
+                <Download className="size-3.5" /> Download file
+              </button>
+            )}
+
+            {hasLink && (
+              <button onClick={() => window.open(item.external_link, '_blank', 'noopener')}
+                className="w-full h-10 bg-white hover:bg-zinc-50 text-sky-700 font-semibold text-xs rounded-md flex justify-center items-center gap-1.5 ring-1 ring-inset ring-sky-200 shadow-sm transition-colors">
+                <ExternalLink className="size-3.5" /> Open link
+              </button>
+            )}
+
+            {hasLink && (
+              <p className="text-[10px] text-zinc-400 break-all px-1">{item.external_link}</p>
+            )}
+
+            {hasFile && isOffice && !previewable && (
+              <div className="rounded-md bg-blue-50/60 ring-1 ring-blue-100 p-3 flex gap-2">
+                <Info className="size-4 text-blue-500 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-blue-800 leading-relaxed">
+                  Word, PowerPoint and Excel files can't be previewed in the browser from here. Download it and it will open in Office on your device.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -451,6 +633,7 @@ const MaterialFormModal = ({ material, onClose, onSave, dbClasses, dbSubjects })
                 <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">File Upload (Max 10MB)</label>
                 <input type="file" onChange={e => setFile(e.target.files[0])}
                   className="block w-full text-sm text-zinc-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-zinc-100 file:text-zinc-700 hover:file:bg-zinc-200 cursor-pointer border border-zinc-200 rounded-md bg-white shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 h-9 leading-9" />
+                <p className="text-[10px] font-medium text-zinc-400">A material can carry a file and a link together - both appear when it's opened.</p>
               </div>
 
               <div className="md:col-span-2">
@@ -502,21 +685,21 @@ const GUIDES = {
     title: 'Study Materials',
     steps: [
       ['1 \u00b7 What this is', 'A shared library of resources for your classes \u2014 notes, presentations, video lectures, worksheets and links, each tagged by class, subject and type.'],
-      ['2 \u00b7 Add material', 'Add Material opens the form: give it a title, pick a class (required) and optional subject, choose a type, then either upload a file (up to 10 MB) or paste an external link.'],
-      ['3 \u00b7 View & download', 'On a card, View opens the resource (Office files preview in Google\u2019s viewer) and Download saves it. A link-only material shows Open Link instead.'],
+      ['2 \u00b7 Add material', 'Add Material opens the form: give it a title, pick a class (required) and optional subject, choose a type, then attach a file (up to 10 MB), paste an external link, or both.'],
+      ['3 \u00b7 Open a material', 'Open on a card shows the full description and everything attached \u2014 View file, Download file and Open link, whichever that material has.'],
       ['4 \u00b7 Find material', 'Search by title, subject, class or uploader, and narrow with the Class and Subject filters.'],
       ['5 \u00b7 Edit & delete', 'Hover a card for the edit and delete actions. Each card shows who uploaded it and when.'],
     ],
-    note: 'Uploads are capped at 10 MB per file. Adding, editing and deleting depend on your Study Materials permissions.'
+    note: 'PDFs, images and videos preview in the browser. Word, PowerPoint and Excel files download and open in Office. Uploads are capped at 10 MB per file.'
   },
   view: {
     title: 'Study Materials',
     steps: [
-      ['1 \u00b7 Browse resources', 'Each card is a resource for a class \u2014 notes, presentations, videos, worksheets or links \u2014 tagged by class, subject and type.'],
-      ['2 \u00b7 View & download', 'View opens the resource and Download saves it. A link-only material shows Open Link instead.'],
+      ['1 \u00b7 Browse resources', 'Each card is a resource for your class \u2014 notes, presentations, videos, worksheets or links \u2014 tagged by class, subject and type.'],
+      ['2 \u00b7 Open a material', 'Open shows the full description and everything attached: View file, Download file and Open link, whichever that material has.'],
       ['3 \u00b7 Find material', 'Search by title, subject or class, and use the Class and Subject filters to narrow the list.'],
     ],
-    note: 'This is a read-only view \u2014 materials are added and managed by teachers and staff.'
+    note: 'PDFs, images and videos preview in the browser. Word, PowerPoint and Excel files download and open in Office.'
   }
 };
 

@@ -3,7 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
-  ArrowLeft, Loader2, Save, Lock, RefreshCw, AlertTriangle, Info, Search, ChevronDown, ArrowUpDown
+  ArrowLeft, Loader2, Save, Lock, RefreshCw, AlertTriangle, Info, Search, ChevronDown, ArrowUpDown, Download
 } from 'lucide-react';
 
 // =====================================================================
@@ -30,6 +30,10 @@ import {
 //
 //  Marks are scoped to the active academic year by the backend. Students
 //  are shown roll-wise by default, with an optional sort by total.
+//
+//  DOWNLOAD: the sheet on screen (for the selected exam type only) can be
+//  saved as an image. It unlocks only once that exam has saved marks and
+//  there is nothing left unsaved, so a download always matches the server.
 // =====================================================================
 
 // Format a numeric mark without trailing decimals: 20.00 -> 20, 19.50 -> 19.5
@@ -46,6 +50,224 @@ const rollNum = (s) => {
   return isNaN(n) ? Number.POSITIVE_INFINITY : n;
 };
 
+// =====================================================================
+//  Marks sheet -> PNG
+//  Paints the same grid the screen shows (heading block, column headers
+//  with teacher + max, one row per student, class total row) onto a
+//  canvas and downloads it.
+// =====================================================================
+const SHEET_PAD   = 28;
+const SHEET_ROW_H = 34;
+const SHEET_HEAD_H = 64;
+const SHEET_SCALE = 2;
+
+const SC = {
+  primary: '#18469A',
+  primarySoft: '#F1F5FB',
+  t900: '#18181B',
+  t700: '#3F3F46',
+  t500: '#71717A',
+  t400: '#A1A1AA',
+  border: '#E4E4E7',
+  line: '#F4F4F5',
+  head: '#FAFAFA'
+};
+
+const SF = (weight, size) =>
+  `${weight} ${size}px ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif`;
+
+function ellipsize(ctx, text, font, maxW) {
+  ctx.font = font;
+  const s = String(text ?? '');
+  if (!s) return '';
+  if (ctx.measureText(s).width <= maxW) return s;
+  let out = s;
+  while (out.length > 1 && ctx.measureText(`${out}...`).width > maxW) out = out.slice(0, -1);
+  return `${out}...`;
+}
+
+// columns: [{ label, sub, sub2, align, min, max, tint }]
+// rows:    [[cell, cell, ...], ...]
+function renderMarksSheet({ title, meta, columns, rows, footerRow, note }) {
+  const scratch = document.createElement('canvas').getContext('2d');
+
+  // ---- column widths ------------------------------------------------
+  const widths = columns.map((c, ci) => {
+    let w = 0;
+    scratch.font = SF(700, 12); w = Math.max(w, scratch.measureText(c.label || '').width);
+    scratch.font = SF(500, 9);  w = Math.max(w, scratch.measureText(c.sub || '').width);
+    scratch.font = SF(600, 9);  w = Math.max(w, scratch.measureText(c.sub2 || '').width);
+    scratch.font = SF(600, 13);
+    rows.forEach(r => { w = Math.max(w, scratch.measureText(String(r[ci] ?? '')).width); });
+    if (footerRow) w = Math.max(w, scratch.measureText(String(footerRow[ci] ?? '')).width);
+    return Math.min(Math.max(Math.ceil(w) + 26, c.min || 84), c.max || 280);
+  });
+  const tableW = widths.reduce((a, b) => a + b, 0);
+  const W = tableW + SHEET_PAD * 2;
+
+  // ---- height -------------------------------------------------------
+  let y = SHEET_PAD;
+  const titleTop = y;
+  y += 30;
+  const metaTop = y;
+  y += meta.length * 16 + 14;
+  const tableTop = y;
+  y += SHEET_HEAD_H + rows.length * SHEET_ROW_H + (footerRow ? 40 : 0);
+  const tableBottom = y;
+  y += note ? 26 : 8;
+  const H = y + SHEET_PAD;
+
+  // ---- paint --------------------------------------------------------
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(W * SHEET_SCALE);
+  canvas.height = Math.round(H * SHEET_SCALE);
+  const ctx = canvas.getContext('2d');
+  ctx.scale(SHEET_SCALE, SHEET_SCALE);
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, W, H);
+
+  // heading
+  ctx.textAlign = 'left';
+  ctx.fillStyle = SC.t900;
+  ctx.font = SF(700, 20);
+  ctx.fillText(title, SHEET_PAD, titleTop);
+  ctx.font = SF(500, 11);
+  ctx.fillStyle = SC.t500;
+  meta.forEach((line, i) => ctx.fillText(line, SHEET_PAD, metaTop + i * 16));
+
+  // column headers
+  const x0 = SHEET_PAD;
+  ctx.fillStyle = SC.head;
+  ctx.fillRect(x0, tableTop, tableW, SHEET_HEAD_H);
+  let cx = x0;
+  columns.forEach((c, ci) => {
+    const w = widths[ci];
+    if (c.tint) { ctx.fillStyle = SC.primarySoft; ctx.fillRect(cx, tableTop, w, SHEET_HEAD_H); }
+    const center = c.align === 'center';
+    const tx = center ? cx + w / 2 : cx + 12;
+    ctx.textAlign = center ? 'center' : 'left';
+    const inner = w - 20;
+    const hasSub = !!(c.sub || c.sub2);
+    ctx.fillStyle = c.tint ? SC.primary : SC.t700;
+    ctx.font = SF(700, 12);
+    ctx.fillText(ellipsize(ctx, c.label, SF(700, 12), inner), tx, tableTop + (hasSub ? 14 : SHEET_HEAD_H / 2 - 7));
+    if (c.sub) {
+      ctx.fillStyle = SC.t400;
+      ctx.font = SF(500, 9);
+      ctx.fillText(ellipsize(ctx, c.sub, SF(500, 9), inner), tx, tableTop + 31);
+    }
+    if (c.sub2) {
+      ctx.fillStyle = SC.primary;
+      ctx.font = SF(600, 9);
+      ctx.fillText(ellipsize(ctx, c.sub2, SF(600, 9), inner), tx, tableTop + 45);
+    }
+    cx += w;
+  });
+  ctx.strokeStyle = SC.border;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x0, tableTop + SHEET_HEAD_H - 0.5);
+  ctx.lineTo(x0 + tableW, tableTop + SHEET_HEAD_H - 0.5);
+  ctx.stroke();
+
+  // body rows
+  let ry = tableTop + SHEET_HEAD_H;
+  rows.forEach((row, ri) => {
+    let bx = x0;
+    columns.forEach((c, ci) => {
+      const w = widths[ci];
+      if (c.tint) { ctx.fillStyle = SC.primarySoft; ctx.fillRect(bx, ry, w, SHEET_ROW_H); }
+      const center = c.align === 'center';
+      const tx = center ? bx + w / 2 : bx + 12;
+      ctx.textAlign = center ? 'center' : 'left';
+      ctx.fillStyle = c.tint ? SC.primary : (ci <= 1 ? SC.t900 : SC.t700);
+      const font = SF(c.tint || ci <= 1 ? 700 : 500, 13);
+      ctx.font = font;
+      ctx.fillText(ellipsize(ctx, row[ci] ?? '', font, w - 20), tx, ry + 10);
+      bx += w;
+    });
+    if (ri < rows.length - 1) {
+      ctx.strokeStyle = SC.line;
+      ctx.beginPath();
+      ctx.moveTo(x0, ry + SHEET_ROW_H - 0.5);
+      ctx.lineTo(x0 + tableW, ry + SHEET_ROW_H - 0.5);
+      ctx.stroke();
+    }
+    ry += SHEET_ROW_H;
+  });
+
+  // class total row
+  if (footerRow) {
+    ctx.fillStyle = SC.head;
+    ctx.fillRect(x0, ry, tableW, 40);
+    let fx = x0;
+    columns.forEach((c, ci) => {
+      const w = widths[ci];
+      if (c.tint) { ctx.fillStyle = '#E7EDF7'; ctx.fillRect(fx, ry, w, 40); }
+      const center = c.align === 'center';
+      const tx = center ? fx + w / 2 : fx + 12;
+      ctx.textAlign = center ? 'center' : 'left';
+      ctx.fillStyle = c.tint ? SC.primary : SC.t900;
+      const font = SF(700, 13);
+      ctx.font = font;
+      ctx.fillText(ellipsize(ctx, footerRow[ci] ?? '', font, w - 20), tx, ry + 13);
+      fx += w;
+    });
+    ctx.strokeStyle = SC.border;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x0, ry + 1);
+    ctx.lineTo(x0 + tableW, ry + 1);
+    ctx.stroke();
+    ry += 40;
+  }
+
+  // column separators + outline
+  ctx.strokeStyle = SC.border;
+  ctx.lineWidth = 1;
+  let sx = x0;
+  columns.forEach((c, ci) => {
+    sx += widths[ci];
+    if (ci < columns.length - 1) {
+      ctx.beginPath();
+      ctx.moveTo(sx - 0.5, tableTop);
+      ctx.lineTo(sx - 0.5, tableBottom);
+      ctx.stroke();
+    }
+  });
+  ctx.strokeRect(x0 + 0.5, tableTop + 0.5, tableW - 1, tableBottom - tableTop - 1);
+
+  // note
+  if (note) {
+    ctx.textAlign = 'left';
+    ctx.font = SF(500, 10);
+    ctx.fillStyle = SC.t400;
+    ctx.fillText(note, SHEET_PAD, tableBottom + 10);
+    ctx.textAlign = 'right';
+    ctx.fillText('Powered by SmartEdz', W - SHEET_PAD, tableBottom + 10);
+    ctx.textAlign = 'left';
+  }
+
+  return canvas;
+}
+
+function saveCanvas(canvas, filename) {
+  return new Promise((resolve, reject) => {
+    try {
+      canvas.toBlob(blob => {
+        if (!blob) return reject(new Error('export failed'));
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        resolve();
+      }, 'image/png');
+    } catch (e) { reject(e); }
+  });
+}
+
 export default function MarksEntry({ classInfo, canManage, onBack }) {
   const { user } = useAuth();
   const { isAllAccess } = usePermissions();
@@ -56,6 +278,7 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
   const [examTypeId, setExamTypeId] = useState('overall');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving]   = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [query, setQuery]     = useState('');
   const [sortMode, setSortMode] = useState('roll');   // 'roll' | 'high' | 'low'
 
@@ -105,6 +328,7 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
 
   const isOverall = examTypeId === 'overall';
   const activeExamType = data?.examTypes?.find(t => String(t.id) === examTypeId);
+  const examLabel = isOverall ? 'Overall' : (activeExamType?.name || 'this exam');
 
   // -----------------------------------------------------------------
   // Per-subject max for an exam type: subject override, else the
@@ -268,6 +492,107 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filteredStudents, sortMode, marks, examTypeId, data]);
 
+  // -----------------------------------------------------------------
+  // Download gate: the sheet can only be taken once this exam actually
+  // has SAVED marks and nothing is left unsaved on screen.
+  // -----------------------------------------------------------------
+  const isDirty = useMemo(() => {
+    const keys = new Set([...Object.keys(marks), ...Object.keys(original)]);
+    for (const k of keys) {
+      if ((marks[k] ?? '') !== (original[k] ?? '')) return true;
+    }
+    return false;
+  }, [marks, original]);
+
+  const savedCountForView = useMemo(() => {
+    if (!data) return 0;
+    const ids = isOverall ? enteredTypes.map(t => String(t.id)) : [String(examTypeId)];
+    let n = 0;
+    Object.keys(original).forEach(k => {
+      const et = k.split(':')[2];
+      if (ids.includes(String(et)) && String(original[k]).trim() !== '') n += 1;
+    });
+    return n;
+  }, [data, original, examTypeId, isOverall, enteredTypes]);
+
+  const canDownload = !!data && sortedStudents.length > 0 && savedCountForView > 0 && !isDirty && !downloading;
+
+  const downloadHint = !data || sortedStudents.length === 0
+    ? 'No students to download.'
+    : isDirty
+      ? 'You have unsaved marks. Save them first, then download.'
+      : savedCountForView === 0
+        ? `Enter and save marks for ${examLabel} to enable the download.`
+        : `If you download now, the ${examLabel} marks list will be downloaded.`;
+
+  const handleDownload = async () => {
+    if (!canDownload) return;
+    setDownloading(true);
+    try {
+      const columns = [
+        { label: 'Roll', align: 'left', min: 64, max: 90 },
+        { label: 'Name', align: 'left', min: 170, max: 280 },
+        ...data.subjects.map(s => {
+          const mx = subjectHeaderMax(s.id);
+          return {
+            label: s.name,
+            sub: s.teacher_name || '',
+            sub2: mx !== undefined ? `max ${fmtNum(mx)}` : '',
+            align: 'center', min: 96, max: 170
+          };
+        }),
+        { label: isOverall ? 'Grand Total' : 'Total', align: 'center', min: 104, max: 150, tint: true }
+      ];
+
+      const rows = sortedStudents.map(stu => ([
+        stu.roll_no || '-',
+        stu.name || '',
+        ...data.subjects.map(s => (
+          isOverall
+            ? (fmtNum(subjectOverall(stu.id, s.id)) || '-')
+            : (fmtNum(getMark(stu.id, s.id, examTypeId)) || '-')
+        )),
+        fmtNum(studentExamTotal(stu.id)) || '-'
+      ]));
+
+      const footerRow = [
+        '', 'Total',
+        ...data.subjects.map(s => fmtNum(subjectColumnTotal(s.id)) || '-'),
+        fmtNum(grandColumnTotal()) || '-'
+      ];
+
+      const generated = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Kolkata', day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', hour12: true
+      }).format(new Date());
+
+      const meta = [
+        `Exam Type: ${isOverall ? 'Overall (total of all entered exams)' : (activeExamType?.name || '-')}`,
+        `Students: ${sortedStudents.length}${sortedStudents.length !== (data.students?.length || 0) ? ` of ${data.students.length} (filtered by "${query.trim()}")` : ''}`,
+        `Sorted: ${sortMode === 'roll' ? 'Roll wise' : sortMode === 'high' ? 'Highest to lowest total' : 'Lowest to highest total'}`,
+        `Generated: ${generated}`
+      ];
+
+      const safe = (s) => String(s || '').replace(/[^\w-]+/g, '_');
+      const filename = `${safe(classInfo.class_group)}_${safe(isOverall ? 'Overall' : activeExamType?.name)}_Marks.png`;
+
+      const canvas = renderMarksSheet({
+        title: `${classInfo.class_group} - Marks Entry`,
+        meta,
+        columns,
+        rows,
+        footerRow,
+        note: 'Computer-generated marks sheet'
+      });
+      await saveCanvas(canvas, filename);
+    } catch (e) {
+      console.error('Marks download error:', e);
+      alert('Could not download the marks list. Please try again.');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   if (loading) {
     return <div className="h-64 flex items-center justify-center"><Loader2 className="animate-spin size-8 text-primary" /></div>;
   }
@@ -323,29 +648,43 @@ export default function MarksEntry({ classInfo, canManage, onBack }) {
         </div>
       </div>
 
-      {/* Sort control */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-          <ArrowUpDown className="size-3.5" /> Sort
-        </span>
-        <div className="inline-flex items-center bg-white border border-zinc-200 rounded-md p-0.5 shadow-sm">
-          {sortOptions.map(o => {
-            const active = sortMode === o.id;
-            return (
-              <button key={o.id} onClick={() => setSortMode(o.id)}
-                className={`px-3 h-7 rounded text-xs font-semibold transition-colors whitespace-nowrap ${
-                  active ? 'bg-primary text-white shadow-sm' : 'text-zinc-600 hover:bg-zinc-50'
-                }`}>
-                {o.label}
-              </button>
-            );
-          })}
-        </div>
-        {sortMode !== 'roll' && (
-          <span className="text-[11px] text-zinc-400 font-medium">
-            by {isOverall ? 'grand total' : (activeExamType ? activeExamType.name + ' total' : 'total')}
+      {/* Sort control + download */}
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+            <ArrowUpDown className="size-3.5" /> Sort
           </span>
-        )}
+          <div className="inline-flex items-center bg-white border border-zinc-200 rounded-md p-0.5 shadow-sm">
+            {sortOptions.map(o => {
+              const active = sortMode === o.id;
+              return (
+                <button key={o.id} onClick={() => setSortMode(o.id)}
+                  className={`px-3 h-7 rounded text-xs font-semibold transition-colors whitespace-nowrap ${
+                    active ? 'bg-primary text-white shadow-sm' : 'text-zinc-600 hover:bg-zinc-50'
+                  }`}>
+                  {o.label}
+                </button>
+              );
+            })}
+          </div>
+          {sortMode !== 'roll' && (
+            <span className="text-[11px] text-zinc-400 font-medium">
+              by {isOverall ? 'grand total' : (activeExamType ? activeExamType.name + ' total' : 'total')}
+            </span>
+          )}
+        </div>
+
+        <div className="flex flex-col sm:items-end gap-1 shrink-0">
+          <button onClick={handleDownload} disabled={!canDownload}
+            title={downloadHint}
+            className="h-9 w-full sm:w-auto px-4 rounded-md bg-primary text-white text-xs font-semibold inline-flex items-center justify-center gap-2 shadow-sm transition-colors hover:bg-primary/90 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:hover:bg-zinc-200 disabled:cursor-not-allowed">
+            {downloading ? <Loader2 className="size-4 shrink-0 animate-spin" /> : <Download className="size-4 shrink-0" />}
+            {downloading ? 'Preparing...' : 'Download'}
+          </button>
+          <p className={`text-[10px] font-medium leading-snug sm:text-right max-w-[280px] ${canDownload ? 'text-zinc-400' : 'text-amber-600'}`}>
+            {downloadHint}
+          </p>
+        </div>
       </div>
 
       {noExamTypes && (

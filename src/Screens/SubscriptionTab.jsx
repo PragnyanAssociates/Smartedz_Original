@@ -145,8 +145,7 @@ export default function SubscriptionTab({ data }) {
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-zinc-900">Need to renew or extend?</p>
           <p className="text-[11px] text-zinc-500 leading-relaxed mt-0.5">
-            Reach out to your SmartEdz team to renew{lifetime ? '' : ' before the date above'}. In-app chat with your SmartEdz
-            representative is coming here soon — for now, contact them directly.
+            Reach out to your SmartEdz team to renew{lifetime ? '' : ' before the date above'}. You can connect SmartEdz team through directly or Support module.
           </p>
         </div>
       </div>

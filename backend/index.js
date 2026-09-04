@@ -9527,7 +9527,103 @@ app.delete('/api/admin/syllabus/keywords/:keywordId', async (req, res) => {
 //     (verify the JWT in an io.use() middleware and read socket.user.id
 //     instead of payload.userId). That needs the frontend to send the
 //     token when it connects. Say the word and I'll wire up both sides.
+//
+//   ⚠ FILE UPLOADS NO LONGER GO THROUGH THE SOCKET:
+//     Socket.IO's default maxHttpBufferSize is 1 MB, so a base64 file of
+//     any real size was silently dropped mid-flight — which is why uploads
+//     hung at 100% and never appeared. Media is now POSTed to
+//     /api/groups/media, which SAVES the message and broadcasts it over
+//     io. The socket only carries text, edits and deletes.
+//
+//     Two settings elsewhere in this server file must match:
+//       app.use(express.json({ limit: '25mb' }));   // 10MB file -> ~14MB base64
+//       app.use(express.urlencoded({ limit: '25mb', extended: true }));
+//     If your express.json limit is lower, a 10 MB upload will 413.
 // ====================================================================
+
+// --- 0. Chat upload limits + shared message helpers ------------------
+//   One source of truth for the size cap. Keep MAX_CHAT_UPLOAD_BYTES in
+//   step with MAX_FILE_BYTES in GroupChatScreen.jsx.
+const MAX_CHAT_UPLOAD_BYTES = 10 * 1024 * 1024;              // 10 MB
+const MAX_CHAT_MEDIA_CHARS  = Math.ceil(MAX_CHAT_UPLOAD_BYTES * 1.45); // base64 + data: prefix
+
+// The full message shape the client renders. Used by the socket handlers
+// and by the media upload route, so every path returns identical rows.
+const CHAT_MESSAGE_SELECT = `
+    SELECT
+        m.id,
+        m.message_text,
+        DATE_FORMAT(m.timestamp, '%Y-%m-%dT%H:%i:%sZ') AS timestamp,
+        m.user_id,
+        m.group_id,
+        m.message_type,
+        m.file_url,
+        m.file_size,
+        m.file_mime_type,
+        m.is_edited,
+        m.is_deleted,
+        m.deleted_by,
+        m.is_pinned,
+        m.file_name,
+        m.reply_to_message_id,
+        u.name AS full_name,
+        u.role,
+        u.profile_pic AS profile_image_url,
+        u.roll_no,
+        reply_m.message_text AS reply_text,
+        reply_m.message_type AS reply_type,
+        reply_u.name AS reply_sender_name
+      FROM group_chat_messages m
+      JOIN users u ON m.user_id = u.id
+      LEFT JOIN group_chat_messages reply_m ON m.reply_to_message_id = reply_m.id
+      LEFT JOIN users reply_u ON reply_m.user_id = reply_u.id
+     WHERE m.id = ?
+`;
+
+async function fetchChatMessage(conn, messageId) {
+    const [rows] = await conn.execute(CHAT_MESSAGE_SELECT, [messageId]);
+    return rows[0] || null;
+}
+
+// Tenant + read-only + membership gate, shared by the socket and the
+// media route so both enforce exactly the same rules.
+async function canPostToGroup(conn, userId, groupId) {
+    const [groupRows] = await conn.execute(
+        'SELECT is_read_only, created_by, institutionId FROM `groups` WHERE id = ?',
+        [groupId]
+    );
+    const [userRows] = await conn.execute(
+        'SELECT role, institutionId FROM users WHERE id = ?',
+        [userId]
+    );
+    const groupRow = groupRows[0];
+    const userRow = userRows[0];
+
+    if (!groupRow) return { ok: false, code: 404, message: 'Group not found.' };
+    if (!userRow)  return { ok: false, code: 403, message: 'User not found.' };
+
+    const isDeveloper   = userRow.role === 'Developer';
+    const isSystemAdmin = isDeveloper || userRow.role === 'Super Admin';
+
+    if (!isDeveloper && String(groupRow.institutionId) !== String(userRow.institutionId)) {
+        return { ok: false, code: 403, message: 'You cannot post to this group.' };
+    }
+
+    const isCreator = String(groupRow.created_by) === String(userId);
+    if (groupRow.is_read_only == 1 && !isSystemAdmin && !isCreator) {
+        return { ok: false, code: 403, message: 'Only admins can send messages in this group.' };
+    }
+
+    const [memberRows] = await conn.execute(
+        'SELECT user_id FROM group_members WHERE group_id = ? AND user_id = ?',
+        [groupId, userId]
+    );
+    if (memberRows.length === 0 && !isSystemAdmin) {
+        return { ok: false, code: 403, message: 'You are not a member of this group.' };
+    }
+
+    return { ok: true, institutionId: groupRow.institutionId };
+}
 
 // --- 1. Unified Helper for Group Permissions ---
 //   Identity from the token. When the route targets a specific group, the
@@ -10122,28 +10218,80 @@ app.get('/api/groups/:groupId/history', async (req, res) => {
     }
 });
 
-// --- 11. Upload Chat Media (Base64) ---
+// --- 11. Upload Chat Media (Base64) — SAVES + BROADCASTS ---
+//   This is the whole file path now. The old version only echoed the
+//   base64 back and left the client to push it through the socket, which
+//   silently exceeded Socket.IO's 1 MB frame limit and hung at 100%.
+//
+//   Body: { groupId, messageType, media, fileName, fileSize,
+//           fileMimeType, replyToMessageId?, clientMessageId? }
+//   Returns the saved message, and broadcasts it to the group room, so
+//   the sender's optimistic bubble can be swapped for the real row.
 app.post('/api/groups/media', async (req, res) => {
-    const { media, fileName, fileSize, fileMimeType } = req.body;
+    const userId = req.auth.userId;
+    const {
+        media, fileName, fileSize, fileMimeType,
+        groupId, messageType, replyToMessageId, clientMessageId
+    } = req.body;
+
     if (!media) return res.status(400).json({ message: 'No media data provided.' });
 
-    const MAX_SIZE_BYTES = 3 * 1024 * 1024; // 3MB limit
-
-    if (fileSize && fileSize > MAX_SIZE_BYTES) {
-        return res.status(413).json({ message: 'File exceeds the 3MB limit.' });
+    // Size gate, checked two ways: the reported size and the actual payload.
+    if (fileSize && Number(fileSize) > MAX_CHAT_UPLOAD_BYTES) {
+        return res.status(413).json({ message: 'File exceeds the 10MB limit.' });
+    }
+    if (typeof media === 'string' && media.length > MAX_CHAT_MEDIA_CHARS) {
+        return res.status(413).json({ message: 'Payload is too large. Limit is 10MB.' });
     }
 
-    const estimatedSize = media.length * 0.75;
-    if (estimatedSize > (MAX_SIZE_BYTES * 1.1)) {
-        return res.status(413).json({ message: 'Payload is too large. Limit is 3MB.' });
+    // Legacy callers that only want the echo (no groupId) keep working.
+    if (!groupId) {
+        return res.status(201).json({
+            fileUrl: media,
+            fileSize: fileSize || null,
+            fileMimeType: fileMimeType || 'unknown',
+            fileName: fileName || 'file'
+        });
     }
 
-    res.status(201).json({
-        fileUrl: media,
-        fileSize: fileSize || null,
-        fileMimeType: fileMimeType || 'unknown',
-        fileName: fileName || 'file'
-    });
+    const type = ['image', 'video', 'file'].includes(messageType) ? messageType : 'file';
+    const conn = await db.getConnection();
+    try {
+        const gate = await canPostToGroup(conn, userId, groupId);
+        if (!gate.ok) return res.status(gate.code).json({ message: gate.message });
+
+        await conn.beginTransaction();
+        const [result] = await conn.execute(
+            `INSERT INTO group_chat_messages
+               (user_id, group_id, message_type, message_text,
+                file_url, file_name, file_size, file_mime_type, reply_to_message_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [userId, groupId, type, null,
+             media, fileName || 'file', fileSize || null,
+             fileMimeType || null, replyToMessageId || null]
+        );
+        const saved = await fetchChatMessage(conn, result.insertId);
+        await conn.commit();
+
+        const payload = { ...saved, clientMessageId: clientMessageId || null };
+        io.to(`group-${groupId}`).emit('newMessage', payload);
+        io.emit('updateGroupList', { groupId });
+
+        res.status(201).json({
+            message: payload,
+            // kept for backward compatibility with older clients
+            fileUrl: media,
+            fileSize: fileSize || null,
+            fileMimeType: fileMimeType || 'unknown',
+            fileName: fileName || 'file'
+        });
+    } catch (error) {
+        try { await conn.rollback(); } catch (_) {}
+        console.error('Error saving chat media:', error);
+        res.status(500).json({ message: 'Could not send the file. Please try again.' });
+    } finally {
+        conn.release();
+    }
 });
 
 // ====================================================================
@@ -10152,7 +10300,14 @@ app.post('/api/groups/media', async (req, res) => {
 //   handlers below additionally enforce that the acting user and the
 //   group share an institution (Developer excepted), so a truthful
 //   Super Admin of one school can't post into / delete from another's.
+//
+//   sendMessage now carries TEXT ONLY. Files go through
+//   POST /api/groups/media (see above).
 // ====================================================================
+
+// A socket frame should never carry a file. Anything bigger than this is
+// rejected with a clear error instead of being dropped by the transport.
+const MAX_SOCKET_TEXT_CHARS = 100000;
 
 io.on('connection', (socket) => {
     console.log(`User connected: ${socket.id}`);
@@ -10174,57 +10329,26 @@ io.on('connection', (socket) => {
         if (messageType === 'text' && !messageText?.trim()) return;
         if (messageType !== 'text' && !fileUrl) return;
 
+        // Guard the transport: a base64 file over the socket exceeds
+        // maxHttpBufferSize and vanishes. Tell the client instead.
+        if (typeof fileUrl === 'string' && fileUrl.length > MAX_SOCKET_TEXT_CHARS) {
+            socket.emit('messageError', {
+                message: 'This file is too large to send this way. Please try again.',
+                clientMessageId: clientMessageId || null
+            });
+            return;
+        }
+
         const roomName = `group-${groupId}`;
         const conn = await db.getConnection();
 
         try {
-            const [[groupRow]] = await conn.execute(
-                'SELECT is_read_only, created_by, institutionId FROM `groups` WHERE id = ?',
-                [groupId]
-            );
-            const [[userRow]] = await conn.execute(
-                'SELECT role, institutionId FROM users WHERE id = ?',
-                [userId]
-            );
-
-            if (!groupRow || !userRow) {
-                conn.release();
-                return;
-            }
-
-            const isSystemAdmin = userRow.role === 'Super Admin' || userRow.role === 'Developer';
-            const isDeveloper = userRow.role === 'Developer';
-
-            // Tenant guard: the user and the group must share an institution
-            // (Developer may span tenants).
-            if (!isDeveloper && String(groupRow.institutionId) !== String(userRow.institutionId)) {
+            const gate = await canPostToGroup(conn, userId, groupId);
+            if (!gate.ok) {
                 socket.emit('messageError', {
-                    message: 'You cannot post to this group.',
+                    message: gate.message,
                     clientMessageId: clientMessageId || null
                 });
-                conn.release();
-                return;
-            }
-
-            const isReadOnly = groupRow.is_read_only == 1;
-            const isCreator = String(groupRow.created_by) === String(userId);
-
-            if (isReadOnly && !isSystemAdmin && !isCreator) {
-                socket.emit('messageError', {
-                    message: 'Only admins can send messages in this group.',
-                    clientMessageId: clientMessageId || null
-                });
-                conn.release();
-                return;
-            }
-
-            const [[memberRow]] = await conn.execute(
-                'SELECT user_id FROM group_members WHERE group_id = ? AND user_id = ?',
-                [groupId, userId]
-            );
-
-            if (!memberRow && !isSystemAdmin) {
-                socket.emit('messageError', { message: 'You are not a member of this group.' });
                 conn.release();
                 return;
             }
@@ -10241,37 +10365,21 @@ io.on('connection', (socket) => {
                  fileMimeType || null, replyToMessageId || null]
             );
 
-            const newMessageId = result.insertId;
-
-            const [rows] = await conn.execute(`
-                SELECT
-                    m.id, m.message_text,
-                  DATE_FORMAT(m.timestamp, '%Y-%m-%dT%H:%i:%sZ') AS timestamp,
-                    m.user_id, m.group_id, m.message_type,
-                    m.file_url, m.file_size, m.file_mime_type,
-                    m.is_edited, m.is_deleted, m.deleted_by,
-                    m.is_pinned, m.file_name, m.reply_to_message_id,
-                    u.name AS full_name, u.role,
-                    u.profile_pic AS profile_image_url, u.roll_no,
-                    reply_m.message_text AS reply_text,
-                    reply_m.message_type AS reply_type,
-                    reply_u.name AS reply_sender_name
-                FROM group_chat_messages m
-                JOIN users u ON m.user_id = u.id
-                LEFT JOIN group_chat_messages reply_m ON m.reply_to_message_id = reply_m.id
-                LEFT JOIN users reply_u ON reply_m.user_id = reply_u.id
-                WHERE m.id = ?
-            `, [newMessageId]);
+            const saved = await fetchChatMessage(conn, result.insertId);
 
             await conn.commit();
 
-            const broadcastMessage = { ...rows[0], clientMessageId: clientMessageId || null };
+            const broadcastMessage = { ...saved, clientMessageId: clientMessageId || null };
             io.to(roomName).emit('newMessage', broadcastMessage);
             io.emit('updateGroupList', { groupId });
 
         } catch (error) {
-            await conn.rollback();
+            try { await conn.rollback(); } catch (_) {}
             console.error('Failed to save message:', error);
+            socket.emit('messageError', {
+                message: 'Message could not be sent. Please try again.',
+                clientMessageId: clientMessageId || null
+            });
         } finally {
             conn.release();
         }
@@ -10328,6 +10436,7 @@ io.on('connection', (socket) => {
             `, [userId, messageId]);
 
             io.to(roomName).emit('messageDeleted', { messageId, deletedBy: userId });
+            io.emit('updateGroupList', { groupId });
 
         } catch (error) {
             console.error('Failed to delete message:', error);
@@ -10357,38 +10466,8 @@ io.on('connection', (socket) => {
                 [newText, messageId]
             );
 
-            const [rows] = await conn.execute(`
-                SELECT
-                    m.id,
-                    m.message_text,
-                    DATE_FORMAT(m.timestamp, '%Y-%m-%dT%H:%i:%sZ') AS timestamp,
-                    m.user_id,
-                    m.group_id,
-                    m.message_type,
-                    m.file_url,
-                    m.file_size,
-                    m.file_mime_type,
-                    m.is_edited,
-                    m.is_deleted,
-                    m.deleted_by,
-                    m.is_pinned,
-                    m.file_name,
-                    m.reply_to_message_id,
-                    u.name AS full_name,
-                    u.role,
-                    u.profile_pic AS profile_image_url,
-                    u.roll_no,
-                    reply_m.message_text AS reply_text,
-                    reply_m.message_type AS reply_type,
-                    reply_u.name AS reply_sender_name
-                  FROM group_chat_messages m
-                  JOIN users u ON m.user_id = u.id
-                  LEFT JOIN group_chat_messages reply_m ON m.reply_to_message_id = reply_m.id
-                  LEFT JOIN users reply_u ON reply_m.user_id = reply_u.id
-                 WHERE m.id = ?
-            `, [messageId]);
-
-            io.to(roomName).emit('messageEdited', rows[0]);
+            const edited = await fetchChatMessage(conn, messageId);
+            io.to(roomName).emit('messageEdited', edited);
 
             const [lastMsg] = await conn.execute(
                 'SELECT id FROM group_chat_messages WHERE group_id = ? ORDER BY timestamp DESC LIMIT 1',

@@ -288,7 +288,7 @@ function RouteEditor({ user, canEdit, editingId, onBack, onSaved }) {
         <div className="space-y-5">
           <div className="ring-1 ring-black/5 rounded-lg bg-white p-5 space-y-4 shadow-sm">
             <h3 className="text-sm font-semibold text-zinc-900 flex items-center gap-2"><RouteIcon className="size-4 text-primary" /> Route Details</h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
               <Field label="Route Name *"><input value={form.route_name} onChange={e => set('route_name', e.target.value)} className={inputCls} placeholder="e.g. Route 1 - City Center" /></Field>
               <Field label="Route Code"><input value={form.route_code} onChange={e => set('route_code', e.target.value)} className={inputCls} placeholder="R-01" /></Field>
               <Field label="Vehicle"><Select value={form.vehicle_id} onChange={v => set('vehicle_id', v)} options={[{ v: '', l: 'Unassigned' }, ...vehicles.map(x => ({ v: x.id, l: `${x.vehicle_no}${x.vehicle_name ? ` - ${x.vehicle_name}` : ''}` }))]} icon={Bus} /></Field>
@@ -325,11 +325,11 @@ function RouteEditor({ user, canEdit, editingId, onBack, onSaved }) {
                       <input value={p.title} onChange={e => updatePoint(i, 'title', e.target.value)} placeholder="Point title (e.g. Main Gate)" className="flex-1 h-8 px-2 text-sm outline-none bg-transparent border-b border-transparent focus:border-primary/40" />
                       
                       {/* Semantic Status Pills */}
-                      <span className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full ring-1 ring-inset ${isResolving ? 'text-blue-700 bg-blue-50 ring-blue-600/20' : pinned ? 'text-emerald-700 bg-emerald-50 ring-emerald-600/20' : 'text-zinc-700 bg-zinc-50 ring-zinc-600/20'}`}>
+                      <span className={`inline-flex items-center shrink-0 text-[10px] leading-none font-semibold uppercase tracking-wider px-2 py-1 rounded-full ring-1 ring-inset ${isResolving ? 'text-blue-700 bg-blue-50 ring-blue-600/20' : pinned ? 'text-emerald-700 bg-emerald-50 ring-emerald-600/20' : 'text-zinc-700 bg-zinc-50 ring-zinc-600/20'}`}>
                         {isResolving ? 'resolving...' : pinned ? 'pinned' : 'not pinned'}
                       </span>
                       
-                      <button onClick={() => removePoint(i)} className="flex items-center justify-center size-7 rounded bg-white text-zinc-600 border border-zinc-200 hover:text-red-600 hover:bg-red-50 transition-colors shadow-sm ml-1">
+                      <button onClick={() => removePoint(i)} className="flex items-center justify-center size-7 shrink-0 rounded bg-white text-zinc-600 border border-zinc-200 hover:text-red-600 hover:bg-red-50 transition-colors shadow-sm ml-1">
                         <Trash2 className="size-3.5" />
                       </button>
                     </div>
@@ -396,13 +396,17 @@ function Field({ label, children }) {
 function Select({ value, onChange, options, icon: Icon, empty }) {
   const only = options.length <= 1;
   return (
-    <div className="relative">
-      <select value={value} onChange={e => onChange(e.target.value)} className={`${inputCls} appearance-none ${Icon ? 'pl-8' : ''} pr-8 cursor-pointer`}>
-        {options.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
-      </select>
-      {Icon && <Icon className="size-4 text-zinc-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />}
-      <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-      {only && empty && <p className="text-[10px] text-amber-600 mt-1">{empty}</p>}
+    <div className="w-full">
+      {/* The icons are positioned against the control only, never against the
+          control + hint text - otherwise the hint pushes them off centre. */}
+      <div className="relative h-9">
+        <select value={value} onChange={e => onChange(e.target.value)} className={`${inputCls} appearance-none ${Icon ? 'pl-9' : ''} pr-9 cursor-pointer`}>
+          {options.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
+        </select>
+        {Icon && <Icon className="size-4 text-zinc-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />}
+        <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+      </div>
+      {only && empty && <p className="text-[10px] text-amber-600 mt-1.5 leading-snug">{empty}</p>}
     </div>
   );
 }
@@ -476,7 +480,7 @@ function RouteView({ routeId, user, canEdit, onBack, onEdit }) {
               <span className="size-6 shrink-0 rounded-full text-white text-[10px] font-semibold flex items-center justify-center" style={{ backgroundColor: color }}>{i + 1}</span>
               <div className="min-w-0 flex-1">
                 <p className="text-sm text-zinc-900 truncate">{p.title}{p.arrival_time ? <span className="text-zinc-400"> - {p.arrival_time}</span> : ''}</p>
-                {p.location_link && <a href={p.location_link} target="_blank" rel="noreferrer" className="text-[11px] text-primary hover:underline inline-flex items-center gap-1 mt-0.5 truncate"><MapPin className="size-3" /> location</a>}
+                {p.location_link && <a href={p.location_link} target="_blank" rel="noreferrer" className="text-[11px] text-primary hover:underline inline-flex items-center gap-1 mt-0.5 truncate"><MapPin className="size-3 shrink-0" /> location</a>}
               </div>
             </div>
           ))}
@@ -555,7 +559,7 @@ function RouteView({ routeId, user, canEdit, onBack, onEdit }) {
 function Meta({ icon: Icon, label, value, phone }) {
   return (
     <div className="rounded-md bg-zinc-50 ring-1 ring-zinc-100 p-2.5 shadow-sm">
-      <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1.5"><Icon className="size-3.5" /> {label}</p>
+      <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1.5"><Icon className="size-3.5 shrink-0" /> {label}</p>
       <p className="text-sm font-semibold text-zinc-900 truncate mt-1">{value}</p>
       {phone ? (
         <a href={`tel:${phone}`} className="text-[11px] text-primary hover:underline inline-flex items-center gap-1 mt-0.5">

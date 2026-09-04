@@ -1,11 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
-import { ArrowLeft, Loader2, Save, CheckCircle2, XCircle } from 'lucide-react';
+import { ArrowLeft, Loader2, Save, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
 
 // =====================================================================
 //  GradingView - load one attempt + its answers, allow teacher to
 //  award marks per question, write overall feedback, then submit.
+//
+//  Marks awarded can never exceed that question's max: the input refuses
+//  anything higher as it's typed, and the payload is clamped again on
+//  submit so an out-of-range value can't reach the server.
 // =====================================================================
 
 export default function GradingView({ attemptId, examTitle, totalMarks, onBack }) {
@@ -39,21 +43,47 @@ export default function GradingView({ attemptId, examTitle, totalMarks, onBack }
     return () => { cancel = true; };
   }, [attemptId]);
 
-  const setMark = (qid, value) => {
+  // Reject anything above this question's max as it's typed, so the
+  // teacher can't award 12 on a 1-mark question.
+  const setMark = (qid, value, max) => {
     if (!/^\d*\.?\d*$/.test(value)) return;
+    if (value !== '') {
+      const num = parseFloat(value);
+      const cap = Number(max);
+      if (!isNaN(num) && !isNaN(cap) && num > cap) return;
+    }
     setGrades(prev => ({ ...prev, [qid]: value }));
   };
 
-  const totalAwarded = Object.values(grades).reduce((s, v) => s + (parseFloat(v) || 0), 0);
+  // Never count more than a question's max towards the running total.
+  const awardedFor = (it) => {
+    const num = parseFloat(grades[it.question_id]);
+    if (isNaN(num)) return 0;
+    const cap = Number(it.marks);
+    return isNaN(cap) ? num : Math.min(num, cap);
+  };
+
+  const totalAwarded = items.reduce((s, it) => s + awardedFor(it), 0);
+
+  // Legacy rows saved before this cap existed can still be over the max.
+  const overMax = items.filter(it => {
+    const num = parseFloat(grades[it.question_id]);
+    const cap = Number(it.marks);
+    return !isNaN(num) && !isNaN(cap) && num > cap;
+  });
 
   const handleSubmit = async () => {
+    if (overMax.length > 0) {
+      alert(`Question ${items.indexOf(overMax[0]) + 1} has more marks than its maximum. Please correct it before submitting.`);
+      return;
+    }
     if (!window.confirm(`Submit grade ${totalAwarded.toFixed(2)} / ${totalMarks}?`)) return;
     setSaving(true);
     try {
       const body = {
         graded_answers: items.map(it => ({
           question_id: it.question_id,
-          marks_awarded: parseFloat(grades[it.question_id]) || 0
+          marks_awarded: awardedFor(it)
         })),
         teacher_feedback: feedback.trim() || null,
         graded_by: user.id
@@ -107,6 +137,10 @@ export default function GradingView({ attemptId, examTitle, totalMarks, onBack }
         {items.map((it, idx) => {
           const isMCQ = it.question_type === 'multiple_choice';
           const isCorrect = isMCQ && it.answer_text === it.correct_answer;
+          const raw = grades[it.question_id] ?? '';
+          const num = parseFloat(raw);
+          const cap = Number(it.marks);
+          const isOver = !isNaN(num) && !isNaN(cap) && num > cap;
           return (
             <div key={it.question_id} className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col">
               <div className="p-4 sm:p-5 border-b border-zinc-100 bg-zinc-50/50">
@@ -159,10 +193,19 @@ export default function GradingView({ attemptId, examTitle, totalMarks, onBack }
                     Award Marks (max {it.marks})
                   </label>
                   <input type="text" inputMode="decimal"
-                    value={grades[it.question_id] ?? ''}
-                    onChange={e => setMark(it.question_id, e.target.value)}
+                    value={raw}
+                    onChange={e => setMark(it.question_id, e.target.value, it.marks)}
                     placeholder={`0 - ${it.marks}`}
-                    className="h-9 w-full sm:w-48 bg-white border border-zinc-200 rounded-md px-3 text-sm font-semibold tabular-nums outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors" />
+                    title={`Cannot be more than ${it.marks}`}
+                    className={`h-9 w-full sm:w-48 bg-white border rounded-md px-3 text-sm font-semibold tabular-nums outline-none focus:ring-2 focus:ring-primary/20 transition-colors ${
+                      isOver ? 'border-red-300 text-red-700 focus:border-red-400' : 'border-zinc-200 focus:border-primary/40'
+                    }`} />
+                  {isOver && (
+                    <p className="text-[11px] font-semibold text-red-600 mt-1.5 inline-flex items-center gap-1.5">
+                      <AlertTriangle className="size-3.5 shrink-0" />
+                      This is more than the maximum of {it.marks}. Please correct it.
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
@@ -186,8 +229,9 @@ export default function GradingView({ attemptId, examTitle, totalMarks, onBack }
           className="h-10 px-6 bg-white border border-zinc-200 text-zinc-700 rounded-md font-semibold text-xs hover:bg-zinc-50 transition-colors w-full sm:w-auto">
           Cancel
         </button>
-        <button onClick={handleSubmit} disabled={saving}
-          className="h-10 px-8 bg-emerald-600 hover:bg-emerald-700 disabled:bg-zinc-200 disabled:text-zinc-400 text-white rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors w-full sm:w-auto">
+        <button onClick={handleSubmit} disabled={saving || overMax.length > 0}
+          title={overMax.length > 0 ? 'Some questions have more marks than their maximum.' : ''}
+          className="h-10 px-8 bg-emerald-600 hover:bg-emerald-700 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:hover:bg-zinc-200 disabled:cursor-not-allowed text-white rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors w-full sm:w-auto">
           {saving ? <Loader2 className="size-4 animate-spin shrink-0" /> : <Save className="size-4 shrink-0" />}
           {saving ? 'Saving...' : 'Submit Grades'}
         </button>
