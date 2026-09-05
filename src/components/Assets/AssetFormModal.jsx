@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { API_BASE_URL } from '../../apiConfig';
-import { X, Save, Loader2, Camera, Trash2, ChevronDown } from 'lucide-react';
+import { X, Save, Loader2, Camera, Trash2, ChevronDown, Plus, List, Check } from 'lucide-react';
 import {
   ASSET_STATUSES, ASSET_UNITS, fileToBase64, toYYYYMMDD, useAuthedImage
 } from './AssetsUtils';
@@ -8,10 +8,13 @@ import {
 // =====================================================================
 //  AssetFormModal - create / edit one asset.
 //  Head of Account is a dropdown fed from /admin/asset-heads/:instId.
+//  Room / Location is a picker over the rooms already in the register,
+//  with an "add a new one" escape hatch - so the same room isn't retyped
+//  (and mistyped) on every item.
 //  Photo is stored as base64 on the row; the existing photo is loaded
 //  through the authed blob endpoint (never a raw <img src>).
 // =====================================================================
-export default function AssetFormModal({ asset, heads, institutionId, onClose, onSaved }) {
+export default function AssetFormModal({ asset, heads, rooms = [], institutionId, onClose, onSaved }) {
   const isEdit = !!asset;
   const [form, setForm] = useState({
     item_name: '', head_id: '', quantity: 1, unit: 'Nos', room_no: '',
@@ -26,6 +29,19 @@ export default function AssetFormModal({ asset, heads, institutionId, onClose, o
   const { src: existingPhoto } = useAuthedImage(
     isEdit && asset.has_photo && !removePhoto ? `${API_BASE_URL}/admin/assets/photo/${asset.id}` : null
   );
+
+  // Every room already on the register, plus this asset's own room in case
+  // it was the only item there and the list hasn't caught up.
+  const knownRooms = useMemo(() => {
+    const seen = new Map();   // lowercased -> original spelling
+    [...(rooms || []), asset?.room_no].forEach(r => {
+      const clean = String(r || '').trim();
+      if (!clean) return;
+      const key = clean.toLowerCase();
+      if (!seen.has(key)) seen.set(key, clean);
+    });
+    return [...seen.values()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  }, [rooms, asset]);
 
   useEffect(() => {
     if (!asset) return;
@@ -61,6 +77,15 @@ export default function AssetFormModal({ asset, heads, institutionId, onClose, o
     e.target.value = '';
   };
 
+  // "room 1", "Room 1 " and "ROOM 1" should all land on the one room that
+  // already exists, instead of creating three.
+  const normalizeRoom = (raw) => {
+    const clean = String(raw || '').trim().replace(/\s+/g, ' ');
+    if (!clean) return null;
+    const match = knownRooms.find(r => r.toLowerCase() === clean.toLowerCase());
+    return match || clean;
+  };
+
   const handleSave = async (e) => {
     e.preventDefault();
     if (!form.item_name.trim()) return alert('Item name is required.');
@@ -75,7 +100,7 @@ export default function AssetFormModal({ asset, heads, institutionId, onClose, o
         head_id: parseInt(form.head_id, 10),
         quantity: qty,
         unit: form.unit || 'Nos',
-        room_no: form.room_no.trim() || null,
+        room_no: normalizeRoom(form.room_no),
         purchase_date: form.purchase_date || null,
         vendor: form.vendor.trim() || null,
         invoice_no: form.invoice_no.trim() || null,
@@ -165,8 +190,8 @@ export default function AssetFormModal({ asset, heads, institutionId, onClose, o
                   options={ASSET_UNITS.map(u => ({ value: u, label: u }))} />
               </div>
 
-              <Field label="Room No / Location" value={form.room_no}
-                onChange={v => set('room_no', v)} placeholder="e.g. Room 12, Lab 2, Library" />
+              {/* Room: pick one already on the register, or add a new one */}
+              <RoomPicker value={form.room_no} onChange={v => set('room_no', v)} rooms={knownRooms} />
 
               <Field label="Date of Purchase" type="date" value={form.purchase_date}
                 onChange={v => set('purchase_date', v)} />
@@ -203,6 +228,95 @@ export default function AssetFormModal({ asset, heads, institutionId, onClose, o
           </div>
         </form>
       </div>
+    </div>
+  );
+}
+
+// =====================================================================
+//  RoomPicker - two modes, one field.
+//   • "Pick" : a dropdown of every room already on the register, so the
+//     same room is never retyped (and never mistyped into a duplicate).
+//   • "New"  : a text box for a room that doesn't exist yet.
+//  Typing a name that already exists (any casing/spacing) is flagged and
+//  saved under the existing spelling.
+// =====================================================================
+const NEW_ROOM = '__new_room__';
+
+function RoomPicker({ value, onChange, rooms }) {
+  const clean = String(value || '').trim();
+  const isKnown = rooms.some(r => r.toLowerCase() === clean.toLowerCase());
+  // Start in "new" mode when there's nothing to pick from, or when the
+  // current value isn't one of the known rooms.
+  const [adding, setAdding] = useState(() => rooms.length === 0 || (!!clean && !isKnown));
+  const inputRef = useRef(null);
+
+  // The typed name already exists under a different spelling.
+  const duplicateOf = adding && clean
+    ? rooms.find(r => r.toLowerCase() === clean.toLowerCase() && r !== clean)
+    : null;
+
+  const startAdding = () => {
+    setAdding(true);
+    onChange('');
+    setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  const base = "h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-shadow shadow-sm";
+
+  return (
+    <div className="flex flex-col">
+      <div className="flex items-center justify-between mb-1.5">
+        <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Room No / Location</label>
+        {rooms.length > 0 && (
+          adding ? (
+            <button type="button" onClick={() => { setAdding(false); onChange(''); }}
+              className="inline-flex items-center gap-1 text-[10px] font-semibold text-primary hover:underline">
+              <List className="size-3" /> Choose from list
+            </button>
+          ) : (
+            <button type="button" onClick={startAdding}
+              className="inline-flex items-center gap-1 text-[10px] font-semibold text-primary hover:underline">
+              <Plus className="size-3" /> Add a new one
+            </button>
+          )
+        )}
+      </div>
+
+      {adding ? (
+        <>
+          <input ref={inputRef} type="text" value={value ?? ''}
+            onChange={e => onChange(e.target.value)}
+            placeholder="e.g. Room 12, Lab 2, Library"
+            className={base} />
+          {duplicateOf ? (
+            <p className="text-[10px] font-semibold text-amber-600 mt-1 inline-flex items-center gap-1">
+              <Check className="size-3 shrink-0" /> "{duplicateOf}" already exists - it will be saved under that name.
+            </p>
+          ) : (
+            <p className="text-[10px] font-medium text-zinc-400 mt-1">
+              {rooms.length > 0
+                ? 'This new room joins the list for next time.'
+                : 'The first room you add starts the list.'}
+            </p>
+          )}
+        </>
+      ) : (
+        <>
+          <div className="relative">
+            <select value={isKnown ? clean : ''}
+              onChange={e => { if (e.target.value === NEW_ROOM) startAdding(); else onChange(e.target.value); }}
+              className={`${base} appearance-none cursor-pointer pr-8`}>
+              <option value="">No room / location</option>
+              {rooms.map(r => <option key={r} value={r}>{r}</option>)}
+              <option value={NEW_ROOM}>+ Add a new room / location...</option>
+            </select>
+            <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+          <p className="text-[10px] font-medium text-zinc-400 mt-1">
+            {rooms.length} {rooms.length === 1 ? 'location' : 'locations'} already on the register.
+          </p>
+        </>
+      )}
     </div>
   );
 }

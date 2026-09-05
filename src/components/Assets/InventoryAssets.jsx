@@ -16,6 +16,8 @@ import {
 //  Inventory & Assets - the institution's asset register.
 //   - Every item is filed under a Head of Account (dropdown, seeded
 //     with the 21 standard heads; custom heads can be added).
+//   - Room / Location is picked from the rooms already on the register,
+//     so the same place isn't retyped (and mistyped) on every item.
 //   - Filters: search, head, status, room, purchase year.
 //   - Summary strip: line items, total quantity, and how many need
 //     attention (Under Repair + Damaged).
@@ -145,6 +147,20 @@ export default function InventoryAssets() {
   const clearFilters = () => {
     setQuery(''); setFilterHead(''); setFilterStatus(''); setFilterRoom(''); setFilterYear('all');
   };
+
+  // Rooms offered in the Add/Edit form. The filters endpoint returns every
+  // room in use; merge in whatever is on screen so a room added moments ago
+  // is offered even before the filter list refreshes.
+  const knownRooms = useMemo(() => {
+    const seen = new Map();   // lowercased -> original spelling
+    [...(filterOpts.rooms || []), ...rows.map(r => r.room_no)].forEach(r => {
+      const clean = String(r || '').trim();
+      if (!clean) return;
+      const key = clean.toLowerCase();
+      if (!seen.has(key)) seen.set(key, clean);
+    });
+    return [...seen.values()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  }, [filterOpts.rooms, rows]);
 
   // Fallback totals if the summary endpoint is unavailable.
   const localTotals = useMemo(() => {
@@ -349,6 +365,7 @@ export default function InventoryAssets() {
         <AssetFormModal
           asset={editing}
           heads={heads}
+          rooms={knownRooms}
           institutionId={instId}
           onClose={() => { setFormOpen(false); setEditing(null); }}
           onSaved={refreshAll}
@@ -615,9 +632,10 @@ const GUIDES = {
     steps: [
       ['1 - What this is', 'The school\'s asset register - every table, chair, laptop, lab item and so on, with its count, where it sits and when it was bought.'],
       ['2 - Add an asset', 'Add Asset records the item name, Head of Account (required), quantity and unit, room or location, purchase date, vendor, bill no, serial no and a photo of the item.'],
-      ['3 - Heads of Account', 'Every item is filed under a head - Office, Classroom, Computer & IT, Laboratory and so on. The standard heads are ready to use; Heads lets you add your own or remove unused ones.'],
-      ['4 - Track condition', 'Set each item to In Use, In Store, Under Repair, Damaged or Disposed. The Needs Attention box counts everything under repair or damaged.'],
-      ['5 - View, find & export', 'Click a row or the eye button to see the full record - including who added it and who last updated it, with dates and times. Search by item, serial, vendor, invoice or room, and narrow by head, status, room or purchase year. Download (Excel) saves exactly what the filters are showing.'],
+      ['3 - Rooms & locations', 'Room / Location is a dropdown of the places already on the register - pick one instead of retyping it. Need somewhere new? "Add a new one" lets you type it, and it joins the list from then on. Typing a name that already exists is saved under the existing spelling, so "room 1" never becomes a second "Room 1".'],
+      ['4 - Heads of Account', 'Every item is filed under a head - Office, Classroom, Computer & IT, Laboratory and so on. The standard heads are ready to use; Heads lets you add your own or remove unused ones.'],
+      ['5 - Track condition', 'Set each item to In Use, In Store, Under Repair, Damaged or Disposed. The Needs Attention box counts everything under repair or damaged.'],
+      ['6 - View, find & export', 'Click a row or the eye button to see the full record - including who added it and who last updated it, with dates and times. Search by item, serial, vendor, invoice or room, and narrow by head, status, room or purchase year. Download (Excel) saves exactly what the filters are showing.'],
     ],
     note: 'Assets are not tied to an academic year - the register carries forward until you change it. Photos are capped at 3 MB. Adding, editing and deleting depend on your permissions.'
   },
