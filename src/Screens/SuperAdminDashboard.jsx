@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Sidebar from './Sidebar';
 import DashboardHeader from './DashboardHeader';
 import Overview from './Overview';
@@ -35,10 +35,10 @@ import { useAuth } from '../context/AuthContext';
 import { MODULES } from './Modules';
 import { ShieldOff } from 'lucide-react';
 
-// The active tab is remembered PER LOGIN SESSION, keyed by the login token:
-//   • Refresh / reload  -> same token  -> you stay on the same module.
-//   • Fresh login (new token, or a different user) -> no match -> Overview.
-// Stored in sessionStorage so it never leaks to another tab or another user.
+// Active tab is remembered PER LOGIN SESSION, keyed by the login token:
+//   • Refresh / reload -> same token -> you stay on the same module.
+//   • Fresh login (new token / different user) -> land on the first module
+//     that user is actually allowed to see (NOT forced to Overview).
 const TAB_KEY = 'dashboard_active_tab';
 
 function DashboardShell() {
@@ -46,49 +46,71 @@ function DashboardShell() {
   const { token } = useAuth();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
+  // First module this user may actually see (Overview only if permitted).
+  // hideFromSidebar modules (Profile / Notifications) are never a landing tab.
   const firstAllowedTab = useMemo(() => {
     const first = MODULES.find(m => !m.hideFromSidebar && (m.alwaysVisible || isVisible(m.module_name)));
-    return first?.id || 'overview';
+    return first?.id || 'profile';
   }, [isVisible]);
 
-  // 1. Restore the tab ONLY if it was saved under the CURRENT login token
-  //    (i.e. this is a refresh, not a new login). Otherwise start at default.
+  const restoredRef  = useRef(false);   // did we restore a tab (i.e. a refresh)?
+  const defaultedRef = useRef(false);   // have we set the fresh-login default yet?
+
+  // On a refresh, restore the tab saved under THIS login token. On a fresh
+  // login there's no match, so we set the real default once permissions load.
   const [activeTab, setActiveTab] = useState(() => {
     try {
       const saved = JSON.parse(sessionStorage.getItem(TAB_KEY) || 'null');
-      if (saved && saved.token && saved.token === token && saved.tab) return saved.tab;
+      if (saved && saved.token && saved.token === token && saved.tab) {
+        restoredRef.current = true;
+        return saved.tab;
+      }
     } catch { /* ignore */ }
-    return firstAllowedTab;
+    return firstAllowedTab;   // provisional; corrected below after perms load
   });
 
-  // One-time cleanup of the old shared localStorage key (which caused every
-  // login to reopen the previous person's tab).
+  // One-time cleanup of the old shared localStorage key.
   useEffect(() => {
     try { localStorage.removeItem(TAB_KEY); } catch { /* ignore */ }
   }, []);
 
-  // 2. Persist the tab together with the current token, so only a refresh of
-  //    THIS session restores it.
+  // Fresh login (not a refresh): once permissions have loaded, land on the
+  // first module this user can see — so a hidden Overview is skipped.
+  useEffect(() => {
+    if (loading || restoredRef.current || defaultedRef.current) return;
+    defaultedRef.current = true;
+    setActiveTab(firstAllowedTab);
+  }, [loading, firstAllowedTab]);
+
+  // Persist the current tab with the token (only a refresh restores it).
   useEffect(() => {
     try {
       if (token) sessionStorage.setItem(TAB_KEY, JSON.stringify({ token, tab: activeTab }));
     } catch { /* ignore */ }
   }, [activeTab, token]);
 
-  // 3. Fallback security check: if the restored/current tab isn't permitted
-  //    for this user, bounce them to the default.
+  // Safety: if the current tab isn't permitted for this user, bounce to default.
   useEffect(() => {
     if (loading) return;
     const currentMod = MODULES.find(m => m.id === activeTab);
     if (!currentMod) return;
     if (currentMod.alwaysVisible) return;
-
     if (!isVisible(currentMod.module_name)) {
       setActiveTab(firstAllowedTab);
     }
   }, [activeTab, isVisible, loading, firstAllowedTab]);
 
   const renderContent = () => {
+    // Wait for permissions before deciding what to render — avoids briefly
+    // flashing a module the user isn't allowed to see.
+    if (loading) {
+      return (
+        <div className="h-full flex items-center justify-center">
+          <div className="size-8 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" />
+        </div>
+      );
+    }
+
     const currentMod = MODULES.find(m => m.id === activeTab);
     const moduleName = currentMod?.module_name;
 

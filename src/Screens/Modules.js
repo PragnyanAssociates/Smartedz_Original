@@ -17,8 +17,7 @@ export const MODULES = [
     label: 'Overview',
     title: 'Overview',
     imageSource: 'https://cdn-icons-png.flaticon.com/128/8899/8899687.png',
-    navigateTo: '/Dashboard',
-    alwaysVisible: true
+    navigateTo: '/Dashboard'
   },
   {
     id: 'manage-login',
@@ -233,7 +232,7 @@ export const MODULES = [
     module_name: 'Support', // Must match backend DEFAULT_MODULES exactly
     label: 'Support',
     title: 'Support',
-    imageSource: 'https://cdn-icons-png.flaticon.com/128/4961/4961759.png',
+    imageSource: 'https://cdn-icons-png.flaticon.com/128/4233/4233830.png',
     navigateTo: '/Support'
   }
 
