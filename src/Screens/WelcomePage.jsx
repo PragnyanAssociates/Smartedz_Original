@@ -42,7 +42,7 @@ export default function WelcomePage() {
           {/* Text Content - UPDATED TO RULES */}
           <div className="space-y-4 sm:space-y-6">
             <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight text-zinc-900 animate-fade-in-up-delay-1 opacity-0 leading-tight">
-              Complete Educational ERP Solution for Schools, Colleges & Educational Institutions.
+              Complete Educational ERP Solution for Schools, Colleges & Educational Institutions
             </h1>
 
             <p className="text-base sm:text-lg text-zinc-500 animate-fade-in-up-delay-2 opacity-0 leading-relaxed max-w-md font-medium">

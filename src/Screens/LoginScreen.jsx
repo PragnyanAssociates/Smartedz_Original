@@ -105,10 +105,10 @@ export default function LoginScreen() {
 
             <div className="space-y-3">
               <h1 className="text-[1.7rem] leading-tight font-semibold text-zinc-900 tracking-tight">
-                Complete ERP Solution for Educational Institutions
+                Complete Educational ERP Solution for Schools, Colleges & Educational Institutions
               </h1>
               <p className="text-zinc-500 text-sm leading-relaxed max-w-sm font-medium">
-                The unified platform to manage your entire institution seamlessly.
+                The unified platform to manage your entire Educational Institutions seamlessly.
               </p>
             </div>
 
