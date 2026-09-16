@@ -8905,25 +8905,21 @@ app.delete('/api/admin/study-materials/:id', async (req, res) => {
 
 
 // =====================================================================
-//  BACKEND — Section 22: SYLLABUS  (v5 — TENANT-SCOPED, no academic year)
-//   Detection/slicing helpers unchanged except a wider TOC text scan
-//   (20 -> 40 pages). Every route verifies the syllabus/chapter/keyword
-//   belongs to the caller's institution. Create/update require the class
-//   to be yours so the fan-out notify can't reach another school.
-//   Academic-year logic removed: create no longer stamps academic_year_id
-//   (the column is left NULL; no read filters by it).
+//  BACKEND — Section 22: SYLLABUS  (v6 — SYLLABUS TYPES added)
 //
-//   AUDIT (needs syllabus_add_updated_by.sql once):
-//     • syllabus.updated_by         — stamped on syllabus edit, textbook
-//       upload, offset change, and chapter-add (all bump the syllabus row).
-//     • syllabus_chapters.updated_by — stamped on chapter edit + periods save.
-//   The list (22.1) and chapters (22.6) queries return updated_by_name so
-//   the UI can show "Updated by <name>" + updated_at (date + IST time).
+//   New in v6: syllabuses are grouped under SYLLABUS TYPES (tabs).
+//     • 22.0  GET/POST/PUT/DELETE /admin/syllabus/types  — manage types.
+//     • 22.1  list now filters by ?typeId= and returns type_name.
+//     • 22.2  create now requires + stores syllabus_type_id.
+//     • 22.3  update can move a syllabus between types.
+//   The SAME class + subject can exist under different types (the UNIQUE
+//   key is now (institutionId, syllabus_type_id, class_id, subject_id)).
+//   Requires: syllabus_types_schema.sql (once).
 //
-//   ⚠ syllabus/chapter/:id/pdf is loaded by the viewer — it's under the
-//     /api gate, so the frontend FETCHES it (token via interceptor) and
-//     renders a blob URL, not a raw <iframe src>.
-//
+//   (v5 unchanged otherwise) TENANT-SCOPED, no academic year. Every route
+//   verifies the syllabus/chapter/keyword belongs to the caller's
+//   institution. syllabus.updated_by / syllabus_chapters.updated_by audit.
+//   chapter/:id/pdf is fetched by the viewer (token via interceptor).
 //   Requires: npm install pdfjs-dist@3.11.174 pdf-lib --save
 //   Reuses nowSQL() (Section 16), studentIdsForClass/createNotifications (25).
 // =====================================================================
@@ -9139,26 +9135,87 @@ async function resliceChapter(chapterId) {
 // ---------------------------------------------------------------------
 //  ROUTES
 // ---------------------------------------------------------------------
-// --- 22.1 Syllabus Management list ----------------------------------
+
+// --- 22.0 Syllabus TYPES (the tabs) ---------------------------------
+app.get('/api/admin/syllabus/types/:instId', async (req, res) => {
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    try {
+        const [rows] = await db.execute(
+            `SELECT t.id, t.name,
+                    (SELECT COUNT(*) FROM syllabus s WHERE s.syllabus_type_id = t.id) AS syllabus_count
+               FROM syllabus_types t
+              WHERE t.institutionId = ?
+              ORDER BY t.name`, [instId]);
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+app.post('/api/admin/syllabus/types', async (req, res) => {
+    const institutionId = req.auth.institutionId;
+    const created_by = req.auth.userId;
+    const name = (req.body.name || '').trim();
+    if (!name) return res.status(400).json({ error: 'A type name is required.' });
+    try {
+        const [r] = await db.execute(
+            'INSERT INTO syllabus_types (institutionId, name, created_by) VALUES (?, ?, ?)',
+            [institutionId, name, created_by]);
+        res.json({ success: true, id: r.insertId });
+    } catch (err) {
+        if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'A type with that name already exists.' });
+        res.status(500).json({ error: err.message });
+    }
+});
+app.put('/api/admin/syllabus/types/:id', async (req, res) => {
+    const name = (req.body.name || '').trim();
+    if (!name) return res.status(400).json({ error: 'A type name is required.' });
+    try {
+        const [own] = await db.execute('SELECT institutionId FROM syllabus_types WHERE id = ?', [req.params.id]);
+        if (own.length === 0) return res.status(404).json({ error: 'Type not found.' });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This type belongs to another institution.' });
+        await db.execute('UPDATE syllabus_types SET name = ? WHERE id = ?', [name, req.params.id]);
+        res.json({ success: true });
+    } catch (err) {
+        if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'A type with that name already exists.' });
+        res.status(500).json({ error: err.message });
+    }
+});
+app.delete('/api/admin/syllabus/types/:id', async (req, res) => {
+    try {
+        const [own] = await db.execute('SELECT institutionId FROM syllabus_types WHERE id = ?', [req.params.id]);
+        if (own.length === 0) return res.json({ success: true });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This type belongs to another institution.' });
+        const [cnt] = await db.execute('SELECT COUNT(*) AS c FROM syllabus WHERE syllabus_type_id = ?', [req.params.id]);
+        if (cnt[0].c > 0) {
+            return res.status(400).json({ error: `This type still has ${cnt[0].c} syllabus(es). Move or delete them first.` });
+        }
+        await db.execute('DELETE FROM syllabus_types WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 22.1 Syllabus Management list (filter by type) -----------------
 app.get('/api/admin/syllabus/list/:instId', async (req, res) => {
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
-    const { classId } = req.query;
+    const { classId, typeId } = req.query;
     try {
         let sql = `
-            SELECT s.id, s.class_id, s.subject_id, s.teacher_id, s.updated_at, s.updated_by,
+            SELECT s.id, s.class_id, s.subject_id, s.teacher_id, s.syllabus_type_id,
+                   s.updated_at, s.updated_by,
                    c.className, c.section,
                    sub.name AS subject_name,
                    t.name AS teacher_name,
+                   st.name AS type_name,
                    uu.name AS updated_by_name,
                    (SELECT COUNT(*) FROM syllabus_chapters ch WHERE ch.syllabus_id = s.id) AS lesson_count
               FROM syllabus s
-              LEFT JOIN classes  c   ON c.id = s.class_id
-              LEFT JOIN subjects sub ON sub.id = s.subject_id
-              LEFT JOIN users    t   ON t.id = s.teacher_id
-              LEFT JOIN users    uu  ON uu.id = s.updated_by
+              LEFT JOIN classes       c   ON c.id = s.class_id
+              LEFT JOIN subjects      sub ON sub.id = s.subject_id
+              LEFT JOIN users         t   ON t.id = s.teacher_id
+              LEFT JOIN syllabus_types st ON st.id = s.syllabus_type_id
+              LEFT JOIN users         uu  ON uu.id = s.updated_by
              WHERE s.institutionId = ?`;
         const params = [instId];
-        if (classId) { sql += ' AND s.class_id = ?'; params.push(classId); }
+        if (typeId)  { sql += ' AND s.syllabus_type_id = ?'; params.push(typeId); }
+        if (classId) { sql += ' AND s.class_id = ?';         params.push(classId); }
         sql += ' ORDER BY sub.name';
         const [rows] = await db.execute(sql, params);
         const decorated = rows.map(r => ({
@@ -9168,36 +9225,43 @@ app.get('/api/admin/syllabus/list/:instId', async (req, res) => {
         res.json(decorated);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-// --- 22.2 Create a syllabus (no academic-year stamp) ----------------
+// --- 22.2 Create a syllabus (under a type) --------------------------
 app.post('/api/admin/syllabus', async (req, res) => {
     const institutionId = req.auth.institutionId;
     const created_by = req.auth.userId;
-    const { class_id, subject_id, teacher_id } = req.body;
+    const { class_id, subject_id, teacher_id, syllabus_type_id } = req.body;
     if (!class_id || !subject_id) {
         return res.status(400).json({ error: 'class_id and subject_id are required.' });
+    }
+    if (!syllabus_type_id) {
+        return res.status(400).json({ error: 'A syllabus type is required.' });
     }
     try {
         const [c] = await db.execute('SELECT institutionId FROM classes WHERE id = ?', [class_id]);
         if (c.length === 0 || !sameTenant(req, c[0].institutionId)) {
             return res.status(403).json({ error: 'That class belongs to another institution.' });
         }
+        const [ty] = await db.execute('SELECT institutionId FROM syllabus_types WHERE id = ?', [syllabus_type_id]);
+        if (ty.length === 0 || !sameTenant(req, ty[0].institutionId)) {
+            return res.status(403).json({ error: 'That syllabus type belongs to another institution.' });
+        }
         const [result] = await db.execute(
             `INSERT INTO syllabus
-               (institutionId, class_id, subject_id, teacher_id, created_by, updated_by)
-             VALUES (?, ?, ?, ?, ?, ?)`,
-            [institutionId, class_id, subject_id, teacher_id || null, created_by, created_by]
+               (institutionId, syllabus_type_id, class_id, subject_id, teacher_id, created_by, updated_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [institutionId, syllabus_type_id, class_id, subject_id, teacher_id || null, created_by, created_by]
         );
         res.json({ success: true, id: result.insertId });
     } catch (err) {
         if (err.code === 'ER_DUP_ENTRY') {
-            return res.status(409).json({ error: 'A syllabus for this class and subject already exists.' });
+            return res.status(409).json({ error: 'A syllabus for this class and subject already exists under this type.' });
         }
         res.status(500).json({ error: err.message });
     }
 });
-// --- 22.3 Update a syllabus -----------------------------------------
+// --- 22.3 Update a syllabus (can move between types) ----------------
 app.put('/api/admin/syllabus/:id', async (req, res) => {
-    const { class_id, subject_id, teacher_id } = req.body;
+    const { class_id, subject_id, teacher_id, syllabus_type_id } = req.body;
     const actor_id = req.auth.userId;
     try {
         const inst = await _sylInstBySyllabus(req.params.id);
@@ -9209,12 +9273,26 @@ app.put('/api/admin/syllabus/:id', async (req, res) => {
                 return res.status(403).json({ error: 'That class belongs to another institution.' });
             }
         }
+        if (syllabus_type_id) {
+            const [ty] = await db.execute('SELECT institutionId FROM syllabus_types WHERE id = ?', [syllabus_type_id]);
+            if (ty.length === 0 || !sameTenant(req, ty[0].institutionId)) {
+                return res.status(403).json({ error: 'That syllabus type belongs to another institution.' });
+            }
+        }
         await db.execute(
-            `UPDATE syllabus SET class_id = ?, subject_id = ?, teacher_id = ?, updated_by = ? WHERE id = ?`,
-            [class_id, subject_id, teacher_id || null, actor_id, req.params.id]
+            `UPDATE syllabus
+                SET class_id = ?, subject_id = ?, teacher_id = ?,
+                    syllabus_type_id = COALESCE(?, syllabus_type_id), updated_by = ?
+              WHERE id = ?`,
+            [class_id, subject_id, teacher_id || null, syllabus_type_id || null, actor_id, req.params.id]
         );
         res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) {
+        if (err.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({ error: 'A syllabus for this class and subject already exists under this type.' });
+        }
+        res.status(500).json({ error: err.message });
+    }
 });
 // --- 22.4 Delete a syllabus -----------------------------------------
 app.delete('/api/admin/syllabus/:id', async (req, res) => {
