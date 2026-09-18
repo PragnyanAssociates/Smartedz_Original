@@ -43,15 +43,16 @@ function getFcmApp() {
 async function sendPushNotifications(userIds, { type, title, body, link, entity_id }) {
     try {
         const app = getFcmApp();
-        if (!app) return;
+        if (!app) { console.log('[FCM] app not initialized (check FIREBASE_SERVICE_ACCOUNT_BASE64), skipping'); return; }
         const ids = [...new Set((userIds || []).map(n => parseInt(n, 10)).filter(Boolean))];
-        if (ids.length === 0) return;
+        if (ids.length === 0) { console.log('[FCM] no recipient ids passed in'); return; }
 
         const ph = ids.map(() => '?').join(',');
         const [rows] = await db.execute(
             `SELECT id, fcm_token FROM device_tokens WHERE user_id IN (${ph})`,
             ids
         );
+        console.log('[FCM] recipients:', ids, '-> found', rows.length, 'device token(s)');
         if (rows.length === 0) return;
 
         const message = {
@@ -68,10 +69,12 @@ async function sendPushNotifications(userIds, { type, title, body, link, entity_
         };
 
         const result = await admin.messaging().sendEachForMulticast(message);
+        console.log('[FCM] sendEachForMulticast: success=', result.successCount, 'failure=', result.failureCount);
 
         const deadIds = [];
         result.responses.forEach((r, i) => {
             if (!r.success) {
+                console.log('[FCM] token', i, 'failed:', r.error && r.error.code, '-', r.error && r.error.message);
                 const code = r.error && r.error.code;
                 if (code === 'messaging/registration-token-not-registered' ||
                     code === 'messaging/invalid-registration-token') {
@@ -87,7 +90,6 @@ async function sendPushNotifications(userIds, { type, title, body, link, entity_
         console.error('[FCM SEND ERROR]', e.message);
     }
 }
-
 const app = express();
 const server = http.createServer({ maxHeaderSize: 81920 }, app);
 
