@@ -13,7 +13,8 @@ const fs = require('fs');
 const http = require('http');
 const { Server } = require('socket.io');   
 const { performance } = require('perf_hooks'); 
-const admin = require('firebase-admin');
+const { initializeApp, cert } = require('firebase-admin/app');
+const { getMessaging } = require('firebase-admin/messaging');
 
 // ---------------------------------------------------------------------
 // FCM — lazy singleton. Any failure here is caught and logged; it never
@@ -30,7 +31,7 @@ function getFcmApp() {
         const b64 = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64;
         if (!b64) { console.warn('[FCM] FIREBASE_SERVICE_ACCOUNT_BASE64 not set — push disabled.'); return null; }
         const svc = JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
-        _fcmApp = admin.initializeApp({ credential: admin.credential.cert(svc) });
+      _fcmApp = initializeApp({ credential: cert(svc) });
     } catch (e) {
         console.error('[FCM INIT ERROR]', e.message);
         _fcmApp = null;
@@ -68,7 +69,7 @@ async function sendPushNotifications(userIds, { type, title, body, link, entity_
             tokens: rows.map(r => r.fcm_token)
         };
 
-        const result = await admin.messaging().sendEachForMulticast(message);
+     const result = await getMessaging(app).sendEachForMulticast(message);
         console.log('[FCM] sendEachForMulticast: success=', result.successCount, 'failure=', result.failureCount);
 
         const deadIds = [];
