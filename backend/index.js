@@ -41,22 +41,23 @@ function getFcmApp() {
 
 // Sends push to every device token belonging to these userIds. Self-contained:
 // never throws to its caller. Prunes dead tokens as Firebase reports them.
-async function sendPushNotifications(userIds, { type, title, body, link, entity_id }) {
+async function sendPushNotifications(notifIdByUser, { type, title, body, link, entity_id }) {
     try {
         const app = getFcmApp();
-        if (!app) { console.log('[FCM] app not initialized (check FIREBASE_SERVICE_ACCOUNT_BASE64), skipping'); return; }
-        const ids = [...new Set((userIds || []).map(n => parseInt(n, 10)).filter(Boolean))];
+        if (!app) { console.log('[FCM] app not initialized, skipping'); return; }
+        const ids = Object.keys(notifIdByUser).map(n => parseInt(n, 10)).filter(Boolean);
         if (ids.length === 0) { console.log('[FCM] no recipient ids passed in'); return; }
 
         const ph = ids.map(() => '?').join(',');
         const [rows] = await db.execute(
-            `SELECT id, fcm_token FROM device_tokens WHERE user_id IN (${ph})`,
+            `SELECT id, user_id, fcm_token FROM device_tokens WHERE user_id IN (${ph})`,
             ids
         );
         console.log('[FCM] recipients:', ids, '-> found', rows.length, 'device token(s)');
         if (rows.length === 0) return;
 
-        const message = {
+        const messages = rows.map(r => ({
+            token: r.fcm_token,
             notification: {
                 title: String(title || 'Notification').slice(0, 200),
                 body: String(body || '').slice(0, 500)
@@ -64,13 +65,13 @@ async function sendPushNotifications(userIds, { type, title, body, link, entity_
             data: {
                 type: String(type || ''),
                 link: String(link || ''),
-                entity_id: entity_id != null ? String(entity_id) : ''
-            },
-            tokens: rows.map(r => r.fcm_token)
-        };
+                entity_id: entity_id != null ? String(entity_id) : '',
+                notification_id: notifIdByUser[r.user_id] != null ? String(notifIdByUser[r.user_id]) : ''
+            }
+        }));
 
-     const result = await getMessaging(app).sendEachForMulticast(message);
-        console.log('[FCM] sendEachForMulticast: success=', result.successCount, 'failure=', result.failureCount);
+        const result = await getMessaging(app).sendEach(messages);
+        console.log('[FCM] sendEach: success=', result.successCount, 'failure=', result.failureCount);
 
         const deadIds = [];
         result.responses.forEach((r, i) => {
@@ -11151,26 +11152,37 @@ async function createNotifications(
         cap(link, 120), entity_id || null, actor_id || null
     ]));
 
-       try {
-        await dbOrConnection.query(
+    let firstInsertId = null;
+    try {
+        const [result] = await dbOrConnection.query(
             `INSERT INTO notifications
                (institutionId, recipient_id, type, title, body, link, entity_id, actor_id)
              VALUES ?`,
             [rows]
         );
+        firstInsertId = result.insertId;
     } catch (e) {
         console.error('[NOTIFICATION ERROR] bulk insert:', e.message);
         return 0;
     }
 
+    // Map each recipient to the id of THEIR OWN notification row, so the
+    // push payload can carry it and the client can mark it read on tap.
+    // Relies on MySQL's documented guarantee (default innodb_autoinc_lock_mode)
+    // that a single multi-row INSERT assigns consecutive auto-increment ids
+    // in the same order as the VALUES list.
+    const notifIdByUser = {};
+    if (firstInsertId) {
+        ids.forEach((rid, i) => { notifIdByUser[rid] = firstInsertId + i; });
+    }
+
     // Additive push channel — fires after the DB insert succeeds, never
     // awaited by the caller's success path, and catches its own errors.
-    sendPushNotifications(ids, { type, title, body, link, entity_id })
+    sendPushNotifications(notifIdByUser, { type, title, body, link, entity_id })
         .catch(e => console.error('[FCM DISPATCH ERROR]', e.message));
 
     return ids.length;
 }
-
 async function studentIdsForClass(classId) {
     if (!classId) return [];
     const [rows] = await db.execute(
