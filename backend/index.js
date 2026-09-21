@@ -12,8 +12,86 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const { Server } = require('socket.io');   
-const { performance } = require('perf_hooks');
+const { performance } = require('perf_hooks'); 
+const { initializeApp, cert } = require('firebase-admin/app');
+const { getMessaging } = require('firebase-admin/messaging');
 
+// ---------------------------------------------------------------------
+// FCM — lazy singleton. Any failure here is caught and logged; it never
+// throws, so a missing/broken credential can't crash the server or
+// affect any other route. This is purely additive to the existing
+// web notification system.
+// ---------------------------------------------------------------------
+let _fcmApp = null;
+let _fcmInitTried = false;
+function getFcmApp() {
+    if (_fcmInitTried) return _fcmApp;
+    _fcmInitTried = true;
+    try {
+        const b64 = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64;
+        if (!b64) { console.warn('[FCM] FIREBASE_SERVICE_ACCOUNT_BASE64 not set — push disabled.'); return null; }
+        const svc = JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
+      _fcmApp = initializeApp({ credential: cert(svc) });
+    } catch (e) {
+        console.error('[FCM INIT ERROR]', e.message);
+        _fcmApp = null;
+    }
+    return _fcmApp;
+}
+
+// Sends push to every device token belonging to these userIds. Self-contained:
+// never throws to its caller. Prunes dead tokens as Firebase reports them.
+async function sendPushNotifications(notifIdByUser, { type, title, body, link, entity_id }) {
+    try {
+        const app = getFcmApp();
+        if (!app) { console.log('[FCM] app not initialized, skipping'); return; }
+        const ids = Object.keys(notifIdByUser).map(n => parseInt(n, 10)).filter(Boolean);
+        if (ids.length === 0) { console.log('[FCM] no recipient ids passed in'); return; }
+
+        const ph = ids.map(() => '?').join(',');
+        const [rows] = await db.execute(
+            `SELECT id, user_id, fcm_token FROM device_tokens WHERE user_id IN (${ph})`,
+            ids
+        );
+        console.log('[FCM] recipients:', ids, '-> found', rows.length, 'device token(s)');
+        if (rows.length === 0) return;
+
+        const messages = rows.map(r => ({
+            token: r.fcm_token,
+            notification: {
+                title: String(title || 'Notification').slice(0, 200),
+                body: String(body || '').slice(0, 500)
+            },
+            data: {
+                type: String(type || ''),
+                link: String(link || ''),
+                entity_id: entity_id != null ? String(entity_id) : '',
+                notification_id: notifIdByUser[r.user_id] != null ? String(notifIdByUser[r.user_id]) : ''
+            }
+        }));
+
+        const result = await getMessaging(app).sendEach(messages);
+        console.log('[FCM] sendEach: success=', result.successCount, 'failure=', result.failureCount);
+
+        const deadIds = [];
+        result.responses.forEach((r, i) => {
+            if (!r.success) {
+                console.log('[FCM] token', i, 'failed:', r.error && r.error.code, '-', r.error && r.error.message);
+                const code = r.error && r.error.code;
+                if (code === 'messaging/registration-token-not-registered' ||
+                    code === 'messaging/invalid-registration-token') {
+                    deadIds.push(rows[i].id);
+                }
+            }
+        });
+        if (deadIds.length) {
+            const dph = deadIds.map(() => '?').join(',');
+            await db.execute(`DELETE FROM device_tokens WHERE id IN (${dph})`, deadIds).catch(() => {});
+        }
+    } catch (e) {
+        console.error('[FCM SEND ERROR]', e.message);
+    }
+}
 const app = express();
 const server = http.createServer({ maxHeaderSize: 81920 }, app);
 
@@ -11075,20 +11153,37 @@ async function createNotifications(
         cap(link, 120), entity_id || null, actor_id || null
     ]));
 
+    let firstInsertId = null;
     try {
-        await dbOrConnection.query(
+        const [result] = await dbOrConnection.query(
             `INSERT INTO notifications
                (institutionId, recipient_id, type, title, body, link, entity_id, actor_id)
              VALUES ?`,
             [rows]
         );
+        firstInsertId = result.insertId;
     } catch (e) {
         console.error('[NOTIFICATION ERROR] bulk insert:', e.message);
         return 0;
     }
+
+    // Map each recipient to the id of THEIR OWN notification row, so the
+    // push payload can carry it and the client can mark it read on tap.
+    // Relies on MySQL's documented guarantee (default innodb_autoinc_lock_mode)
+    // that a single multi-row INSERT assigns consecutive auto-increment ids
+    // in the same order as the VALUES list.
+    const notifIdByUser = {};
+    if (firstInsertId) {
+        ids.forEach((rid, i) => { notifIdByUser[rid] = firstInsertId + i; });
+    }
+
+    // Additive push channel — fires after the DB insert succeeds, never
+    // awaited by the caller's success path, and catches its own errors.
+    sendPushNotifications(notifIdByUser, { type, title, body, link, entity_id })
+        .catch(e => console.error('[FCM DISPATCH ERROR]', e.message));
+
     return ids.length;
 }
-
 async function studentIdsForClass(classId) {
     if (!classId) return [];
     const [rows] = await db.execute(
@@ -11121,7 +11216,37 @@ async function staffUserIds(institutionId) {
     );
     return rows.map(r => r.id);
 }
+// ---------------------------------------------------------------------
+// FCM device token registration
+// ---------------------------------------------------------------------
+app.post('/api/fcm/register-token', async (req, res) => {
+    const { fcm_token, platform } = req.body;
+    if (!fcm_token || !['android', 'ios'].includes(platform)) {
+        return res.status(400).json({ error: 'fcm_token and platform (android|ios) are required.' });
+    }
+    try {
+        await db.execute(
+            `INSERT INTO device_tokens (user_id, institutionId, fcm_token, platform)
+             VALUES (?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE user_id = VALUES(user_id), institutionId = VALUES(institutionId),
+                                     platform = VALUES(platform), updated_at = CURRENT_TIMESTAMP`,
+            [req.auth.userId, req.auth.institutionId, fcm_token, platform]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
+app.delete('/api/fcm/register-token', async (req, res) => {
+    const { fcm_token } = req.body;
+    if (!fcm_token) return res.status(400).json({ error: 'fcm_token is required.' });
+    try {
+        await db.execute(
+            'DELETE FROM device_tokens WHERE fcm_token = ? AND user_id = ?',
+            [fcm_token, req.auth.userId]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
 // --- 25.1 List a user's notifications (self only) -------------------
 app.get('/api/notifications/:userId', async (req, res) => {
