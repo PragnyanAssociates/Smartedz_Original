@@ -172,7 +172,8 @@ const DEFAULT_MODULES = [
     'Alumni',
     'InventoryAssets',
     'LessonPlan',
-    'Support'
+    'Support',
+    'Library'
     
 ];
 
@@ -15361,6 +15362,312 @@ app.post('/api/support/tickets/:id/close', async (req, res) => {
             [ticket.id]
         );
         await _sysMsg(ticket.id, req.auth.userId, `Closed by ${await _userName(req.auth.userId)} · chatted ${_durText(since)}.`);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+
+// =====================================================================
+// === LIBRARY MODULE — splice into index.js ==========================
+//
+//  ONLINE library (book PDFs):
+//    • anyone in the tenant may LIST / VIEW / DOWNLOAD;
+//    • ADD / EDIT / DELETE are SUPER ADMIN only (enforced here).
+//  OFFLINE library (physical books + issue/return):
+//    • catalogue + issue/return, tenant-scoped (the frontend gates writes
+//      by the Library "edit" permission, same as other modules).
+//
+//  Requires: library_schema.sql. Reuses sameTenant() and nowSQL().
+//  Add 'Library' to DEFAULT_MODULES.
+// =====================================================================
+
+// Only a Super Admin (or Developer) may manage the ONLINE library.
+function _canManageOnline(req) {
+    return !!req.auth && (req.auth.role === 'Super Admin' || req.auth.role === 'Developer');
+}
+async function _libOnlineInst(id) {
+    const [r] = await db.execute('SELECT institutionId FROM library_online_books WHERE id = ?', [id]);
+    return r.length ? r[0].institutionId : null;
+}
+async function _libBookInst(id) {
+    const [r] = await db.execute('SELECT institutionId FROM library_books WHERE id = ?', [id]);
+    return r.length ? r[0].institutionId : null;
+}
+async function _libIssueInst(id) {
+    const [r] = await db.execute('SELECT institutionId FROM library_issues WHERE id = ?', [id]);
+    return r.length ? r[0].institutionId : null;
+}
+// Keep available_copies honest: total minus the currently-issued count.
+async function _libRecalcAvailable(bookId) {
+    const [bk] = await db.execute('SELECT total_copies FROM library_books WHERE id = ?', [bookId]);
+    if (!bk.length) return;
+    const [cnt] = await db.execute(
+        "SELECT COUNT(*) AS c FROM library_issues WHERE book_id = ? AND status = 'issued'", [bookId]);
+    const avail = Math.max(0, Number(bk[0].total_copies) - Number(cnt[0].c));
+    await db.execute('UPDATE library_books SET available_copies = ? WHERE id = ?', [avail, bookId]);
+}
+
+// ---------------------------------------------------------------------
+//  Borrower picker — active users of the institution
+// ---------------------------------------------------------------------
+app.get('/api/admin/library/members/:instId', async (req, res) => {
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    try {
+        const [rows] = await db.execute(
+            `SELECT id, name, role FROM users
+              WHERE institutionId = ? AND (status IS NULL OR LOWER(status) = 'active')
+              ORDER BY name`, [instId]);
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ---------------------------------------------------------------------
+//  ONLINE LIBRARY
+// ---------------------------------------------------------------------
+
+// List (metadata only — never ships doc_data).
+app.get('/api/admin/library/online/:instId', async (req, res) => {
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    const { q } = req.query;
+    try {
+        let sql = `SELECT id, title, author, category, description, doc_name,
+                          (doc_data IS NOT NULL) AS has_doc, updated_at
+                     FROM library_online_books WHERE institutionId = ?`;
+        const params = [instId];
+        if (q && q.trim()) {
+            sql += ' AND (title LIKE ? OR author LIKE ? OR category LIKE ?)';
+            const like = `%${q.trim()}%`; params.push(like, like, like);
+        }
+        sql += ' ORDER BY title';
+        const [rows] = await db.execute(sql, params);
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// View / download the PDF (?download=1 forces an attachment).
+app.get('/api/admin/library/online/:id/pdf', async (req, res) => {
+    try {
+        const inst = await _libOnlineInst(req.params.id);
+        if (inst === null) return res.status(404).send('Not found');
+        if (!sameTenant(req, inst)) return res.status(403).send('Forbidden');
+        const [rows] = await db.execute('SELECT title, doc_data FROM library_online_books WHERE id = ?', [req.params.id]);
+        if (!rows.length || !rows[0].doc_data) return res.status(404).send('No document');
+        const base64 = String(rows[0].doc_data).replace(/^data:[^;]+;base64,/, '');
+        const bytes = Buffer.from(base64, 'base64');
+        const safe = String(rows[0].title || 'book').replace(/[^a-z0-9._-]+/gi, '_').slice(0, 80);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition',
+            `${req.query.download ? 'attachment' : 'inline'}; filename="${safe}.pdf"`);
+        res.setHeader('Cache-Control', 'private, max-age=3600');
+        res.send(bytes);
+    } catch (err) { res.status(500).send(err.message); }
+});
+
+// Add — SUPER ADMIN ONLY.
+app.post('/api/admin/library/online', async (req, res) => {
+    if (!_canManageOnline(req)) return res.status(403).json({ error: 'Only a Super Admin can add online books.' });
+    const institutionId = req.auth.institutionId;
+    const actor = req.auth.userId;
+    const { title, author, category, description, doc_name, doc_data } = req.body;
+    if (!title || !title.trim()) return res.status(400).json({ error: 'A title is required.' });
+    if (!doc_data) return res.status(400).json({ error: 'Please attach the book PDF.' });
+    try {
+        const [r] = await db.execute(
+            `INSERT INTO library_online_books
+               (institutionId, title, author, category, description, doc_name, doc_data, created_by, updated_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [institutionId, title.trim(), author || null, category || null, description || null,
+             doc_name || null, doc_data, actor, actor]);
+        res.json({ success: true, id: r.insertId });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Edit — SUPER ADMIN ONLY. doc_data optional (blank keeps the current PDF).
+app.put('/api/admin/library/online/:id', async (req, res) => {
+    if (!_canManageOnline(req)) return res.status(403).json({ error: 'Only a Super Admin can edit online books.' });
+    const actor = req.auth.userId;
+    const { title, author, category, description, doc_name, doc_data } = req.body;
+    try {
+        const inst = await _libOnlineInst(req.params.id);
+        if (inst === null) return res.status(404).json({ error: 'Book not found.' });
+        if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This book belongs to another institution.' });
+        if (doc_data) {
+            await db.execute(
+                `UPDATE library_online_books
+                    SET title=?, author=?, category=?, description=?, doc_name=?, doc_data=?, updated_by=?
+                  WHERE id=?`,
+                [title, author || null, category || null, description || null, doc_name || null, doc_data, actor, req.params.id]);
+        } else {
+            await db.execute(
+                `UPDATE library_online_books
+                    SET title=?, author=?, category=?, description=?, updated_by=?
+                  WHERE id=?`,
+                [title, author || null, category || null, description || null, actor, req.params.id]);
+        }
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Delete — SUPER ADMIN ONLY.
+app.delete('/api/admin/library/online/:id', async (req, res) => {
+    if (!_canManageOnline(req)) return res.status(403).json({ error: 'Only a Super Admin can delete online books.' });
+    try {
+        const inst = await _libOnlineInst(req.params.id);
+        if (inst === null) return res.json({ success: true });
+        if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This book belongs to another institution.' });
+        await db.execute('DELETE FROM library_online_books WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ---------------------------------------------------------------------
+//  OFFLINE LIBRARY — physical catalogue
+// ---------------------------------------------------------------------
+
+app.get('/api/admin/library/books/:instId', async (req, res) => {
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    const { q } = req.query;
+    try {
+        let sql = 'SELECT * FROM library_books WHERE institutionId = ?';
+        const params = [instId];
+        if (q && q.trim()) {
+            sql += ' AND (title LIKE ? OR author LIKE ? OR isbn LIKE ? OR category LIKE ?)';
+            const like = `%${q.trim()}%`; params.push(like, like, like, like);
+        }
+        sql += ' ORDER BY title';
+        const [rows] = await db.execute(sql, params);
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/admin/library/books', async (req, res) => {
+    const institutionId = req.auth.institutionId;
+    const actor = req.auth.userId;
+    const { title, author, isbn, category, location, total_copies } = req.body;
+    if (!title || !title.trim()) return res.status(400).json({ error: 'A title is required.' });
+    const total = Math.max(1, parseInt(total_copies, 10) || 1);
+    try {
+        const [r] = await db.execute(
+            `INSERT INTO library_books
+               (institutionId, title, author, isbn, category, location, total_copies, available_copies, created_by, updated_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [institutionId, title.trim(), author || null, isbn || null, category || null, location || null, total, total, actor, actor]);
+        res.json({ success: true, id: r.insertId });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/api/admin/library/books/:id', async (req, res) => {
+    const actor = req.auth.userId;
+    const { title, author, isbn, category, location, total_copies } = req.body;
+    try {
+        const inst = await _libBookInst(req.params.id);
+        if (inst === null) return res.status(404).json({ error: 'Book not found.' });
+        if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This book belongs to another institution.' });
+        const total = Math.max(1, parseInt(total_copies, 10) || 1);
+        await db.execute(
+            `UPDATE library_books SET title=?, author=?, isbn=?, category=?, location=?, total_copies=?, updated_by=? WHERE id=?`,
+            [title, author || null, isbn || null, category || null, location || null, total, actor, req.params.id]);
+        await _libRecalcAvailable(req.params.id);   // reconcile availability with total
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/admin/library/books/:id', async (req, res) => {
+    try {
+        const inst = await _libBookInst(req.params.id);
+        if (inst === null) return res.json({ success: true });
+        if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This book belongs to another institution.' });
+        await db.execute('DELETE FROM library_books WHERE id = ?', [req.params.id]);  // cascades its issues
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ---------------------------------------------------------------------
+//  OFFLINE LIBRARY — issue / return records
+// ---------------------------------------------------------------------
+
+app.get('/api/admin/library/issues/:instId', async (req, res) => {
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    const { status, q } = req.query;
+    try {
+        let sql = `
+            SELECT i.*, b.title AS book_title, b.author AS book_author,
+                   u.name AS member_name, ib.name AS issued_by_name
+              FROM library_issues i
+              LEFT JOIN library_books b ON b.id = i.book_id
+              LEFT JOIN users u  ON u.id = i.member_user_id
+              LEFT JOIN users ib ON ib.id = i.issued_by
+             WHERE i.institutionId = ?`;
+        const params = [instId];
+        if (status === 'issued' || status === 'returned') { sql += ' AND i.status = ?'; params.push(status); }
+        if (q && q.trim()) {
+            sql += ' AND (b.title LIKE ? OR i.borrower_name LIKE ? OR u.name LIKE ?)';
+            const like = `%${q.trim()}%`; params.push(like, like, like);
+        }
+        sql += " ORDER BY (i.status = 'returned') ASC, i.issue_date DESC, i.id DESC";
+        const [rows] = await db.execute(sql, params);
+        const decorated = rows.map(r => ({ ...r, borrower: r.borrower_name || r.member_name || 'Unknown' }));
+        res.json(decorated);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Issue a book to a borrower.
+app.post('/api/admin/library/issues', async (req, res) => {
+    const institutionId = req.auth.institutionId;
+    const issued_by = req.auth.userId;
+    const { book_id, member_user_id, borrower_name, issue_date, due_date, notes } = req.body;
+    if (!book_id) return res.status(400).json({ error: 'Pick a book.' });
+    if (!member_user_id && !(borrower_name || '').trim()) return res.status(400).json({ error: 'Choose a borrower or type a name.' });
+    if (!issue_date) return res.status(400).json({ error: 'An issue date is required.' });
+    try {
+        const inst = await _libBookInst(book_id);
+        if (inst === null) return res.status(404).json({ error: 'Book not found.' });
+        if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This book belongs to another institution.' });
+
+        // Claim an available copy atomically.
+        const [upd] = await db.execute(
+            'UPDATE library_books SET available_copies = available_copies - 1 WHERE id = ? AND available_copies > 0', [book_id]);
+        if (upd.affectedRows === 0) return res.status(400).json({ error: 'No copies of this book are available.' });
+
+        // Snapshot the borrower's name (so records survive a user rename/delete).
+        let name = (borrower_name || '').trim() || null;
+        if (!name && member_user_id) {
+            const [u] = await db.execute('SELECT name FROM users WHERE id = ?', [member_user_id]);
+            name = u.length ? u[0].name : null;
+        }
+        const [r] = await db.execute(
+            `INSERT INTO library_issues
+               (institutionId, book_id, member_user_id, borrower_name, issue_date, due_date, status, issued_by, notes)
+             VALUES (?, ?, ?, ?, ?, ?, 'issued', ?, ?)`,
+            [institutionId, book_id, member_user_id || null, name, issue_date, due_date || null, issued_by, (notes || '').trim() || null]);
+        res.json({ success: true, id: r.insertId });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Mark an issued book returned.
+app.post('/api/admin/library/issues/:id/return', async (req, res) => {
+    try {
+        const [rows] = await db.execute('SELECT institutionId, book_id, status FROM library_issues WHERE id = ?', [req.params.id]);
+        if (rows.length === 0) return res.status(404).json({ error: 'Record not found.' });
+        if (!sameTenant(req, rows[0].institutionId)) return res.status(403).json({ error: 'This record belongs to another institution.' });
+        if (rows[0].status === 'returned') return res.json({ success: true });   // already returned
+        const returnDate = (req.body && req.body.return_date) || new Date().toISOString().slice(0, 10);
+        await db.execute(
+            "UPDATE library_issues SET status = 'returned', return_date = ? WHERE id = ?", [returnDate, req.params.id]);
+        await _libRecalcAvailable(rows[0].book_id);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Delete an issue record (frees the copy if it was still out).
+app.delete('/api/admin/library/issues/:id', async (req, res) => {
+    try {
+        const [rows] = await db.execute('SELECT institutionId, book_id FROM library_issues WHERE id = ?', [req.params.id]);
+        if (rows.length === 0) return res.json({ success: true });
+        if (!sameTenant(req, rows[0].institutionId)) return res.status(403).json({ error: 'This record belongs to another institution.' });
+        await db.execute('DELETE FROM library_issues WHERE id = ?', [req.params.id]);
+        await _libRecalcAvailable(rows[0].book_id);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });

@@ -28,6 +28,7 @@ import NotificationsScreen from './NotificationsScreen';
 import Profile from './Profile';
 import OnlineClasses from '../components/OnlineClasses/OnlineClasses';
 import InventoryAssets from '../components/Assets/InventoryAssets';
+import Library from '../components/Library/Library';
 import Support from './Support';
 
 import { PermissionsProvider, usePermissions } from './PermissionsContext';
@@ -156,6 +157,7 @@ function DashboardShell() {
       case 'LessonPlan':        return <LessonPlan/>;
       case 'InventoryAssets':   return <InventoryAssets/>;
       case 'Support':           return <Support/>;
+      case 'Library':           return <Library/>;
       case 'notifications':     return <NotificationsScreen onNavigate={setActiveTab} />;
 
       default:

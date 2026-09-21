@@ -234,6 +234,14 @@ export const MODULES = [
     title: 'Support',
     imageSource: 'https://cdn-icons-png.flaticon.com/128/4233/4233830.png',
     navigateTo: '/Support'
+  },
+  {
+    id: 'Library',
+    module_name: 'Library', // Must match backend DEFAULT_MODULES exactly
+    label: 'Library',
+    title: 'Library',
+    imageSource: 'https://cdn-icons-png.flaticon.com/128/5833/5833290.png',
+    navigateTo: '/Library'
   }
 
 ];
