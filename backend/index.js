@@ -15494,17 +15494,17 @@ app.post('/api/support/tickets/:id/close', async (req, res) => {
 
 
 // =====================================================================
-// === LIBRARY MODULE — splice into index.js  (v2: online enriched) ====
+// === LIBRARY MODULE — splice into index.js (v2) =====================
 //
-//  ONLINE library (book PDFs):
-//    • anyone in the tenant may LIST / VIEW / DOWNLOAD;
+//  ONLINE library (book PDFs + optional cover image):
+//    • anyone in the tenant LIST / VIEW / DOWNLOAD;
 //    • ADD / EDIT / DELETE are SUPER ADMIN only (enforced here).
-//    • now carries a cover image, description, and "added/updated by"
-//      name + timestamp.
-//  OFFLINE library (physical books + issue/return): unchanged.
+//    • list returns added-by / updated-by names + timestamps + has_cover;
+//    • /cover serves the cover image; /pdf serves the book.
+//  OFFLINE library (physical books + issue/return): tenant-scoped.
 //
-//  Requires: library_schema.sql + library_online_cover_schema.sql.
-//  Reuses sameTenant() and nowSQL(). Add 'Library' to DEFAULT_MODULES.
+//  Requires: library_schema.sql + library_cover_schema.sql. Reuses
+//  sameTenant() and nowSQL(). Add 'Library' to DEFAULT_MODULES.
 // =====================================================================
 
 function _canManageOnline(req) {
@@ -15544,19 +15544,17 @@ app.get('/api/admin/library/members/:instId', async (req, res) => {
 //  ONLINE LIBRARY
 // ---------------------------------------------------------------------
 
-// List (metadata only — never ships doc_data or cover_data). Returns the
-// added-by / updated-by names + timestamps, and has_doc / has_cover flags.
+// List — metadata + who added/updated it + cover flag (never ships the big blobs).
 app.get('/api/admin/library/online/:instId', async (req, res) => {
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     const { q } = req.query;
     try {
         let sql = `
             SELECT o.id, o.title, o.author, o.category, o.description, o.doc_name,
-                   (o.doc_data  IS NOT NULL) AS has_doc,
+                   (o.doc_data IS NOT NULL)   AS has_doc,
                    (o.cover_data IS NOT NULL) AS has_cover,
-                   o.created_at, o.updated_at,
-                   cu.name AS created_by_name,
-                   uu.name AS updated_by_name
+                   o.created_at, o.updated_at, o.created_by, o.updated_by,
+                   cu.name AS created_by_name, uu.name AS updated_by_name
               FROM library_online_books o
               LEFT JOIN users cu ON cu.id = o.created_by
               LEFT JOIN users uu ON uu.id = o.updated_by
@@ -15566,10 +15564,27 @@ app.get('/api/admin/library/online/:instId', async (req, res) => {
             sql += ' AND (o.title LIKE ? OR o.author LIKE ? OR o.category LIKE ?)';
             const like = `%${q.trim()}%`; params.push(like, like, like);
         }
-        sql += ' ORDER BY o.created_at DESC, o.id DESC';
+        sql += ' ORDER BY o.id ASC';   // stable order -> #1 is the first added
         const [rows] = await db.execute(sql, params);
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// The cover image (blob) — fetched by the card / detail view.
+app.get('/api/admin/library/online/:id/cover', async (req, res) => {
+    try {
+        const inst = await _libOnlineInst(req.params.id);
+        if (inst === null) return res.status(404).send('Not found');
+        if (!sameTenant(req, inst)) return res.status(403).send('Forbidden');
+        const [rows] = await db.execute('SELECT cover_data FROM library_online_books WHERE id = ?', [req.params.id]);
+        if (!rows.length || !rows[0].cover_data) return res.status(404).send('No cover');
+        const m = String(rows[0].cover_data).match(/^data:([^;]+);base64,(.*)$/);
+        const mime = m ? m[1] : 'image/png';
+        const b64 = m ? m[2] : String(rows[0].cover_data).replace(/^data:[^;]+;base64,/, '');
+        res.setHeader('Content-Type', mime);
+        res.setHeader('Cache-Control', 'private, max-age=3600');
+        res.send(Buffer.from(b64, 'base64'));
+    } catch (err) { res.status(500).send(err.message); }
 });
 
 // View / download the PDF (?download=1 forces an attachment).
@@ -15587,24 +15602,6 @@ app.get('/api/admin/library/online/:id/pdf', async (req, res) => {
         res.setHeader('Content-Disposition', `${req.query.download ? 'attachment' : 'inline'}; filename="${safe}.pdf"`);
         res.setHeader('Cache-Control', 'private, max-age=3600');
         res.send(bytes);
-    } catch (err) { res.status(500).send(err.message); }
-});
-
-// The cover image (served as a blob so it stays behind the auth gate).
-app.get('/api/admin/library/online/:id/cover', async (req, res) => {
-    try {
-        const inst = await _libOnlineInst(req.params.id);
-        if (inst === null) return res.status(404).send('Not found');
-        if (!sameTenant(req, inst)) return res.status(403).send('Forbidden');
-        const [rows] = await db.execute('SELECT cover_data FROM library_online_books WHERE id = ?', [req.params.id]);
-        if (!rows.length || !rows[0].cover_data) return res.status(404).send('No cover');
-        const uri = String(rows[0].cover_data);
-        const m = uri.match(/^data:([^;]+);base64,(.*)$/);
-        const mime = m ? m[1] : 'image/png';
-        const b64 = m ? m[2] : uri.replace(/^data:[^;]+;base64,/, '');
-        res.setHeader('Content-Type', mime);
-        res.setHeader('Cache-Control', 'private, max-age=3600');
-        res.send(Buffer.from(b64, 'base64'));
     } catch (err) { res.status(500).send(err.message); }
 });
 
@@ -15627,8 +15624,7 @@ app.post('/api/admin/library/online', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Edit — SUPER ADMIN ONLY. doc_data optional (blank keeps current PDF).
-// cover_data replaces the cover; remove_cover:true clears it.
+// Edit — SUPER ADMIN ONLY. doc_data / cover_data optional; remove_cover clears it.
 app.put('/api/admin/library/online/:id', async (req, res) => {
     if (!_canManageOnline(req)) return res.status(403).json({ error: 'Only a Super Admin can edit online books.' });
     const actor = req.auth.userId;
@@ -15639,12 +15635,12 @@ app.put('/api/admin/library/online/:id', async (req, res) => {
         if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This book belongs to another institution.' });
 
         const sets = ['title=?', 'author=?', 'category=?', 'description=?', 'updated_by=?'];
-        const params = [title, author || null, category || null, description || null, actor];
-        if (doc_data) { sets.splice(4, 0, 'doc_name=?', 'doc_data=?'); params.splice(4, 0, doc_name || null, doc_data); }
-        if (cover_data) { sets.push('cover_data=?'); params.push(cover_data); }
-        else if (remove_cover) { sets.push('cover_data=NULL'); }
-        params.push(req.params.id);
-        await db.execute(`UPDATE library_online_books SET ${sets.join(', ')} WHERE id=?`, params);
+        const vals = [title, author || null, category || null, description || null, actor];
+        if (doc_data) { sets.push('doc_name=?', 'doc_data=?'); vals.push(doc_name || null, doc_data); }
+        if (remove_cover) { sets.push('cover_data=NULL'); }
+        else if (cover_data) { sets.push('cover_data=?'); vals.push(cover_data); }
+        vals.push(req.params.id);
+        await db.execute(`UPDATE library_online_books SET ${sets.join(', ')} WHERE id=?`, vals);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -15664,7 +15660,6 @@ app.delete('/api/admin/library/online/:id', async (req, res) => {
 // ---------------------------------------------------------------------
 //  OFFLINE LIBRARY — physical catalogue
 // ---------------------------------------------------------------------
-
 app.get('/api/admin/library/books/:instId', async (req, res) => {
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     const { q } = req.query;
@@ -15726,7 +15721,6 @@ app.delete('/api/admin/library/books/:id', async (req, res) => {
 // ---------------------------------------------------------------------
 //  OFFLINE LIBRARY — issue / return records
 // ---------------------------------------------------------------------
-
 app.get('/api/admin/library/issues/:instId', async (req, res) => {
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     const { status, q } = req.query;

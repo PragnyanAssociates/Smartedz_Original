@@ -6,10 +6,22 @@ import {
   BookOpen, Library as LibraryIcon, Globe, Plus, Edit, Trash2, X, Loader2, Search,
   Download, Eye, Upload, FileText, RefreshCw, ChevronDown, Save, User,
   ArrowLeftRight, CheckCircle2, AlertTriangle, HelpCircle, ShieldCheck, ArrowLeft,
-  Tag, Image as ImageIcon, Clock
+  Image as ImageIcon, Tag, Users, Clock
 } from 'lucide-react';
 
 // ---- helpers --------------------------------------------------------
+const asUtcIso = (v) => {
+  if (!v) return null;
+  const s = String(v).replace(' ', 'T');
+  return /[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s : s + 'Z';
+};
+const fmtWhen = (v) => {
+  const iso = asUtcIso(v);
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true });
+};
 const fmtDMY = (v) => {
   if (!v) return '-';
   const d = new Date(String(v).length <= 10 ? v + 'T00:00:00' : v);
@@ -17,13 +29,6 @@ const fmtDMY = (v) => {
   const dd = String(d.getDate()).padStart(2, '0');
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   return `${dd}/${mm}/${d.getFullYear()}`;
-};
-const asUtc = (v) => { const s = String(v).replace(' ', 'T'); return /[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s : s + 'Z'; };
-const fmtWhen = (v) => {
-  if (!v) return '';
-  const d = new Date(asUtc(v));
-  if (isNaN(d.getTime())) return '';
-  return d.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true });
 };
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const isOverdue = (row) => row.status === 'issued' && row.due_date && row.due_date < todayISO();
@@ -36,45 +41,24 @@ const fileToDataUrl = (file, maxMB) => new Promise((resolve, reject) => {
   r.readAsDataURL(file);
 });
 
-// Cover image fetched as a blob (stays behind the auth gate). Falls back to an icon.
-function CoverImg({ id, hasCover, className = '', iconClass = 'size-6' }) {
+// Fetches a book's cover as a blob (token via fetch interceptor) and shows it.
+function CoverThumb({ bookId, hasCover, className }) {
   const [url, setUrl] = useState(null);
   useEffect(() => {
     if (!hasCover) { setUrl(null); return; }
     let revoked = false, obj = null;
-    fetch(`${API_BASE_URL}/admin/library/online/${id}/cover`)
-      .then(r => (r.ok ? r.blob() : null))
-      .then(b => { if (b && !revoked) { obj = URL.createObjectURL(b); setUrl(obj); } })
+    fetch(`${API_BASE_URL}/admin/library/online/${bookId}/cover`)
+      .then(r => { if (!r.ok) throw new Error(); return r.blob(); })
+      .then(b => { if (revoked) return; obj = URL.createObjectURL(b); setUrl(obj); })
       .catch(() => {});
     return () => { revoked = true; if (obj) URL.revokeObjectURL(obj); };
-  }, [id, hasCover]);
-  if (url) return <img src={url} alt="cover" className={`object-cover ${className}`} />;
-  return <div className={`flex items-center justify-center bg-primary/10 text-primary ${className}`}><FileText className={iconClass} /></div>;
-}
-
-// PDF view / download (blob, auth'd).
-async function openBookPdf(id, download, title, setBusy) {
-  setBusy && setBusy(id + (download ? 'd' : 'v'));
-  try {
-    const res = await fetch(`${API_BASE_URL}/admin/library/online/${id}/pdf${download ? '?download=1' : ''}`);
-    if (!res.ok) throw new Error('Could not load the PDF.');
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    if (download) {
-      const a = document.createElement('a');
-      a.href = url; a.download = (title || 'book').replace(/[^a-z0-9._-]+/gi, '_') + '.pdf';
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 4000);
-    } else {
-      window.open(url, '_blank');
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
-    }
-  } catch (e) { alert(e.message); }
-  setBusy && setBusy(null);
+  }, [bookId, hasCover]);
+  if (url) return <img src={url} alt="cover" className={`${className} object-cover`} />;
+  return <div className={`${className} flex items-center justify-center bg-zinc-100`}><FileText className="size-8 text-primary/50" /></div>;
 }
 
 // =====================================================================
-//  Library — Online + Offline
+//  Library — Online (book PDFs) + Offline (physical issue/return)
 // =====================================================================
 export default function Library() {
   const { user } = useAuth();
@@ -115,15 +99,14 @@ export default function Library() {
 }
 
 // =====================================================================
-//  ONLINE LIBRARY  (grid -> detail)
+//  ONLINE LIBRARY
 // =====================================================================
 function OnlineLibrary({ user, isSuperAdmin }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [modal, setModal] = useState(null);      // add/edit
-  const [selected, setSelected] = useState(null); // detail view
-  const [busyId, setBusyId] = useState(null);
+  const [selected, setSelected] = useState(null); // detail view (book id)
 
   const load = useCallback(async () => {
     if (!user?.institutionId) return;
@@ -137,61 +120,41 @@ function OnlineLibrary({ user, isSuperAdmin }) {
   }, [user]);
   useEffect(() => { load(); }, [load]);
 
+  // Stable #1..#N numbering by creation order.
+  const numbered = useMemo(() => rows.map((r, i) => ({ ...r, _num: i + 1 })), [rows]);
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter(r => [r.title, r.author, r.category].some(v => (v || '').toLowerCase().includes(q)));
-  }, [rows, query]);
+    if (!q) return numbered;
+    return numbered.filter(r => [r.title, r.author, r.category].some(v => (v || '').toLowerCase().includes(q)));
+  }, [numbered, query]);
 
   const stats = useMemo(() => ({
     total: rows.length,
-    categories: new Set(rows.map(r => (r.category || '').trim()).filter(Boolean)).size,
-    withPdf: rows.filter(r => r.has_doc).length,
+    authors: new Set(rows.map(r => (r.author || '').trim()).filter(Boolean)).size,
+    categories: new Set(rows.map(r => (r.category || '').trim()).filter(Boolean)).size
   }), [rows]);
 
-  const remove = async (row) => {
-    if (!window.confirm(`Delete "${row.title}" from the online library?`)) return;
-    try {
-      const res = await fetch(`${API_BASE_URL}/admin/library/online/${row.id}`, { method: 'DELETE' });
-      const d = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(d.error || 'Delete failed');
-      setSelected(null);
-      load();
-    } catch (e) { alert(e.message); }
-  };
+  const selectedBook = useMemo(() => numbered.find(b => b.id === selected) || null, [numbered, selected]);
 
-  // ---- Detail view ----
-  if (selected) {
-    const b = rows.find(r => r.id === selected.id) || selected;
+  // ---- detail view ----
+  if (selectedBook) {
     return (
       <OnlineBookDetail
-        book={b} isSuperAdmin={isSuperAdmin} busyId={busyId} setBusyId={setBusyId}
+        book={selectedBook}
+        isSuperAdmin={isSuperAdmin}
         onBack={() => setSelected(null)}
-        onEdit={() => setModal({ editing: b })}
-        onDelete={() => remove(b)}
-      >
-        {modal && <OnlineBookModal editing={modal.editing} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} />}
-      </OnlineBookDetail>
+        onEdit={() => setModal({ editing: selectedBook })}
+        onDeleted={() => { setSelected(null); load(); }} />
     );
   }
 
   return (
     <>
-      {/* Stat cards */}
-      <div className="grid grid-cols-3 gap-3 sm:gap-4">
-        {[
-          { label: 'Total Books', value: stats.total, Icon: BookOpen, box: 'bg-primary/5 ring-primary/20', chip: 'bg-primary/10 text-primary' },
-          { label: 'Categories', value: stats.categories, Icon: Tag, box: 'bg-violet-50 ring-violet-600/20', chip: 'bg-violet-100 text-violet-700' },
-          { label: 'With PDF', value: stats.withPdf, Icon: FileText, box: 'bg-emerald-50 ring-emerald-600/20', chip: 'bg-emerald-100 text-emerald-700' },
-        ].map(s => (
-          <div key={s.label} className={`rounded-lg ring-1 p-3 sm:p-4 flex items-center gap-3 ${s.box}`}>
-            <div className={`size-9 sm:size-10 rounded-md flex items-center justify-center shrink-0 ${s.chip}`}><s.Icon className="size-4 sm:size-5" /></div>
-            <div className="flex flex-col min-w-0">
-              <span className="text-lg sm:text-2xl font-bold text-zinc-900 leading-none tabular-nums">{s.value}</span>
-              <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider truncate mt-1">{s.label}</span>
-            </div>
-          </div>
-        ))}
+      {/* compact stats */}
+      <div className="flex flex-wrap gap-3">
+        <StatCard icon={BookOpen} label="Total Books" value={stats.total} tint="primary" />
+        <StatCard icon={Users} label="Authors" value={stats.authors} tint="amber" />
+        <StatCard icon={Tag} label="Categories" value={stats.categories} tint="violet" />
       </div>
 
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -220,32 +183,31 @@ function OnlineLibrary({ user, isSuperAdmin }) {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-5">
-          {filtered.map((b, idx) => (
-            <div key={b.id} onClick={() => setSelected(b)}
-              className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col group cursor-pointer hover:ring-primary/30 hover:shadow-md transition-all">
-              <div className="relative">
-                <CoverImg id={b.id} hasCover={b.has_cover} className="w-full h-36" iconClass="size-10" />
-                <span className="absolute top-2 left-2 text-[10px] font-bold text-white bg-zinc-900/60 rounded px-1.5 py-0.5 tabular-nums">#{idx + 1}</span>
-              </div>
-              <div className="p-4 flex flex-col flex-1">
-                <h3 className="text-sm font-semibold text-zinc-900 leading-tight line-clamp-2 group-hover:text-primary transition-colors">{b.title}</h3>
-                {b.author && <p className="text-[11px] text-zinc-500 mt-0.5 truncate">{b.author}</p>}
-                {b.category && <span className="self-start text-[10px] font-semibold text-zinc-600 bg-zinc-100 ring-1 ring-inset ring-black/5 px-2 py-0.5 rounded uppercase tracking-wider mt-2">{b.category}</span>}
-                {b.description && <p className="text-[11px] text-zinc-500 leading-relaxed line-clamp-2 mt-2">{b.description}</p>}
-                {b.created_by_name && <p className="text-[10px] text-zinc-400 mt-2">Added by <span className="font-semibold text-zinc-500">{b.created_by_name}</span></p>}
-                <div onClick={e => e.stopPropagation()} className="mt-auto pt-4 flex items-center gap-2">
-                  <button onClick={() => openBookPdf(b.id, false, b.title, setBusyId)} disabled={!b.has_doc || busyId === b.id + 'v'}
-                    className="h-8 flex-1 bg-primary hover:bg-primary/90 disabled:bg-zinc-200 disabled:text-zinc-400 text-white rounded-md text-xs font-semibold inline-flex items-center justify-center gap-1.5 shadow-sm transition-colors">
-                    {busyId === b.id + 'v' ? <Loader2 className="size-3.5 animate-spin" /> : <Eye className="size-3.5" />} View
-                  </button>
-                  <button onClick={() => openBookPdf(b.id, true, b.title, setBusyId)} disabled={!b.has_doc || busyId === b.id + 'd'} title="Download"
-                    className="h-8 px-3 bg-white ring-1 ring-black/5 shadow-sm hover:bg-zinc-50 text-zinc-600 hover:text-primary rounded-md inline-flex items-center justify-center transition-colors">
-                    {busyId === b.id + 'd' ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
-                  </button>
+          {filtered.map(b => (
+            <div key={b.id} className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col group">
+              {/* clickable area -> detail */}
+              <button onClick={() => setSelected(b.id)} className="text-left">
+                <div className="relative aspect-[4/3] bg-zinc-100">
+                  <span className="absolute top-2 left-2 z-10 text-[10px] font-bold text-white bg-zinc-900/70 rounded px-1.5 py-0.5 tabular-nums">#{b._num}</span>
+                  <CoverThumb bookId={b.id} hasCover={b.has_cover} className="w-full h-full" />
+                </div>
+                <div className="px-4 pt-3">
+                  <h3 className="text-sm font-semibold text-zinc-900 leading-tight line-clamp-1 group-hover:text-primary transition-colors">{b.title}</h3>
+                  {b.author && <p className="text-[11px] text-zinc-500 mt-0.5 truncate">{b.author}</p>}
+                </div>
+              </button>
+
+              <div className="px-4 pb-4 pt-2 flex flex-col flex-1">
+                {b.category && <span className="self-start text-[10px] font-semibold text-zinc-600 bg-zinc-100 ring-1 ring-inset ring-black/5 px-2 py-0.5 rounded uppercase tracking-wider mb-2">{b.category}</span>}
+                {b.description && <p className="text-[11px] text-zinc-500 leading-relaxed line-clamp-2">{b.description}</p>}
+                <p className="text-[10px] text-zinc-400 mt-2">Added by <span className="font-semibold text-zinc-500">{b.created_by_name || 'Unknown'}</span>{b.created_at && <> · {fmtWhen(b.created_at)}</>}</p>
+
+                <div className="mt-auto pt-3 flex items-center gap-2">
+                  <PdfButtons bookId={b.id} title={b.title} hasDoc={b.has_doc} compact />
                   {isSuperAdmin && (
                     <>
                       <button onClick={() => setModal({ editing: b })} title="Edit" className="size-8 bg-white ring-1 ring-black/5 shadow-sm hover:bg-zinc-50 text-zinc-500 hover:text-primary rounded-md flex items-center justify-center transition-colors"><Edit className="size-3.5" /></button>
-                      <button onClick={() => remove(b)} title="Delete" className="size-8 bg-white ring-1 ring-black/5 shadow-sm hover:bg-zinc-50 text-zinc-500 hover:text-red-600 rounded-md flex items-center justify-center transition-colors"><Trash2 className="size-3.5" /></button>
+                      <DeleteBookButton book={b} onDeleted={load} />
                     </>
                   )}
                 </div>
@@ -255,44 +217,113 @@ function OnlineLibrary({ user, isSuperAdmin }) {
         </div>
       )}
 
-      {modal && !selected && (
-        <OnlineBookModal editing={modal.editing} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} />
-      )}
+      {modal && <OnlineBookModal editing={modal.editing} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} />}
     </>
   );
 }
 
-function OnlineBookDetail({ book, isSuperAdmin, busyId, setBusyId, onBack, onEdit, onDelete, children }) {
+function StatCard({ icon: Icon, label, value, tint }) {
+  const tints = {
+    primary: 'bg-primary/5 ring-primary/20 text-primary',
+    amber: 'bg-amber-50 ring-amber-600/20 text-amber-600',
+    violet: 'bg-violet-50 ring-violet-600/20 text-violet-600'
+  };
   return (
-    <div className="animate-in fade-in duration-300">
-      <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
-        <button onClick={onBack} className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
-          <ArrowLeft className="size-4" /> Back to books
-        </button>
-        {isSuperAdmin && (
-          <div className="flex items-center gap-2">
-            <button onClick={onEdit} className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 hover:bg-zinc-50 rounded-md text-xs font-semibold flex items-center gap-1.5 transition-colors"><Edit className="size-3.5" /> Edit</button>
-            <button onClick={onDelete} className="h-9 px-4 bg-white border border-red-200 text-red-600 hover:bg-red-50 rounded-md text-xs font-semibold flex items-center gap-1.5 transition-colors"><Trash2 className="size-3.5" /> Delete</button>
-          </div>
-        )}
+    <div className={`flex items-center gap-2.5 rounded-lg ring-1 px-3 py-2 ${tints[tint] || tints.primary}`}>
+      <div className="size-8 rounded-md bg-white/70 flex items-center justify-center shrink-0"><Icon className="size-4" /></div>
+      <div className="flex flex-col leading-none">
+        <span className="text-lg font-bold text-zinc-900 tabular-nums">{value}</span>
+        <span className="text-[9px] font-semibold text-zinc-500 uppercase tracking-wider mt-0.5">{label}</span>
       </div>
+    </div>
+  );
+}
+
+// View + Download buttons (fetch blob so the token is attached).
+function PdfButtons({ bookId, title, hasDoc, compact }) {
+  const [busy, setBusy] = useState(null);
+  const open = async (download) => {
+    setBusy(download ? 'd' : 'v');
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/library/online/${bookId}/pdf${download ? '?download=1' : ''}`);
+      if (!res.ok) throw new Error('Could not load the PDF.');
+      const url = URL.createObjectURL(await res.blob());
+      if (download) {
+        const a = document.createElement('a');
+        a.href = url; a.download = (title || 'book').replace(/[^a-z0-9._-]+/gi, '_') + '.pdf';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 4000);
+      } else { window.open(url, '_blank'); setTimeout(() => URL.revokeObjectURL(url), 60000); }
+    } catch (e) { alert(e.message); }
+    setBusy(null);
+  };
+  return (
+    <>
+      <button onClick={() => open(false)} disabled={!hasDoc || busy === 'v'}
+        className={`${compact ? 'h-8 flex-1' : 'h-9 px-4'} bg-primary hover:bg-primary/90 disabled:bg-zinc-200 disabled:text-zinc-400 text-white rounded-md text-xs font-semibold inline-flex items-center justify-center gap-1.5 shadow-sm transition-colors`}>
+        {busy === 'v' ? <Loader2 className="size-3.5 animate-spin" /> : <Eye className="size-3.5" />} View
+      </button>
+      <button onClick={() => open(true)} disabled={!hasDoc || busy === 'd'} title="Download"
+        className="h-8 px-3 bg-white ring-1 ring-black/5 shadow-sm hover:bg-zinc-50 text-zinc-600 hover:text-primary rounded-md text-xs font-semibold inline-flex items-center justify-center transition-colors">
+        {busy === 'd' ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+      </button>
+    </>
+  );
+}
+
+function DeleteBookButton({ book, onDeleted }) {
+  const del = async () => {
+    if (!window.confirm(`Delete "${book.title}" from the online library?`)) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/library/online/${book.id}`, { method: 'DELETE' });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || 'Delete failed');
+      onDeleted();
+    } catch (e) { alert(e.message); }
+  };
+  return (
+    <button onClick={del} title="Delete" className="size-8 bg-white ring-1 ring-black/5 shadow-sm hover:bg-zinc-50 text-zinc-500 hover:text-red-600 rounded-md flex items-center justify-center transition-colors"><Trash2 className="size-3.5" /></button>
+  );
+}
+
+// ---- detail view ----
+function OnlineBookDetail({ book, isSuperAdmin, onBack, onEdit, onDeleted }) {
+  const del = async () => {
+    if (!window.confirm(`Delete "${book.title}" from the online library?`)) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/library/online/${book.id}`, { method: 'DELETE' });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || 'Delete failed');
+      onDeleted();
+    } catch (e) { alert(e.message); }
+  };
+  return (
+    <div className="animate-in fade-in duration-300 space-y-4">
+      <button onClick={onBack} className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
+        <ArrowLeft className="size-4" /> Back to books
+      </button>
 
       <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden">
         <div className="flex flex-col sm:flex-row gap-6 p-5 sm:p-6 border-b border-zinc-100">
-          <CoverImg id={book.id} hasCover={book.has_cover} className="w-40 h-52 rounded-md ring-1 ring-black/5 shadow-sm mx-auto sm:mx-0 shrink-0" iconClass="size-12" />
+          <div className="w-full sm:w-48 shrink-0">
+            <div className="aspect-[3/4] rounded-md ring-1 ring-black/5 overflow-hidden bg-zinc-100">
+              <CoverThumb bookId={book.id} hasCover={book.has_cover} className="w-full h-full" />
+            </div>
+          </div>
           <div className="flex-1 min-w-0">
-            <h2 className="text-xl font-semibold text-zinc-900 tracking-tight">{book.title}</h2>
-            {book.author && <p className="text-sm text-zinc-500 mt-1">by {book.author}</p>}
-            {book.category && <span className="inline-block text-[10px] font-semibold text-zinc-600 bg-zinc-100 ring-1 ring-inset ring-black/5 px-2 py-0.5 rounded uppercase tracking-wider mt-3">{book.category}</span>}
-            <div className="mt-4 flex flex-wrap gap-2">
-              <button onClick={() => openBookPdf(book.id, false, book.title, setBusyId)} disabled={!book.has_doc || busyId === book.id + 'v'}
-                className="h-9 px-5 bg-primary hover:bg-primary/90 disabled:bg-zinc-200 disabled:text-zinc-400 text-white rounded-md text-xs font-semibold inline-flex items-center gap-1.5 shadow-sm transition-colors">
-                {busyId === book.id + 'v' ? <Loader2 className="size-3.5 animate-spin" /> : <Eye className="size-3.5" />} View PDF
-              </button>
-              <button onClick={() => openBookPdf(book.id, true, book.title, setBusyId)} disabled={!book.has_doc || busyId === book.id + 'd'}
-                className="h-9 px-5 bg-white ring-1 ring-black/5 shadow-sm hover:bg-zinc-50 text-zinc-700 hover:text-primary rounded-md text-xs font-semibold inline-flex items-center gap-1.5 transition-colors">
-                {busyId === book.id + 'd' ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />} Download
-              </button>
+            <span className="text-[10px] font-bold text-zinc-500 tabular-nums">#{book._num}</span>
+            <h2 className="text-xl font-semibold text-zinc-900 tracking-tight leading-tight mt-0.5">{book.title}</h2>
+            {book.author && <p className="text-sm text-zinc-500 mt-1">{book.author}</p>}
+            {book.category && <span className="inline-block mt-2 text-[10px] font-semibold text-zinc-600 bg-zinc-100 ring-1 ring-inset ring-black/5 px-2 py-0.5 rounded uppercase tracking-wider">{book.category}</span>}
+
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <PdfButtons bookId={book.id} title={book.title} hasDoc={book.has_doc} />
+              {isSuperAdmin && (
+                <>
+                  <button onClick={onEdit} className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 hover:bg-zinc-50 rounded-md text-xs font-semibold inline-flex items-center gap-1.5 transition-colors"><Edit className="size-3.5" /> Edit</button>
+                  <button onClick={del} className="h-9 px-4 bg-white border border-red-200 text-red-600 hover:bg-red-50 rounded-md text-xs font-semibold inline-flex items-center gap-1.5 transition-colors"><Trash2 className="size-3.5" /> Delete</button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -304,19 +335,21 @@ function OnlineBookDetail({ book, isSuperAdmin, busyId, setBusyId, onBack, onEdi
           </div>
         )}
 
-        <div className="p-5 sm:p-6 grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-          <div className="flex items-start gap-2 text-zinc-600">
-            <User className="size-4 text-primary shrink-0 mt-0.5" />
-            <span>Added by <span className="font-semibold text-zinc-800">{book.created_by_name || 'Unknown'}</span>{book.created_at && <span className="block text-[11px] text-zinc-400 mt-0.5">{fmtWhen(book.created_at)}</span>}</span>
+        <div className="p-5 sm:p-6 grid grid-cols-1 sm:grid-cols-2 gap-4 text-[11px]">
+          <div className="flex items-center gap-2 text-zinc-500">
+            <User className="size-3.5 text-primary shrink-0" />
+            Added by <span className="font-semibold text-zinc-700">{book.created_by_name || 'Unknown'}</span>
+            {book.created_at && <span className="text-zinc-400">· {fmtWhen(book.created_at)}</span>}
           </div>
-          <div className="flex items-start gap-2 text-zinc-600">
-            <Clock className="size-4 text-primary shrink-0 mt-0.5" />
-            <span>Last updated by <span className="font-semibold text-zinc-800">{book.updated_by_name || 'Unknown'}</span>{book.updated_at && <span className="block text-[11px] text-zinc-400 mt-0.5">{fmtWhen(book.updated_at)}</span>}</span>
-          </div>
+          {book.updated_by_name && (
+            <div className="flex items-center gap-2 text-zinc-500">
+              <Clock className="size-3.5 text-primary shrink-0" />
+              Updated by <span className="font-semibold text-zinc-700">{book.updated_by_name}</span>
+              {book.updated_at && <span className="text-zinc-400">· {fmtWhen(book.updated_at)}</span>}
+            </div>
+          )}
         </div>
       </div>
-
-      {children}
     </div>
   );
 }
@@ -326,26 +359,23 @@ function OnlineBookModal({ editing, onClose, onSaved }) {
     title: editing?.title || '', author: editing?.author || '',
     category: editing?.category || '', description: editing?.description || ''
   });
-  const [doc, setDoc] = useState(null);       // new PDF { name, data }
-  const [cover, setCover] = useState(null);   // new cover { name, data }
+  const [doc, setDoc] = useState(null);       // { name, data }
+  const [cover, setCover] = useState(null);   // { name, data }
   const [removeCover, setRemoveCover] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const onPickPdf = async (e) => {
+  const pickPdf = async (e) => {
     const f = e.target.files?.[0]; e.target.value = '';
     if (!f) return;
     if (f.type !== 'application/pdf') return alert('Please choose a PDF file.');
     try { setDoc(await fileToDataUrl(f, 30)); } catch (err) { alert(err.message); }
   };
-  const onPickCover = async (e) => {
+  const pickCover = async (e) => {
     const f = e.target.files?.[0]; e.target.value = '';
     if (!f) return;
-    if (!f.type.startsWith('image/')) return alert('Please choose an image.');
+    if (!f.type.startsWith('image/')) return alert('Please choose an image file.');
     try { setCover(await fileToDataUrl(f, 2)); setRemoveCover(false); } catch (err) { alert(err.message); }
   };
-
-  const showNewCover = !!cover;
-  const showServerCover = editing && editing.has_cover && !cover && !removeCover;
 
   const submit = async (e) => {
     e.preventDefault();
@@ -365,6 +395,8 @@ function OnlineBookModal({ editing, onClose, onSaved }) {
     } catch (e2) { alert(e2.message); }
     setSaving(false);
   };
+
+  const hasExistingCover = !!editing?.has_cover;
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
@@ -387,48 +419,22 @@ function OnlineBookModal({ editing, onClose, onSaved }) {
             </div>
 
             {/* Cover image */}
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Cover Image <span className="text-zinc-400 normal-case font-medium">(optional)</span></label>
-              {showNewCover || showServerCover ? (
-                <div className="flex items-center gap-3">
-                  {showNewCover
-                    ? <img src={cover.data} alt="cover" className="w-16 h-20 object-cover rounded-md ring-1 ring-black/5" />
-                    : <CoverImg id={editing.id} hasCover className="w-16 h-20 rounded-md ring-1 ring-black/5" iconClass="size-6" />}
-                  <div className="flex flex-col gap-1.5">
-                    <label className="cursor-pointer inline-flex items-center gap-1.5 text-zinc-700 px-3 py-1.5 border border-zinc-200 rounded-md text-xs font-medium hover:bg-zinc-50 transition-colors w-fit">
-                      <ImageIcon className="size-3.5" /> Replace
-                      <input type="file" accept="image/*" onChange={onPickCover} className="hidden" />
-                    </label>
-                    <button type="button" onClick={() => { setCover(null); setRemoveCover(true); }} className="text-xs font-medium text-red-600 hover:underline w-fit">Remove cover</button>
-                  </div>
-                </div>
-              ) : (
-                <label className="cursor-pointer flex items-center gap-2 text-zinc-700 px-3 py-2.5 border border-dashed border-zinc-300 rounded-md text-xs font-medium hover:bg-zinc-50 transition-colors">
-                  <ImageIcon className="size-4 text-primary" /> Choose cover image (max 2 MB)
-                  <input type="file" accept="image/*" onChange={onPickCover} className="hidden" />
-                </label>
-              )}
-            </div>
+            <FilePicker
+              label="Cover Image" optional Icon={ImageIcon} accent
+              picked={cover} onPick={pickCover} onClear={() => setCover(null)}
+              chooseLabel="Choose cover image (max 2 MB)"
+              existing={hasExistingCover && !cover && !removeCover ? 'Current cover in use' : (removeCover ? 'Cover will be removed on save' : null)}
+              onRemoveExisting={hasExistingCover ? () => { setCover(null); setRemoveCover(true); } : null}
+              onKeepExisting={removeCover ? () => setRemoveCover(false) : null}
+            />
 
-            {/* PDF — choose / remove & reselect */}
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
-                Book PDF {editing ? <span className="text-zinc-400 normal-case font-medium">(leave empty to keep current)</span> : <span className="text-red-500">*</span>}
-              </label>
-              {doc ? (
-                <div className="flex items-center gap-2 px-3 py-2.5 border border-zinc-200 rounded-md bg-zinc-50/50">
-                  <FileText className="size-4 text-primary shrink-0" />
-                  <span className="text-xs font-medium text-zinc-700 truncate flex-1">{doc.name}</span>
-                  <button type="button" onClick={() => setDoc(null)} title="Remove & choose another"
-                    className="size-6 bg-white ring-1 ring-black/10 rounded-full flex items-center justify-center text-zinc-500 hover:text-red-600 shrink-0"><X className="size-3.5" /></button>
-                </div>
-              ) : (
-                <label className="cursor-pointer flex items-center gap-2 text-zinc-700 px-3 py-2.5 border border-dashed border-zinc-300 rounded-md text-xs font-medium hover:bg-zinc-50 transition-colors">
-                  <Upload className="size-4 text-primary" /> {editing ? 'Replace PDF (max 30 MB)' : 'Choose PDF (max 30 MB)'}
-                  <input type="file" accept="application/pdf" onChange={onPickPdf} className="hidden" />
-                </label>
-              )}
-            </div>
+            {/* Book PDF */}
+            <FilePicker
+              label="Book PDF" required={!editing} Icon={Upload}
+              picked={doc} onPick={pickPdf} onClear={() => setDoc(null)}
+              chooseLabel={editing ? 'Replace PDF (max 30 MB)' : 'Choose PDF (max 30 MB)'}
+              existing={editing && !doc ? 'Current PDF kept' : null}
+            />
           </div>
           <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
             <button type="button" onClick={onClose} disabled={saving} className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 rounded-md font-semibold text-xs hover:bg-zinc-50 transition-colors">Cancel</button>
@@ -438,6 +444,38 @@ function OnlineBookModal({ editing, onClose, onSaved }) {
           </div>
         </form>
       </div>
+    </div>
+  );
+}
+
+// A file input that, once a file is chosen, shows its name with a ✕ to clear.
+function FilePicker({ label, optional, required, Icon, picked, onPick, onClear, chooseLabel, accent, existing, onRemoveExisting, onKeepExisting }) {
+  const accept = Icon === ImageIcon ? 'image/*' : 'application/pdf';
+  return (
+    <div className="space-y-1.5">
+      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
+        {label} {required ? <span className="text-red-500">*</span> : optional ? <span className="text-zinc-400 normal-case font-medium">(optional)</span> : null}
+      </label>
+      {picked ? (
+        <div className="flex items-center gap-2 px-3 py-2 border border-zinc-200 rounded-md bg-zinc-50">
+          <Icon className={`size-4 shrink-0 ${accent ? 'text-primary' : 'text-primary'}`} />
+          <span className="text-xs font-medium text-zinc-700 truncate flex-1">{picked.name}</span>
+          <button type="button" onClick={onClear} title="Remove this file"
+            className="size-6 rounded-full bg-white ring-1 ring-black/10 text-zinc-500 hover:text-red-600 flex items-center justify-center shrink-0 shadow-sm"><X className="size-3.5" /></button>
+        </div>
+      ) : (
+        <label className="cursor-pointer flex items-center gap-2 text-zinc-700 px-3 py-2.5 border border-dashed border-zinc-300 rounded-md text-xs font-medium hover:bg-zinc-50 transition-colors">
+          <Icon className="size-4 text-primary" /> {chooseLabel}
+          <input type="file" accept={accept} onChange={onPick} className="hidden" />
+        </label>
+      )}
+      {existing && !picked && (
+        <div className="flex items-center justify-between text-[10px] text-zinc-400">
+          <span>{existing}</span>
+          {onRemoveExisting && <button type="button" onClick={onRemoveExisting} className="font-semibold text-red-500 hover:underline">Remove cover</button>}
+          {onKeepExisting && <button type="button" onClick={onKeepExisting} className="font-semibold text-primary hover:underline">Undo</button>}
+        </div>
+      )}
     </div>
   );
 }
@@ -507,9 +545,7 @@ function Catalogue({ user, canEdit }) {
         <div className="flex items-center gap-2 w-full sm:w-auto">
           <button onClick={load} className="h-9 px-3 bg-white border border-zinc-200 text-zinc-600 hover:text-primary hover:bg-zinc-50 rounded-md flex items-center justify-center transition-colors shadow-sm shrink-0"><RefreshCw className="size-4" /></button>
           {canEdit && (
-            <button onClick={() => setModal({})} className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full sm:w-auto shrink-0">
-              <Plus className="size-3.5" /> Add Book
-            </button>
+            <button onClick={() => setModal({})} className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full sm:w-auto shrink-0"><Plus className="size-3.5" /> Add Book</button>
           )}
         </div>
       </div>
@@ -539,7 +575,9 @@ function Catalogue({ user, canEdit }) {
                 const avail = Number(b.available_copies);
                 return (
                   <tr key={b.id} className="hover:bg-zinc-50/60 transition-colors group">
-                    <td className="px-5 py-4 font-semibold text-zinc-900 text-sm">{b.title}{b.isbn && <span className="block text-[10px] font-medium text-zinc-400 mt-0.5">ISBN {b.isbn}</span>}</td>
+                    <td className="px-5 py-4 font-semibold text-zinc-900 text-sm">
+                      {b.title}{b.isbn && <span className="block text-[10px] font-medium text-zinc-400 mt-0.5">ISBN {b.isbn}</span>}
+                    </td>
                     <td className="px-5 py-4 text-sm text-zinc-700">{b.author || <span className="text-zinc-400 italic">-</span>}</td>
                     <td className="px-5 py-4 text-sm text-zinc-600">{b.category || '-'}</td>
                     <td className="px-5 py-4 text-sm text-zinc-600">{b.location || '-'}</td>
@@ -550,9 +588,7 @@ function Catalogue({ user, canEdit }) {
                       <div className="flex items-center justify-end gap-2">
                         {canEdit && (
                           <button onClick={() => setIssueFor(b)} disabled={avail <= 0} title={avail > 0 ? 'Issue a copy' : 'No copies available'}
-                            className="h-8 px-3 rounded-md font-semibold text-xs text-primary bg-primary/10 hover:bg-primary/20 disabled:bg-zinc-100 disabled:text-zinc-400 transition-colors inline-flex items-center gap-1.5">
-                            <ArrowLeftRight className="size-3.5" /> Issue
-                          </button>
+                            className="h-8 px-3 rounded-md font-semibold text-xs text-primary bg-primary/10 hover:bg-primary/20 disabled:bg-zinc-100 disabled:text-zinc-400 transition-colors inline-flex items-center gap-1.5"><ArrowLeftRight className="size-3.5" /> Issue</button>
                         )}
                         {canEdit && (
                           <div className="flex items-center gap-1 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity ml-1">
@@ -738,8 +774,7 @@ function IssuedBooks({ user, canEdit }) {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div className="flex items-center gap-2">
           {[['issued', 'Issued'], ['returned', 'Returned']].map(([id, label]) => (
-            <button key={id} onClick={() => setStatus(id)}
-              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${status === id ? 'bg-primary text-white' : 'bg-white text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-50'}`}>{label}</button>
+            <button key={id} onClick={() => setStatus(id)} className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${status === id ? 'bg-primary text-white' : 'bg-white text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-50'}`}>{label}</button>
           ))}
         </div>
         <div className="relative w-full sm:w-72">
@@ -752,8 +787,7 @@ function IssuedBooks({ user, canEdit }) {
         <div className="h-64 flex items-center justify-center"><Loader2 className="animate-spin size-8 text-primary" /></div>
       ) : rows.length === 0 ? (
         <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
-          <ArrowLeftRight className="size-10 text-zinc-300 mb-3" />
-          <p className="text-zinc-500 text-sm font-medium">No {status} records.</p>
+          <ArrowLeftRight className="size-10 text-zinc-300 mb-3" /><p className="text-zinc-500 text-sm font-medium">No {status} records.</p>
         </div>
       ) : (
         <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-x-auto custom-scrollbar">
@@ -809,7 +843,9 @@ function IssuedBooks({ user, canEdit }) {
 function LabeledInput({ label, value, onChange, type = 'text', required, placeholder, hint }) {
   return (
     <div className="space-y-1.5">
-      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">{label} {required && <span className="text-red-500">*</span>}</label>
+      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">
+        {label} {required && <span className="text-red-500">*</span>}
+      </label>
       <input type={type} value={value || ''} onChange={e => onChange(e.target.value)} required={required} placeholder={placeholder}
         className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
       {hint && <p className="text-[10px] text-zinc-400">{hint}</p>}
@@ -821,9 +857,9 @@ function LabeledInput({ label, value, onChange, type = 'text', required, placeho
 function LibraryHelp({ isSuperAdmin, canEdit }) {
   const [open, setOpen] = useState(false);
   const steps = [
-    ['Online Library', 'Cards show the cover, title and category. Click a card to open its full details (cover, description, who added/updated it). View or Download the PDF — anyone with access can. Only a Super Admin can add, edit or delete online books, including the cover.'],
-    ['Offline — Catalogue', 'The physical books, with total and available copies. Availability updates as copies go out and come back.'],
-    ['Offline — Issue a book', 'Use Issue on an available book: pick a member (or type a name), set the issue and due dates. A copy is reserved automatically.'],
+    ['Online Library', 'Cards show a cover, an auto number and who added it. Click a card to open its full detail (handy for long descriptions), then View or Download the PDF.'],
+    ['Manage online (Super Admin)', 'Only a Super Admin can Add / Edit / Delete online books, and set a cover image.'],
+    ['Offline — Catalogue & Issue', 'The physical books with copy counts. Use Issue on an available book; availability updates automatically.'],
     ['Offline — Return', 'On the Issued tab, hit Return when a book comes back. Overdue books are flagged in red.'],
   ];
   return (
