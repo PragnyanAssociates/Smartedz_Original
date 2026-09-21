@@ -237,7 +237,7 @@ export const MODULES = [
   },
   {
     id: 'Library',
-    module_name: 'Library', // Must match backend DEFAULT_MODULES exactly
+    module_name: 'Library', // Must match backend DEFAULT_MODULES exactly.
     label: 'Library',
     title: 'Library',
     imageSource: 'https://cdn-icons-png.flaticon.com/128/5833/5833290.png',
