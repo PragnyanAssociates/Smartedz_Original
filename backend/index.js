@@ -15664,45 +15664,73 @@ app.get('/api/admin/library/books/:instId', async (req, res) => {
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     const { q } = req.query;
     try {
-        let sql = 'SELECT * FROM library_books WHERE institutionId = ?';
+        let sql = `
+            SELECT b.id, b.institutionId, b.title, b.author, b.isbn, b.category, b.location,
+                   b.total_copies, b.available_copies, b.created_at, b.updated_at,
+                   b.created_by, b.updated_by, (b.cover_data IS NOT NULL) AS has_cover,
+                   cu.name AS created_by_name, uu.name AS updated_by_name
+              FROM library_books b
+              LEFT JOIN users cu ON cu.id = b.created_by
+              LEFT JOIN users uu ON uu.id = b.updated_by
+             WHERE b.institutionId = ?`;
         const params = [instId];
         if (q && q.trim()) {
-            sql += ' AND (title LIKE ? OR author LIKE ? OR isbn LIKE ? OR category LIKE ?)';
+            sql += ' AND (b.title LIKE ? OR b.author LIKE ? OR b.isbn LIKE ? OR b.category LIKE ?)';
             const like = `%${q.trim()}%`; params.push(like, like, like, like);
         }
-        sql += ' ORDER BY title';
+        sql += ' ORDER BY b.id ASC';   // stable order -> #1 is the first added
         const [rows] = await db.execute(sql, params);
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Cover image (blob) for a physical book.
+app.get('/api/admin/library/books/:id/cover', async (req, res) => {
+    try {
+        const inst = await _libBookInst(req.params.id);
+        if (inst === null) return res.status(404).send('Not found');
+        if (!sameTenant(req, inst)) return res.status(403).send('Forbidden');
+        const [rows] = await db.execute('SELECT cover_data FROM library_books WHERE id = ?', [req.params.id]);
+        if (!rows.length || !rows[0].cover_data) return res.status(404).send('No cover');
+        const m = String(rows[0].cover_data).match(/^data:([^;]+);base64,(.*)$/);
+        const mime = m ? m[1] : 'image/png';
+        const b64 = m ? m[2] : String(rows[0].cover_data).replace(/^data:[^;]+;base64,/, '');
+        res.setHeader('Content-Type', mime);
+        res.setHeader('Cache-Control', 'private, max-age=3600');
+        res.send(Buffer.from(b64, 'base64'));
+    } catch (err) { res.status(500).send(err.message); }
+});
+
 app.post('/api/admin/library/books', async (req, res) => {
     const institutionId = req.auth.institutionId;
     const actor = req.auth.userId;
-    const { title, author, isbn, category, location, total_copies } = req.body;
+    const { title, author, isbn, category, location, total_copies, cover_data } = req.body;
     if (!title || !title.trim()) return res.status(400).json({ error: 'A title is required.' });
     const total = Math.max(1, parseInt(total_copies, 10) || 1);
     try {
         const [r] = await db.execute(
             `INSERT INTO library_books
-               (institutionId, title, author, isbn, category, location, total_copies, available_copies, created_by, updated_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [institutionId, title.trim(), author || null, isbn || null, category || null, location || null, total, total, actor, actor]);
+               (institutionId, title, author, isbn, category, location, cover_data, total_copies, available_copies, created_by, updated_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [institutionId, title.trim(), author || null, isbn || null, category || null, location || null, cover_data || null, total, total, actor, actor]);
         res.json({ success: true, id: r.insertId });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.put('/api/admin/library/books/:id', async (req, res) => {
     const actor = req.auth.userId;
-    const { title, author, isbn, category, location, total_copies } = req.body;
+    const { title, author, isbn, category, location, total_copies, cover_data, remove_cover } = req.body;
     try {
         const inst = await _libBookInst(req.params.id);
         if (inst === null) return res.status(404).json({ error: 'Book not found.' });
         if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This book belongs to another institution.' });
         const total = Math.max(1, parseInt(total_copies, 10) || 1);
-        await db.execute(
-            `UPDATE library_books SET title=?, author=?, isbn=?, category=?, location=?, total_copies=?, updated_by=? WHERE id=?`,
-            [title, author || null, isbn || null, category || null, location || null, total, actor, req.params.id]);
+        const sets = ['title=?', 'author=?', 'isbn=?', 'category=?', 'location=?', 'total_copies=?', 'updated_by=?'];
+        const vals = [title, author || null, isbn || null, category || null, location || null, total, actor];
+        if (remove_cover) { sets.push('cover_data=NULL'); }
+        else if (cover_data) { sets.push('cover_data=?'); vals.push(cover_data); }
+        vals.push(req.params.id);
+        await db.execute(`UPDATE library_books SET ${sets.join(', ')} WHERE id=?`, vals);
         await _libRecalcAvailable(req.params.id);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
