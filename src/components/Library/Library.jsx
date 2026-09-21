@@ -4,8 +4,9 @@ import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import {
   BookOpen, Library as LibraryIcon, Globe, Plus, Edit, Trash2, X, Loader2, Search,
-  Download, Eye, Upload, FileText, RefreshCw, ChevronDown, Save, Calendar, User,
-  ArrowLeftRight, CheckCircle2, AlertTriangle, HelpCircle, ShieldCheck, Layers
+  Download, Eye, Upload, FileText, RefreshCw, ChevronDown, Save, User,
+  ArrowLeftRight, CheckCircle2, AlertTriangle, HelpCircle, ShieldCheck, ArrowLeft,
+  Tag, Image as ImageIcon, Clock
 } from 'lucide-react';
 
 // ---- helpers --------------------------------------------------------
@@ -17,10 +18,16 @@ const fmtDMY = (v) => {
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   return `${dd}/${mm}/${d.getFullYear()}`;
 };
+const asUtc = (v) => { const s = String(v).replace(' ', 'T'); return /[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s : s + 'Z'; };
+const fmtWhen = (v) => {
+  if (!v) return '';
+  const d = new Date(asUtc(v));
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true });
+};
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const isOverdue = (row) => row.status === 'issued' && row.due_date && row.due_date < todayISO();
 
-// Read a File -> base64 data URL, with a size cap.
 const fileToDataUrl = (file, maxMB) => new Promise((resolve, reject) => {
   if (file.size > maxMB * 1024 * 1024) { reject(new Error(`"${file.name}" is over ${maxMB} MB.`)); return; }
   const r = new FileReader();
@@ -29,8 +36,45 @@ const fileToDataUrl = (file, maxMB) => new Promise((resolve, reject) => {
   r.readAsDataURL(file);
 });
 
+// Cover image fetched as a blob (stays behind the auth gate). Falls back to an icon.
+function CoverImg({ id, hasCover, className = '', iconClass = 'size-6' }) {
+  const [url, setUrl] = useState(null);
+  useEffect(() => {
+    if (!hasCover) { setUrl(null); return; }
+    let revoked = false, obj = null;
+    fetch(`${API_BASE_URL}/admin/library/online/${id}/cover`)
+      .then(r => (r.ok ? r.blob() : null))
+      .then(b => { if (b && !revoked) { obj = URL.createObjectURL(b); setUrl(obj); } })
+      .catch(() => {});
+    return () => { revoked = true; if (obj) URL.revokeObjectURL(obj); };
+  }, [id, hasCover]);
+  if (url) return <img src={url} alt="cover" className={`object-cover ${className}`} />;
+  return <div className={`flex items-center justify-center bg-primary/10 text-primary ${className}`}><FileText className={iconClass} /></div>;
+}
+
+// PDF view / download (blob, auth'd).
+async function openBookPdf(id, download, title, setBusy) {
+  setBusy && setBusy(id + (download ? 'd' : 'v'));
+  try {
+    const res = await fetch(`${API_BASE_URL}/admin/library/online/${id}/pdf${download ? '?download=1' : ''}`);
+    if (!res.ok) throw new Error('Could not load the PDF.');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    if (download) {
+      const a = document.createElement('a');
+      a.href = url; a.download = (title || 'book').replace(/[^a-z0-9._-]+/gi, '_') + '.pdf';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    } else {
+      window.open(url, '_blank');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    }
+  } catch (e) { alert(e.message); }
+  setBusy && setBusy(null);
+}
+
 // =====================================================================
-//  Library — Online (book PDFs) + Offline (physical issue/return)
+//  Library — Online + Offline
 // =====================================================================
 export default function Library() {
   const { user } = useAuth();
@@ -52,7 +96,6 @@ export default function Library() {
         <LibraryHelp isSuperAdmin={isSuperAdmin} canEdit={canEdit} />
       </header>
 
-      {/* Top tabs */}
       <div className="flex items-center gap-2 border-b border-zinc-200 pb-3 overflow-x-auto custom-scrollbar">
         {[['online', 'Online Library', Globe], ['offline', 'Offline Library', LibraryIcon]].map(([id, label, Icon]) => (
           <button key={id} onClick={() => setTab(id)}
@@ -72,13 +115,14 @@ export default function Library() {
 }
 
 // =====================================================================
-//  ONLINE LIBRARY
+//  ONLINE LIBRARY  (grid -> detail)
 // =====================================================================
 function OnlineLibrary({ user, isSuperAdmin }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
-  const [modal, setModal] = useState(null); // { editing? } | null
+  const [modal, setModal] = useState(null);      // add/edit
+  const [selected, setSelected] = useState(null); // detail view
   const [busyId, setBusyId] = useState(null);
 
   const load = useCallback(async () => {
@@ -96,31 +140,14 @@ function OnlineLibrary({ user, isSuperAdmin }) {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return rows;
-    return rows.filter(r =>
-      (r.title || '').toLowerCase().includes(q) ||
-      (r.author || '').toLowerCase().includes(q) ||
-      (r.category || '').toLowerCase().includes(q));
+    return rows.filter(r => [r.title, r.author, r.category].some(v => (v || '').toLowerCase().includes(q)));
   }, [rows, query]);
 
-  const openPdf = async (id, download = false, title = '') => {
-    setBusyId(id + (download ? 'd' : 'v'));
-    try {
-      const res = await fetch(`${API_BASE_URL}/admin/library/online/${id}/pdf${download ? '?download=1' : ''}`);
-      if (!res.ok) throw new Error('Could not load the PDF.');
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      if (download) {
-        const a = document.createElement('a');
-        a.href = url; a.download = (title || 'book').replace(/[^a-z0-9._-]+/gi, '_') + '.pdf';
-        document.body.appendChild(a); a.click(); a.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 4000);
-      } else {
-        window.open(url, '_blank');
-        setTimeout(() => URL.revokeObjectURL(url), 60000);
-      }
-    } catch (e) { alert(e.message); }
-    setBusyId(null);
-  };
+  const stats = useMemo(() => ({
+    total: rows.length,
+    categories: new Set(rows.map(r => (r.category || '').trim()).filter(Boolean)).size,
+    withPdf: rows.filter(r => r.has_doc).length,
+  }), [rows]);
 
   const remove = async (row) => {
     if (!window.confirm(`Delete "${row.title}" from the online library?`)) return;
@@ -128,12 +155,45 @@ function OnlineLibrary({ user, isSuperAdmin }) {
       const res = await fetch(`${API_BASE_URL}/admin/library/online/${row.id}`, { method: 'DELETE' });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(d.error || 'Delete failed');
+      setSelected(null);
       load();
     } catch (e) { alert(e.message); }
   };
 
+  // ---- Detail view ----
+  if (selected) {
+    const b = rows.find(r => r.id === selected.id) || selected;
+    return (
+      <OnlineBookDetail
+        book={b} isSuperAdmin={isSuperAdmin} busyId={busyId} setBusyId={setBusyId}
+        onBack={() => setSelected(null)}
+        onEdit={() => setModal({ editing: b })}
+        onDelete={() => remove(b)}
+      >
+        {modal && <OnlineBookModal editing={modal.editing} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} />}
+      </OnlineBookDetail>
+    );
+  }
+
   return (
     <>
+      {/* Stat cards */}
+      <div className="grid grid-cols-3 gap-3 sm:gap-4">
+        {[
+          { label: 'Total Books', value: stats.total, Icon: BookOpen, box: 'bg-primary/5 ring-primary/20', chip: 'bg-primary/10 text-primary' },
+          { label: 'Categories', value: stats.categories, Icon: Tag, box: 'bg-violet-50 ring-violet-600/20', chip: 'bg-violet-100 text-violet-700' },
+          { label: 'With PDF', value: stats.withPdf, Icon: FileText, box: 'bg-emerald-50 ring-emerald-600/20', chip: 'bg-emerald-100 text-emerald-700' },
+        ].map(s => (
+          <div key={s.label} className={`rounded-lg ring-1 p-3 sm:p-4 flex items-center gap-3 ${s.box}`}>
+            <div className={`size-9 sm:size-10 rounded-md flex items-center justify-center shrink-0 ${s.chip}`}><s.Icon className="size-4 sm:size-5" /></div>
+            <div className="flex flex-col min-w-0">
+              <span className="text-lg sm:text-2xl font-bold text-zinc-900 leading-none tabular-nums">{s.value}</span>
+              <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider truncate mt-1">{s.label}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div className="relative w-full sm:w-72">
           <Search className="size-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -141,9 +201,7 @@ function OnlineLibrary({ user, isSuperAdmin }) {
             className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
         </div>
         <div className="flex items-center gap-2 w-full sm:w-auto">
-          <button onClick={load} className="h-9 px-3 bg-white border border-zinc-200 text-zinc-600 hover:text-primary hover:bg-zinc-50 rounded-md flex items-center justify-center transition-colors shadow-sm shrink-0">
-            <RefreshCw className="size-4" />
-          </button>
+          <button onClick={load} className="h-9 px-3 bg-white border border-zinc-200 text-zinc-600 hover:text-primary hover:bg-zinc-50 rounded-md flex items-center justify-center transition-colors shadow-sm shrink-0"><RefreshCw className="size-4" /></button>
           {isSuperAdmin && (
             <button onClick={() => setModal({})} className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full sm:w-auto shrink-0">
               <Plus className="size-3.5" /> Add Book
@@ -161,38 +219,33 @@ function OnlineLibrary({ user, isSuperAdmin }) {
           {isSuperAdmin && rows.length === 0 && <p className="text-zinc-400 text-xs mt-1.5">Click "Add Book" to upload a PDF.</p>}
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-5">
-          {filtered.map(b => (
-            <div key={b.id} className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col group">
-              <div className="p-4 flex items-start gap-3 border-b border-zinc-100 bg-zinc-50/40">
-                <div className="size-11 rounded-md bg-primary/10 text-primary flex items-center justify-center shrink-0"><FileText className="size-5" /></div>
-                <div className="min-w-0 flex-1">
-                  <h3 className="text-sm font-semibold text-zinc-900 leading-tight line-clamp-2">{b.title}</h3>
-                  {b.author && <p className="text-[11px] text-zinc-500 mt-0.5 truncate">{b.author}</p>}
-                </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-5">
+          {filtered.map((b, idx) => (
+            <div key={b.id} onClick={() => setSelected(b)}
+              className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col group cursor-pointer hover:ring-primary/30 hover:shadow-md transition-all">
+              <div className="relative">
+                <CoverImg id={b.id} hasCover={b.has_cover} className="w-full h-36" iconClass="size-10" />
+                <span className="absolute top-2 left-2 text-[10px] font-bold text-white bg-zinc-900/60 rounded px-1.5 py-0.5 tabular-nums">#{idx + 1}</span>
               </div>
               <div className="p-4 flex flex-col flex-1">
-                {b.category && <span className="self-start text-[10px] font-semibold text-zinc-600 bg-zinc-100 ring-1 ring-inset ring-black/5 px-2 py-0.5 rounded uppercase tracking-wider mb-2">{b.category}</span>}
-                {b.description && <p className="text-[11px] text-zinc-500 leading-relaxed line-clamp-3">{b.description}</p>}
-                <div className="mt-auto pt-4 flex items-center gap-2">
-                  <button onClick={() => openPdf(b.id, false, b.title)} disabled={!b.has_doc || busyId === b.id + 'v'}
+                <h3 className="text-sm font-semibold text-zinc-900 leading-tight line-clamp-2 group-hover:text-primary transition-colors">{b.title}</h3>
+                {b.author && <p className="text-[11px] text-zinc-500 mt-0.5 truncate">{b.author}</p>}
+                {b.category && <span className="self-start text-[10px] font-semibold text-zinc-600 bg-zinc-100 ring-1 ring-inset ring-black/5 px-2 py-0.5 rounded uppercase tracking-wider mt-2">{b.category}</span>}
+                {b.description && <p className="text-[11px] text-zinc-500 leading-relaxed line-clamp-2 mt-2">{b.description}</p>}
+                {b.created_by_name && <p className="text-[10px] text-zinc-400 mt-2">Added by <span className="font-semibold text-zinc-500">{b.created_by_name}</span></p>}
+                <div onClick={e => e.stopPropagation()} className="mt-auto pt-4 flex items-center gap-2">
+                  <button onClick={() => openBookPdf(b.id, false, b.title, setBusyId)} disabled={!b.has_doc || busyId === b.id + 'v'}
                     className="h-8 flex-1 bg-primary hover:bg-primary/90 disabled:bg-zinc-200 disabled:text-zinc-400 text-white rounded-md text-xs font-semibold inline-flex items-center justify-center gap-1.5 shadow-sm transition-colors">
                     {busyId === b.id + 'v' ? <Loader2 className="size-3.5 animate-spin" /> : <Eye className="size-3.5" />} View
                   </button>
-                  <button onClick={() => openPdf(b.id, true, b.title)} disabled={!b.has_doc || busyId === b.id + 'd'} title="Download"
-                    className="h-8 px-3 bg-white ring-1 ring-black/5 shadow-sm hover:bg-zinc-50 text-zinc-600 hover:text-primary rounded-md text-xs font-semibold inline-flex items-center justify-center transition-colors">
+                  <button onClick={() => openBookPdf(b.id, true, b.title, setBusyId)} disabled={!b.has_doc || busyId === b.id + 'd'} title="Download"
+                    className="h-8 px-3 bg-white ring-1 ring-black/5 shadow-sm hover:bg-zinc-50 text-zinc-600 hover:text-primary rounded-md inline-flex items-center justify-center transition-colors">
                     {busyId === b.id + 'd' ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
                   </button>
                   {isSuperAdmin && (
                     <>
-                      <button onClick={() => setModal({ editing: b })} title="Edit"
-                        className="size-8 bg-white ring-1 ring-black/5 shadow-sm hover:bg-zinc-50 text-zinc-500 hover:text-primary rounded-md flex items-center justify-center transition-colors">
-                        <Edit className="size-3.5" />
-                      </button>
-                      <button onClick={() => remove(b)} title="Delete"
-                        className="size-8 bg-white ring-1 ring-black/5 shadow-sm hover:bg-zinc-50 text-zinc-500 hover:text-red-600 rounded-md flex items-center justify-center transition-colors">
-                        <Trash2 className="size-3.5" />
-                      </button>
+                      <button onClick={() => setModal({ editing: b })} title="Edit" className="size-8 bg-white ring-1 ring-black/5 shadow-sm hover:bg-zinc-50 text-zinc-500 hover:text-primary rounded-md flex items-center justify-center transition-colors"><Edit className="size-3.5" /></button>
+                      <button onClick={() => remove(b)} title="Delete" className="size-8 bg-white ring-1 ring-black/5 shadow-sm hover:bg-zinc-50 text-zinc-500 hover:text-red-600 rounded-md flex items-center justify-center transition-colors"><Trash2 className="size-3.5" /></button>
                     </>
                   )}
                 </div>
@@ -202,10 +255,69 @@ function OnlineLibrary({ user, isSuperAdmin }) {
         </div>
       )}
 
-      {modal && (
+      {modal && !selected && (
         <OnlineBookModal editing={modal.editing} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} />
       )}
     </>
+  );
+}
+
+function OnlineBookDetail({ book, isSuperAdmin, busyId, setBusyId, onBack, onEdit, onDelete, children }) {
+  return (
+    <div className="animate-in fade-in duration-300">
+      <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+        <button onClick={onBack} className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
+          <ArrowLeft className="size-4" /> Back to books
+        </button>
+        {isSuperAdmin && (
+          <div className="flex items-center gap-2">
+            <button onClick={onEdit} className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 hover:bg-zinc-50 rounded-md text-xs font-semibold flex items-center gap-1.5 transition-colors"><Edit className="size-3.5" /> Edit</button>
+            <button onClick={onDelete} className="h-9 px-4 bg-white border border-red-200 text-red-600 hover:bg-red-50 rounded-md text-xs font-semibold flex items-center gap-1.5 transition-colors"><Trash2 className="size-3.5" /> Delete</button>
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden">
+        <div className="flex flex-col sm:flex-row gap-6 p-5 sm:p-6 border-b border-zinc-100">
+          <CoverImg id={book.id} hasCover={book.has_cover} className="w-40 h-52 rounded-md ring-1 ring-black/5 shadow-sm mx-auto sm:mx-0 shrink-0" iconClass="size-12" />
+          <div className="flex-1 min-w-0">
+            <h2 className="text-xl font-semibold text-zinc-900 tracking-tight">{book.title}</h2>
+            {book.author && <p className="text-sm text-zinc-500 mt-1">by {book.author}</p>}
+            {book.category && <span className="inline-block text-[10px] font-semibold text-zinc-600 bg-zinc-100 ring-1 ring-inset ring-black/5 px-2 py-0.5 rounded uppercase tracking-wider mt-3">{book.category}</span>}
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button onClick={() => openBookPdf(book.id, false, book.title, setBusyId)} disabled={!book.has_doc || busyId === book.id + 'v'}
+                className="h-9 px-5 bg-primary hover:bg-primary/90 disabled:bg-zinc-200 disabled:text-zinc-400 text-white rounded-md text-xs font-semibold inline-flex items-center gap-1.5 shadow-sm transition-colors">
+                {busyId === book.id + 'v' ? <Loader2 className="size-3.5 animate-spin" /> : <Eye className="size-3.5" />} View PDF
+              </button>
+              <button onClick={() => openBookPdf(book.id, true, book.title, setBusyId)} disabled={!book.has_doc || busyId === book.id + 'd'}
+                className="h-9 px-5 bg-white ring-1 ring-black/5 shadow-sm hover:bg-zinc-50 text-zinc-700 hover:text-primary rounded-md text-xs font-semibold inline-flex items-center gap-1.5 transition-colors">
+                {busyId === book.id + 'd' ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />} Download
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {book.description && (
+          <div className="p-5 sm:p-6 border-b border-zinc-100">
+            <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-2">Description</p>
+            <p className="text-sm text-zinc-700 leading-relaxed whitespace-pre-wrap">{book.description}</p>
+          </div>
+        )}
+
+        <div className="p-5 sm:p-6 grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+          <div className="flex items-start gap-2 text-zinc-600">
+            <User className="size-4 text-primary shrink-0 mt-0.5" />
+            <span>Added by <span className="font-semibold text-zinc-800">{book.created_by_name || 'Unknown'}</span>{book.created_at && <span className="block text-[11px] text-zinc-400 mt-0.5">{fmtWhen(book.created_at)}</span>}</span>
+          </div>
+          <div className="flex items-start gap-2 text-zinc-600">
+            <Clock className="size-4 text-primary shrink-0 mt-0.5" />
+            <span>Last updated by <span className="font-semibold text-zinc-800">{book.updated_by_name || 'Unknown'}</span>{book.updated_at && <span className="block text-[11px] text-zinc-400 mt-0.5">{fmtWhen(book.updated_at)}</span>}</span>
+          </div>
+        </div>
+      </div>
+
+      {children}
+    </div>
   );
 }
 
@@ -214,15 +326,26 @@ function OnlineBookModal({ editing, onClose, onSaved }) {
     title: editing?.title || '', author: editing?.author || '',
     category: editing?.category || '', description: editing?.description || ''
   });
-  const [doc, setDoc] = useState(null); // { name, data }
+  const [doc, setDoc] = useState(null);       // new PDF { name, data }
+  const [cover, setCover] = useState(null);   // new cover { name, data }
+  const [removeCover, setRemoveCover] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const onPick = async (e) => {
-    const f = e.target.files?.[0];
+  const onPickPdf = async (e) => {
+    const f = e.target.files?.[0]; e.target.value = '';
     if (!f) return;
     if (f.type !== 'application/pdf') return alert('Please choose a PDF file.');
     try { setDoc(await fileToDataUrl(f, 30)); } catch (err) { alert(err.message); }
   };
+  const onPickCover = async (e) => {
+    const f = e.target.files?.[0]; e.target.value = '';
+    if (!f) return;
+    if (!f.type.startsWith('image/')) return alert('Please choose an image.');
+    try { setCover(await fileToDataUrl(f, 2)); setRemoveCover(false); } catch (err) { alert(err.message); }
+  };
+
+  const showNewCover = !!cover;
+  const showServerCover = editing && editing.has_cover && !cover && !removeCover;
 
   const submit = async (e) => {
     e.preventDefault();
@@ -232,10 +355,10 @@ function OnlineBookModal({ editing, onClose, onSaved }) {
     try {
       const payload = { ...form, title: form.title.trim() };
       if (doc) { payload.doc_name = doc.name; payload.doc_data = doc.data; }
+      if (cover) payload.cover_data = cover.data;
+      else if (removeCover) payload.remove_cover = true;
       const url = editing ? `${API_BASE_URL}/admin/library/online/${editing.id}` : `${API_BASE_URL}/admin/library/online`;
-      const res = await fetch(url, {
-        method: editing ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-      });
+      const res = await fetch(url, { method: editing ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(d.error || 'Save failed');
       onSaved();
@@ -260,17 +383,51 @@ function OnlineBookModal({ editing, onClose, onSaved }) {
             <div className="space-y-1.5">
               <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Description</label>
               <textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} rows={3}
-                className="w-full bg-white border border-zinc-200 rounded-md px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors resize-none" />
+                className="w-full bg-white border border-zinc-200 rounded-md px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors resize-y" />
             </div>
+
+            {/* Cover image */}
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Cover Image <span className="text-zinc-400 normal-case font-medium">(optional)</span></label>
+              {showNewCover || showServerCover ? (
+                <div className="flex items-center gap-3">
+                  {showNewCover
+                    ? <img src={cover.data} alt="cover" className="w-16 h-20 object-cover rounded-md ring-1 ring-black/5" />
+                    : <CoverImg id={editing.id} hasCover className="w-16 h-20 rounded-md ring-1 ring-black/5" iconClass="size-6" />}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="cursor-pointer inline-flex items-center gap-1.5 text-zinc-700 px-3 py-1.5 border border-zinc-200 rounded-md text-xs font-medium hover:bg-zinc-50 transition-colors w-fit">
+                      <ImageIcon className="size-3.5" /> Replace
+                      <input type="file" accept="image/*" onChange={onPickCover} className="hidden" />
+                    </label>
+                    <button type="button" onClick={() => { setCover(null); setRemoveCover(true); }} className="text-xs font-medium text-red-600 hover:underline w-fit">Remove cover</button>
+                  </div>
+                </div>
+              ) : (
+                <label className="cursor-pointer flex items-center gap-2 text-zinc-700 px-3 py-2.5 border border-dashed border-zinc-300 rounded-md text-xs font-medium hover:bg-zinc-50 transition-colors">
+                  <ImageIcon className="size-4 text-primary" /> Choose cover image (max 2 MB)
+                  <input type="file" accept="image/*" onChange={onPickCover} className="hidden" />
+                </label>
+              )}
+            </div>
+
+            {/* PDF — choose / remove & reselect */}
             <div className="space-y-1.5">
               <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
                 Book PDF {editing ? <span className="text-zinc-400 normal-case font-medium">(leave empty to keep current)</span> : <span className="text-red-500">*</span>}
               </label>
-              <label className="cursor-pointer flex items-center gap-2 text-zinc-700 px-3 py-2.5 border border-dashed border-zinc-300 rounded-md text-xs font-medium hover:bg-zinc-50 transition-colors">
-                <Upload className="size-4 text-primary" />
-                {doc ? <span className="truncate">{doc.name}</span> : (editing ? 'Replace PDF (max 30 MB)' : 'Choose PDF (max 30 MB)')}
-                <input type="file" accept="application/pdf" onChange={onPick} className="hidden" />
-              </label>
+              {doc ? (
+                <div className="flex items-center gap-2 px-3 py-2.5 border border-zinc-200 rounded-md bg-zinc-50/50">
+                  <FileText className="size-4 text-primary shrink-0" />
+                  <span className="text-xs font-medium text-zinc-700 truncate flex-1">{doc.name}</span>
+                  <button type="button" onClick={() => setDoc(null)} title="Remove & choose another"
+                    className="size-6 bg-white ring-1 ring-black/10 rounded-full flex items-center justify-center text-zinc-500 hover:text-red-600 shrink-0"><X className="size-3.5" /></button>
+                </div>
+              ) : (
+                <label className="cursor-pointer flex items-center gap-2 text-zinc-700 px-3 py-2.5 border border-dashed border-zinc-300 rounded-md text-xs font-medium hover:bg-zinc-50 transition-colors">
+                  <Upload className="size-4 text-primary" /> {editing ? 'Replace PDF (max 30 MB)' : 'Choose PDF (max 30 MB)'}
+                  <input type="file" accept="application/pdf" onChange={onPickPdf} className="hidden" />
+                </label>
+              )}
             </div>
           </div>
           <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
@@ -286,7 +443,7 @@ function OnlineBookModal({ editing, onClose, onSaved }) {
 }
 
 // =====================================================================
-//  OFFLINE LIBRARY — Catalogue + Issued
+//  OFFLINE LIBRARY — Catalogue + Issued  (unchanged)
 // =====================================================================
 function OfflineLibrary({ user, canEdit }) {
   const [sub, setSub] = useState('catalog');
@@ -309,8 +466,8 @@ function Catalogue({ user, canEdit }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
-  const [modal, setModal] = useState(null);      // book add/edit
-  const [issueFor, setIssueFor] = useState(null); // book to issue
+  const [modal, setModal] = useState(null);
+  const [issueFor, setIssueFor] = useState(null);
 
   const load = useCallback(async () => {
     if (!user?.institutionId) return;
@@ -382,16 +539,12 @@ function Catalogue({ user, canEdit }) {
                 const avail = Number(b.available_copies);
                 return (
                   <tr key={b.id} className="hover:bg-zinc-50/60 transition-colors group">
-                    <td className="px-5 py-4 font-semibold text-zinc-900 text-sm">
-                      {b.title}{b.isbn && <span className="block text-[10px] font-medium text-zinc-400 mt-0.5">ISBN {b.isbn}</span>}
-                    </td>
+                    <td className="px-5 py-4 font-semibold text-zinc-900 text-sm">{b.title}{b.isbn && <span className="block text-[10px] font-medium text-zinc-400 mt-0.5">ISBN {b.isbn}</span>}</td>
                     <td className="px-5 py-4 text-sm text-zinc-700">{b.author || <span className="text-zinc-400 italic">-</span>}</td>
                     <td className="px-5 py-4 text-sm text-zinc-600">{b.category || '-'}</td>
                     <td className="px-5 py-4 text-sm text-zinc-600">{b.location || '-'}</td>
                     <td className="px-5 py-4 text-center">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold tabular-nums ring-1 ring-inset ${
-                        avail > 0 ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' : 'bg-red-50 text-red-700 ring-red-600/20'
-                      }`}>{avail} / {b.total_copies}</span>
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold tabular-nums ring-1 ring-inset ${avail > 0 ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' : 'bg-red-50 text-red-700 ring-red-600/20'}`}>{avail} / {b.total_copies}</span>
                     </td>
                     <td className="px-5 py-4 text-right whitespace-nowrap">
                       <div className="flex items-center justify-end gap-2">
@@ -403,10 +556,8 @@ function Catalogue({ user, canEdit }) {
                         )}
                         {canEdit && (
                           <div className="flex items-center gap-1 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity ml-1">
-                            <button onClick={() => setModal({ editing: b })} title="Edit"
-                              className="size-8 bg-white hover:bg-zinc-50 text-zinc-600 hover:text-primary rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5"><Edit className="size-3.5" /></button>
-                            <button onClick={() => remove(b)} title="Delete"
-                              className="size-8 bg-white hover:bg-zinc-50 text-zinc-600 hover:text-red-600 rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5"><Trash2 className="size-3.5" /></button>
+                            <button onClick={() => setModal({ editing: b })} title="Edit" className="size-8 bg-white hover:bg-zinc-50 text-zinc-600 hover:text-primary rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5"><Edit className="size-3.5" /></button>
+                            <button onClick={() => remove(b)} title="Delete" className="size-8 bg-white hover:bg-zinc-50 text-zinc-600 hover:text-red-600 rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5"><Trash2 className="size-3.5" /></button>
                           </div>
                         )}
                       </div>
@@ -432,7 +583,6 @@ function BookModal({ editing, onClose, onSaved }) {
     total_copies: editing?.total_copies ? String(editing.total_copies) : '1'
   });
   const [saving, setSaving] = useState(false);
-
   const submit = async (e) => {
     e.preventDefault();
     if (!form.title.trim()) return alert('A title is required.');
@@ -447,7 +597,6 @@ function BookModal({ editing, onClose, onSaved }) {
     } catch (e2) { alert(e2.message); }
     setSaving(false);
   };
-
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
       <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-md shadow-xl flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-200">
@@ -484,14 +633,12 @@ function IssueModal({ book, instId, onClose, onSaved }) {
   const [form, setForm] = useState({ member_user_id: '', borrower_name: '', issue_date: todayISO(), due_date: '', notes: '' });
   const [useCustom, setUseCustom] = useState(false);
   const [saving, setSaving] = useState(false);
-
   useEffect(() => {
     (async () => {
       try { const res = await fetch(`${API_BASE_URL}/admin/library/members/${instId}`); const d = await res.json(); if (res.ok) setMembers(Array.isArray(d) ? d : []); }
       catch (e) { console.error(e); }
     })();
   }, [instId]);
-
   const submit = async (e) => {
     e.preventDefault();
     if (!useCustom && !form.member_user_id) return alert('Choose a borrower (or switch to a custom name).');
@@ -512,15 +659,11 @@ function IssueModal({ book, instId, onClose, onSaved }) {
     } catch (e2) { alert(e2.message); }
     setSaving(false);
   };
-
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
       <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-md shadow-xl flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-200">
         <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 rounded-t-lg shrink-0">
-          <div>
-            <h2 className="text-lg font-semibold text-zinc-900">Issue Book</h2>
-            <p className="text-[11px] text-zinc-500 mt-0.5 truncate">{book.title}</p>
-          </div>
+          <div><h2 className="text-lg font-semibold text-zinc-900">Issue Book</h2><p className="text-[11px] text-zinc-500 mt-0.5 truncate">{book.title}</p></div>
           <button onClick={onClose} className="text-zinc-400 hover:text-zinc-700 p-1.5 hover:bg-zinc-100 rounded-md"><X className="size-4" /></button>
         </div>
         <form onSubmit={submit} className="flex flex-col flex-1 overflow-hidden">
@@ -529,7 +672,6 @@ function IssueModal({ book, instId, onClose, onSaved }) {
               <button type="button" onClick={() => setUseCustom(false)} className={`px-2.5 py-1 rounded ${!useCustom ? 'bg-primary text-white' : 'bg-zinc-100 text-zinc-600'}`}>System member</button>
               <button type="button" onClick={() => setUseCustom(true)} className={`px-2.5 py-1 rounded ${useCustom ? 'bg-primary text-white' : 'bg-zinc-100 text-zinc-600'}`}>Other name</button>
             </div>
-
             {useCustom ? (
               <LabeledInput label="Borrower name" required value={form.borrower_name} onChange={v => setForm({ ...form, borrower_name: v })} placeholder="e.g. Visiting teacher" />
             ) : (
@@ -545,7 +687,6 @@ function IssueModal({ book, instId, onClose, onSaved }) {
                 </div>
               </div>
             )}
-
             <div className="grid grid-cols-2 gap-4">
               <LabeledInput label="Issue date" type="date" required value={form.issue_date} onChange={v => setForm({ ...form, issue_date: v })} />
               <LabeledInput label="Due date" type="date" value={form.due_date} onChange={v => setForm({ ...form, due_date: v })} />
@@ -569,7 +710,6 @@ function IssuedBooks({ user, canEdit }) {
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState('issued');
   const [query, setQuery] = useState('');
-
   const load = useCallback(async () => {
     if (!user?.institutionId) return;
     setLoading(true);
@@ -583,24 +723,16 @@ function IssuedBooks({ user, canEdit }) {
     setLoading(false);
   }, [user, status, query]);
   useEffect(() => { load(); }, [load]);
-
   const doReturn = async (row) => {
     if (!window.confirm(`Mark "${row.book_title}" returned by ${row.borrower}?`)) return;
-    try {
-      const res = await fetch(`${API_BASE_URL}/admin/library/issues/${row.id}/return`, { method: 'POST' });
-      if (!res.ok) throw new Error('Return failed');
-      load();
-    } catch (e) { alert(e.message); }
+    try { const res = await fetch(`${API_BASE_URL}/admin/library/issues/${row.id}/return`, { method: 'POST' }); if (!res.ok) throw new Error('Return failed'); load(); }
+    catch (e) { alert(e.message); }
   };
   const remove = async (row) => {
     if (!window.confirm('Delete this issue record?')) return;
-    try {
-      const res = await fetch(`${API_BASE_URL}/admin/library/issues/${row.id}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error('Delete failed');
-      load();
-    } catch (e) { alert(e.message); }
+    try { const res = await fetch(`${API_BASE_URL}/admin/library/issues/${row.id}`, { method: 'DELETE' }); if (!res.ok) throw new Error('Delete failed'); load(); }
+    catch (e) { alert(e.message); }
   };
-
   return (
     <>
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -616,7 +748,6 @@ function IssuedBooks({ user, canEdit }) {
             className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
         </div>
       </div>
-
       {loading ? (
         <div className="h-64 flex items-center justify-center"><Loader2 className="animate-spin size-8 text-primary" /></div>
       ) : rows.length === 0 ? (
@@ -645,9 +776,7 @@ function IssuedBooks({ user, canEdit }) {
                     <td className="px-5 py-4 font-semibold text-zinc-900 text-sm">{r.book_title || '-'}{r.book_author && <span className="block text-[10px] font-medium text-zinc-400 mt-0.5">{r.book_author}</span>}</td>
                     <td className="px-5 py-4 text-sm text-zinc-700"><span className="inline-flex items-center gap-1.5"><User className="size-3.5 text-zinc-400" /> {r.borrower}</span></td>
                     <td className="px-5 py-4 text-sm text-zinc-600 tabular-nums">{fmtDMY(r.issue_date)}</td>
-                    <td className="px-5 py-4 text-sm tabular-nums">
-                      <span className={overdue ? 'text-red-600 font-semibold' : 'text-zinc-600'}>{fmtDMY(r.due_date)}</span>
-                    </td>
+                    <td className="px-5 py-4 text-sm tabular-nums"><span className={overdue ? 'text-red-600 font-semibold' : 'text-zinc-600'}>{fmtDMY(r.due_date)}</span></td>
                     <td className="px-5 py-4">
                       {r.status === 'returned'
                         ? <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-zinc-600"><CheckCircle2 className="size-3.5 text-emerald-500" /> {fmtDMY(r.return_date)}</span>
@@ -659,12 +788,9 @@ function IssuedBooks({ user, canEdit }) {
                       <td className="px-5 py-4 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-2">
                           {r.status !== 'returned' && (
-                            <button onClick={() => doReturn(r)} className="h-8 px-3 rounded-md font-semibold text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition-colors inline-flex items-center gap-1.5">
-                              <CheckCircle2 className="size-3.5" /> Return
-                            </button>
+                            <button onClick={() => doReturn(r)} className="h-8 px-3 rounded-md font-semibold text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition-colors inline-flex items-center gap-1.5"><CheckCircle2 className="size-3.5" /> Return</button>
                           )}
-                          <button onClick={() => remove(r)} title="Delete record"
-                            className="size-8 bg-white hover:bg-zinc-50 text-zinc-500 hover:text-red-600 rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5 sm:opacity-0 sm:group-hover:opacity-100"><Trash2 className="size-3.5" /></button>
+                          <button onClick={() => remove(r)} title="Delete record" className="size-8 bg-white hover:bg-zinc-50 text-zinc-500 hover:text-red-600 rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5 sm:opacity-0 sm:group-hover:opacity-100"><Trash2 className="size-3.5" /></button>
                         </div>
                       </td>
                     )}
@@ -683,9 +809,7 @@ function IssuedBooks({ user, canEdit }) {
 function LabeledInput({ label, value, onChange, type = 'text', required, placeholder, hint }) {
   return (
     <div className="space-y-1.5">
-      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">
-        {label} {required && <span className="text-red-500">*</span>}
-      </label>
+      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">{label} {required && <span className="text-red-500">*</span>}</label>
       <input type={type} value={value || ''} onChange={e => onChange(e.target.value)} required={required} placeholder={placeholder}
         className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
       {hint && <p className="text-[10px] text-zinc-400">{hint}</p>}
@@ -697,10 +821,10 @@ function LabeledInput({ label, value, onChange, type = 'text', required, placeho
 function LibraryHelp({ isSuperAdmin, canEdit }) {
   const [open, setOpen] = useState(false);
   const steps = [
-    ['Online Library', 'Read or download a book PDF — anyone with access can. Only a Super Admin can add, edit or delete online books.'],
-    ['Offline — Catalogue', 'The physical books, with total and available copies. Add a book with its copy count; availability updates as copies go out and come back.'],
-    ['Offline — Issue a book', 'Use the Issue button on an available book: pick a member (or type a name), set the issue and due dates. A copy is reserved automatically.'],
-    ['Offline — Return', 'On the Issued tab, hit Return when a book comes back. Overdue books (past their due date) are flagged in red.'],
+    ['Online Library', 'Cards show the cover, title and category. Click a card to open its full details (cover, description, who added/updated it). View or Download the PDF — anyone with access can. Only a Super Admin can add, edit or delete online books, including the cover.'],
+    ['Offline — Catalogue', 'The physical books, with total and available copies. Availability updates as copies go out and come back.'],
+    ['Offline — Issue a book', 'Use Issue on an available book: pick a member (or type a name), set the issue and due dates. A copy is reserved automatically.'],
+    ['Offline — Return', 'On the Issued tab, hit Return when a book comes back. Overdue books are flagged in red.'],
   ];
   return (
     <>
