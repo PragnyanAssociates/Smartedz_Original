@@ -52,13 +52,14 @@ const fileToDataUrl = (file, maxMB) => new Promise((resolve, reject) => {
 function CoverThumb({ src, hasCover, className }) {
   const [url, setUrl] = useState(null);
   useEffect(() => {
-    if (!hasCover || !src) { setUrl(null); return; }
-    let revoked = false, obj = null;
+    setUrl(null);                       // drop the old image while the new one loads
+    if (!hasCover || !src) return;
+    let cancelled = false, obj = null;
     fetch(src)
       .then(r => { if (!r.ok) throw new Error(); return r.blob(); })
-      .then(b => { if (revoked) return; obj = URL.createObjectURL(b); setUrl(obj); })
+      .then(b => { if (cancelled) return; obj = URL.createObjectURL(b); setUrl(obj); })
       .catch(() => {});
-    return () => { revoked = true; if (obj) URL.revokeObjectURL(obj); };
+    return () => { cancelled = true; if (obj) URL.revokeObjectURL(obj); };
   }, [src, hasCover]);
   // object-contain -> the whole cover fits, never cropped, whatever its size.
   if (url) return <img src={url} alt="cover" className={`${className} object-contain`} />;
@@ -214,7 +215,7 @@ function OnlineLibrary({ user, isSuperAdmin }) {
                   className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col cursor-pointer group hover:ring-primary/30 hover:shadow-md transition-all">
                   <div className="relative aspect-[4/3] bg-zinc-50">
                     <span className="absolute top-2 left-2 z-10 text-[10px] font-bold text-white bg-zinc-900/70 rounded px-1.5 py-0.5 tabular-nums">#{b._num}</span>
-                    <CoverThumb src={`${API_BASE_URL}/admin/library/online/${b.id}/cover`} hasCover={b.has_cover} className="w-full h-full" />
+                    <CoverThumb src={`${API_BASE_URL}/admin/library/online/${b.id}/cover?v=${encodeURIComponent(b.updated_at || '')}`} hasCover={b.has_cover} className="w-full h-full" />
                   </div>
                   <div className="p-3.5">
                     <h3 className="text-sm font-semibold text-zinc-900 leading-tight line-clamp-2 group-hover:text-primary transition-colors">{b.title}</h3>
@@ -336,7 +337,7 @@ function OnlineBookDetail({ book, isSuperAdmin, onBack, onEdit, onDeleted }) {
         <div className="flex flex-col sm:flex-row gap-6 p-5 sm:p-6 border-b border-zinc-100">
           <div className="w-full sm:w-48 shrink-0">
             <div className="aspect-[3/4] rounded-md ring-1 ring-black/5 overflow-hidden bg-zinc-100">
-              <CoverThumb src={`${API_BASE_URL}/admin/library/online/${book.id}/cover`} hasCover={book.has_cover} className="w-full h-full" />
+              <CoverThumb src={`${API_BASE_URL}/admin/library/online/${book.id}/cover?v=${encodeURIComponent(book.updated_at || '')}`} hasCover={book.has_cover} className="w-full h-full" />
             </div>
           </div>
           <div className="flex-1 min-w-0">
@@ -655,7 +656,7 @@ function Catalogue({ user, canEdit }) {
                   <tr key={b.id} className="hover:bg-zinc-50/60 transition-colors group">
                     <td className="px-4 py-3 text-center font-semibold text-primary tabular-nums">{b._num}</td>
                     <td className="px-4 py-3">
-                      <CoverThumb src={`${API_BASE_URL}/admin/library/books/${b.id}/cover`} hasCover={b.has_cover} className="w-10 h-14 rounded ring-1 ring-black/5" />
+                      <CoverThumb src={`${API_BASE_URL}/admin/library/books/${b.id}/cover?v=${encodeURIComponent(b.updated_at || '')}`} hasCover={b.has_cover} className="w-10 h-14 rounded ring-1 ring-black/5" />
                     </td>
                     <td className="px-4 py-3 font-semibold text-zinc-900 text-sm">
                       {b.title}{b.isbn && <span className="block text-[10px] font-medium text-zinc-400 mt-0.5">ISBN {b.isbn}</span>}
