@@ -15528,16 +15528,36 @@ async function _libRecalcAvailable(bookId) {
     await db.execute('UPDATE library_books SET available_copies = ? WHERE id = ?', [avail, bookId]);
 }
 
-// Borrower picker — active users of the institution.
+// Borrower picker — active users, enriched with class + roll when those
+// columns exist (detected at runtime so it adapts to the real users schema).
 app.get('/api/admin/library/members/:instId', async (req, res) => {
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     try {
-        const [rows] = await db.execute(
-            `SELECT id, name, role FROM users
-              WHERE institutionId = ? AND (status IS NULL OR LOWER(status) = 'active')
-              ORDER BY name`, [instId]);
+        const [cols] = await db.execute(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users'");
+        const names = cols.map(c => String(c.COLUMN_NAME));
+        const hasClass = names.includes('class_id');
+        const rollCol = ['rollNumber', 'roll_no', 'roll_number', 'roll', 'admissionNumber', 'admission_no'].find(c => names.includes(c));
+
+        const sel = ['u.id', 'u.name', 'u.role'];
+        if (hasClass) sel.push('u.class_id');
+        if (rollCol) sel.push('u.`' + rollCol + '` AS roll_no');
+        let sql = 'SELECT ' + sel.join(', ');
+        if (hasClass) sql += ', c.className, c.section';
+        sql += ' FROM users u';
+        if (hasClass) sql += ' LEFT JOIN classes c ON c.id = u.class_id';
+        sql += " WHERE u.institutionId = ? AND (u.status IS NULL OR LOWER(u.status) = 'active') ORDER BY u.name";
+        const [rows] = await db.execute(sql, [instId]);
         res.json(rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) {
+        // Fallback: never break issuing just because a column is missing.
+        try {
+            const [rows] = await db.execute(
+                "SELECT id, name, role FROM users WHERE institutionId = ? AND (status IS NULL OR LOWER(status) = 'active') ORDER BY name",
+                [instId]);
+            res.json(rows);
+        } catch (e2) { res.status(500).json({ error: e2.message }); }
+    }
 });
 
 // ---------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { API_BASE_URL } from '../../apiConfig';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
@@ -6,7 +6,7 @@ import {
   BookOpen, Library as LibraryIcon, Globe, Plus, Edit, Trash2, X, Loader2, Search,
   Download, Eye, Upload, FileText, RefreshCw, ChevronDown, Save, User,
   ArrowLeftRight, CheckCircle2, AlertTriangle, HelpCircle, ShieldCheck, ArrowLeft,
-  Image as ImageIcon, Tag, Users, Clock, Calendar
+  Image as ImageIcon, Tag, Users, Clock, Calendar, ArrowUpDown
 } from 'lucide-react';
 
 // ---- helpers --------------------------------------------------------
@@ -251,6 +251,54 @@ function FilterSelect({ value, onChange, allLabel, options }) {
   );
 }
 
+
+function SearchableSelect({ value, onChange, options, placeholder, disabled }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const ref = useRef(null);
+  useEffect(() => {
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+  const filtered = options.filter(o => {
+    const t = q.trim().toLowerCase();
+    return !t || o.label.toLowerCase().includes(t) || (o.sub || '').toLowerCase().includes(t);
+  });
+  const selected = options.find(o => o.value === value);
+  return (
+    <div ref={ref} className="relative">
+      <button type="button" disabled={disabled} onClick={() => setOpen(o => !o)}
+        className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-left outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors disabled:bg-zinc-50 disabled:cursor-not-allowed flex items-center">
+        <span className={`truncate ${selected ? 'text-zinc-900' : 'text-zinc-400'}`}>{selected ? selected.label : placeholder}</span>
+        <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+      </button>
+      {open && !disabled && (
+        <div className="absolute z-[70] mt-1 w-full bg-white ring-1 ring-black/10 shadow-xl rounded-md overflow-hidden">
+          <div className="p-2 border-b border-zinc-100">
+            <div className="relative">
+              <Search className="size-3.5 text-zinc-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search..."
+                className="h-8 w-full bg-zinc-50 border border-zinc-200 rounded pl-8 pr-2 text-xs outline-none focus:ring-2 focus:ring-primary/20" />
+            </div>
+          </div>
+          <div className="max-h-56 overflow-y-auto custom-scrollbar py-1">
+            {filtered.length === 0 ? (
+              <div className="px-3 py-4 text-center text-xs text-zinc-400">No matches</div>
+            ) : filtered.map(o => (
+              <button key={o.value} type="button" onClick={() => { onChange(o.value); setOpen(false); setQ(''); }}
+                className={`w-full text-left px-3 py-2 hover:bg-zinc-50 transition-colors flex flex-col ${o.value === value ? 'bg-primary/5' : ''}`}>
+                <span className="text-sm text-zinc-800 font-medium">{o.label}</span>
+                {o.sub && <span className="text-[10px] text-zinc-400">{o.sub}</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StatCard({ icon: Icon, label, value, tint }) {
   const tints = {
     primary: 'bg-primary/5 ring-primary/20 text-primary',
@@ -411,6 +459,8 @@ function OnlineBookModal({ editing, onClose, onSaved }) {
   const submit = async (e) => {
     e.preventDefault();
     if (!form.title.trim()) return alert('A title is required.');
+    if (!form.author.trim()) return alert('Author is required.');
+    if (!form.category.trim()) return alert('Category is required.');
     if (!editing && !doc) return alert('Please attach the book PDF.');
     setSaving(true);
     try {
@@ -441,8 +491,8 @@ function OnlineBookModal({ editing, onClose, onSaved }) {
           <div className="p-5 sm:p-6 overflow-y-auto custom-scrollbar space-y-4">
             <LabeledInput label="Title" required value={form.title} onChange={v => setForm({ ...form, title: v })} placeholder="e.g. Mathematics — Class 10" />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <LabeledInput label="Author" value={form.author} onChange={v => setForm({ ...form, author: v })} />
-              <LabeledInput label="Category" value={form.category} onChange={v => setForm({ ...form, category: v })} placeholder="e.g. Textbook" />
+              <LabeledInput label="Author" required value={form.author} onChange={v => setForm({ ...form, author: v })} />
+              <LabeledInput label="Category" required value={form.category} onChange={v => setForm({ ...form, category: v })} placeholder="e.g. Textbook" />
             </div>
             <div className="space-y-1.5">
               <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Description</label>
@@ -634,63 +684,41 @@ function Catalogue({ user, canEdit }) {
           <p className="text-zinc-500 text-sm font-medium">{rows.length === 0 ? 'No books in the catalogue yet.' : 'No matches for your filters.'}</p>
         </div>
       ) : (
-        <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-x-auto custom-scrollbar">
-          <table className="w-full text-left border-collapse min-w-[1080px]">
-            <thead className="bg-zinc-50/80">
-              <tr>
-                <th className="px-4 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 w-12 text-center">#</th>
-                <th className="px-4 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 w-16">Cover</th>
-                <th className="px-4 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Title</th>
-                <th className="px-4 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Author</th>
-                <th className="px-4 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Category</th>
-                <th className="px-4 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Shelf</th>
-                <th className="px-4 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 text-center">Available</th>
-                <th className="px-4 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Added</th>
-                <th className="px-4 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {filtered.map(b => {
-                const avail = Number(b.available_copies);
-                return (
-                  <tr key={b.id} className="hover:bg-zinc-50/60 transition-colors group">
-                    <td className="px-4 py-3 text-center font-semibold text-primary tabular-nums">{b._num}</td>
-                    <td className="px-4 py-3">
-                      <CoverThumb src={`${API_BASE_URL}/admin/library/books/${b.id}/cover?v=${encodeURIComponent(b.updated_at || '')}`} hasCover={b.has_cover} className="w-10 h-14 rounded ring-1 ring-black/5" />
-                    </td>
-                    <td className="px-4 py-3 font-semibold text-zinc-900 text-sm">
-                      {b.title}{b.isbn && <span className="block text-[10px] font-medium text-zinc-400 mt-0.5">ISBN {b.isbn}</span>}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-zinc-700">{b.author || <span className="text-zinc-400 italic">-</span>}</td>
-                    <td className="px-4 py-3 text-sm text-zinc-600">{b.category || '-'}</td>
-                    <td className="px-4 py-3 text-sm text-zinc-600">{b.location || '-'}</td>
-                    <td className="px-4 py-3 text-center">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold tabular-nums ring-1 ring-inset ${avail > 0 ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' : 'bg-red-50 text-red-700 ring-red-600/20'}`}>{avail} / {b.total_copies}</span>
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <div className="text-[11px] font-semibold text-zinc-700">{b.created_by_name || '-'}</div>
-                      {b.created_at && <div className="text-[10px] text-zinc-400">{fmtWhen(b.created_at)}</div>}
-                      {b.updated_by_name && <div className="text-[10px] text-zinc-400 mt-0.5">upd: {b.updated_by_name}{b.updated_at ? ` · ${fmtWhen(b.updated_at)}` : ''}</div>}
-                    </td>
-                    <td className="px-4 py-3 text-right whitespace-nowrap">
-                      <div className="flex items-center justify-end gap-2">
-                        {canEdit && (
-                          <button onClick={() => setIssueFor(b)} disabled={avail <= 0} title={avail > 0 ? 'Issue a copy' : 'No copies available'}
-                            className="h-8 px-3 rounded-md font-semibold text-xs text-primary bg-primary/10 hover:bg-primary/20 disabled:bg-zinc-100 disabled:text-zinc-400 transition-colors inline-flex items-center gap-1.5"><ArrowLeftRight className="size-3.5" /> Issue</button>
-                        )}
-                        {canEdit && (
-                          <div className="flex items-center gap-1 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity ml-1">
-                            <button onClick={() => setModal({ editing: b })} title="Edit" className="size-8 bg-white hover:bg-zinc-50 text-zinc-600 hover:text-primary rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5"><Edit className="size-3.5" /></button>
-                            <button onClick={() => remove(b)} title="Delete" className="size-8 bg-white hover:bg-zinc-50 text-zinc-600 hover:text-red-600 rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5"><Trash2 className="size-3.5" /></button>
-                          </div>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          {filtered.map(b => {
+            const avail = Number(b.available_copies);
+            return (
+              <div key={b.id} className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col group">
+                <div className="relative aspect-[4/3] bg-zinc-50">
+                  <span className="absolute top-2 left-2 z-10 text-[10px] font-bold text-white bg-zinc-900/70 rounded px-1.5 py-0.5 tabular-nums">#{b._num}</span>
+                  <span className={`absolute top-2 right-2 z-10 text-[10px] font-bold rounded px-1.5 py-0.5 tabular-nums ring-1 ring-inset ${avail > 0 ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' : 'bg-red-50 text-red-700 ring-red-600/20'}`}>{avail}/{b.total_copies}</span>
+                  <CoverThumb src={`${API_BASE_URL}/admin/library/books/${b.id}/cover?v=${encodeURIComponent(b.updated_at || '')}`} hasCover={b.has_cover} className="w-full h-full" />
+                </div>
+                <div className="p-4 flex flex-col flex-1">
+                  <h3 className="text-sm font-semibold text-zinc-900 leading-tight line-clamp-2">{b.title}</h3>
+                  <p className="text-[11px] text-zinc-500 mt-0.5 truncate">{b.author || '—'}{b.isbn ? ` · ISBN ${b.isbn}` : ''}</p>
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {b.category && <span className="text-[10px] font-semibold text-zinc-600 bg-zinc-100 ring-1 ring-inset ring-black/5 px-2 py-0.5 rounded">{b.category}</span>}
+                    {b.location && <span className="text-[10px] font-semibold text-zinc-500 bg-zinc-50 ring-1 ring-inset ring-black/5 px-2 py-0.5 rounded">Shelf {b.location}</span>}
+                  </div>
+                  <p className="text-[10px] text-zinc-400 mt-2 leading-relaxed">
+                    Added by <span className="font-semibold text-zinc-500">{b.created_by_name || 'Unknown'}</span>{b.created_at && <> · {fmtWhen(b.created_at)}</>}
+                    {b.updated_by_name && <span className="block mt-0.5">Updated by <span className="font-semibold text-zinc-500">{b.updated_by_name}</span>{b.updated_at && <> · {fmtWhen(b.updated_at)}</>}</span>}
+                  </p>
+                  {canEdit ? (
+                    <div className="mt-auto pt-3 flex items-center gap-2">
+                      <button onClick={() => setIssueFor(b)} disabled={avail <= 0} title={avail > 0 ? 'Issue a copy' : 'No copies available'}
+                        className="h-8 flex-1 rounded-md font-semibold text-xs text-white bg-primary hover:bg-primary/90 disabled:bg-zinc-200 disabled:text-zinc-400 transition-colors inline-flex items-center justify-center gap-1.5"><ArrowLeftRight className="size-3.5" /> Issue</button>
+                      <button onClick={() => setModal({ editing: b })} title="Edit" className="size-8 bg-white ring-1 ring-black/5 shadow-sm hover:bg-zinc-50 text-zinc-500 hover:text-primary rounded-md flex items-center justify-center transition-colors"><Edit className="size-3.5" /></button>
+                      <button onClick={() => remove(b)} title="Delete" className="size-8 bg-white ring-1 ring-black/5 shadow-sm hover:bg-zinc-50 text-zinc-500 hover:text-red-600 rounded-md flex items-center justify-center transition-colors"><Trash2 className="size-3.5" /></button>
+                    </div>
+                  ) : (
+                    <div className="mt-auto pt-3 text-[11px] font-medium text-zinc-400">{avail > 0 ? `${avail} available` : 'All copies out'}</div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -720,6 +748,10 @@ function BookModal({ editing, onClose, onSaved }) {
   const submit = async (e) => {
     e.preventDefault();
     if (!form.title.trim()) return alert('A title is required.');
+    if (!form.author.trim()) return alert('Author is required.');
+    if (!form.isbn.trim()) return alert('ISBN is required.');
+    if (!form.category.trim()) return alert('Category is required.');
+    if (!form.location.trim()) return alert('Shelf / Location is required.');
     setSaving(true);
     try {
       const payload = { ...form, title: form.title.trim(), total_copies: Math.max(1, parseInt(form.total_copies, 10) || 1) };
@@ -747,10 +779,10 @@ function BookModal({ editing, onClose, onSaved }) {
           <div className="p-5 sm:p-6 overflow-y-auto custom-scrollbar space-y-4">
             <LabeledInput label="Title" required value={form.title} onChange={v => setForm({ ...form, title: v })} />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <LabeledInput label="Author" value={form.author} onChange={v => setForm({ ...form, author: v })} />
-              <LabeledInput label="ISBN" value={form.isbn} onChange={v => setForm({ ...form, isbn: v })} />
-              <LabeledInput label="Category" value={form.category} onChange={v => setForm({ ...form, category: v })} />
-              <LabeledInput label="Shelf / Location" value={form.location} onChange={v => setForm({ ...form, location: v })} />
+              <LabeledInput label="Author" required value={form.author} onChange={v => setForm({ ...form, author: v })} />
+              <LabeledInput label="ISBN" required value={form.isbn} onChange={v => setForm({ ...form, isbn: v })} />
+              <LabeledInput label="Category" required value={form.category} onChange={v => setForm({ ...form, category: v })} />
+              <LabeledInput label="Shelf / Location" required value={form.location} onChange={v => setForm({ ...form, location: v })} />
             </div>
             <FilePicker label="Cover Image" optional Icon={ImageIcon}
               picked={cover} onPick={pickCover} onClear={() => setCover(null)}
@@ -758,7 +790,7 @@ function BookModal({ editing, onClose, onSaved }) {
               currentName={coverCurrent} onCurrentX={() => setRemoveCover(true)}
               note={removeCover && !cover ? 'Cover will be removed on save' : null}
               onUndoNote={removeCover ? () => setRemoveCover(false) : null} />
-            <LabeledInput label="Total Copies" type="number" value={form.total_copies} onChange={v => setForm({ ...form, total_copies: v })}
+            <LabeledInput label="Total Copies" required type="number" value={form.total_copies} onChange={v => setForm({ ...form, total_copies: v })}
               hint={editing ? 'Available copies re-balance automatically.' : undefined} />
           </div>
           <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
@@ -775,28 +807,47 @@ function BookModal({ editing, onClose, onSaved }) {
 
 function IssueModal({ book, instId, onClose, onSaved }) {
   const [members, setMembers] = useState([]);
-  const [form, setForm] = useState({ member_user_id: '', borrower_name: '', issue_date: todayISO(), due_date: '', notes: '' });
-  const [useCustom, setUseCustom] = useState(false);
+  const [role, setRole] = useState('');
+  const [classFilter, setClassFilter] = useState('');
+  const [memberId, setMemberId] = useState('');
+  const [issueDate, setIssueDate] = useState(todayISO());
+  const [dueDate, setDueDate] = useState('');
+  const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+
   useEffect(() => {
     (async () => {
       try { const res = await fetch(`${API_BASE_URL}/admin/library/members/${instId}`); const d = await res.json(); if (res.ok) setMembers(Array.isArray(d) ? d : []); }
       catch (e) { console.error(e); }
     })();
   }, [instId]);
+
+  const classLabel = (m) => (m.className ? `${m.className}${m.section ? ' - ' + m.section : ''}` : '');
+  const roles = useMemo(() => [...new Set(members.map(m => (m.role || '').trim()).filter(Boolean))].sort(), [members]);
+  const isStudentRole = /student/i.test(role);
+  const classesForRole = useMemo(() =>
+    isStudentRole ? [...new Set(members.filter(m => m.role === role).map(classLabel).filter(Boolean))].sort() : [],
+    [members, role, isStudentRole]);
+
+  const memberOptions = useMemo(() => {
+    let list = members.filter(m => !role || m.role === role);
+    if (isStudentRole && classFilter) list = list.filter(m => classLabel(m) === classFilter);
+    return list.map(m => ({
+      value: String(m.id), label: m.name,
+      sub: [m.roll_no ? `Roll ${m.roll_no}` : null, classLabel(m) || null].filter(Boolean).join(' · ')
+    }));
+  }, [members, role, classFilter, isStudentRole]);
+
+  useEffect(() => { if (memberId && !memberOptions.some(o => o.value === memberId)) setMemberId(''); }, [memberOptions]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const submit = async (e) => {
     e.preventDefault();
-    if (!useCustom && !form.member_user_id) return alert('Choose a borrower (or switch to a custom name).');
-    if (useCustom && !form.borrower_name.trim()) return alert('Type the borrower name.');
-    if (!form.issue_date) return alert('Pick an issue date.');
+    if (!role) return alert('Select a role.');
+    if (!memberId) return alert('Select a borrower.');
+    if (!issueDate) return alert('Pick an issue date.');
     setSaving(true);
     try {
-      const payload = {
-        book_id: book.id,
-        member_user_id: useCustom ? null : (form.member_user_id ? parseInt(form.member_user_id, 10) : null),
-        borrower_name: useCustom ? form.borrower_name.trim() : null,
-        issue_date: form.issue_date, due_date: form.due_date || null, notes: form.notes.trim() || null
-      };
+      const payload = { book_id: book.id, member_user_id: parseInt(memberId, 10), issue_date: issueDate, due_date: dueDate || null, notes: notes.trim() || null };
       const res = await fetch(`${API_BASE_URL}/admin/library/issues`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(d.error || 'Could not issue the book.');
@@ -804,6 +855,7 @@ function IssueModal({ book, instId, onClose, onSaved }) {
     } catch (e2) { alert(e2.message); }
     setSaving(false);
   };
+
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
       <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-md shadow-xl flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-200">
@@ -813,30 +865,55 @@ function IssueModal({ book, instId, onClose, onSaved }) {
         </div>
         <form onSubmit={submit} className="flex flex-col flex-1 overflow-hidden">
           <div className="p-5 sm:p-6 overflow-y-auto custom-scrollbar space-y-4">
-            <div className="flex items-center gap-2 text-[11px] font-semibold">
-              <button type="button" onClick={() => setUseCustom(false)} className={`px-2.5 py-1 rounded ${!useCustom ? 'bg-primary text-white' : 'bg-zinc-100 text-zinc-600'}`}>System member</button>
-              <button type="button" onClick={() => setUseCustom(true)} className={`px-2.5 py-1 rounded ${useCustom ? 'bg-primary text-white' : 'bg-zinc-100 text-zinc-600'}`}>Other name</button>
+            {/* Role first (keeps the borrower list short) */}
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Role <span className="text-red-500">*</span></label>
+              <div className="relative">
+                <select value={role} onChange={e => { setRole(e.target.value); setClassFilter(''); setMemberId(''); }}
+                  className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 appearance-none shadow-sm transition-colors cursor-pointer">
+                  <option value="">Select a role…</option>
+                  {roles.map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+                <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
             </div>
-            {useCustom ? (
-              <LabeledInput label="Borrower name" required value={form.borrower_name} onChange={v => setForm({ ...form, borrower_name: v })} placeholder="e.g. Visiting teacher" />
-            ) : (
+
+            {/* Class filter — students only */}
+            {isStudentRole && classesForRole.length > 0 && (
               <div className="space-y-1.5">
-                <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Borrower <span className="text-red-500">*</span></label>
+                <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Class</label>
                 <div className="relative">
-                  <select value={form.member_user_id} onChange={e => setForm({ ...form, member_user_id: e.target.value })}
+                  <select value={classFilter} onChange={e => { setClassFilter(e.target.value); setMemberId(''); }}
                     className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 appearance-none shadow-sm transition-colors cursor-pointer">
-                    <option value="">Select a member…</option>
-                    {members.map(m => <option key={m.id} value={m.id}>{m.name}{m.role ? ` — ${m.role}` : ''}</option>)}
+                    <option value="">All classes</option>
+                    {classesForRole.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                   <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
               </div>
             )}
-            <div className="grid grid-cols-2 gap-4">
-              <LabeledInput label="Issue date" type="date" required value={form.issue_date} onChange={v => setForm({ ...form, issue_date: v })} />
-              <LabeledInput label="Due date" type="date" value={form.due_date} onChange={v => setForm({ ...form, due_date: v })} />
+
+            {/* Borrower — searchable, filtered by role (+ class) */}
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Borrower <span className="text-red-500">*</span></label>
+              <SearchableSelect value={memberId} onChange={setMemberId} options={memberOptions}
+                placeholder={role ? 'Search & select…' : 'Pick a role first'} disabled={!role} />
+              {role && memberOptions.length === 0 && <p className="text-[10px] text-zinc-400">No members found for this role.</p>}
             </div>
-            <LabeledInput label="Notes" value={form.notes} onChange={v => setForm({ ...form, notes: v })} placeholder="Optional" />
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Issue date <span className="text-red-500">*</span></label>
+                <input type="date" value={issueDate} onChange={e => setIssueDate(e.target.value)} required
+                  className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Due date</label>
+                <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)}
+                  className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
+              </div>
+            </div>
+            <LabeledInput label="Notes" value={notes} onChange={setNotes} placeholder="Optional" />
           </div>
           <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
             <button type="button" onClick={onClose} disabled={saving} className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 rounded-md font-semibold text-xs hover:bg-zinc-50 transition-colors">Cancel</button>
@@ -855,19 +932,53 @@ function IssuedBooks({ user, canEdit }) {
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState('issued');
   const [query, setQuery] = useState('');
+  const [issFrom, setIssFrom] = useState('');
+  const [issTo, setIssTo] = useState('');
+  const [dueFrom, setDueFrom] = useState('');
+  const [dueTo, setDueTo] = useState('');
+  const [sort, setSort] = useState('serial');
+
   const load = useCallback(async () => {
     if (!user?.institutionId) return;
     setLoading(true);
     try {
-      let url = `${API_BASE_URL}/admin/library/issues/${user.institutionId}?status=${status}`;
-      if (query.trim()) url += `&q=${encodeURIComponent(query.trim())}`;
-      const res = await fetch(url);
+      const res = await fetch(`${API_BASE_URL}/admin/library/issues/${user.institutionId}?status=${status}`);
       const d = await res.json();
       setRows(Array.isArray(d) ? d : []);
     } catch (e) { console.error(e); }
     setLoading(false);
-  }, [user, status, query]);
+  }, [user, status]);
   useEffect(() => { load(); }, [load]);
+
+  const numbered = useMemo(() => rows.map((r, i) => ({ ...r, _num: i + 1 })), [rows]);
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return numbered.filter(r => {
+      if (q && ![r.book_title, r.borrower, r.book_author].some(v => (v || '').toLowerCase().includes(q))) return false;
+      const iss = (r.issue_date || '').slice(0, 10);
+      if (issFrom && iss && iss < issFrom) return false;
+      if (issTo && iss && iss > issTo) return false;
+      const due = (r.due_date || '').slice(0, 10);
+      if (dueFrom && (!due || due < dueFrom)) return false;
+      if (dueTo && (!due || due > dueTo)) return false;
+      return true;
+    });
+  }, [numbered, query, issFrom, issTo, dueFrom, dueTo]);
+
+  const sorted = useMemo(() => {
+    const arr = [...filtered];
+    if (sort === 'serial') arr.sort((a, b) => a._num - b._num);
+    else if (sort === 'issue') arr.sort((a, b) => (b.issue_date || '').localeCompare(a.issue_date || ''));
+    else if (sort === 'due') arr.sort((a, b) => {   // soonest / most overdue first, no-due last
+      const ad = (a.due_date || '').slice(0, 10), bd = (b.due_date || '').slice(0, 10);
+      if (!ad && !bd) return 0; if (!ad) return 1; if (!bd) return -1;
+      return ad.localeCompare(bd);
+    });
+    return arr;
+  }, [filtered, sort]);
+
+  const anyFilter = query || issFrom || issTo || dueFrom || dueTo;
+
   const doReturn = async (row) => {
     if (!window.confirm(`Mark "${row.book_title}" returned by ${row.borrower}?`)) return;
     try { const res = await fetch(`${API_BASE_URL}/admin/library/issues/${row.id}/return`, { method: 'POST' }); if (!res.ok) throw new Error('Return failed'); load(); }
@@ -878,31 +989,67 @@ function IssuedBooks({ user, canEdit }) {
     try { const res = await fetch(`${API_BASE_URL}/admin/library/issues/${row.id}`, { method: 'DELETE' }); if (!res.ok) throw new Error('Delete failed'); load(); }
     catch (e) { alert(e.message); }
   };
+
+  const dateInput = "h-9 w-[9rem] bg-white border border-zinc-200 rounded-md px-2.5 text-xs text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors";
+
   return (
     <>
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-        <div className="flex items-center gap-2">
-          {[['issued', 'Issued'], ['returned', 'Returned']].map(([id, label]) => (
-            <button key={id} onClick={() => setStatus(id)} className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${status === id ? 'bg-primary text-white' : 'bg-white text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-50'}`}>{label}</button>
-          ))}
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div className="flex items-center gap-2">
+            {[['issued', 'Issued'], ['returned', 'Returned']].map(([id, label]) => (
+              <button key={id} onClick={() => setStatus(id)} className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${status === id ? 'bg-primary text-white' : 'bg-white text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-50'}`}>{label}</button>
+            ))}
+          </div>
+          <div className="relative w-full sm:w-64">
+            <Search className="size-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search book or borrower..."
+              className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
+          </div>
         </div>
-        <div className="relative w-full sm:w-72">
-          <Search className="size-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-          <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search book or borrower..."
-            className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
+
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative">
+            <ArrowUpDown className="size-3.5 text-zinc-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <select value={sort} onChange={e => setSort(e.target.value)}
+              className="h-9 bg-white border border-zinc-200 rounded-md pl-8 pr-8 text-xs font-medium text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 appearance-none shadow-sm cursor-pointer">
+              <option value="serial">Sort: S.No</option>
+              <option value="issue">Sort: Issue date (newest)</option>
+              <option value="due">Sort: Due date (urgent first)</option>
+            </select>
+            <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Issued</span>
+            <input type="date" value={issFrom} onChange={e => setIssFrom(e.target.value)} title="Issued from" className={dateInput} />
+            <span className="text-zinc-300 text-xs">–</span>
+            <input type="date" value={issTo} onChange={e => setIssTo(e.target.value)} title="Issued to" className={dateInput} />
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Due</span>
+            <input type="date" value={dueFrom} onChange={e => setDueFrom(e.target.value)} title="Due from" className={dateInput} />
+            <span className="text-zinc-300 text-xs">–</span>
+            <input type="date" value={dueTo} onChange={e => setDueTo(e.target.value)} title="Due to" className={dateInput} />
+          </div>
+          {anyFilter && (
+            <button onClick={() => { setQuery(''); setIssFrom(''); setIssTo(''); setDueFrom(''); setDueTo(''); }}
+              className="h-9 px-3 rounded-md border border-zinc-200 bg-white text-xs font-semibold text-zinc-600 hover:bg-zinc-50 transition-colors">Clear</button>
+          )}
         </div>
       </div>
+
       {loading ? (
         <div className="h-64 flex items-center justify-center"><Loader2 className="animate-spin size-8 text-primary" /></div>
-      ) : rows.length === 0 ? (
+      ) : sorted.length === 0 ? (
         <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
-          <ArrowLeftRight className="size-10 text-zinc-300 mb-3" /><p className="text-zinc-500 text-sm font-medium">No {status} records.</p>
+          <ArrowLeftRight className="size-10 text-zinc-300 mb-3" /><p className="text-zinc-500 text-sm font-medium">No {status} records{anyFilter ? ' match your filters' : ''}.</p>
         </div>
       ) : (
         <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-x-auto custom-scrollbar">
-          <table className="w-full text-left border-collapse min-w-[880px]">
+          <table className="w-full text-left border-collapse min-w-[920px]">
             <thead className="bg-zinc-50/80">
               <tr>
+                <th className="px-4 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 w-12 text-center">#</th>
                 <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Book</th>
                 <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Borrower</th>
                 <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Issue Date</th>
@@ -912,10 +1059,11 @@ function IssuedBooks({ user, canEdit }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100">
-              {rows.map(r => {
+              {sorted.map(r => {
                 const overdue = isOverdue(r);
                 return (
                   <tr key={r.id} className="hover:bg-zinc-50/60 transition-colors group">
+                    <td className="px-4 py-4 text-center font-semibold text-primary tabular-nums">{r._num}</td>
                     <td className="px-5 py-4 font-semibold text-zinc-900 text-sm">{r.book_title || '-'}{r.book_author && <span className="block text-[10px] font-medium text-zinc-400 mt-0.5">{r.book_author}</span>}</td>
                     <td className="px-5 py-4 text-sm text-zinc-700"><span className="inline-flex items-center gap-1.5"><User className="size-3.5 text-zinc-400" /> {r.borrower}</span></td>
                     <td className="px-5 py-4 text-sm text-zinc-600 tabular-nums">{fmtDMY(r.issue_date)}</td>
