@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   Plus, Edit, Trash2, X, Loader2, RefreshCw, BarChart3, BookOpen, ChevronDown, Save,
-  HelpCircle, ShieldCheck, Layers
+  HelpCircle, ShieldCheck, Layers, Library as LibraryIcon
 } from 'lucide-react';
 import { fmtDate } from './SyllabusUtils';
 
@@ -20,28 +20,30 @@ const fmtTimeIST = (val) => {
   });
 };
 
+const classLabel = (c) => `${c.className}${c.section ? ' - ' + c.section : ''}`;
+
 // =====================================================================
 //  Syllabus Management
 //
-//  Syllabuses are grouped under SYLLABUS TYPES, shown as tabs. A school
-//  names a type once (Add Type) and then just picks its tab; the same
-//  class + subject can exist under different types. The active tab is
-//  highlighted, and everything below (table, create) is scoped to it.
+//  Type tab + class filter are CONTROLLED by the parent (Syllabus.jsx),
+//  which remembers them, so coming back to this screen - or to the
+//  module later - reopens the same tab and class.
+//  There is no "All Classes" option: exactly one class is always shown.
 // =====================================================================
 export default function SyllabusManagement({
   user, canEdit, classes, subjects, subjectClasses, teachers,
-  onOpenSyllabus
+  activeTypeId, onTypeChange, filterClass, onClassChange,
+  onOpenSyllabus, onOpenLibrary
 }) {
   // ---- Syllabus types (tabs) ----
-  const [types, setTypes]           = useState([]);
+  const [types, setTypes]               = useState([]);
   const [typesLoading, setTypesLoading] = useState(true);
-  const [activeTypeId, setActiveTypeId] = useState(null);
-  const [typeModal, setTypeModal]   = useState(null); // { editing? } | null
+  const [typeModal, setTypeModal]       = useState(null); // { editing? } | null
 
   // ---- Syllabus rows ----
   const [rows, setRows]       = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filterClass, setFilterClass] = useState('');
+  const reqSeq = useRef(0);
 
   // ---- create / edit syllabus modal ----
   const [modalOpen, setModalOpen] = useState(false);
@@ -49,8 +51,8 @@ export default function SyllabusManagement({
   const [form, setForm] = useState({ class_id: '', subject_id: '', teacher_id: '', syllabus_type_id: '' });
   const [saving, setSaving] = useState(false);
 
-  const classLabel = (c) => `${c.className}${c.section ? ' - ' + c.section : ''}`;
-  const activeType = useMemo(() => types.find(t => String(t.id) === String(activeTypeId)) || null, [types, activeTypeId]);
+  const activeType  = useMemo(() => types.find(t => String(t.id) === String(activeTypeId)) || null, [types, activeTypeId]);
+  const activeClass = useMemo(() => classes.find(c => String(c.id) === String(filterClass)) || null, [classes, filterClass]);
 
   // ---- load types ----
   const loadTypes = useCallback(async () => {
@@ -66,25 +68,32 @@ export default function SyllabusManagement({
 
   useEffect(() => { loadTypes(); }, [loadTypes]);
 
-  // Keep a valid active type selected.
+  // Keep a valid type selected - only AFTER types have loaded, otherwise the
+  // empty initial list would wipe the remembered tab.
   useEffect(() => {
-    if (types.length === 0) { setActiveTypeId(null); return; }
-    const stillValid = types.some(t => String(t.id) === String(activeTypeId));
-    if (!stillValid) setActiveTypeId(String(types[0].id));
-  }, [types, activeTypeId]);
+    if (typesLoading) return;
+    if (types.length === 0) { if (activeTypeId != null) onTypeChange(null); return; }
+    if (!types.some(t => String(t.id) === String(activeTypeId))) onTypeChange(String(types[0].id));
+  }, [types, typesLoading, activeTypeId, onTypeChange]);
 
-  // ---- load syllabus rows for the active type ----
+  // Keep a valid class selected (no "All Classes").
+  useEffect(() => {
+    if (classes.length === 0) return;
+    if (!classes.some(c => String(c.id) === String(filterClass))) onClassChange(String(classes[0].id));
+  }, [classes, filterClass, onClassChange]);
+
+  // ---- load syllabus rows for the active type + class ----
   const load = useCallback(async () => {
-    if (!user?.institutionId || !activeTypeId) { setRows([]); setLoading(false); return; }
+    const seq = ++reqSeq.current;
+    if (!user?.institutionId || !activeTypeId || !filterClass) { setRows([]); setLoading(false); return; }
     setLoading(true);
     try {
-      let url = `${API_BASE_URL}/admin/syllabus/list/${user.institutionId}?typeId=${activeTypeId}`;
-      if (filterClass) url += `&classId=${filterClass}`;
+      const url = `${API_BASE_URL}/admin/syllabus/list/${user.institutionId}?typeId=${activeTypeId}&classId=${filterClass}`;
       const res = await fetch(url);
       const d = await res.json();
-      setRows(Array.isArray(d) ? d : []);
+      if (seq === reqSeq.current) setRows(Array.isArray(d) ? d : []);
     } catch (e) { console.error(e); }
-    setLoading(false);
+    if (seq === reqSeq.current) setLoading(false);
   }, [user, filterClass, activeTypeId]);
 
   useEffect(() => { load(); }, [load]);
@@ -103,7 +112,7 @@ export default function SyllabusManagement({
   const openCreate = () => {
     if (!activeTypeId) return alert('Create a syllabus type first.');
     setEditing(null);
-    setForm({ class_id: '', subject_id: '', teacher_id: '', syllabus_type_id: String(activeTypeId) });
+    setForm({ class_id: filterClass ? String(filterClass) : '', subject_id: '', teacher_id: '', syllabus_type_id: String(activeTypeId) });
     setModalOpen(true);
   };
 
@@ -130,27 +139,23 @@ export default function SyllabusManagement({
         teacher_id: form.teacher_id ? parseInt(form.teacher_id, 10) : null,
         syllabus_type_id: parseInt(form.syllabus_type_id, 10)
       };
-      let res;
-      if (editing) {
-        res = await fetch(`${API_BASE_URL}/admin/syllabus/${editing.id}`, {
-          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-        });
-      } else {
-        res = await fetch(`${API_BASE_URL}/admin/syllabus`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...payload, institutionId: user.institutionId, created_by: user.id })
-        });
-      }
+      const res = editing
+        ? await fetch(`${API_BASE_URL}/admin/syllabus/${editing.id}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+          })
+        : await fetch(`${API_BASE_URL}/admin/syllabus`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...payload, institutionId: user.institutionId, created_by: user.id })
+          });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(d.error || 'Save failed');
       setModalOpen(false);
-      // if the syllabus moved to another type, follow it there
-      if (editing && String(payload.syllabus_type_id) !== String(activeTypeId)) {
-        setActiveTypeId(String(payload.syllabus_type_id));
-      }
+      // follow the syllabus if it landed in another type or class
+      if (String(payload.syllabus_type_id) !== String(activeTypeId)) onTypeChange(String(payload.syllabus_type_id));
+      if (String(payload.class_id) !== String(filterClass)) onClassChange(String(payload.class_id));
       loadTypes();
       load();
-    } catch (e) { alert(e.message); }
+    } catch (e2) { alert(e2.message); }
     setSaving(false);
   };
 
@@ -166,7 +171,6 @@ export default function SyllabusManagement({
     } catch (e) { alert(e.message); }
   };
 
-  // ---- type add / rename / delete ----
   const handleDeleteType = async () => {
     if (!activeType) return;
     if (!window.confirm(`Delete the "${activeType.name}" type?`)) return;
@@ -174,7 +178,7 @@ export default function SyllabusManagement({
       const res = await fetch(`${API_BASE_URL}/admin/syllabus/types/${activeType.id}`, { method: 'DELETE' });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(d.error || 'Delete failed');
-      setActiveTypeId(null);
+      onTypeChange(null);
       loadTypes();
     } catch (e) { alert(e.message); }
   };
@@ -182,7 +186,6 @@ export default function SyllabusManagement({
   return (
     <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
 
-      {/* Header */}
       <header className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-2 sm:mb-0">
         <div className="flex flex-col">
           <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
@@ -202,14 +205,14 @@ export default function SyllabusManagement({
           <Layers className="size-3.5 text-zinc-400" />
           <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Syllabus Type</span>
         </div>
-        {typesLoading ? (
+        {typesLoading && types.length === 0 ? (
           <div className="h-9 flex items-center"><Loader2 className="size-4 animate-spin text-primary" /></div>
         ) : (
           <div className="flex items-center gap-2 overflow-x-auto custom-scrollbar">
             {types.map(t => {
               const active = String(t.id) === String(activeTypeId);
               return (
-                <button key={t.id} onClick={() => { setActiveTypeId(String(t.id)); setFilterClass(''); }}
+                <button key={t.id} onClick={() => onTypeChange(String(t.id))}
                   className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-md text-xs font-semibold whitespace-nowrap shrink-0 transition-colors ${
                     active ? 'bg-primary text-white shadow-sm' : 'bg-white text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-50'
                   }`}>
@@ -228,7 +231,6 @@ export default function SyllabusManagement({
               </button>
             )}
 
-            {/* active-type actions */}
             {canEdit && activeType && (
               <div className="flex items-center gap-1 pl-1 ml-1 border-l border-zinc-200 shrink-0">
                 <button onClick={() => setTypeModal({ editing: activeType })} title="Rename type"
@@ -245,7 +247,6 @@ export default function SyllabusManagement({
         )}
       </div>
 
-      {/* If there are NO types yet */}
       {!typesLoading && types.length === 0 ? (
         <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center flex-1 justify-center">
           <Layers className="size-10 text-zinc-300 mb-3" />
@@ -262,27 +263,36 @@ export default function SyllabusManagement({
               <div className="flex items-center gap-2 w-full sm:w-auto">
                 <span className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider shrink-0">Filter:</span>
                 <div className="relative w-full sm:w-48">
-                  <select value={filterClass} onChange={e => setFilterClass(e.target.value)}
+                  <select value={filterClass} onChange={e => onClassChange(e.target.value)}
+                    disabled={classes.length === 0}
                     className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
-                    <option value="">All Classes</option>
-                    {classes.map(c => (<option key={c.id} value={c.id}>{classLabel(c)}</option>))}
+                    {classes.length === 0 && <option value="">No classes</option>}
+                    {classes.map(c => (<option key={c.id} value={String(c.id)}>{classLabel(c)}</option>))}
                   </select>
                   <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
               </div>
 
-              <button onClick={load} disabled={loading}
+              <button onClick={() => { loadTypes(); load(); }} disabled={loading}
                 className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 hover:bg-zinc-50 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full sm:w-auto shrink-0">
                 {loading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
                 Refresh
               </button>
             </div>
-            {canEdit && (
-              <button onClick={openCreate}
-                className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full md:w-auto shrink-0">
-                <Plus className="size-3.5" /> Create Syllabus
+
+            <div className="flex items-center gap-2 w-full md:w-auto">
+              <button onClick={() => activeType && onOpenLibrary(activeType)} disabled={!activeType}
+                title={activeType ? `Textbooks and materials for ${activeType.name}` : ''}
+                className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 hover:text-primary hover:border-primary/30 hover:bg-primary/5 disabled:opacity-50 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors flex-1 md:flex-none">
+                <LibraryIcon className="size-3.5" /> Library
               </button>
-            )}
+              {canEdit && (
+                <button onClick={openCreate}
+                  className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors flex-1 md:flex-none">
+                  <Plus className="size-3.5" /> Create Syllabus
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Table */}
@@ -292,7 +302,9 @@ export default function SyllabusManagement({
             ) : rows.length === 0 ? (
               <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
                 <BookOpen className="size-10 text-zinc-300 mb-3" />
-                <p className="text-zinc-500 text-sm font-medium">No syllabuses in {activeType ? `"${activeType.name}"` : 'this type'} yet.</p>
+                <p className="text-zinc-500 text-sm font-medium">
+                  No syllabuses for {activeClass ? classLabel(activeClass) : 'this class'} in {activeType ? `"${activeType.name}"` : 'this type'} yet.
+                </p>
                 {canEdit && <p className="text-zinc-400 text-xs mt-1.5">Click "Create Syllabus" to begin.</p>}
               </div>
             ) : (
@@ -356,20 +368,17 @@ export default function SyllabusManagement({
         </>
       )}
 
-      {/* ---- ADD / RENAME TYPE MODAL ---- */}
       {typeModal && (
         <TypeModal
           editing={typeModal.editing}
-          instId={user.institutionId}
           onClose={() => setTypeModal(null)}
           onSaved={(newId) => {
             setTypeModal(null);
             loadTypes();
-            if (newId) setActiveTypeId(String(newId));
+            if (newId) onTypeChange(String(newId));
           }} />
       )}
 
-      {/* ---- CREATE / EDIT SYLLABUS MODAL ---- */}
       {modalOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
           <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-md shadow-xl relative flex flex-col animate-in fade-in zoom-in-95 duration-200">
@@ -381,7 +390,6 @@ export default function SyllabusManagement({
             </div>
             <form onSubmit={handleSave} className="flex flex-col flex-1 overflow-hidden">
               <div className="p-5 sm:p-6 overflow-y-auto custom-scrollbar space-y-4">
-
                 {editing ? (
                   <Field label="Syllabus Type" type="select" required value={form.syllabus_type_id}
                     onChange={v => setForm({ ...form, syllabus_type_id: v })}
@@ -406,7 +414,6 @@ export default function SyllabusManagement({
                 <Field label="Teacher" type="select" value={form.teacher_id}
                   onChange={v => setForm({ ...form, teacher_id: v })}
                   options={[{ value: '', label: 'Unassigned' }, ...teachers.map(t => ({ value: String(t.id), label: t.name }))]} />
-
               </div>
               <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
                 <button type="button" onClick={() => setModalOpen(false)} disabled={saving}
@@ -426,7 +433,7 @@ export default function SyllabusManagement({
 }
 
 // --- Add / rename a syllabus type ---
-function TypeModal({ editing, instId, onClose, onSaved }) {
+function TypeModal({ editing, onClose, onSaved }) {
   const [name, setName] = useState(editing?.name || '');
   const [saving, setSaving] = useState(false);
 
@@ -496,9 +503,6 @@ function Field({ label, value, onChange, type = 'text', options, required, place
           </select>
           <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
         </div>
-      ) : type === 'textarea' ? (
-        <textarea value={value || ''} onChange={e => onChange(e.target.value)} rows={3}
-          placeholder={placeholder} className={`${base} h-auto py-2.5 resize-none`} required={required} />
       ) : (
         <input type={type} value={value || ''} onChange={e => onChange(e.target.value)}
           placeholder={placeholder} className={base} required={required} />
@@ -508,28 +512,29 @@ function Field({ label, value, onChange, type = 'text', options, required, place
 }
 
 // =====================================================================
-//  SyllabusManagementHelp — "How to use" guide
+//  SyllabusManagementHelp - "How to use" guide
 // =====================================================================
 const GUIDES = {
   manage: {
     title: 'Syllabus Management',
     steps: [
-      ['1 · Syllabus Types (tabs)', 'Syllabuses are grouped under types shown as tabs (e.g. State Board, CBSE). Add a type once with New Type; after that just click its tab. The same class + subject can exist under different types.'],
-      ['2 · What a syllabus is', 'Inside a type, one syllabus per class + subject. The table shows the subject, class, lesson count, teacher and who last updated it.'],
-      ['3 · Create a syllabus', 'Create Syllabus adds one under the CURRENTLY SELECTED type tab, for a class, subject and (optionally) teacher.'],
-      ['4 · Manage (Subject Index)', 'The green Manage button opens the Subject Index: upload the textbook, auto-detect chapters, add keywords and set lesson periods.'],
-      ['5 · Edit, move & delete', 'Hover a row for edit/delete. Editing lets you move a syllabus to another type. Deleting removes its lessons and keywords. A type can only be deleted once it has no syllabuses.'],
+      ['1 - Syllabus Types (tabs)', 'Syllabuses are grouped under types shown as tabs (e.g. State Board, CBSE). Add a type once with New Type; after that just click its tab. The tab you pick is remembered, even after you leave this page.'],
+      ['2 - Class filter', 'One class is always selected. Switching tabs keeps the same class, and it is remembered too.'],
+      ['3 - Create a syllabus', 'Create Syllabus adds one under the selected type tab, with the filtered class already chosen. One syllabus per class + subject per type.'],
+      ['4 - Manage (Subject Index)', 'The green Manage button opens the Subject Index: upload the textbook, auto-detect chapters, add keywords and set lesson periods.'],
+      ['5 - Library', 'Each type has its own Library. Create a folder for a class + subject and keep textbooks, notes and worksheets in it (PDF, Word, Excel).'],
+      ['6 - Edit, move & delete', 'Hover a row for edit/delete. Editing lets you move a syllabus to another type. A type can only be deleted when it has no syllabuses and no library folders.'],
     ],
-    note: 'Types and syllabuses carry across academic years — there\'s no year to pick here.'
+    note: 'Types, syllabuses and the library carry across academic years - there\'s no year to pick here.'
   },
   view: {
     title: 'Syllabus Management',
     steps: [
-      ['1 · Types', 'Pick a type tab to see the syllabuses grouped under it.'],
-      ['2 · Browse', 'One row per syllabus — a class + subject pairing — with its lesson count and teacher.'],
-      ['3 · Open a syllabus', 'The Manage button opens the Subject Index to read chapters, the textbook and keywords.'],
+      ['1 - Types', 'Pick a type tab, then a class, to see the syllabuses under it.'],
+      ['2 - Open a syllabus', 'The Manage button opens the Subject Index to read chapters, the textbook and keywords.'],
+      ['3 - Library', 'Library holds the textbooks and materials for the selected type, in folders by class and subject.'],
     ],
-    note: 'This is a read-only view — types and syllabuses are set up by teachers.'
+    note: 'This is a read-only view - types, syllabuses and the library are set up by teachers.'
   }
 };
 

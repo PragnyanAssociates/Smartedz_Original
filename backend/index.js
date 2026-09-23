@@ -8984,27 +8984,35 @@ app.delete('/api/admin/study-materials/:id', async (req, res) => {
 
 
 // =====================================================================
-//  BACKEND — Section 22: SYLLABUS  (v6 — SYLLABUS TYPES added)
+//  BACKEND — Section 22: SYLLABUS  (v7 — PDF pages + LIBRARY)
 //
-//   New in v6: syllabuses are grouped under SYLLABUS TYPES (tabs).
-//     • 22.0  GET/POST/PUT/DELETE /admin/syllabus/types  — manage types.
-//     • 22.1  list now filters by ?typeId= and returns type_name.
-//     • 22.2  create now requires + stores syllabus_type_id.
-//     • 22.3  update can move a syllabus between types.
-//   The SAME class + subject can exist under different types (the UNIQUE
-//   key is now (institutionId, syllabus_type_id, class_id, subject_id)).
-//   Requires: syllabus_types_schema.sql (once).
+//   New in v7:
+//     • Page offset REMOVED. syllabus_chapters.page_from / page_to are
+//       now always the PDF's own page numbers (page X of N).
+//       Detection converts the book's PRINTED contents-page numbers into
+//       PDF pages automatically (page labels -> printed footer numbers ->
+//       chapter-title search), so chapters split on the right pages.
+//     • Better contents-page parsing: only real TOC pages are used, and
+//       month columns ("June"), trailing page ranges ("9-23") and stray
+//       numbers are stripped from titles. Chapters are numbered 1..N.
+//     • Chapter create/edit validate the range against the PDF's page
+//       count and re-slice immediately.
+//     • chapter/:id/pdf is sent with Cache-Control: no-store — the old
+//       1-hour cache made edited chapters keep showing the old pages.
+//     • Chapters are returned in page order (Add Chapter lands in place).
+//     • 22.L  SYLLABUS LIBRARY — folders (type + class + subject) holding
+//       PDF / Word / Excel files.
+//     • A type can't be deleted while it still has library folders.
 //
-//   (v5 unchanged otherwise) TENANT-SCOPED, no academic year. Every route
-//   verifies the syllabus/chapter/keyword belongs to the caller's
-//   institution. syllabus.updated_by / syllabus_chapters.updated_by audit.
-//   chapter/:id/pdf is fetched by the viewer (token via interceptor).
+//   Requires: syllabus_v7_migration.sql (once).
 //   Requires: npm install pdfjs-dist@3.11.174 pdf-lib --save
-//   Reuses nowSQL() (Section 16), studentIdsForClass/createNotifications (25).
+//   Reuses nowSQL() (Section 16), studentIdsForClass/createNotifications (25),
+//   sameTenant().
 // =====================================================================
 const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
 const { PDFDocument } = require('pdf-lib');
-// ---- tenant helpers: resolve a syllabus' institution from any id ----
+
+// ---- tenant helpers: resolve an institution from any id ----
 async function _sylInstBySyllabus(id) {
     const [r] = await db.execute('SELECT institutionId FROM syllabus WHERE id = ?', [id]);
     return r.length ? r[0].institutionId : null;
@@ -9022,24 +9030,68 @@ async function _sylInstByKeyword(id) {
            JOIN syllabus s ON s.id = c.syllabus_id WHERE k.id = ?`, [id]);
     return r.length ? r[0].institutionId : null;
 }
-// ---------------------------------------------------------------------
-//  Detection helpers
-// ---------------------------------------------------------------------
+async function _libInstByFolder(id) {
+    const [r] = await db.execute('SELECT institutionId FROM syllabus_library_folders WHERE id = ?', [id]);
+    return r.length ? r[0].institutionId : null;
+}
+async function _libInstByFile(id) {
+    const [r] = await db.execute(
+        `SELECT f.institutionId FROM syllabus_library_files lf
+           JOIN syllabus_library_folders f ON f.id = lf.folder_id WHERE lf.id = ?`, [id]);
+    return r.length ? r[0].institutionId : null;
+}
+
+// ---- page-range validation (PDF pages) ----
+async function _bookPages(syllabusId) {
+    const [r] = await db.execute(
+        'SELECT doc_pages, (doc_data IS NOT NULL) AS has_book FROM syllabus WHERE id = ?', [syllabusId]);
+    if (!r.length || !r[0].has_book) return null;
+    return r[0].doc_pages || null;
+}
+function _rangeError(from, to, total) {
+    const f = parseInt(from, 10), t = parseInt(to, 10);
+    if (!Number.isInteger(f) || !Number.isInteger(t)) return 'Page From and Page To are required.';
+    if (f < 1) return 'Page From must be 1 or more.';
+    if (t < f) return 'Page To must be the same as or after Page From.';
+    if (total && t > total) return `The textbook PDF has only ${total} pages.`;
+    return null;
+}
+
+// =====================================================================
+//  CHAPTER DETECTION
+//  Result pages are PDF pages (1-based).
+// =====================================================================
+const _MONTH = '(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\.?';
+const _TRAIL_MONTH_RE = new RegExp('\\s+' + _MONTH + '$', 'i');
+
 async function detectChapters(buffer) {
     const data = new Uint8Array(buffer);
-    const doc = await pdfjsLib.getDocument({
-        data, useSystemFonts: true, isEvalSupported: false,
-    }).promise;
+    const doc = await pdfjsLib.getDocument({ data, useSystemFonts: true, isEvalSupported: false }).promise;
     const total = doc.numPages;
+
+    const cache = new Map();
+    const linesOf = async (p) => {
+        if (p < 1 || p > total) return [];
+        if (!cache.has(p)) {
+            let lines = [];
+            try { lines = await _pageToLines(await doc.getPage(p)); } catch (_) { lines = []; }
+            cache.set(p, lines);
+        }
+        return cache.get(p);
+    };
+
     let chapters = [];
     try { chapters = await _fromOutline(doc, total); } catch (_) { chapters = []; }
     if (!chapters.length) {
-        try { chapters = await _fromTocText(doc, total); } catch (_) { chapters = []; }
+        try { chapters = await _fromTocText(doc, total, linesOf); }
+        catch (e) { console.warn('[syllabus toc]', e.message); chapters = []; }
     }
     if (!chapters.length) chapters = [{ title: 'Full Document', page_from: 1, page_to: total }];
     try { await doc.cleanup(); await doc.destroy(); } catch (_) {}
     return { total, chapters };
 }
+
+// Bookmarks already point at real PDF pages — no conversion needed.
 async function _fromOutline(doc, total) {
     const outline = await doc.getOutline();
     if (!outline || !outline.length) return [];
@@ -9049,9 +9101,7 @@ async function _fromOutline(doc, total) {
         items.push({ title: node.title || '', start: idx == null ? null : idx + 1 });
     }
     if (!items.some(i => i.start != null)) return [];
-    // A single outline entry (often just the file/title) is not a usable
-    // chapter list — fall back to TOC-text detection instead.
-    if (items.length < 2) return [];
+    if (items.length < 2) return []; // a single bookmark is usually just the file title
     return _assemble(items, total);
 }
 async function _destToPageIndex(doc, dest) {
@@ -9061,30 +9111,41 @@ async function _destToPageIndex(doc, dest) {
         if (!Array.isArray(d) || !d.length) return null;
         const ref = d[0];
         if (ref == null) return null;
+        if (typeof ref === 'number') return ref;
         return await doc.getPageIndex(ref);
     } catch (_) { return null; }
 }
-async function _fromTocText(doc, total) {
+
+// Contents-page text -> printed page numbers -> PDF pages.
+async function _fromTocText(doc, total, linesOf) {
     const scan = Math.min(total, 40);
-    const candidates = [];
+    const toc = [];
+    let tocEnd = 0;
     for (let p = 1; p <= scan; p++) {
-        const page = await doc.getPage(p);
-        const lines = await _pageToLines(page);
-        for (const ln of lines) {
-            const parsed = _parseTocLine(ln, total);
-            if (parsed) candidates.push(parsed);
-        }
+        const hits = (await linesOf(p)).map(_parseTocLine).filter(Boolean);
+        const need = toc.length ? 2 : 3;          // a TOC page has several entries
+        if (hits.length >= need) { toc.push(...hits); tocEnd = p; }
+        else if (toc.length) break;               // TOC pages are consecutive
     }
-    if (candidates.length < 2) return [];
-    candidates.sort((a, b) => a.start - b.start);
-    const seen = new Set(); const items = [];
-    for (const c of candidates) {
-        if (seen.has(c.start)) continue;
-        seen.add(c.start);
-        items.push({ title: c.title, start: c.start });
+    if (toc.length < 2) return [];
+
+    toc.sort((a, b) => a.printed - b.printed);
+    const entries = [];
+    const seen = new Set();
+    for (const e of toc) {
+        if (seen.has(e.printed)) continue;
+        seen.add(e.printed);
+        entries.push(e);
     }
+
+    const toPdf = await _printedToPdf(doc, total, tocEnd, entries, linesOf);
+    const items = entries
+        .map(e => ({ title: e.title, start: toPdf(e.printed) }))
+        .filter(i => Number.isFinite(i.start) && i.start >= 1 && i.start <= total);
+    if (items.length < 2) return [];
     return _assemble(items, total);
 }
+
 async function _pageToLines(page) {
     const tc = await page.getTextContent();
     const buckets = [];
@@ -9097,22 +9158,98 @@ async function _pageToLines(page) {
         if (!b) { b = { y, parts: [] }; buckets.push(b); }
         b.parts.push({ x, s });
     }
-    buckets.sort((a, b) => b.y - a.y);
+    buckets.sort((a, b) => b.y - a.y);   // top of page first
     return buckets.map((b) =>
         b.parts.sort((p, q) => p.x - q.x).map((p) => p.s).join(' ').replace(/\s+/g, ' ').trim()
     );
 }
-function _parseTocLine(line, total) {
-    if (!line || line.length < 4) return null;
-    const m = line.match(/^(.*?[A-Za-z].*?)[\s.·•\-_]{1,}(\d{1,4})$/);
+
+// "Title ...... 12"   "Title  June  12"   "Title 12-23"
+function _parseTocLine(line) {
+    if (!line || line.length < 4 || line.length > 180) return null;
+    const m = line.match(/^(.*?[A-Za-z].*?)[\s.·•\-_…]+(\d{1,4})(?:\s*[-–—]\s*(\d{1,4}))?$/);
     if (!m) return null;
-    const title = (m[1] || '').replace(/\s+/g, ' ').replace(/[\s.·•\-_]+$/, '').trim();
-    const pageNum = parseInt(m[2], 10);
-    if (!title || title.length < 3) return null;
-    if (!/[A-Za-z]/.test(title)) return null;
-    if (!(pageNum >= 1 && pageNum <= total)) return null;
-    return { title, start: pageNum };
+    const printed = parseInt(m[2], 10);
+    if (!(printed >= 1)) return null;
+    const title = _stripTitleNoise(m[1]);
+    if (title.length < 3 || !/[A-Za-z]{2}/.test(title)) return null;
+    return { title, printed };
 }
+function _stripTitleNoise(t) {
+    let s = (t || '').replace(/\s+/g, ' ').trim();
+    let prev;
+    do {
+        prev = s;
+        s = s.replace(/[\s.·•\-_…,:;|]+$/, '').trim();
+        s = s.replace(_TRAIL_MONTH_RE, '').trim();
+        if (/\S+\s+\S+\s+\d{1,4}$/.test(s)) s = s.replace(/\s+\d{1,4}$/, '').trim();
+    } while (s !== prev);
+    return s;
+}
+
+// Returns fn(printedPage) -> pdfPage
+async function _printedToPdf(doc, total, tocEnd, entries, linesOf) {
+    // (a) page labels embedded in the PDF
+    try {
+        const labels = await doc.getPageLabels();
+        if (Array.isArray(labels) && labels.length === total) {
+            const byLabel = new Map();
+            labels.forEach((l, i) => {
+                const s = String(l || '').trim();
+                if (/^\d+$/.test(s) && !byLabel.has(+s)) byLabel.set(+s, i + 1);
+            });
+            const hits = entries.filter(e => byLabel.has(e.printed));
+            if (hits.length >= Math.ceil(entries.length * 0.6)) {
+                const off = _mode(hits.map(e => byLabel.get(e.printed) - e.printed)) ?? 0;
+                return (n) => byLabel.get(n) ?? (n + off);
+            }
+        }
+    } catch (_) {}
+
+    // (b) page numbers printed in the header/footer of body pages
+    const votes = [];
+    for (let p = tocEnd + 1; p <= Math.min(total, tocEnd + 80); p++) {
+        const lines = await linesOf(p);
+        if (!lines.length) continue;
+        const edges = [lines[lines.length - 1], lines[0], lines[lines.length - 2], lines[1]].filter(Boolean);
+        for (const l of edges) {
+            const m = l.match(/^(?:page\s*)?[^\w]{0,3}(\d{1,4})[^\w]{0,3}$/i);
+            if (!m) continue;
+            const n = parseInt(m[1], 10);
+            if (n >= 1 && n <= total) { votes.push(p - n); break; }
+        }
+    }
+    const footerOff = _mode(votes, 3, 0.3);
+    if (footerOff != null) return (n) => n + footerOff;
+
+    // (c) find each chapter's title near the top of the page it should start on
+    const titleVotes = [];
+    for (const e of entries) {
+        const words = _norm(e.title).split(' ').filter(w => w.length >= 4 && !/^\d+$/.test(w));
+        if (!words.length) continue;
+        const need = Math.max(1, Math.ceil(words.length * 0.6));
+        for (let p = Math.max(tocEnd + 1, e.printed); p <= Math.min(total, e.printed + 40); p++) {
+            const head = (await linesOf(p)).slice(0, 10).map(_norm).join(' ');
+            if (words.filter(w => head.includes(w)).length >= need) { titleVotes.push(p - e.printed); break; }
+        }
+    }
+    const titleOff = _mode(titleVotes, 2);
+    return (n) => n + (titleOff ?? 0);
+}
+
+function _norm(s) {
+    return (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+function _mode(values, minVotes = 1, minShare = 0) {
+    if (!values.length) return null;
+    const counts = new Map();
+    for (const v of values) counts.set(v, (counts.get(v) || 0) + 1);
+    let best = null, bestN = 0;
+    for (const [v, n] of counts) if (n > bestN) { best = v; bestN = n; }
+    if (bestN < minVotes || bestN / values.length < minShare) return null;
+    return best;
+}
+
 function _assemble(items, total) {
     if (!items.length) return [];
     const n = items.length;
@@ -9136,14 +9273,15 @@ function _assemble(items, total) {
         starts[i] = v;
     }
     const cleaned = items.map((it, i) => ({ title: _cleanTitle(it.title), start: starts[i] }));
-    const firstChapter = cleaned.findIndex(c => /^\d+\b/.test(c.title));
+
+    // Unnumbered front-matter entries (Preface, Note to the student...) fold into "Index".
+    const numbered = (t) => /^(?:(?:unit|chapter|lesson|ch\.)\s*)?\d+\b/i.test(t);
+    const firstNum = cleaned.findIndex(c => numbered(c.title));
+    const startIdx = firstNum > 0 ? firstNum : 0;
+
     const result = [];
-    let startIdx = 0;
-    if (firstChapter > 0) {
-        result.push({ title: 'Index', page_from: 1, page_to: Math.max(1, cleaned[firstChapter].start - 1) });
-        startIdx = firstChapter;
-    } else if (cleaned[0].start > 1) {
-        result.push({ title: 'Index', page_from: 1, page_to: cleaned[0].start - 1 });
+    if (cleaned[startIdx].start > 1) {
+        result.push({ title: 'Index', page_from: 1, page_to: cleaned[startIdx].start - 1 });
     }
     let seq = 0;
     for (let i = startIdx; i < n; i++) {
@@ -9161,20 +9299,24 @@ function _titleCase(s) {
     return (s || '').toLowerCase().replace(/\b([a-z])/g, (m) => m.toUpperCase());
 }
 function _formatChapterTitle(clean, seq) {
-    const m = clean.match(/^(\d+)\s*[.)]?\s*(.*)$/);
-    if (m && m[2]) return `${m[1]}. ${_titleCase(m[2])}`;
-    if (m) return `${m[1]}. Chapter ${m[1]}`;
-    return `${seq}. ${_titleCase(clean)}`;
+    let t = (clean || '')
+        .replace(/^(?:unit|chapter|lesson|ch\.)\s*(?=\d)/i, '')
+        .replace(/^\d+\s*[.):\-–]?\s*/, '')
+        .trim();
+    if (!t) t = `Chapter ${seq}`;
+    const allCaps = t === t.toUpperCase() && /[A-Z]/.test(t);
+    return `${seq}. ${allCaps ? _titleCase(t) : t}`;
 }
-// ---------------------------------------------------------------------
-//  Slicing helpers
-// ---------------------------------------------------------------------
+
+// =====================================================================
+//  SLICING (PDF pages, no offset)
+// =====================================================================
 async function sliceAll(buffer, ranges) {
     const src = await PDFDocument.load(buffer, { ignoreEncryption: true });
     const total = src.getPageCount();
     const slices = [];
     for (const [from, to] of ranges) {
-        let start = Math.max(1, parseInt(from, 10) || 1);
+        let start = Math.min(total, Math.max(1, parseInt(from, 10) || 1));
         let end = Math.min(total, parseInt(to, 10) || total);
         if (end < start) end = start;
         const d = await PDFDocument.create();
@@ -9183,17 +9325,13 @@ async function sliceAll(buffer, ranges) {
         const pages = await d.copyPages(src, idx);
         pages.forEach((p) => d.addPage(p));
         const bytes = await d.save();
-        slices.push(Buffer.from(bytes).toString('base64'));
+        slices.push({ b64: Buffer.from(bytes).toString('base64'), pages: end - start + 1 });
     }
     return { total, slices };
 }
-async function slicePdf(buffer, from, to) {
-    const { slices } = await sliceAll(buffer, [[from, to]]);
-    return slices[0];
-}
 async function resliceChapter(chapterId) {
     const [rows] = await db.execute(
-        `SELECT c.page_from, c.page_to, s.doc_data, s.page_offset
+        `SELECT c.page_from, c.page_to, s.doc_data
            FROM syllabus_chapters c JOIN syllabus s ON s.id = c.syllabus_id
           WHERE c.id = ?`, [chapterId]);
     if (!rows.length) return;
@@ -9204,16 +9342,14 @@ async function resliceChapter(chapterId) {
     }
     const base64 = String(r.doc_data).replace(/^data:[^;]+;base64,/, '');
     const buffer = Buffer.from(base64, 'base64');
-    const offset = r.page_offset || 0;
-    const from = (r.page_from || 1) + offset;
-    const to = (r.page_to || r.page_from || 1) + offset;
-    const b64 = await slicePdf(buffer, from, to);
+    const { slices } = await sliceAll(buffer, [[r.page_from, r.page_to || r.page_from]]);
     await db.execute('UPDATE syllabus_chapters SET doc_data = ?, doc_pages = ? WHERE id = ?',
-        ['data:application/pdf;base64,' + b64, Math.max(1, (r.page_to - r.page_from + 1)), chapterId]);
+        ['data:application/pdf;base64,' + slices[0].b64, slices[0].pages, chapterId]);
 }
-// ---------------------------------------------------------------------
+
+// =====================================================================
 //  ROUTES
-// ---------------------------------------------------------------------
+// =====================================================================
 
 // --- 22.0 Syllabus TYPES (the tabs) ---------------------------------
 app.get('/api/admin/syllabus/types/:instId', async (req, res) => {
@@ -9262,16 +9398,20 @@ app.delete('/api/admin/syllabus/types/:id', async (req, res) => {
         const [own] = await db.execute('SELECT institutionId FROM syllabus_types WHERE id = ?', [req.params.id]);
         if (own.length === 0) return res.json({ success: true });
         if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This type belongs to another institution.' });
-        const [cnt] = await db.execute('SELECT COUNT(*) AS c FROM syllabus WHERE syllabus_type_id = ?', [req.params.id]);
-        if (cnt[0].c > 0) {
-            return res.status(400).json({ error: `This type still has ${cnt[0].c} syllabus(es). Move or delete them first.` });
+        const [[{ c: sylCount }]] = await db.execute('SELECT COUNT(*) AS c FROM syllabus WHERE syllabus_type_id = ?', [req.params.id]);
+        if (sylCount > 0) {
+            return res.status(400).json({ error: `This type still has ${sylCount} syllabus(es). Move or delete them first.` });
+        }
+        const [[{ c: libCount }]] = await db.execute('SELECT COUNT(*) AS c FROM syllabus_library_folders WHERE syllabus_type_id = ?', [req.params.id]);
+        if (libCount > 0) {
+            return res.status(400).json({ error: `This type still has ${libCount} library folder(s). Delete them first.` });
         }
         await db.execute('DELETE FROM syllabus_types WHERE id = ?', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 22.1 Syllabus Management list (filter by type) -----------------
+// --- 22.1 Syllabus Management list (filter by type + class) ---------
 app.get('/api/admin/syllabus/list/:instId', async (req, res) => {
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     const { classId, typeId } = req.query;
@@ -9286,22 +9426,18 @@ app.get('/api/admin/syllabus/list/:instId', async (req, res) => {
                    uu.name AS updated_by_name,
                    (SELECT COUNT(*) FROM syllabus_chapters ch WHERE ch.syllabus_id = s.id) AS lesson_count
               FROM syllabus s
-              LEFT JOIN classes       c   ON c.id = s.class_id
-              LEFT JOIN subjects      sub ON sub.id = s.subject_id
-              LEFT JOIN users         t   ON t.id = s.teacher_id
-              LEFT JOIN syllabus_types st ON st.id = s.syllabus_type_id
-              LEFT JOIN users         uu  ON uu.id = s.updated_by
+              LEFT JOIN classes        c   ON c.id = s.class_id
+              LEFT JOIN subjects       sub ON sub.id = s.subject_id
+              LEFT JOIN users          t   ON t.id = s.teacher_id
+              LEFT JOIN syllabus_types st  ON st.id = s.syllabus_type_id
+              LEFT JOIN users          uu  ON uu.id = s.updated_by
              WHERE s.institutionId = ?`;
         const params = [instId];
         if (typeId)  { sql += ' AND s.syllabus_type_id = ?'; params.push(typeId); }
         if (classId) { sql += ' AND s.class_id = ?';         params.push(classId); }
         sql += ' ORDER BY sub.name';
         const [rows] = await db.execute(sql, params);
-        const decorated = rows.map(r => ({
-            ...r,
-            class_group: `${r.className || ''}${r.section ? ' - ' + r.section : ''}`
-        }));
-        res.json(decorated);
+        res.json(rows.map(r => ({ ...r, class_group: `${r.className || ''}${r.section ? ' - ' + r.section : ''}` })));
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 // --- 22.2 Create a syllabus (under a type) --------------------------
@@ -9309,12 +9445,8 @@ app.post('/api/admin/syllabus', async (req, res) => {
     const institutionId = req.auth.institutionId;
     const created_by = req.auth.userId;
     const { class_id, subject_id, teacher_id, syllabus_type_id } = req.body;
-    if (!class_id || !subject_id) {
-        return res.status(400).json({ error: 'class_id and subject_id are required.' });
-    }
-    if (!syllabus_type_id) {
-        return res.status(400).json({ error: 'A syllabus type is required.' });
-    }
+    if (!class_id || !subject_id) return res.status(400).json({ error: 'class_id and subject_id are required.' });
+    if (!syllabus_type_id) return res.status(400).json({ error: 'A syllabus type is required.' });
     try {
         const [c] = await db.execute('SELECT institutionId FROM classes WHERE id = ?', [class_id]);
         if (c.length === 0 || !sameTenant(req, c[0].institutionId)) {
@@ -9328,13 +9460,10 @@ app.post('/api/admin/syllabus', async (req, res) => {
             `INSERT INTO syllabus
                (institutionId, syllabus_type_id, class_id, subject_id, teacher_id, created_by, updated_by)
              VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [institutionId, syllabus_type_id, class_id, subject_id, teacher_id || null, created_by, created_by]
-        );
+            [institutionId, syllabus_type_id, class_id, subject_id, teacher_id || null, created_by, created_by]);
         res.json({ success: true, id: result.insertId });
     } catch (err) {
-        if (err.code === 'ER_DUP_ENTRY') {
-            return res.status(409).json({ error: 'A syllabus for this class and subject already exists under this type.' });
-        }
+        if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'A syllabus for this class and subject already exists under this type.' });
         res.status(500).json({ error: err.message });
     }
 });
@@ -9363,13 +9492,10 @@ app.put('/api/admin/syllabus/:id', async (req, res) => {
                 SET class_id = ?, subject_id = ?, teacher_id = ?,
                     syllabus_type_id = COALESCE(?, syllabus_type_id), updated_by = ?
               WHERE id = ?`,
-            [class_id, subject_id, teacher_id || null, syllabus_type_id || null, actor_id, req.params.id]
-        );
+            [class_id, subject_id, teacher_id || null, syllabus_type_id || null, actor_id, req.params.id]);
         res.json({ success: true });
     } catch (err) {
-        if (err.code === 'ER_DUP_ENTRY') {
-            return res.status(409).json({ error: 'A syllabus for this class and subject already exists under this type.' });
-        }
+        if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'A syllabus for this class and subject already exists under this type.' });
         res.status(500).json({ error: err.message });
     }
 });
@@ -9383,21 +9509,23 @@ app.delete('/api/admin/syllabus/:id', async (req, res) => {
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-// --- 22.5 Resolve a syllabus by class + subject ---------------------
+// --- 22.5 Resolve a syllabus by class + subject (optional ?typeId=) --
 app.get('/api/admin/syllabus/resolve/:instId/:classId/:subjectId', async (req, res) => {
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     const { classId, subjectId } = req.params;
+    const { typeId } = req.query;
     try {
-        const [rows] = await db.execute(
-            `SELECT s.id, s.teacher_id, t.name AS teacher_name
-               FROM syllabus s LEFT JOIN users t ON t.id = s.teacher_id
-              WHERE s.institutionId = ? AND s.class_id = ? AND s.subject_id = ?`,
-            [instId, classId, subjectId]
-        );
+        let sql = `SELECT s.id, s.teacher_id, s.syllabus_type_id, t.name AS teacher_name
+                     FROM syllabus s LEFT JOIN users t ON t.id = s.teacher_id
+                    WHERE s.institutionId = ? AND s.class_id = ? AND s.subject_id = ?`;
+        const params = [instId, classId, subjectId];
+        if (typeId) { sql += ' AND s.syllabus_type_id = ?'; params.push(typeId); }
+        sql += ' ORDER BY s.updated_at DESC LIMIT 1';
+        const [rows] = await db.execute(sql, params);
         res.json(rows.length > 0 ? rows[0] : { id: null });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-// --- 22.6 Chapters of a syllabus ------------------------------------
+// --- 22.6 Chapters of a syllabus (in page order) --------------------
 app.get('/api/admin/syllabus/:syllabusId/chapters', async (req, res) => {
     try {
         const inst = await _sylInstBySyllabus(req.params.syllabusId);
@@ -9414,9 +9542,8 @@ app.get('/api/admin/syllabus/:syllabusId/chapters', async (req, res) => {
                FROM syllabus_chapters c
                LEFT JOIN users uu ON uu.id = c.updated_by
               WHERE c.syllabus_id = ?
-              ORDER BY c.chapter_order, c.id`,
-            [req.params.syllabusId]
-        );
+              ORDER BY (c.page_from IS NULL), c.page_from, c.chapter_order, c.id`,
+            [req.params.syllabusId]);
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -9424,19 +9551,17 @@ app.get('/api/admin/syllabus/:syllabusId/chapters', async (req, res) => {
 app.get('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
     try {
         const [rows] = await db.execute(
-            `SELECT institutionId, doc_name, doc_pages, page_offset, (doc_data IS NOT NULL) AS has_book
-               FROM syllabus WHERE id = ?`,
-            [req.params.syllabusId]
-        );
+            `SELECT institutionId, doc_name, doc_pages, (doc_data IS NOT NULL) AS has_book
+               FROM syllabus WHERE id = ?`, [req.params.syllabusId]);
         if (!rows.length) return res.json({ has_book: 0 });
         if (!sameTenant(req, rows[0].institutionId)) return res.status(403).json({ error: 'This syllabus belongs to another institution.' });
-        const { doc_name, doc_pages, page_offset, has_book } = rows[0];
-        res.json({ doc_name, doc_pages, page_offset, has_book });
+        const { doc_name, doc_pages, has_book } = rows[0];
+        res.json({ doc_name, doc_pages, has_book });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 // --- 22.8 Upload textbook -> detect chapters -> pre-slice each ------
 app.put('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
-    const { doc_name, doc_data, page_offset } = req.body;
+    const { doc_name, doc_data } = req.body;
     const actor_id = req.auth.userId;
     const syllabusId = req.params.syllabusId;
     if (!doc_data) return res.status(400).json({ error: 'doc_data is required.' });
@@ -9446,37 +9571,30 @@ app.put('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
         if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This syllabus belongs to another institution.' });
         const base64 = String(doc_data).replace(/^data:[^;]+;base64,/, '');
         const buffer = Buffer.from(base64, 'base64');
-        const offset = parseInt(page_offset, 10) || 0;
+
         const { total, chapters } = await detectChapters(buffer);
+        const { slices } = await sliceAll(buffer, chapters.map(c => [c.page_from, c.page_to]));
+
         await db.execute(
             `UPDATE syllabus
-                SET doc_name = ?, doc_data = ?, doc_pages = ?, page_offset = ?, updated_at = ?, updated_by = ?
+                SET doc_name = ?, doc_data = ?, doc_pages = ?, updated_at = ?, updated_by = ?
               WHERE id = ?`,
-            [doc_name || null, doc_data, total, offset, nowSQL(), actor_id, syllabusId]
-        );
+            [doc_name || null, doc_data, total, nowSQL(), actor_id, syllabusId]);
         await db.execute('DELETE FROM syllabus_chapters WHERE syllabus_id = ?', [syllabusId]);
-        const ranges = chapters.map(c => [c.page_from + offset, c.page_to + offset]);
-        const { slices } = await sliceAll(buffer, ranges);
-        let order = 0;
         for (let i = 0; i < chapters.length; i++) {
             const ch = chapters[i];
-            const dataUri = 'data:application/pdf;base64,' + slices[i];
-            const pages = ranges[i][1] - ranges[i][0] + 1;
             await db.execute(
                 `INSERT INTO syllabus_chapters
-                   (syllabus_id, chapter_order, title, page_from, page_to, doc_name, doc_data, doc_pages)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-                [syllabusId, order++, ch.title, ch.page_from, ch.page_to, doc_name || null, dataUri, pages]
-            );
+                   (syllabus_id, chapter_order, title, page_from, page_to, doc_name, doc_data, doc_pages, updated_by)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [syllabusId, i, ch.title.slice(0, 255), ch.page_from, ch.page_to, doc_name || null,
+                 'data:application/pdf;base64,' + slices[i].b64, slices[i].pages, actor_id]);
         }
         try {
             const [info] = await db.execute(
                 `SELECT s.institutionId, s.class_id, sub.name AS subject_name
-                   FROM syllabus s
-                   LEFT JOIN subjects sub ON sub.id = s.subject_id
-                  WHERE s.id = ?`,
-                [syllabusId]
-            );
+                   FROM syllabus s LEFT JOIN subjects sub ON sub.id = s.subject_id
+                  WHERE s.id = ?`, [syllabusId]);
             if (info.length && info[0].class_id) {
                 const recipients = await studentIdsForClass(info[0].class_id);
                 await createNotifications({
@@ -9495,33 +9613,8 @@ app.put('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
         res.status(500).json({ error: 'Could not read this PDF: ' + err.message });
     }
 });
-// --- 22.9 Change page offset -> re-slice all chapters ---------------
-app.put('/api/admin/syllabus/:syllabusId/book/offset', async (req, res) => {
-    try {
-        const sid = req.params.syllabusId;
-        const actor_id = req.auth.userId;
-        const inst = await _sylInstBySyllabus(sid);
-        if (inst === null) return res.status(404).json({ error: 'Syllabus not found.' });
-        if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This syllabus belongs to another institution.' });
-        const offset = parseInt(req.body.page_offset, 10) || 0;
-        await db.execute('UPDATE syllabus SET page_offset = ?, updated_by = ? WHERE id = ?', [offset, actor_id, sid]);
-        const [bookRows] = await db.execute('SELECT doc_data FROM syllabus WHERE id = ?', [sid]);
-        if (bookRows.length && bookRows[0].doc_data) {
-            const base64 = String(bookRows[0].doc_data).replace(/^data:[^;]+;base64,/, '');
-            const buffer = Buffer.from(base64, 'base64');
-            const [chs] = await db.execute(
-                'SELECT id, page_from, page_to FROM syllabus_chapters WHERE syllabus_id = ? ORDER BY chapter_order, id',
-                [sid]);
-            const ranges = chs.map(c => [(c.page_from || 1) + offset, (c.page_to || c.page_from || 1) + offset]);
-            const { slices } = await sliceAll(buffer, ranges);
-            for (let i = 0; i < chs.length; i++) {
-                await db.execute('UPDATE syllabus_chapters SET doc_data = ?, doc_pages = ? WHERE id = ?',
-                    ['data:application/pdf;base64,' + slices[i], ranges[i][1] - ranges[i][0] + 1, chs[i].id]);
-            }
-        }
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
+// (22.9 page-offset route removed in v7)
+
 // --- 22.10 A chapter as a real PDF file (viewer loads this) ---------
 app.get('/api/admin/syllabus/chapter/:id/pdf', async (req, res) => {
     try {
@@ -9534,7 +9627,7 @@ app.get('/api/admin/syllabus/chapter/:id/pdf', async (req, res) => {
         const bytes = Buffer.from(base64, 'base64');
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', 'inline; filename="chapter.pdf"');
-        res.setHeader('Cache-Control', 'private, max-age=3600');
+        res.setHeader('Cache-Control', 'private, no-store');   // edits must show immediately
         res.send(bytes);
     } catch (err) { res.status(500).send(err.message); }
 });
@@ -9550,34 +9643,36 @@ app.get('/api/admin/syllabus/chapter/:id/doc', async (req, res) => {
         res.json(rows[0]);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-// --- 22.11 Create a chapter (manual) -> slice it --------------------
+// --- 22.11 Create a chapter (manual, PDF pages) -> slice it ---------
 app.post('/api/admin/syllabus/chapters', async (req, res) => {
-    const { syllabus_id, title, page_from, page_to } = req.body;
+    const { syllabus_id, page_from, page_to } = req.body;
+    const title = (req.body.title || '').trim();
     const actor_id = req.auth.userId;
-    if (!syllabus_id || !title) {
-        return res.status(400).json({ error: 'syllabus_id and title are required.' });
-    }
+    if (!syllabus_id || !title) return res.status(400).json({ error: 'syllabus_id and title are required.' });
     try {
         const inst = await _sylInstBySyllabus(syllabus_id);
         if (inst === null) return res.status(404).json({ error: 'Syllabus not found.' });
         if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This syllabus belongs to another institution.' });
+        const total = await _bookPages(syllabus_id);
+        if (total) {
+            const bad = _rangeError(page_from, page_to, total);
+            if (bad) return res.status(400).json({ error: bad });
+        }
         const [[{ maxOrder }]] = await db.execute(
             `SELECT COALESCE(MAX(chapter_order), -1) + 1 AS maxOrder
                FROM syllabus_chapters WHERE syllabus_id = ?`, [syllabus_id]);
         const [result] = await db.execute(
             `INSERT INTO syllabus_chapters (syllabus_id, chapter_order, title, page_from, page_to, updated_by)
              VALUES (?, ?, ?, ?, ?, ?)`,
-            [syllabus_id, maxOrder, title, page_from || null, page_to || null, actor_id]);
+            [syllabus_id, maxOrder, title.slice(0, 255),
+             page_from ? parseInt(page_from, 10) : null, page_to ? parseInt(page_to, 10) : null, actor_id]);
         await resliceChapter(result.insertId);
         await db.execute('UPDATE syllabus SET updated_at = ?, updated_by = ? WHERE id = ?', [nowSQL(), actor_id, syllabus_id]);
         try {
             const [info] = await db.execute(
                 `SELECT s.institutionId, s.class_id, sub.name AS subject_name
-                   FROM syllabus s
-                   LEFT JOIN subjects sub ON sub.id = s.subject_id
-                  WHERE s.id = ?`,
-                [syllabus_id]
-            );
+                   FROM syllabus s LEFT JOIN subjects sub ON sub.id = s.subject_id
+                  WHERE s.id = ?`, [syllabus_id]);
             if (info.length && info[0].class_id) {
                 const recipients = await studentIdsForClass(info[0].class_id);
                 await createNotifications({
@@ -9591,18 +9686,28 @@ app.post('/api/admin/syllabus/chapters', async (req, res) => {
         res.json({ success: true, id: result.insertId });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-// --- 22.12 Update a chapter -> re-slice it --------------------------
+// --- 22.12 Update a chapter (PDF pages) -> re-slice it --------------
 app.put('/api/admin/syllabus/chapters/:id', async (req, res) => {
-    const { title, page_from, page_to } = req.body;
+    const { page_from, page_to } = req.body;
+    const title = (req.body.title || '').trim();
     const actor_id = req.auth.userId;
+    if (!title) return res.status(400).json({ error: 'Chapter title is required.' });
     try {
         const inst = await _sylInstByChapter(req.params.id);
         if (inst === null) return res.status(404).json({ error: 'Chapter not found.' });
         if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This chapter belongs to another institution.' });
+        const [[ch]] = await db.execute('SELECT syllabus_id FROM syllabus_chapters WHERE id = ?', [req.params.id]);
+        const total = await _bookPages(ch.syllabus_id);
+        if (total) {
+            const bad = _rangeError(page_from, page_to, total);
+            if (bad) return res.status(400).json({ error: bad });
+        }
         await db.execute(
             `UPDATE syllabus_chapters SET title = ?, page_from = ?, page_to = ?, updated_by = ? WHERE id = ?`,
-            [title, page_from || null, page_to || null, actor_id, req.params.id]);
+            [title.slice(0, 255), page_from ? parseInt(page_from, 10) : null, page_to ? parseInt(page_to, 10) : null,
+             actor_id, req.params.id]);
         await resliceChapter(req.params.id);
+        await db.execute('UPDATE syllabus SET updated_at = ?, updated_by = ? WHERE id = ?', [nowSQL(), actor_id, ch.syllabus_id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -9636,8 +9741,7 @@ app.get('/api/admin/syllabus/chapter/:id/keywords', async (req, res) => {
         const inst = await _sylInstByChapter(req.params.id);
         if (inst === null) return res.json([]);
         if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This chapter belongs to another institution.' });
-        const [rows] = await db.execute(
-            'SELECT * FROM syllabus_keywords WHERE chapter_id = ? ORDER BY term', [req.params.id]);
+        const [rows] = await db.execute('SELECT * FROM syllabus_keywords WHERE chapter_id = ? ORDER BY term', [req.params.id]);
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -9662,6 +9766,210 @@ app.delete('/api/admin/syllabus/keywords/:keywordId', async (req, res) => {
         if (inst === null) return res.json({ success: true });
         if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This keyword belongs to another institution.' });
         await db.execute('DELETE FROM syllabus_keywords WHERE id = ?', [req.params.keywordId]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// =====================================================================
+//  22.L  SYLLABUS LIBRARY
+//   Folders belong to (institution, syllabus type, class, subject).
+//   Files: PDF / Word / Excel, stored as LONGBLOB, checked by extension
+//   AND file signature, 50 MB each.
+// =====================================================================
+const LIB_TYPES = {
+    pdf:  'application/pdf',
+    doc:  'application/msword',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xls:  'application/vnd.ms-excel',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+};
+const LIB_MAX_BYTES = 50 * 1024 * 1024;
+const OLE_SIG = Buffer.from([0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]);
+
+function _libSignatureOk(ext, buf) {
+    if (!buf || buf.length < 8) return false;
+    if (ext === 'pdf') return buf.subarray(0, 1024).includes('%PDF-');
+    if (ext === 'docx' || ext === 'xlsx') return buf[0] === 0x50 && buf[1] === 0x4B; // "PK" zip
+    if (ext === 'doc' || ext === 'xls') return buf.subarray(0, 8).equals(OLE_SIG);
+    return false;
+}
+function _libSafeName(name) {
+    const base = String(name || '').split(/[\\/]/).pop();
+    // eslint-disable-next-line no-control-regex
+    return base.replace(/[\u0000-\u001f\u007f"<>|:*?]/g, '_').trim().slice(0, 255);
+}
+
+// --- 22.L1 List folders for a type + class --------------------------
+app.get('/api/admin/syllabus/library/:instId/folders', async (req, res) => {
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    const { typeId, classId } = req.query;
+    if (!typeId) return res.status(400).json({ error: 'typeId is required.' });
+    try {
+        let sql = `
+            SELECT f.id, f.name, f.syllabus_type_id, f.class_id, f.subject_id,
+                   f.created_at, f.updated_at,
+                   c.className, c.section, sub.name AS subject_name,
+                   uu.name AS updated_by_name,
+                   (SELECT COUNT(*) FROM syllabus_library_files lf WHERE lf.folder_id = f.id) AS file_count,
+                   (SELECT COALESCE(SUM(lf.file_size), 0) FROM syllabus_library_files lf WHERE lf.folder_id = f.id) AS total_size
+              FROM syllabus_library_folders f
+              LEFT JOIN classes  c   ON c.id = f.class_id
+              LEFT JOIN subjects sub ON sub.id = f.subject_id
+              LEFT JOIN users    uu  ON uu.id = COALESCE(f.updated_by, f.created_by)
+             WHERE f.institutionId = ? AND f.syllabus_type_id = ?`;
+        const params = [instId, typeId];
+        if (classId) { sql += ' AND f.class_id = ?'; params.push(classId); }
+        sql += ' ORDER BY sub.name, f.name';
+        const [rows] = await db.execute(sql, params);
+        res.json(rows.map(r => ({
+            ...r,
+            file_count: Number(r.file_count) || 0,
+            total_size: Number(r.total_size) || 0,
+            class_group: `${r.className || ''}${r.section ? ' - ' + r.section : ''}`
+        })));
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+async function _libValidateScope(req, { syllabus_type_id, class_id, subject_id }) {
+    if (!syllabus_type_id || !class_id || !subject_id) return 'Type, class and subject are required.';
+    const [ty] = await db.execute('SELECT institutionId FROM syllabus_types WHERE id = ?', [syllabus_type_id]);
+    if (!ty.length || !sameTenant(req, ty[0].institutionId)) return 'That syllabus type belongs to another institution.';
+    const [c] = await db.execute('SELECT institutionId FROM classes WHERE id = ?', [class_id]);
+    if (!c.length || !sameTenant(req, c[0].institutionId)) return 'That class belongs to another institution.';
+    const [s] = await db.execute('SELECT id FROM subjects WHERE id = ?', [subject_id]);
+    if (!s.length) return 'Subject not found.';
+    return null;
+}
+
+// --- 22.L2 Create a folder ------------------------------------------
+app.post('/api/admin/syllabus/library/folders', async (req, res) => {
+    const actor_id = req.auth.userId;
+    const { syllabus_type_id, class_id, subject_id } = req.body;
+    try {
+        const bad = await _libValidateScope(req, { syllabus_type_id, class_id, subject_id });
+        if (bad) return res.status(400).json({ error: bad });
+        let name = (req.body.name || '').trim();
+        if (!name) {
+            const [[s]] = await db.execute('SELECT name FROM subjects WHERE id = ?', [subject_id]);
+            name = s?.name || 'Folder';
+        }
+        const [ty] = await db.execute('SELECT institutionId FROM syllabus_types WHERE id = ?', [syllabus_type_id]);
+        const [r] = await db.execute(
+            `INSERT INTO syllabus_library_folders
+               (institutionId, syllabus_type_id, class_id, subject_id, name, created_by, updated_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [ty[0].institutionId, syllabus_type_id, class_id, subject_id, name.slice(0, 150), actor_id, actor_id]);
+        res.json({ success: true, id: r.insertId });
+    } catch (err) {
+        if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'A folder with that name already exists for this class and subject.' });
+        res.status(500).json({ error: err.message });
+    }
+});
+// --- 22.L3 Rename / re-scope a folder -------------------------------
+app.put('/api/admin/syllabus/library/folders/:id', async (req, res) => {
+    const actor_id = req.auth.userId;
+    const { class_id, subject_id } = req.body;
+    const name = (req.body.name || '').trim();
+    if (!name) return res.status(400).json({ error: 'A folder name is required.' });
+    try {
+        const inst = await _libInstByFolder(req.params.id);
+        if (inst === null) return res.status(404).json({ error: 'Folder not found.' });
+        if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This folder belongs to another institution.' });
+        const [[cur]] = await db.execute('SELECT syllabus_type_id FROM syllabus_library_folders WHERE id = ?', [req.params.id]);
+        const bad = await _libValidateScope(req, { syllabus_type_id: cur.syllabus_type_id, class_id, subject_id });
+        if (bad) return res.status(400).json({ error: bad });
+        await db.execute(
+            `UPDATE syllabus_library_folders SET name = ?, class_id = ?, subject_id = ?, updated_by = ? WHERE id = ?`,
+            [name.slice(0, 150), class_id, subject_id, actor_id, req.params.id]);
+        res.json({ success: true });
+    } catch (err) {
+        if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'A folder with that name already exists for this class and subject.' });
+        res.status(500).json({ error: err.message });
+    }
+});
+// --- 22.L4 Delete a folder (files cascade) --------------------------
+app.delete('/api/admin/syllabus/library/folders/:id', async (req, res) => {
+    try {
+        const inst = await _libInstByFolder(req.params.id);
+        if (inst === null) return res.json({ success: true });
+        if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This folder belongs to another institution.' });
+        await db.execute('DELETE FROM syllabus_library_folders WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+// --- 22.L5 Files in a folder (metadata only) ------------------------
+app.get('/api/admin/syllabus/library/folders/:id/files', async (req, res) => {
+    try {
+        const inst = await _libInstByFolder(req.params.id);
+        if (inst === null) return res.json([]);
+        if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This folder belongs to another institution.' });
+        const [rows] = await db.execute(
+            `SELECT lf.id, lf.file_name, lf.file_ext, lf.mime_type, lf.file_size, lf.created_at,
+                    lf.uploaded_by, u.name AS uploaded_by_name
+               FROM syllabus_library_files lf
+               LEFT JOIN users u ON u.id = lf.uploaded_by
+              WHERE lf.folder_id = ?
+              ORDER BY lf.file_name`, [req.params.id]);
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+// --- 22.L6 Upload a file into a folder ------------------------------
+app.post('/api/admin/syllabus/library/folders/:id/files', async (req, res) => {
+    const actor_id = req.auth.userId;
+    const file_name = _libSafeName(req.body.file_name);
+    const { file_data } = req.body;
+    if (!file_name || !file_data) return res.status(400).json({ error: 'file_name and file_data are required.' });
+    const ext = (file_name.includes('.') ? file_name.split('.').pop() : '').toLowerCase();
+    if (!LIB_TYPES[ext]) return res.status(400).json({ error: 'Only PDF, Word (.doc, .docx) and Excel (.xls, .xlsx) files are allowed.' });
+    try {
+        const inst = await _libInstByFolder(req.params.id);
+        if (inst === null) return res.status(404).json({ error: 'Folder not found.' });
+        if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This folder belongs to another institution.' });
+        const buf = Buffer.from(String(file_data).replace(/^data:[^;]*;base64,/, ''), 'base64');
+        if (!buf.length) return res.status(400).json({ error: 'The file is empty.' });
+        if (buf.length > LIB_MAX_BYTES) return res.status(413).json({ error: 'Files must be 50 MB or smaller.' });
+        if (!_libSignatureOk(ext, buf)) return res.status(400).json({ error: `This doesn't look like a real .${ext} file.` });
+        const [r] = await db.execute(
+            `INSERT INTO syllabus_library_files
+               (folder_id, file_name, file_ext, mime_type, file_size, file_data, uploaded_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [req.params.id, file_name, ext, LIB_TYPES[ext], buf.length, buf, actor_id]);
+        await db.execute('UPDATE syllabus_library_folders SET updated_by = ?, updated_at = ? WHERE id = ?',
+            [actor_id, nowSQL(), req.params.id]);
+        res.json({ success: true, id: r.insertId });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+// --- 22.L7 Download / view a file -----------------------------------
+app.get('/api/admin/syllabus/library/files/:id/download', async (req, res) => {
+    try {
+        const inst = await _libInstByFile(req.params.id);
+        if (inst === null) return res.status(404).send('Not found');
+        if (!sameTenant(req, inst)) return res.status(403).send('Forbidden');
+        const [rows] = await db.execute(
+            'SELECT file_name, file_ext, mime_type, file_data FROM syllabus_library_files WHERE id = ?', [req.params.id]);
+        if (!rows.length) return res.status(404).send('Not found');
+        const f = rows[0];
+        const inline = req.query.inline === '1' && f.file_ext === 'pdf';
+        const ascii = f.file_name.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '_');
+        res.setHeader('Content-Type', f.mime_type);
+        res.setHeader('Content-Length', f.file_data.length);
+        res.setHeader('Content-Disposition',
+            `${inline ? 'inline' : 'attachment'}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(f.file_name)}`);
+        res.setHeader('Cache-Control', 'private, no-store');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.send(f.file_data);
+    } catch (err) { res.status(500).send(err.message); }
+});
+// --- 22.L8 Delete a file --------------------------------------------
+app.delete('/api/admin/syllabus/library/files/:id', async (req, res) => {
+    try {
+        const inst = await _libInstByFile(req.params.id);
+        if (inst === null) return res.json({ success: true });
+        if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This file belongs to another institution.' });
+        const [[row]] = await db.execute('SELECT folder_id FROM syllabus_library_files WHERE id = ?', [req.params.id]);
+        await db.execute('DELETE FROM syllabus_library_files WHERE id = ?', [req.params.id]);
+        if (row) await db.execute('UPDATE syllabus_library_folders SET updated_by = ?, updated_at = ? WHERE id = ?',
+            [req.auth.userId, nowSQL(), row.folder_id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });

@@ -9,10 +9,13 @@ import { pageLabel, fileToBase64 } from './SyllabusUtils';
 
 // =====================================================================
 //  Subject Index - textbook-first, auto-detected chapters.
-//    LEFT   - Chapters (auto from the book's index; edit/delete to fix)
+//    LEFT   - Chapters (auto from the book; edit/delete/add to fix)
 //    MIDDLE - PDF viewer showing ONLY the selected chapter's pages
 //    RIGHT  - Keywords for the selected chapter
-//  (Academic-year logic removed.)
+//
+//  Page numbers are ALWAYS the PDF's own pages (page X of N in a PDF
+//  viewer). The backend maps the book's printed index numbers to PDF
+//  pages during detection, so there is no page offset any more.
 // =====================================================================
 export default function SubjectIndex({ syllabus, canEdit, onBack, onOpenPeriods }) {
   const [chapters, setChapters] = useState([]);
@@ -22,7 +25,6 @@ export default function SubjectIndex({ syllabus, canEdit, onBack, onOpenPeriods 
   const [selectedId, setSelId]  = useState(null);
 
   const loadAll = useCallback(async () => {
-    setLoading(true);
     try {
       const [cRes, bRes] = await Promise.all([
         fetch(`${API_BASE_URL}/admin/syllabus/${syllabus.id}/chapters`),
@@ -36,11 +38,11 @@ export default function SubjectIndex({ syllabus, canEdit, onBack, onOpenPeriods 
     setLoading(false);
   }, [syllabus]);
 
-  useEffect(() => { loadAll(); }, [loadAll]);
+  useEffect(() => { setLoading(true); loadAll(); }, [loadAll]);
 
   useEffect(() => {
-    if (chapters.length > 0 && !chapters.some(c => c.id === selectedId)) setSelId(chapters[0].id);
-    if (chapters.length === 0) setSelId(null);
+    if (chapters.length === 0) { setSelId(null); return; }
+    if (!chapters.some(c => c.id === selectedId)) setSelId(chapters[0].id);
   }, [chapters, selectedId]);
 
   const selected = useMemo(
@@ -58,8 +60,8 @@ export default function SubjectIndex({ syllabus, canEdit, onBack, onOpenPeriods 
       const file = e.target.files?.[0];
       if (!file) return;
       if (chapters.length > 0 && !window.confirm(
-        'Re-reading the textbook rebuilds the chapter list from its index. ' +
-        'Existing chapters and their keywords will be replaced. Continue?'
+        'Replacing the textbook rebuilds the chapter list from the new PDF. ' +
+        'Existing chapters, their keywords and lesson periods will be replaced. Continue?'
       )) return;
       setUp(true);
       try {
@@ -71,6 +73,7 @@ export default function SubjectIndex({ syllabus, canEdit, onBack, onOpenPeriods 
         });
         const d = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(d.error || 'Upload failed');
+        setSelId(null);
         await loadAll();
       } catch (err) { alert(err.message); }
       setUp(false);
@@ -89,14 +92,12 @@ export default function SubjectIndex({ syllabus, canEdit, onBack, onOpenPeriods 
 
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-2">
         <header className="flex flex-col">
-          <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
-              <BookOpen className="text-primary size-5" />
-              Subject Index
-            </h1>
-          </div>
+          <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
+            <BookOpen className="text-primary size-5" />
+            Subject Index
+          </h1>
           <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
-            Upload the textbook and the chapters are detected from its index.
+            Upload the textbook and the chapters are detected and split automatically.
           </p>
           <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider mt-1.5">
             {syllabus.class_group} - {syllabus.subject_name}
@@ -124,8 +125,8 @@ export default function SubjectIndex({ syllabus, canEdit, onBack, onOpenPeriods 
             </div>
             <h3 className="text-base font-semibold text-zinc-900">Upload the textbook to begin</h3>
             <p className="text-sm text-zinc-500 mt-1.5 leading-relaxed">
-              Upload the subject PDF and the chapters will be detected from its
-              index automatically - an Index entry, then each chapter with its pages.
+              Upload the subject PDF. The chapters are read from its contents page and each one is
+              split out by PDF page, ready to open on its own.
             </p>
             {canEdit ? (
               <button onClick={uploadTextbook} disabled={uploading}
@@ -144,7 +145,7 @@ export default function SubjectIndex({ syllabus, canEdit, onBack, onOpenPeriods 
             <ChaptersPanel
               chapters={chapters} selectedId={selectedId} canEdit={canEdit}
               onSelect={setSelId} reload={loadAll} syllabusId={syllabus.id}
-              book={book} onReplace={uploadTextbook} uploading={uploading} />
+              totalPages={book?.doc_pages || null} onReplace={uploadTextbook} uploading={uploading} />
           </div>
           <div className="lg:col-span-8 xl:col-span-6 h-full flex flex-col">
             <DocumentPanel chapter={selected} />
@@ -161,68 +162,63 @@ export default function SubjectIndex({ syllabus, canEdit, onBack, onOpenPeriods 
 // =====================================================================
 //  LEFT - Chapters
 // =====================================================================
-function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllabusId, book, onReplace, uploading }) {
+function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllabusId, totalPages, onReplace, uploading }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing]     = useState(null);
   const [form, setForm] = useState({ title: '', page_from: '', page_to: '' });
   const [saving, setSaving] = useState(false);
-  const [offset, setOffset]    = useState(book?.page_offset ?? 0);
-  const [savingOff, setSavOff] = useState(false);
-
-  useEffect(() => { setOffset(book?.page_offset ?? 0); }, [book]);
-
-  const saveOffset = async () => {
-    setSavOff(true);
-    try {
-      const res = await fetch(`${API_BASE_URL}/admin/syllabus/${syllabusId}/book/offset`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ page_offset: parseInt(offset, 10) || 0 })
-      });
-      if (!res.ok) throw new Error('Could not save offset');
-      reload();
-    } catch (e) { alert(e.message); }
-    setSavOff(false);
-  };
 
   const openCreate = () => {
     setEditing(null);
-    setForm({ title: '', page_from: '', page_to: '' });
+    const last = chapters[chapters.length - 1];
+    const nextFrom = last?.page_to ? Math.min((totalPages || last.page_to + 1), last.page_to + 1) : '';
+    setForm({ title: '', page_from: nextFrom === '' ? '' : String(nextFrom), page_to: '' });
     setModalOpen(true);
   };
 
   const openEdit = (ch) => {
     setEditing(ch);
-    setForm({ title: ch.title || '', page_from: ch.page_from || '', page_to: ch.page_to || '' });
+    setForm({
+      title: ch.title || '',
+      page_from: ch.page_from != null ? String(ch.page_from) : '',
+      page_to: ch.page_to != null ? String(ch.page_to) : ''
+    });
     setModalOpen(true);
   };
+
+  const fromNum = parseInt(form.page_from, 10);
+  const toNum   = parseInt(form.page_to, 10);
+  const rangeError = (() => {
+    if (form.page_from === '' || form.page_to === '') return null;
+    if (!Number.isInteger(fromNum) || !Number.isInteger(toNum)) return 'Enter whole page numbers.';
+    if (fromNum < 1) return 'Page From must be 1 or more.';
+    if (toNum < fromNum) return 'Page To must be the same as or after Page From.';
+    if (totalPages && toNum > totalPages) return `The PDF has only ${totalPages} pages.`;
+    return null;
+  })();
 
   const handleSave = async (e) => {
     e.preventDefault();
     if (!form.title.trim()) return alert('Chapter title is required.');
+    if (form.page_from === '' || form.page_to === '') return alert('Page From and Page To are required.');
+    if (rangeError) return alert(rangeError);
     setSaving(true);
     try {
-      const body = {
-        title: form.title.trim(),
-        page_from: form.page_from ? parseInt(form.page_from, 10) : null,
-        page_to: form.page_to ? parseInt(form.page_to, 10) : null
-      };
-      let res;
-      if (editing) {
-        res = await fetch(`${API_BASE_URL}/admin/syllabus/chapters/${editing.id}`, {
-          method: 'PUT', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
-        });
-      } else {
-        res = await fetch(`${API_BASE_URL}/admin/syllabus/chapters`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...body, syllabus_id: syllabusId })
-        });
-      }
-      if (!res.ok) throw new Error('Save failed');
+      const body = { title: form.title.trim(), page_from: fromNum, page_to: toNum };
+      const res = editing
+        ? await fetch(`${API_BASE_URL}/admin/syllabus/chapters/${editing.id}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+          })
+        : await fetch(`${API_BASE_URL}/admin/syllabus/chapters`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...body, syllabus_id: syllabusId })
+          });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || 'Save failed');
       setModalOpen(false);
-      reload();
-    } catch (e) { alert(e.message); }
+      await reload();
+      onSelect(editing ? editing.id : d.id);
+    } catch (e2) { alert(e2.message); }
     setSaving(false);
   };
 
@@ -243,7 +239,7 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
           <h3 className="font-semibold text-sm text-zinc-900">Chapters</h3>
         </div>
         <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">
-          {chapters.length} items{book?.doc_pages ? ` - ${book.doc_pages}p` : ''}
+          {chapters.length} items{totalPages ? ` - ${totalPages}p` : ''}
         </span>
       </div>
 
@@ -261,7 +257,7 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
             <div className="p-3 flex items-start gap-3">
               <BookMarked className={`size-4 mt-0.5 shrink-0 transition-colors ${selectedId === ch.id ? 'text-primary' : 'text-zinc-400'}`} />
               <div className="min-w-0 flex-1">
-                <p className={`font-semibold text-sm leading-tight transition-colors truncate ${
+                <p title={ch.title} className={`font-semibold text-sm leading-tight transition-colors truncate ${
                   selectedId === ch.id ? 'text-primary' : 'text-zinc-900 group-hover:text-primary'
                 }`}>
                   {ch.title}
@@ -274,11 +270,11 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
               </div>
               {canEdit && (
                 <div className="flex flex-col gap-1 shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                  <button onClick={e => { e.stopPropagation(); openEdit(ch); }}
+                  <button onClick={e => { e.stopPropagation(); openEdit(ch); }} title="Edit chapter"
                     className="p-1.5 text-zinc-400 hover:text-primary hover:bg-white rounded-md transition-colors shadow-sm ring-1 ring-transparent hover:ring-black/5">
                     <Edit className="size-3.5" />
                   </button>
-                  <button onClick={e => { e.stopPropagation(); handleDelete(ch); }}
+                  <button onClick={e => { e.stopPropagation(); handleDelete(ch); }} title="Delete chapter"
                     className="p-1.5 text-zinc-400 hover:text-red-600 hover:bg-white rounded-md transition-colors shadow-sm ring-1 ring-transparent hover:ring-black/5">
                     <Trash2 className="size-3.5" />
                   </button>
@@ -290,27 +286,13 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
       </div>
 
       {canEdit && (
-        <div className="p-3 border-t border-zinc-100 bg-zinc-50/50 shrink-0 space-y-2">
-          <div className="flex items-center gap-2">
-            <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider shrink-0" title="If the book's printed page 1 is not the PDF's first page, set the difference here.">
-              Page offset
-            </label>
-            <input type="number" value={offset}
-              onChange={e => setOffset(e.target.value)}
-              className="h-8 w-16 bg-white border border-zinc-200 rounded-md px-2 text-xs text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm" />
-            <button onClick={saveOffset} disabled={savingOff}
-              className="h-8 px-3 bg-white ring-1 ring-black/5 shadow-sm hover:bg-zinc-50 text-zinc-700 rounded-md font-semibold text-xs flex items-center gap-1.5 transition-all">
-              {savingOff ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-              Apply
-            </button>
-          </div>
-
+        <div className="p-3 border-t border-zinc-100 bg-zinc-50/50 shrink-0">
           <div className="flex gap-2">
             <button onClick={openCreate}
               className="h-9 flex-1 bg-white ring-1 ring-black/5 shadow-sm hover:bg-zinc-50 hover:ring-black/10 text-zinc-700 rounded-md font-semibold text-xs flex items-center justify-center gap-1.5 transition-all">
               <Plus className="size-3.5" /> Add Chapter
             </button>
-            <button onClick={onReplace} disabled={uploading} title="Re-upload the textbook and re-detect chapters"
+            <button onClick={onReplace} disabled={uploading} title="Upload a new textbook and re-detect chapters"
               className="h-9 px-3 bg-white ring-1 ring-black/5 shadow-sm hover:bg-zinc-50 hover:ring-black/10 text-zinc-700 rounded-md font-semibold text-xs flex items-center justify-center gap-1.5 transition-all shrink-0">
               {uploading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
               Replace
@@ -336,30 +318,42 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
                   <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">
                     Chapter Title <span className="text-red-500">*</span>
                   </label>
-                  <input value={form.title} required
+                  <input value={form.title} required autoFocus
                     onChange={e => setForm({ ...form, title: e.target.value })}
-                    placeholder="e.g. Relief Features"
+                    placeholder="e.g. 1. The Snake and the Mirror"
                     className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Page From</label>
-                    <input type="number" value={form.page_from}
+                    <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">
+                      PDF Page From <span className="text-red-500">*</span>
+                    </label>
+                    <input type="number" min={1} max={totalPages || undefined} value={form.page_from} required
                       onChange={e => setForm({ ...form, page_from: e.target.value })}
                       className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Page To</label>
-                    <input type="number" value={form.page_to}
+                    <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">
+                      PDF Page To <span className="text-red-500">*</span>
+                    </label>
+                    <input type="number" min={1} max={totalPages || undefined} value={form.page_to} required
                       onChange={e => setForm({ ...form, page_to: e.target.value })}
                       className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
                   </div>
                 </div>
 
+                {rangeError ? (
+                  <p className="text-[11px] font-medium text-red-600">{rangeError}</p>
+                ) : Number.isInteger(fromNum) && Number.isInteger(toNum) && toNum >= fromNum ? (
+                  <p className="text-[11px] font-medium text-emerald-700">
+                    This chapter will have {toNum - fromNum + 1} page{toNum - fromNum ? 's' : ''}.
+                  </p>
+                ) : null}
+
                 <p className="text-[11px] text-zinc-400 leading-relaxed">
-                  Enter the book&apos;s printed page numbers. If the PDF pages differ from the printed
-                  numbers, set the Page offset (below the chapter list) instead of adjusting each chapter.
+                  Use the PDF&apos;s own page numbers - the &quot;page X of {totalPages || 'N'}&quot; your PDF viewer shows -
+                  not the number printed on the page.
                 </p>
               </div>
               <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
@@ -367,7 +361,7 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
                   className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 rounded-md font-semibold text-xs hover:bg-zinc-50 transition-colors w-full sm:w-auto">
                   Cancel
                 </button>
-                <button type="submit" disabled={saving}
+                <button type="submit" disabled={saving || !!rangeError}
                   className="h-9 px-6 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors w-full sm:w-auto min-w-[120px]">
                   {saving ? <Loader2 className="size-3.5 animate-spin shrink-0" /> : <Save className="size-3.5 shrink-0" />}
                   {saving ? 'Saving...' : (editing ? 'Save Changes' : 'Add Chapter')}
@@ -383,34 +377,38 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
 
 // =====================================================================
 //  MIDDLE - PDF viewer
-//   The chapter PDF is behind the /api auth gate, so a raw <iframe src>
-//   sends no token and renders the JSON "Please sign in" error. We FETCH
-//   it as a blob (interceptor adds the token) and point the iframe at the
-//   resulting object URL.
+//   The chapter PDF is behind the /api auth gate, so we FETCH it as a
+//   blob (interceptor adds the token) and point the iframe at it.
+//   The URL carries a version (updated_at + page range) and the request
+//   skips the HTTP cache - otherwise an edited chapter kept showing the
+//   OLD slice, which is why edits looked like they didn't work.
 // =====================================================================
 function DocumentPanel({ chapter }) {
-  const [url, setUrl]       = useState(null);
-  const [loading, setLoad]  = useState(false);
-  const [err, setErr]       = useState(false);
+  const [url, setUrl]      = useState(null);
+  const [loading, setLoad] = useState(false);
+  const [err, setErr]      = useState(false);
+
+  const chapterId = chapter?.id ?? null;
+  const version = chapter ? `${chapter.updated_at || ''}_${chapter.page_from || ''}_${chapter.page_to || ''}` : '';
 
   useEffect(() => {
-    if (!chapter) { setUrl(null); setErr(false); return; }
-    let revoked = false;
+    if (!chapterId) { setUrl(null); setErr(false); return; }
+    let cancelled = false;
     let objUrl = null;
     setLoad(true); setErr(false); setUrl(null);
 
-    fetch(`${API_BASE_URL}/admin/syllabus/chapter/${chapter.id}/pdf`)
+    fetch(`${API_BASE_URL}/admin/syllabus/chapter/${chapterId}/pdf?v=${encodeURIComponent(version)}`, { cache: 'no-store' })
       .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.blob(); })
       .then(blob => {
-        if (revoked) return;
+        if (cancelled) return;
         objUrl = URL.createObjectURL(blob);
         setUrl(objUrl);
       })
-      .catch(() => { if (!revoked) setErr(true); })
-      .finally(() => { if (!revoked) setLoad(false); });
+      .catch(() => { if (!cancelled) setErr(true); })
+      .finally(() => { if (!cancelled) setLoad(false); });
 
-    return () => { revoked = true; if (objUrl) URL.revokeObjectURL(objUrl); };
-  }, [chapter]);
+    return () => { cancelled = true; if (objUrl) URL.revokeObjectURL(objUrl); };
+  }, [chapterId, version]);
 
   if (!chapter) {
     return (
@@ -448,10 +446,10 @@ function DocumentPanel({ chapter }) {
           </div>
         ) : err ? (
           <div className="flex-1 flex items-center justify-center min-h-[500px] p-8 text-center">
-            <p className="text-sm text-zinc-500 font-medium">Could not load this chapter's PDF.</p>
+            <p className="text-sm text-zinc-500 font-medium">Could not load this chapter&apos;s PDF.</p>
           </div>
         ) : url ? (
-          <iframe key={chapter.id} src={url} title={chapter.title}
+          <iframe key={`${chapterId}-${version}`} src={url} title={chapter.title}
             className="w-full h-full border-0 min-h-[500px]" />
         ) : null}
       </div>
@@ -471,16 +469,18 @@ function KeywordsPanel({ chapter, canEdit }) {
   const [newDef, setNewDef]     = useState('');
   const [newExample, setNewEx]  = useState('');
 
+  const chapterId = chapter?.id ?? null;
+
   const load = useCallback(async () => {
-    if (!chapter) { setKeywords([]); return; }
+    if (!chapterId) { setKeywords([]); return; }
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/syllabus/chapter/${chapter.id}/keywords`);
+      const res = await fetch(`${API_BASE_URL}/admin/syllabus/chapter/${chapterId}/keywords`);
       const d = await res.json();
       setKeywords(Array.isArray(d) ? d : []);
     } catch (e) { console.error(e); }
     setLoading(false);
-  }, [chapter]);
+  }, [chapterId]);
 
   useEffect(() => { load(); setAdding(false); setQuery(''); }, [load]);
 
@@ -499,18 +499,14 @@ function KeywordsPanel({ chapter, canEdit }) {
     e.preventDefault();
     if (!newTerm.trim() || !newDef.trim()) return;
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/syllabus/chapter/${chapter.id}/keywords`, {
+      const res = await fetch(`${API_BASE_URL}/admin/syllabus/chapter/${chapterId}/keywords`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          term: newTerm.trim(),
-          definition: newDef.trim(),
-          example: newExample.trim() || null
-        })
+        body: JSON.stringify({ term: newTerm.trim(), definition: newDef.trim(), example: newExample.trim() || null })
       });
       if (!res.ok) throw new Error('Could not add keyword');
       resetForm(); setAdding(false);
       load();
-    } catch (e) { alert(e.message); }
+    } catch (e2) { alert(e2.message); }
   };
 
   const handleDelete = async (id) => {
@@ -566,9 +562,7 @@ function KeywordsPanel({ chapter, canEdit }) {
                   className="w-full bg-white border border-zinc-200 rounded-md px-2.5 py-1.5 text-xs text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors resize-y leading-relaxed" />
               </div>
               <div className="space-y-1">
-                <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
-                  Example
-                </label>
+                <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Example</label>
                 <textarea value={newExample} onChange={e => setNewEx(e.target.value)} rows={2}
                   placeholder="A sentence or case that illustrates it"
                   className="w-full bg-white border border-zinc-200 rounded-md px-2.5 py-1.5 text-xs text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors resize-y leading-relaxed" />
@@ -598,9 +592,7 @@ function KeywordsPanel({ chapter, canEdit }) {
               <div key={k.id} className="group bg-white ring-1 ring-black/5 rounded-md p-3 flex items-start gap-3 hover:ring-black/10 transition-shadow">
                 <div className="min-w-0 flex-1">
                   <p className="font-semibold text-sm text-zinc-900 leading-tight">{k.term}</p>
-                  {k.definition && (
-                    <p className="text-xs text-zinc-500 mt-1 leading-relaxed">{k.definition}</p>
-                  )}
+                  {k.definition && <p className="text-xs text-zinc-500 mt-1 leading-relaxed">{k.definition}</p>}
                   {k.example && (
                     <p className="text-xs text-zinc-500 mt-1.5 leading-relaxed bg-zinc-50 ring-1 ring-inset ring-black/5 rounded px-2 py-1">
                       <span className="font-semibold text-zinc-600">Example: </span>
@@ -624,26 +616,24 @@ function KeywordsPanel({ chapter, canEdit }) {
 }
 
 // =====================================================================
-//  SubjectIndexHelp - "How to use" guide (same theme as ReportsHelp).
-//  Editors get the manage guide (upload, page offset, add-chapter fixes);
-//  read-only users get the browse/read one.
+//  SubjectIndexHelp - "How to use" guide
 // =====================================================================
 const GUIDES = {
   manage: {
     title: 'Subject Index',
     steps: [
-      ['1 - Upload the textbook', 'Upload the subject PDF and the chapters are detected automatically from the book\'s printed index - an Index entry first, then each chapter with its page range.'],
-      ['2 - How the pages are worked out', 'Detection uses the page numbers printed in the book\'s index - the book\'s pages, not the PDF\'s. If the PDF\'s first page isn\'t the book\'s printed page 1 (covers or front-matter shift it), set Page offset to the difference and Apply. Every chapter re-slices to match. Example: if printed page 1 is the 5th page of the PDF, the offset is 4.'],
-      ['3 - Fix a bad split', 'If the auto-detection merged, missed or mis-paged a lesson, use Add Chapter to create one with the correct Page From / Page To, or Edit an existing chapter\'s pages. Delete removes a wrong entry. This is how you divide lessons that didn\'t come out cleanly.'],
+      ['1 - Upload the textbook', 'Upload the subject PDF. Chapters are read from the book\'s contents page and each one is split out automatically - an Index entry first, then every chapter with its pages.'],
+      ['2 - Pages are PDF pages', 'All page numbers here are the PDF\'s own pages (page X of N in a PDF viewer), not the numbers printed in the book. The printed contents page is converted to PDF pages for you.'],
+      ['3 - Fix a bad split', 'If a lesson was merged, missed or cut wrong, Edit its title and PDF pages, or use Add Chapter to create one. Delete removes a wrong entry. The viewer updates as soon as you save.'],
       ['4 - Read a chapter', 'Click a chapter to see only its pages in the middle viewer; the maximize button opens it full-screen.'],
       ['5 - Keywords', 'On the right, add a term with its definition and an example for the selected chapter - students see these on their side.'],
     ],
-    note: 'Replace re-reads the textbook and rebuilds the whole chapter list (existing chapters and their keywords are replaced). Lesson Periods (top-right) is where you set the teaching schedule.'
+    note: 'Replace uploads a new textbook and rebuilds the whole chapter list (existing chapters, keywords and lesson periods are replaced). Lesson Periods (top-right) is where you set the teaching schedule.'
   },
   view: {
     title: 'Subject Index',
     steps: [
-      ['1 - Chapters', 'The left list is the book\'s chapters, each with the pages it covers.'],
+      ['1 - Chapters', 'The left list is the book\'s chapters, each with the PDF pages it covers.'],
       ['2 - Read a chapter', 'Click one to see just its pages in the viewer; use maximize for a full-screen read.'],
       ['3 - Keywords', 'The right panel lists the chapter\'s key terms with definitions and examples - search to find one quickly.'],
     ],
