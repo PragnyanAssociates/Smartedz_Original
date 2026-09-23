@@ -209,20 +209,19 @@ function OnlineLibrary({ user, isSuperAdmin }) {
               {isSuperAdmin && rows.length === 0 && <p className="text-zinc-400 text-xs mt-1.5">Click "Add Book" to upload a PDF.</p>}
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
               {filtered.map(b => (
                 <div key={b.id} onClick={() => setSelected(b.id)}
                   className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col cursor-pointer group hover:ring-primary/30 hover:shadow-md transition-all">
-                  <div className="relative aspect-[4/3] bg-zinc-50">
-                    <span className="absolute top-2 left-2 z-10 text-[10px] font-bold text-white bg-zinc-900/70 rounded px-1.5 py-0.5 tabular-nums">#{b._num}</span>
+                  <div className="relative aspect-[3/4] bg-zinc-50">
+                    <span className="absolute top-1 left-1 z-10 text-[8px] font-bold text-white bg-zinc-900/70 rounded px-1 py-0.5 tabular-nums">#{b._num}</span>
                     <CoverThumb src={`${API_BASE_URL}/admin/library/online/${b.id}/cover?v=${encodeURIComponent(b.updated_at || '')}`} hasCover={b.has_cover} className="w-full h-full" />
                   </div>
-                  <div className="p-3.5">
-                    <h3 className="text-sm font-semibold text-zinc-900 leading-tight line-clamp-2 group-hover:text-primary transition-colors">{b.title}</h3>
-                    {b.author && <p className="text-[11px] text-zinc-500 mt-0.5 truncate">{b.author}</p>}
-                    <p className="text-[10px] text-zinc-400 mt-2 leading-relaxed">
-                      Added by <span className="font-semibold text-zinc-500">{b.created_by_name || 'Unknown'}</span>
-                      {b.created_at && <> · {fmtWhen(b.created_at)}</>}
+                  <div className="p-2">
+                    <h3 className="text-[11px] font-semibold text-zinc-900 leading-tight line-clamp-2 group-hover:text-primary transition-colors">{b.title}</h3>
+                    {b.author && <p className="text-[9px] text-zinc-500 mt-0.5 truncate">{b.author}</p>}
+                    <p className="text-[8px] text-zinc-400 mt-1 leading-snug line-clamp-1">
+                      by <span className="font-semibold text-zinc-500">{b.created_by_name || 'Unknown'}</span>{b.created_at && <> · {fmtWhen(b.created_at)}</>}
                     </p>
                   </div>
                 </div>
@@ -440,7 +439,7 @@ function OnlineBookModal({ editing, onClose, onSaved }) {
   const [doc, setDoc] = useState(null);       // { name, data }
   const [cover, setCover] = useState(null);   // { name, data }
   const [replacePdf, setReplacePdf] = useState(false);
-  const [removeCover, setRemoveCover] = useState(false);
+  const [replaceCover, setReplaceCover] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const pickPdf = async (e) => {
@@ -453,7 +452,7 @@ function OnlineBookModal({ editing, onClose, onSaved }) {
     const f = e.target.files?.[0]; e.target.value = '';
     if (!f) return;
     if (!f.type.startsWith('image/')) return alert('Please choose an image file.');
-    try { setCover(await fileToDataUrl(f, 2)); setRemoveCover(false); } catch (err) { alert(err.message); }
+    try { setCover(await fileToDataUrl(f, 2)); setReplaceCover(false); } catch (err) { alert(err.message); }
   };
 
   const submit = async (e) => {
@@ -461,13 +460,13 @@ function OnlineBookModal({ editing, onClose, onSaved }) {
     if (!form.title.trim()) return alert('A title is required.');
     if (!form.author.trim()) return alert('Author is required.');
     if (!form.category.trim()) return alert('Category is required.');
+    if (!cover && !(editing && editing.has_cover)) return alert('Cover image is required.');
     if (!editing && !doc) return alert('Please attach the book PDF.');
     setSaving(true);
     try {
       const payload = { ...form, title: form.title.trim() };
       if (doc) { payload.doc_name = doc.name; payload.doc_data = doc.data; }
       if (cover) payload.cover_data = cover.data;
-      else if (removeCover) payload.remove_cover = true;
       const url = editing ? `${API_BASE_URL}/admin/library/online/${editing.id}` : `${API_BASE_URL}/admin/library/online`;
       const res = await fetch(url, { method: editing ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const d = await res.json().catch(() => ({}));
@@ -478,7 +477,7 @@ function OnlineBookModal({ editing, onClose, onSaved }) {
   };
 
   const pdfCurrent = editing && editing.has_doc && !replacePdf ? (editing.doc_name || 'Current PDF') : null;
-  const coverCurrent = editing && editing.has_cover && !removeCover ? 'Current cover image' : null;
+  const coverCurrent = editing && editing.has_cover && !replaceCover ? 'Current cover image' : null;
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
@@ -500,12 +499,10 @@ function OnlineBookModal({ editing, onClose, onSaved }) {
                 className="w-full bg-white border border-zinc-200 rounded-md px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors resize-y" />
             </div>
 
-            <FilePicker label="Cover Image" optional Icon={ImageIcon}
+            <FilePicker label="Cover Image" required Icon={ImageIcon}
               picked={cover} onPick={pickCover} onClear={() => setCover(null)}
               chooseLabel="Choose cover image (max 2 MB)"
-              currentName={coverCurrent} onCurrentX={() => setRemoveCover(true)}
-              note={removeCover && !cover ? 'Cover will be removed on save' : null}
-              onUndoNote={removeCover ? () => setRemoveCover(false) : null} />
+              currentName={coverCurrent} onCurrentX={() => setReplaceCover(true)} />
 
             <FilePicker label="Book PDF" required={!editing} Icon={Upload}
               picked={doc} onPick={pickPdf} onClear={() => setDoc(null)}
@@ -588,6 +585,7 @@ function Catalogue({ user, canEdit }) {
   const [fTo, setFTo] = useState('');
   const [modal, setModal] = useState(null);
   const [issueFor, setIssueFor] = useState(null);
+  const [selected, setSelected] = useState(null);
 
   const load = useCallback(async () => {
     if (!user?.institutionId) return;
@@ -625,6 +623,7 @@ function Catalogue({ user, canEdit }) {
     categories: categories.length
   }), [rows, categories]);
   const anyFilter = query || fAuthor || fCategory || fFrom || fTo;
+  const selectedBook = useMemo(() => numbered.find(b => b.id === selected) || null, [numbered, selected]);
 
   const remove = async (row) => {
     if (!window.confirm(`Delete "${row.title}" and its issue history?`)) return;
@@ -637,94 +636,149 @@ function Catalogue({ user, canEdit }) {
 
   return (
     <>
-      {/* compact stats */}
-      <div className="flex flex-wrap gap-3">
-        <StatCard icon={LibraryIcon} label="Total Books" value={stats.total} tint="primary" />
-        <StatCard icon={CheckCircle2} label="Available" value={stats.available} tint="emerald" />
-        <StatCard icon={ArrowLeftRight} label="On Loan" value={stats.onloan} tint="amber" />
-        <StatCard icon={Tag} label="Categories" value={stats.categories} tint="violet" />
-      </div>
-
-      {/* search + filters */}
-      <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto">
-          <div className="relative w-full sm:w-56">
-            <Search className="size-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-            <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search catalogue..."
-              className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
-          </div>
-          <FilterSelect value={fAuthor} onChange={setFAuthor} allLabel="All Authors" options={authors} />
-          <FilterSelect value={fCategory} onChange={setFCategory} allLabel="All Categories" options={categories} />
-          <div className="flex items-center gap-1.5">
-            <Calendar className="size-4 text-zinc-400 shrink-0" />
-            <input type="date" value={fFrom} onChange={e => setFFrom(e.target.value)} title="Added from"
-              className="h-9 w-[9.5rem] bg-white border border-zinc-200 rounded-md px-2.5 text-xs text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
-            <span className="text-zinc-300 text-xs">–</span>
-            <input type="date" value={fTo} onChange={e => setFTo(e.target.value)} title="Added to"
-              className="h-9 w-[9.5rem] bg-white border border-zinc-200 rounded-md px-2.5 text-xs text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
-          </div>
-          {anyFilter && (
-            <button onClick={() => { setQuery(''); setFAuthor(''); setFCategory(''); setFFrom(''); setFTo(''); }}
-              className="h-9 px-3 rounded-md border border-zinc-200 bg-white text-xs font-semibold text-zinc-600 hover:bg-zinc-50 transition-colors shrink-0">Clear</button>
-          )}
-        </div>
-        <div className="flex items-center gap-2 w-full xl:w-auto">
-          <button onClick={load} className="h-9 px-3 bg-white border border-zinc-200 text-zinc-600 hover:text-primary hover:bg-zinc-50 rounded-md flex items-center justify-center transition-colors shadow-sm shrink-0"><RefreshCw className="size-4" /></button>
-          {canEdit && (
-            <button onClick={() => setModal({})} className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full xl:w-auto shrink-0"><Plus className="size-3.5" /> Add Book</button>
-          )}
-        </div>
-      </div>
-
-      {loading ? (
-        <div className="h-64 flex items-center justify-center"><Loader2 className="animate-spin size-8 text-primary" /></div>
-      ) : filtered.length === 0 ? (
-        <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
-          <LibraryIcon className="size-10 text-zinc-300 mb-3" />
-          <p className="text-zinc-500 text-sm font-medium">{rows.length === 0 ? 'No books in the catalogue yet.' : 'No matches for your filters.'}</p>
-        </div>
+      {selectedBook ? (
+        <OfflineBookDetail book={selectedBook} canEdit={canEdit}
+          onBack={() => setSelected(null)}
+          onEdit={() => setModal({ editing: selectedBook })}
+          onIssue={() => setIssueFor(selectedBook)}
+          onDeleted={() => { setSelected(null); load(); }} />
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {filtered.map(b => {
-            const avail = Number(b.available_copies);
-            return (
-              <div key={b.id} className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col group">
-                <div className="relative aspect-[4/3] bg-zinc-50">
-                  <span className="absolute top-2 left-2 z-10 text-[10px] font-bold text-white bg-zinc-900/70 rounded px-1.5 py-0.5 tabular-nums">#{b._num}</span>
-                  <span className={`absolute top-2 right-2 z-10 text-[10px] font-bold rounded px-1.5 py-0.5 tabular-nums ring-1 ring-inset ${avail > 0 ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' : 'bg-red-50 text-red-700 ring-red-600/20'}`}>{avail}/{b.total_copies}</span>
-                  <CoverThumb src={`${API_BASE_URL}/admin/library/books/${b.id}/cover?v=${encodeURIComponent(b.updated_at || '')}`} hasCover={b.has_cover} className="w-full h-full" />
-                </div>
-                <div className="p-4 flex flex-col flex-1">
-                  <h3 className="text-sm font-semibold text-zinc-900 leading-tight line-clamp-2">{b.title}</h3>
-                  <p className="text-[11px] text-zinc-500 mt-0.5 truncate">{b.author || '—'}{b.isbn ? ` · ISBN ${b.isbn}` : ''}</p>
-                  <div className="flex flex-wrap gap-1.5 mt-2">
-                    {b.category && <span className="text-[10px] font-semibold text-zinc-600 bg-zinc-100 ring-1 ring-inset ring-black/5 px-2 py-0.5 rounded">{b.category}</span>}
-                    {b.location && <span className="text-[10px] font-semibold text-zinc-500 bg-zinc-50 ring-1 ring-inset ring-black/5 px-2 py-0.5 rounded">Shelf {b.location}</span>}
-                  </div>
-                  <p className="text-[10px] text-zinc-400 mt-2 leading-relaxed">
-                    Added by <span className="font-semibold text-zinc-500">{b.created_by_name || 'Unknown'}</span>{b.created_at && <> · {fmtWhen(b.created_at)}</>}
-                    {b.updated_by_name && <span className="block mt-0.5">Updated by <span className="font-semibold text-zinc-500">{b.updated_by_name}</span>{b.updated_at && <> · {fmtWhen(b.updated_at)}</>}</span>}
-                  </p>
-                  {canEdit ? (
-                    <div className="mt-auto pt-3 flex items-center gap-2">
-                      <button onClick={() => setIssueFor(b)} disabled={avail <= 0} title={avail > 0 ? 'Issue a copy' : 'No copies available'}
-                        className="h-8 flex-1 rounded-md font-semibold text-xs text-white bg-primary hover:bg-primary/90 disabled:bg-zinc-200 disabled:text-zinc-400 transition-colors inline-flex items-center justify-center gap-1.5"><ArrowLeftRight className="size-3.5" /> Issue</button>
-                      <button onClick={() => setModal({ editing: b })} title="Edit" className="size-8 bg-white ring-1 ring-black/5 shadow-sm hover:bg-zinc-50 text-zinc-500 hover:text-primary rounded-md flex items-center justify-center transition-colors"><Edit className="size-3.5" /></button>
-                      <button onClick={() => remove(b)} title="Delete" className="size-8 bg-white ring-1 ring-black/5 shadow-sm hover:bg-zinc-50 text-zinc-500 hover:text-red-600 rounded-md flex items-center justify-center transition-colors"><Trash2 className="size-3.5" /></button>
-                    </div>
-                  ) : (
-                    <div className="mt-auto pt-3 text-[11px] font-medium text-zinc-400">{avail > 0 ? `${avail} available` : 'All copies out'}</div>
-                  )}
-                </div>
+        <>
+          <div className="flex flex-wrap gap-3">
+            <StatCard icon={LibraryIcon} label="Total Books" value={stats.total} tint="primary" />
+            <StatCard icon={CheckCircle2} label="Available" value={stats.available} tint="emerald" />
+            <StatCard icon={ArrowLeftRight} label="On Loan" value={stats.onloan} tint="amber" />
+            <StatCard icon={Tag} label="Categories" value={stats.categories} tint="violet" />
+          </div>
+
+          <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto">
+              <div className="relative w-full sm:w-56">
+                <Search className="size-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search catalogue..."
+                  className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
               </div>
-            );
-          })}
-        </div>
+              <FilterSelect value={fAuthor} onChange={setFAuthor} allLabel="All Authors" options={authors} />
+              <FilterSelect value={fCategory} onChange={setFCategory} allLabel="All Categories" options={categories} />
+              <div className="flex items-center gap-1.5">
+                <Calendar className="size-4 text-zinc-400 shrink-0" />
+                <input type="date" value={fFrom} onChange={e => setFFrom(e.target.value)} title="Added from"
+                  className="h-9 w-[9.5rem] bg-white border border-zinc-200 rounded-md px-2.5 text-xs text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
+                <span className="text-zinc-300 text-xs">–</span>
+                <input type="date" value={fTo} onChange={e => setFTo(e.target.value)} title="Added to"
+                  className="h-9 w-[9.5rem] bg-white border border-zinc-200 rounded-md px-2.5 text-xs text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
+              </div>
+              {anyFilter && (
+                <button onClick={() => { setQuery(''); setFAuthor(''); setFCategory(''); setFFrom(''); setFTo(''); }}
+                  className="h-9 px-3 rounded-md border border-zinc-200 bg-white text-xs font-semibold text-zinc-600 hover:bg-zinc-50 transition-colors shrink-0">Clear</button>
+              )}
+            </div>
+            <div className="flex items-center gap-2 w-full xl:w-auto">
+              <button onClick={load} className="h-9 px-3 bg-white border border-zinc-200 text-zinc-600 hover:text-primary hover:bg-zinc-50 rounded-md flex items-center justify-center transition-colors shadow-sm shrink-0"><RefreshCw className="size-4" /></button>
+              {canEdit && (
+                <button onClick={() => setModal({})} className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full xl:w-auto shrink-0"><Plus className="size-3.5" /> Add Book</button>
+              )}
+            </div>
+          </div>
+
+          {loading ? (
+            <div className="h-64 flex items-center justify-center"><Loader2 className="animate-spin size-8 text-primary" /></div>
+          ) : filtered.length === 0 ? (
+            <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
+              <LibraryIcon className="size-10 text-zinc-300 mb-3" />
+              <p className="text-zinc-500 text-sm font-medium">{rows.length === 0 ? 'No books in the catalogue yet.' : 'No matches for your filters.'}</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+              {filtered.map(b => {
+                const avail = Number(b.available_copies);
+                return (
+                  <div key={b.id} onClick={() => setSelected(b.id)}
+                    className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col cursor-pointer group hover:ring-primary/30 hover:shadow-md transition-all">
+                    <div className="relative aspect-[3/4] bg-zinc-50">
+                      <span className="absolute top-1 left-1 z-10 text-[8px] font-bold text-white bg-zinc-900/70 rounded px-1 py-0.5 tabular-nums">#{b._num}</span>
+                      <span className={`absolute top-1 right-1 z-10 text-[8px] font-bold rounded px-1 py-0.5 tabular-nums ring-1 ring-inset ${avail > 0 ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' : 'bg-red-50 text-red-700 ring-red-600/20'}`}>{avail}/{b.total_copies}</span>
+                      <CoverThumb src={`${API_BASE_URL}/admin/library/books/${b.id}/cover?v=${encodeURIComponent(b.updated_at || '')}`} hasCover={b.has_cover} className="w-full h-full" />
+                    </div>
+                    <div className="p-2">
+                      <h3 className="text-[11px] font-semibold text-zinc-900 leading-tight line-clamp-2 group-hover:text-primary transition-colors">{b.title}</h3>
+                      <p className="text-[9px] text-zinc-500 mt-0.5 truncate">{b.author || '—'}</p>
+                      <p className="text-[8px] text-zinc-400 mt-1 leading-snug line-clamp-1">by {b.created_by_name || 'Unknown'}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
       )}
 
       {modal && <BookModal editing={modal.editing} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} />}
       {issueFor && <IssueModal book={issueFor} instId={user.institutionId} onClose={() => setIssueFor(null)} onSaved={() => { setIssueFor(null); load(); }} />}
     </>
+  );
+}
+
+function OfflineBookDetail({ book, canEdit, onBack, onEdit, onIssue, onDeleted }) {
+  const avail = Number(book.available_copies);
+  const del = async () => {
+    if (!window.confirm(`Delete "${book.title}" and its issue history?`)) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/library/books/${book.id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Delete failed');
+      onDeleted();
+    } catch (e) { alert(e.message); }
+  };
+  return (
+    <div className="animate-in fade-in duration-300 space-y-4">
+      <button onClick={onBack} className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
+        <ArrowLeft className="size-4" /> Back to catalogue
+      </button>
+      <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden">
+        <div className="flex flex-col sm:flex-row gap-6 p-5 sm:p-6 border-b border-zinc-100">
+          <div className="w-full sm:w-48 shrink-0">
+            <div className="aspect-[3/4] rounded-md ring-1 ring-black/5 overflow-hidden bg-zinc-100">
+              <CoverThumb src={`${API_BASE_URL}/admin/library/books/${book.id}/cover?v=${encodeURIComponent(book.updated_at || '')}`} hasCover={book.has_cover} className="w-full h-full" />
+            </div>
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold text-zinc-500 tabular-nums">#{book._num}</span>
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded tabular-nums ring-1 ring-inset ${avail > 0 ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' : 'bg-red-50 text-red-700 ring-red-600/20'}`}>{avail} / {book.total_copies} available</span>
+            </div>
+            <h2 className="text-xl font-semibold text-zinc-900 tracking-tight leading-tight mt-1">{book.title}</h2>
+            {book.author && <p className="text-sm text-zinc-500 mt-1">{book.author}</p>}
+            {book.isbn && <p className="text-[11px] text-zinc-400 mt-0.5">ISBN {book.isbn}</p>}
+            <div className="flex flex-wrap gap-2 mt-3">
+              {book.category && <span className="text-[10px] font-semibold text-zinc-600 bg-zinc-100 ring-1 ring-inset ring-black/5 px-2 py-0.5 rounded uppercase tracking-wider">{book.category}</span>}
+              {book.location && <span className="text-[10px] font-semibold text-zinc-500 bg-zinc-50 ring-1 ring-inset ring-black/5 px-2 py-0.5 rounded">Shelf {book.location}</span>}
+            </div>
+            {canEdit && (
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <button onClick={onIssue} disabled={avail <= 0}
+                  className="h-9 px-4 bg-primary hover:bg-primary/90 disabled:bg-zinc-200 disabled:text-zinc-400 text-white rounded-md text-xs font-semibold inline-flex items-center gap-1.5 shadow-sm transition-colors"><ArrowLeftRight className="size-3.5" /> Issue</button>
+                <button onClick={onEdit} className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 hover:bg-zinc-50 rounded-md text-xs font-semibold inline-flex items-center gap-1.5 transition-colors"><Edit className="size-3.5" /> Edit</button>
+                <button onClick={del} className="h-9 px-4 bg-white border border-red-200 text-red-600 hover:bg-red-50 rounded-md text-xs font-semibold inline-flex items-center gap-1.5 transition-colors"><Trash2 className="size-3.5" /> Delete</button>
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="p-5 sm:p-6 grid grid-cols-1 sm:grid-cols-2 gap-4 text-[11px]">
+          <div className="flex items-center gap-2 text-zinc-500">
+            <User className="size-3.5 text-primary shrink-0" />
+            Added by <span className="font-semibold text-zinc-700">{book.created_by_name || 'Unknown'}</span>
+            {book.created_at && <span className="text-zinc-400">· {fmtWhen(book.created_at)}</span>}
+          </div>
+          {book.updated_by_name && (
+            <div className="flex items-center gap-2 text-zinc-500">
+              <Clock className="size-3.5 text-primary shrink-0" />
+              Updated by <span className="font-semibold text-zinc-700">{book.updated_by_name}</span>
+              {book.updated_at && <span className="text-zinc-400">· {fmtWhen(book.updated_at)}</span>}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -735,14 +789,14 @@ function BookModal({ editing, onClose, onSaved }) {
     total_copies: editing?.total_copies ? String(editing.total_copies) : '1'
   });
   const [cover, setCover] = useState(null);
-  const [removeCover, setRemoveCover] = useState(false);
+  const [replaceCover, setReplaceCover] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const pickCover = async (e) => {
     const f = e.target.files?.[0]; e.target.value = '';
     if (!f) return;
     if (!f.type.startsWith('image/')) return alert('Please choose an image file.');
-    try { setCover(await fileToDataUrl(f, 2)); setRemoveCover(false); } catch (err) { alert(err.message); }
+    try { setCover(await fileToDataUrl(f, 2)); setReplaceCover(false); } catch (err) { alert(err.message); }
   };
 
   const submit = async (e) => {
@@ -752,11 +806,11 @@ function BookModal({ editing, onClose, onSaved }) {
     if (!form.isbn.trim()) return alert('ISBN is required.');
     if (!form.category.trim()) return alert('Category is required.');
     if (!form.location.trim()) return alert('Shelf / Location is required.');
+    if (!cover && !(editing && editing.has_cover)) return alert('Cover image is required.');
     setSaving(true);
     try {
       const payload = { ...form, title: form.title.trim(), total_copies: Math.max(1, parseInt(form.total_copies, 10) || 1) };
       if (cover) payload.cover_data = cover.data;
-      else if (removeCover) payload.remove_cover = true;
       const url = editing ? `${API_BASE_URL}/admin/library/books/${editing.id}` : `${API_BASE_URL}/admin/library/books`;
       const res = await fetch(url, { method: editing ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const d = await res.json().catch(() => ({}));
@@ -766,7 +820,7 @@ function BookModal({ editing, onClose, onSaved }) {
     setSaving(false);
   };
 
-  const coverCurrent = editing && editing.has_cover && !removeCover ? 'Current cover image' : null;
+  const coverCurrent = editing && editing.has_cover && !replaceCover ? 'Current cover image' : null;
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
@@ -784,12 +838,10 @@ function BookModal({ editing, onClose, onSaved }) {
               <LabeledInput label="Category" required value={form.category} onChange={v => setForm({ ...form, category: v })} />
               <LabeledInput label="Shelf / Location" required value={form.location} onChange={v => setForm({ ...form, location: v })} />
             </div>
-            <FilePicker label="Cover Image" optional Icon={ImageIcon}
+            <FilePicker label="Cover Image" required Icon={ImageIcon}
               picked={cover} onPick={pickCover} onClear={() => setCover(null)}
               chooseLabel="Choose cover image (max 2 MB)"
-              currentName={coverCurrent} onCurrentX={() => setRemoveCover(true)}
-              note={removeCover && !cover ? 'Cover will be removed on save' : null}
-              onUndoNote={removeCover ? () => setRemoveCover(false) : null} />
+              currentName={coverCurrent} onCurrentX={() => setReplaceCover(true)} />
             <LabeledInput label="Total Copies" required type="number" value={form.total_copies} onChange={v => setForm({ ...form, total_copies: v })}
               hint={editing ? 'Available copies re-balance automatically.' : undefined} />
           </div>
@@ -845,6 +897,7 @@ function IssueModal({ book, instId, onClose, onSaved }) {
     if (!role) return alert('Select a role.');
     if (!memberId) return alert('Select a borrower.');
     if (!issueDate) return alert('Pick an issue date.');
+    if (!dueDate) return alert('Due date is required.');
     setSaving(true);
     try {
       const payload = { book_id: book.id, member_user_id: parseInt(memberId, 10), issue_date: issueDate, due_date: dueDate || null, notes: notes.trim() || null };
@@ -908,8 +961,8 @@ function IssueModal({ book, instId, onClose, onSaved }) {
                   className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
               </div>
               <div className="space-y-1.5">
-                <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Due date</label>
-                <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)}
+                <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Due date <span className="text-red-500">*</span></label>
+                <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} required
                   className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
               </div>
             </div>
