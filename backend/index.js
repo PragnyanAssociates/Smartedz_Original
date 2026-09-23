@@ -15772,15 +15772,26 @@ app.delete('/api/admin/library/books/:id', async (req, res) => {
 app.get('/api/admin/library/issues/:instId', async (req, res) => {
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     const { status, q } = req.query;
+    const decorate = rows => rows.map(r => ({ ...r, borrower: r.borrower_name || r.member_name || 'Unknown' }));
     try {
-        let sql = `
-            SELECT i.*, b.title AS book_title, b.author AS book_author,
-                   u.name AS member_name, ib.name AS issued_by_name
-              FROM library_issues i
-              LEFT JOIN library_books b ON b.id = i.book_id
-              LEFT JOIN users u  ON u.id = i.member_user_id
-              LEFT JOIN users ib ON ib.id = i.issued_by
-             WHERE i.institutionId = ?`;
+        const [cols] = await db.execute(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users'");
+        const names = cols.map(c => String(c.COLUMN_NAME));
+        const hasClass = names.includes('class_id');
+        const rollCol = ['rollNumber', 'roll_no', 'roll_number', 'roll', 'admissionNumber', 'admission_no'].find(c => names.includes(c));
+
+        const extra = ['u.role AS member_role'];
+        if (rollCol) extra.push('u.`' + rollCol + '` AS member_roll');
+        if (hasClass) extra.push('c.className AS member_class', 'c.section AS member_section');
+
+        let sql = 'SELECT i.*, b.title AS book_title, b.author AS book_author, u.name AS member_name, ib.name AS issued_by_name, '
+            + extra.join(', ')
+            + ' FROM library_issues i'
+            + ' LEFT JOIN library_books b ON b.id = i.book_id'
+            + ' LEFT JOIN users u ON u.id = i.member_user_id'
+            + ' LEFT JOIN users ib ON ib.id = i.issued_by'
+            + (hasClass ? ' LEFT JOIN classes c ON c.id = u.class_id' : '')
+            + ' WHERE i.institutionId = ?';
         const params = [instId];
         if (status === 'issued' || status === 'returned') { sql += ' AND i.status = ?'; params.push(status); }
         if (q && q.trim()) {
@@ -15789,9 +15800,23 @@ app.get('/api/admin/library/issues/:instId', async (req, res) => {
         }
         sql += " ORDER BY (i.status = 'returned') ASC, i.issue_date DESC, i.id DESC";
         const [rows] = await db.execute(sql, params);
-        const decorated = rows.map(r => ({ ...r, borrower: r.borrower_name || r.member_name || 'Unknown' }));
-        res.json(decorated);
-    } catch (err) { res.status(500).json({ error: err.message }); }
+        res.json(decorate(rows));
+    } catch (err) {
+        // Fallback: role only (always present), never break the list.
+        try {
+            let sql = `SELECT i.*, b.title AS book_title, b.author AS book_author, u.name AS member_name, u.role AS member_role, ib.name AS issued_by_name
+                         FROM library_issues i
+                         LEFT JOIN library_books b ON b.id = i.book_id
+                         LEFT JOIN users u ON u.id = i.member_user_id
+                         LEFT JOIN users ib ON ib.id = i.issued_by
+                        WHERE i.institutionId = ?`;
+            const params = [instId];
+            if (status === 'issued' || status === 'returned') { sql += ' AND i.status = ?'; params.push(status); }
+            sql += " ORDER BY (i.status = 'returned') ASC, i.issue_date DESC, i.id DESC";
+            const [rows] = await db.execute(sql, params);
+            res.json(decorate(rows));
+        } catch (e2) { res.status(500).json({ error: e2.message }); }
+    }
 });
 
 app.post('/api/admin/library/issues', async (req, res) => {

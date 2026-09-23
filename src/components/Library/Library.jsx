@@ -1007,7 +1007,7 @@ function IssuedBooks({ user, canEdit }) {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return numbered.filter(r => {
-      if (q && ![r.book_title, r.borrower, r.book_author].some(v => (v || '').toLowerCase().includes(q))) return false;
+      if (q && ![r.book_title, r.borrower, r.book_author, r.member_role, r.member_roll, r.member_class].some(v => String(v || '').toLowerCase().includes(q))) return false;
       const iss = (r.issue_date || '').slice(0, 10);
       if (issFrom && iss && iss < issFrom) return false;
       if (issTo && iss && iss > issTo) return false;
@@ -1118,7 +1118,19 @@ function IssuedBooks({ user, canEdit }) {
                   <tr key={r.id} className="hover:bg-zinc-50/60 transition-colors group">
                     <td className="px-4 py-4 text-center font-semibold text-primary tabular-nums">{r._num}</td>
                     <td className="px-5 py-4 font-semibold text-zinc-900 text-sm">{r.book_title || '-'}{r.book_author && <span className="block text-[10px] font-medium text-zinc-400 mt-0.5">{r.book_author}</span>}</td>
-                    <td className="px-5 py-4 text-sm text-zinc-700"><span className="inline-flex items-center gap-1.5"><User className="size-3.5 text-zinc-400" /> {r.borrower}</span></td>
+                    <td className="px-5 py-4 text-sm text-zinc-700">
+                      <div className="flex items-start gap-1.5">
+                        <User className="size-3.5 text-zinc-400 mt-0.5 shrink-0" />
+                        <div className="leading-tight">
+                          <div className="font-medium text-zinc-800">{r.borrower}</div>
+                          {(() => {
+                            const cls = r.member_class ? `${r.member_class}${r.member_section ? ' - ' + r.member_section : ''}` : '';
+                            const bits = [r.member_role, r.member_roll ? `Roll ${r.member_roll}` : null, cls].filter(Boolean);
+                            return bits.length ? <div className="text-[10px] text-zinc-400 mt-0.5">{bits.join(' · ')}</div> : null;
+                          })()}
+                        </div>
+                      </div>
+                    </td>
                     <td className="px-5 py-4 text-sm text-zinc-600 tabular-nums">{fmtDMY(r.issue_date)}</td>
                     <td className="px-5 py-4 text-sm tabular-nums"><span className={overdue ? 'text-red-600 font-semibold' : 'text-zinc-600'}>{fmtDMY(r.due_date)}</span></td>
                     <td className="px-5 py-4">
