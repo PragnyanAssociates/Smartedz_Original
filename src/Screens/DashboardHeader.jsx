@@ -73,12 +73,6 @@ export default function DashboardHeader({ onMenuClick }) {
               {instituteName ? initial : <Building2 className="size-6 text-zinc-400" />}
             </div>
           )}
-
-          {instituteName && (
-            <span className="md:hidden text-sm font-semibold text-zinc-900 truncate max-w-[140px]">
-              {instituteName}{branchName ? ` \u00b7 ${branchName}` : ''}
-            </span>
-          )}
         </div>
 
         {/* SECTION 2: Institute info (middle) */}

@@ -213,7 +213,7 @@ function OnlineLibrary({ user, isSuperAdmin }) {
               {filtered.map(b => (
                 <div key={b.id} onClick={() => setSelected(b.id)}
                   className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col cursor-pointer group hover:ring-primary/30 hover:shadow-md transition-all">
-                  <div className="relative aspect-[3/4] bg-zinc-50">
+                  <div className="relative h-28 bg-zinc-50">
                     <span className="absolute top-1 left-1 z-10 text-[8px] font-bold text-white bg-zinc-900/70 rounded px-1 py-0.5 tabular-nums">#{b._num}</span>
                     <CoverThumb src={`${API_BASE_URL}/admin/library/online/${b.id}/cover?v=${encodeURIComponent(b.updated_at || '')}`} hasCover={b.has_cover} className="w-full h-full" />
                   </div>
@@ -695,7 +695,7 @@ function Catalogue({ user, canEdit }) {
                 return (
                   <div key={b.id} onClick={() => setSelected(b.id)}
                     className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col cursor-pointer group hover:ring-primary/30 hover:shadow-md transition-all">
-                    <div className="relative aspect-[3/4] bg-zinc-50">
+                    <div className="relative h-28 bg-zinc-50">
                       <span className="absolute top-1 left-1 z-10 text-[8px] font-bold text-white bg-zinc-900/70 rounded px-1 py-0.5 tabular-nums">#{b._num}</span>
                       <span className={`absolute top-1 right-1 z-10 text-[8px] font-bold rounded px-1 py-0.5 tabular-nums ring-1 ring-inset ${avail > 0 ? 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' : 'bg-red-50 text-red-700 ring-red-600/20'}`}>{avail}/{b.total_copies}</span>
                       <CoverThumb src={`${API_BASE_URL}/admin/library/books/${b.id}/cover?v=${encodeURIComponent(b.updated_at || '')}`} hasCover={b.has_cover} className="w-full h-full" />

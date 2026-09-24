@@ -87,13 +87,13 @@ function CoverThumb({ cover, ext, folder, index }) {
   const style = EXT_STYLE[ext] || { icon: FileIcon, wrap: 'bg-zinc-100', fg: 'text-zinc-400' };
   const Icon = folder ? Folder : style.icon;
   return (
-    <div className="relative aspect-[3/4] w-full overflow-hidden rounded-t-lg bg-zinc-50">
+    <div className="relative aspect-[4/3] w-full overflow-hidden rounded-t-lg bg-zinc-50">
       {cover ? (
         <img src={cover} alt="" className="absolute inset-0 h-full w-full object-cover" />
       ) : (
         <div className={`absolute inset-0 flex flex-col items-center justify-center ${folder ? 'bg-amber-50' : style.wrap}`}>
-          <Icon className={`size-10 ${folder ? 'text-amber-400' : style.fg}`} />
-          {!folder && <span className="mt-2 text-[10px] font-bold uppercase tracking-wider text-zinc-400">{ext}</span>}
+          <Icon className={`size-8 ${folder ? 'text-amber-400' : style.fg}`} />
+          {!folder && <span className="mt-1.5 text-[10px] font-bold uppercase tracking-wider text-zinc-400">{ext}</span>}
         </div>
       )}
       {typeof index === 'number' && (
