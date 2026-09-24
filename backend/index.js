@@ -8984,7 +8984,16 @@ app.delete('/api/admin/study-materials/:id', async (req, res) => {
 
 
 // =====================================================================
-//  BACKEND — Section 22: SYLLABUS  (v7 — PDF pages + LIBRARY)
+//  BACKEND — Section 22: SYLLABUS  (v8 — library cards: covers + rename)
+//
+//   New in v8 (library):
+//     • Folders and files can carry a COVER IMAGE (cover_data, a small
+//       compressed JPEG data URI). Returned inline in the list so the
+//       card grid renders instantly.
+//     • Files can be RENAMED and given a cover (PUT .../library/files/:id).
+//       The extension is preserved and re-validated on rename.
+//     • File create/edit accept an optional cover.
+//   Requires: syllabus_v8_library_covers.sql (once, after v7).
 //
 //   New in v7:
 //     • Page offset REMOVED. syllabus_chapters.page_from / page_to are
@@ -9798,6 +9807,25 @@ function _libSafeName(name) {
     // eslint-disable-next-line no-control-regex
     return base.replace(/[\u0000-\u001f\u007f"<>|:*?]/g, '_').trim().slice(0, 255);
 }
+// Rename keeps the original extension: strip any ext the user typed, re-add ours.
+function _libApplyRename(newName, currentExt) {
+    let n = _libSafeName(newName);
+    n = n.replace(/\.(pdf|docx?|xlsx?)$/i, '').trim();
+    if (!n) return null;
+    return `${n}.${currentExt}`;
+}
+// Cover: a small image data URI. Returns { ok, error } after size/type check.
+const COVER_MAX_BYTES = 3 * 1024 * 1024; // ~3 MB decoded (client compresses to far less)
+function _coverCheck(cover) {
+    if (cover === null || cover === undefined || cover === '') return { ok: true, value: null };
+    if (typeof cover !== 'string') return { ok: false, error: 'Invalid cover image.' };
+    const m = cover.match(/^data:image\/(png|jpe?g|webp);base64,/i);
+    if (!m) return { ok: false, error: 'Cover must be a PNG, JPG or WebP image.' };
+    const b64 = cover.slice(cover.indexOf(',') + 1);
+    const bytes = Math.floor(b64.length * 3 / 4);
+    if (bytes > COVER_MAX_BYTES) return { ok: false, error: 'Cover image is too large.' };
+    return { ok: true, value: cover };
+}
 
 // --- 22.L1 List folders for a type + class --------------------------
 app.get('/api/admin/syllabus/library/:instId/folders', async (req, res) => {
@@ -9807,7 +9835,7 @@ app.get('/api/admin/syllabus/library/:instId/folders', async (req, res) => {
     try {
         let sql = `
             SELECT f.id, f.name, f.syllabus_type_id, f.class_id, f.subject_id,
-                   f.created_at, f.updated_at,
+                   f.cover_data, f.created_at, f.updated_at,
                    c.className, c.section, sub.name AS subject_name,
                    uu.name AS updated_by_name,
                    (SELECT COUNT(*) FROM syllabus_library_files lf WHERE lf.folder_id = f.id) AS file_count,
@@ -9853,12 +9881,14 @@ app.post('/api/admin/syllabus/library/folders', async (req, res) => {
             const [[s]] = await db.execute('SELECT name FROM subjects WHERE id = ?', [subject_id]);
             name = s?.name || 'Folder';
         }
+        const cov = _coverCheck(req.body.cover_data);
+        if (!cov.ok) return res.status(400).json({ error: cov.error });
         const [ty] = await db.execute('SELECT institutionId FROM syllabus_types WHERE id = ?', [syllabus_type_id]);
         const [r] = await db.execute(
             `INSERT INTO syllabus_library_folders
-               (institutionId, syllabus_type_id, class_id, subject_id, name, created_by, updated_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [ty[0].institutionId, syllabus_type_id, class_id, subject_id, name.slice(0, 150), actor_id, actor_id]);
+               (institutionId, syllabus_type_id, class_id, subject_id, name, cover_data, created_by, updated_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [ty[0].institutionId, syllabus_type_id, class_id, subject_id, name.slice(0, 150), cov.value, actor_id, actor_id]);
         res.json({ success: true, id: r.insertId });
     } catch (err) {
         if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'A folder with that name already exists for this class and subject.' });
@@ -9878,9 +9908,18 @@ app.put('/api/admin/syllabus/library/folders/:id', async (req, res) => {
         const [[cur]] = await db.execute('SELECT syllabus_type_id FROM syllabus_library_folders WHERE id = ?', [req.params.id]);
         const bad = await _libValidateScope(req, { syllabus_type_id: cur.syllabus_type_id, class_id, subject_id });
         if (bad) return res.status(400).json({ error: bad });
-        await db.execute(
-            `UPDATE syllabus_library_folders SET name = ?, class_id = ?, subject_id = ?, updated_by = ? WHERE id = ?`,
-            [name.slice(0, 150), class_id, subject_id, actor_id, req.params.id]);
+        const hasCover = Object.prototype.hasOwnProperty.call(req.body, 'cover_data');
+        const cov = hasCover ? _coverCheck(req.body.cover_data) : { ok: true };
+        if (!cov.ok) return res.status(400).json({ error: cov.error });
+        if (hasCover) {
+            await db.execute(
+                `UPDATE syllabus_library_folders SET name = ?, class_id = ?, subject_id = ?, cover_data = ?, updated_by = ? WHERE id = ?`,
+                [name.slice(0, 150), class_id, subject_id, cov.value, actor_id, req.params.id]);
+        } else {
+            await db.execute(
+                `UPDATE syllabus_library_folders SET name = ?, class_id = ?, subject_id = ?, updated_by = ? WHERE id = ?`,
+                [name.slice(0, 150), class_id, subject_id, actor_id, req.params.id]);
+        }
         res.json({ success: true });
     } catch (err) {
         if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'A folder with that name already exists for this class and subject.' });
@@ -9904,10 +9943,13 @@ app.get('/api/admin/syllabus/library/folders/:id/files', async (req, res) => {
         if (inst === null) return res.json([]);
         if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This folder belongs to another institution.' });
         const [rows] = await db.execute(
-            `SELECT lf.id, lf.file_name, lf.file_ext, lf.mime_type, lf.file_size, lf.created_at,
-                    lf.uploaded_by, u.name AS uploaded_by_name
+            `SELECT lf.id, lf.file_name, lf.file_ext, lf.mime_type, lf.file_size, lf.cover_data,
+                    lf.created_at, lf.updated_at,
+                    lf.uploaded_by, u.name AS uploaded_by_name,
+                    uu.name AS updated_by_name
                FROM syllabus_library_files lf
-               LEFT JOIN users u ON u.id = lf.uploaded_by
+               LEFT JOIN users u  ON u.id  = lf.uploaded_by
+               LEFT JOIN users uu ON uu.id = lf.updated_by
               WHERE lf.folder_id = ?
               ORDER BY lf.file_name`, [req.params.id]);
         res.json(rows);
@@ -9929,11 +9971,13 @@ app.post('/api/admin/syllabus/library/folders/:id/files', async (req, res) => {
         if (!buf.length) return res.status(400).json({ error: 'The file is empty.' });
         if (buf.length > LIB_MAX_BYTES) return res.status(413).json({ error: 'Files must be 50 MB or smaller.' });
         if (!_libSignatureOk(ext, buf)) return res.status(400).json({ error: `This doesn't look like a real .${ext} file.` });
+        const cov = _coverCheck(req.body.cover_data);
+        if (!cov.ok) return res.status(400).json({ error: cov.error });
         const [r] = await db.execute(
             `INSERT INTO syllabus_library_files
-               (folder_id, file_name, file_ext, mime_type, file_size, file_data, uploaded_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [req.params.id, file_name, ext, LIB_TYPES[ext], buf.length, buf, actor_id]);
+               (folder_id, file_name, file_ext, mime_type, file_size, file_data, cover_data, uploaded_by, updated_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [req.params.id, file_name, ext, LIB_TYPES[ext], buf.length, buf, cov.value, actor_id, actor_id]);
         await db.execute('UPDATE syllabus_library_folders SET updated_by = ?, updated_at = ? WHERE id = ?',
             [actor_id, nowSQL(), req.params.id]);
         res.json({ success: true, id: r.insertId });
@@ -9959,6 +10003,39 @@ app.get('/api/admin/syllabus/library/files/:id/download', async (req, res) => {
         res.setHeader('X-Content-Type-Options', 'nosniff');
         res.send(f.file_data);
     } catch (err) { res.status(500).send(err.message); }
+});
+// --- 22.L7b Rename a file / set-or-clear its cover ------------------
+app.put('/api/admin/syllabus/library/files/:id', async (req, res) => {
+    const actor_id = req.auth.userId;
+    try {
+        const inst = await _libInstByFile(req.params.id);
+        if (inst === null) return res.status(404).json({ error: 'File not found.' });
+        if (!sameTenant(req, inst)) return res.status(403).json({ error: 'This file belongs to another institution.' });
+        const [[cur]] = await db.execute(
+            'SELECT folder_id, file_ext FROM syllabus_library_files WHERE id = ?', [req.params.id]);
+
+        const sets = [];
+        const params = [];
+
+        if (Object.prototype.hasOwnProperty.call(req.body, 'file_name')) {
+            const renamed = _libApplyRename(req.body.file_name, cur.file_ext);
+            if (!renamed) return res.status(400).json({ error: 'A file name is required.' });
+            sets.push('file_name = ?'); params.push(renamed);
+        }
+        if (Object.prototype.hasOwnProperty.call(req.body, 'cover_data')) {
+            const cov = _coverCheck(req.body.cover_data);
+            if (!cov.ok) return res.status(400).json({ error: cov.error });
+            sets.push('cover_data = ?'); params.push(cov.value);
+        }
+        if (!sets.length) return res.status(400).json({ error: 'Nothing to update.' });
+
+        sets.push('updated_by = ?'); params.push(actor_id);
+        params.push(req.params.id);
+        await db.execute(`UPDATE syllabus_library_files SET ${sets.join(', ')} WHERE id = ?`, params);
+        await db.execute('UPDATE syllabus_library_folders SET updated_by = ?, updated_at = ? WHERE id = ?',
+            [actor_id, nowSQL(), cur.folder_id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 // --- 22.L8 Delete a file --------------------------------------------
 app.delete('/api/admin/syllabus/library/files/:id', async (req, res) => {

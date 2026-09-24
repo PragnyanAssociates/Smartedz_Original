@@ -3,29 +3,48 @@ import { API_BASE_URL } from '../../apiConfig';
 import {
   ArrowLeft, Library as LibraryIcon, Folder, FolderPlus, Upload, Download, Eye, Trash2, Edit,
   X, Loader2, Save, ChevronDown, ChevronRight, FileText, FileSpreadsheet, File as FileIcon,
-  Search, HelpCircle, ShieldCheck, Layers, RefreshCw
+  Search, HelpCircle, ShieldCheck, Layers, ImagePlus, ExternalLink
 } from 'lucide-react';
-import { fmtDate } from './SyllabusUtils';
 
 // =====================================================================
 //  Syllabus Library
-//   One library per SYLLABUS TYPE. Inside it, folders - each tied to a
-//   class + subject - hold textbooks and materials (PDF, Word, Excel).
-//   Uses the same remembered class filter as Syllabus Management.
+//   One library per SYLLABUS TYPE. Folders (class + subject) hold
+//   textbooks and materials (PDF, Word, Excel) shown as cover cards.
+//   Folders and files can carry a cover image; files can be renamed.
 // =====================================================================
 
 const MAX_MB = 50;
 const ACCEPT = '.pdf,.doc,.docx,.xls,.xlsx';
 const ALLOWED = ['pdf', 'doc', 'docx', 'xls', 'xlsx'];
+const COVER_ACCEPT = 'image/png,image/jpeg,image/webp';
 
 const classLabel = (c) => `${c.className}${c.section ? ' - ' + c.section : ''}`;
 const extOf = (name = '') => (name.includes('.') ? name.split('.').pop() : '').toLowerCase();
+const stripExt = (name = '') => name.replace(/\.(pdf|docx?|xlsx?)$/i, '');
 const fmtSize = (b) => {
   const n = Number(b) || 0;
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 };
+
+// "by vicky · 23 Sep 2026, 10:22 am"  (IST; Railway stores UTC)
+const _toDate = (val) => {
+  if (!val) return null;
+  let d;
+  if (typeof val === 'string' && !val.includes('T') && !val.endsWith('Z')) d = new Date(val.replace(' ', 'T') + 'Z');
+  else d = new Date(val);
+  return isNaN(d.getTime()) ? null : d;
+};
+const fmtWhen = (val) => {
+  const d = _toDate(val);
+  if (!d) return '';
+  const date = d.toLocaleDateString('en-GB', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' });
+  const time = d.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true });
+  return `${date}, ${time}`;
+};
+const byLine = (name, val) => `by ${name || 'Unknown'}${val ? ' · ' + fmtWhen(val) : ''}`;
+
 const readAsDataURL = (file) => new Promise((resolve, reject) => {
   const r = new FileReader();
   r.onload = () => resolve(r.result);
@@ -33,11 +52,94 @@ const readAsDataURL = (file) => new Promise((resolve, reject) => {
   r.readAsDataURL(file);
 });
 
-function FileTypeIcon({ ext, className = 'size-4' }) {
-  if (ext === 'pdf') return <FileText className={`${className} text-red-500`} />;
-  if (ext === 'xls' || ext === 'xlsx') return <FileSpreadsheet className={`${className} text-emerald-600`} />;
-  if (ext === 'doc' || ext === 'docx') return <FileText className={`${className} text-blue-600`} />;
-  return <FileIcon className={`${className} text-zinc-400`} />;
+// Downscale a chosen image to a small JPEG data URI so covers stay light.
+const imageToCover = (file, max = 640, quality = 0.82) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, max / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.round(img.width * scale));
+      const h = Math.max(1, Math.round(img.height * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => reject(new Error('That image could not be read.'));
+    img.src = reader.result;
+  };
+  reader.onerror = () => reject(new Error('That image could not be read.'));
+  reader.readAsDataURL(file);
+});
+
+const EXT_STYLE = {
+  pdf:  { icon: FileText,        wrap: 'bg-red-50',     fg: 'text-red-500' },
+  doc:  { icon: FileText,        wrap: 'bg-blue-50',    fg: 'text-blue-600' },
+  docx: { icon: FileText,        wrap: 'bg-blue-50',    fg: 'text-blue-600' },
+  xls:  { icon: FileSpreadsheet, wrap: 'bg-emerald-50', fg: 'text-emerald-600' },
+  xlsx: { icon: FileSpreadsheet, wrap: 'bg-emerald-50', fg: 'text-emerald-600' },
+};
+
+// A cover thumbnail (portrait) - the image if there is one, else a tinted
+// placeholder with the file-type icon. Used by both file and folder cards.
+function CoverThumb({ cover, ext, folder, index }) {
+  const style = EXT_STYLE[ext] || { icon: FileIcon, wrap: 'bg-zinc-100', fg: 'text-zinc-400' };
+  const Icon = folder ? Folder : style.icon;
+  return (
+    <div className="relative aspect-[3/4] w-full overflow-hidden rounded-t-lg bg-zinc-50">
+      {cover ? (
+        <img src={cover} alt="" className="absolute inset-0 h-full w-full object-cover" />
+      ) : (
+        <div className={`absolute inset-0 flex flex-col items-center justify-center ${folder ? 'bg-amber-50' : style.wrap}`}>
+          <Icon className={`size-10 ${folder ? 'text-amber-400' : style.fg}`} />
+          {!folder && <span className="mt-2 text-[10px] font-bold uppercase tracking-wider text-zinc-400">{ext}</span>}
+        </div>
+      )}
+      {typeof index === 'number' && (
+        <span className="absolute left-2 top-2 rounded bg-zinc-900/70 px-1.5 py-0.5 text-[10px] font-bold text-white backdrop-blur-sm">
+          #{index + 1}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// Cover picker used inside the folder / file modals.
+function CoverPicker({ value, onChange }) {
+  const ref = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const pick = async (e) => {
+    const f = e.target.files?.[0];
+    if (ref.current) ref.current.value = '';
+    if (!f) return;
+    if (f.size > 8 * 1024 * 1024) return alert('Pick an image under 8 MB.');
+    setBusy(true);
+    try { onChange(await imageToCover(f)); }
+    catch (err) { alert(err.message); }
+    setBusy(false);
+  };
+  return (
+    <div className="flex items-center gap-3">
+      <div className="size-20 shrink-0 overflow-hidden rounded-md ring-1 ring-black/10 bg-zinc-50 flex items-center justify-center">
+        {value ? <img src={value} alt="" className="h-full w-full object-cover" /> : <ImagePlus className="size-6 text-zinc-300" />}
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <input ref={ref} type="file" accept={COVER_ACCEPT} className="hidden" onChange={pick} />
+        <button type="button" onClick={() => ref.current?.click()} disabled={busy}
+          className="h-8 px-3 bg-white ring-1 ring-black/10 shadow-sm hover:bg-zinc-50 text-zinc-700 rounded-md text-xs font-semibold inline-flex items-center gap-1.5 transition-colors w-fit">
+          {busy ? <Loader2 className="size-3.5 animate-spin" /> : <ImagePlus className="size-3.5" />}
+          {value ? 'Change cover' : 'Add cover'}
+        </button>
+        {value && (
+          <button type="button" onClick={() => onChange(null)}
+            className="h-8 px-3 text-red-600 hover:bg-red-50 rounded-md text-xs font-semibold inline-flex items-center gap-1.5 transition-colors w-fit">
+            <Trash2 className="size-3.5" /> Remove cover
+          </button>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export default function SyllabusLibrary({
@@ -96,12 +198,16 @@ export default function SyllabusLibrary({
     } catch (e) { alert(e.message); }
   };
 
+  // Top-of-page back: inside a folder -> back to the folder list; else -> syllabuses.
+  const backAction = openFolder ? () => setOpenFolderId(null) : onBack;
+  const backLabel  = openFolder ? 'Back to library' : 'Back to syllabuses';
+
   return (
     <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
       <div className="flex items-center">
-        <button onClick={onBack}
+        <button onClick={backAction}
           className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors w-fit">
-          <ArrowLeft className="size-4" /> Back to syllabuses
+          <ArrowLeft className="size-4" /> {backLabel}
         </button>
       </div>
 
@@ -142,11 +248,6 @@ export default function SyllabusLibrary({
                 className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-8 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
             </div>
           )}
-          <button onClick={load} disabled={loading}
-            className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 hover:bg-zinc-50 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors w-full sm:w-auto shrink-0">
-            {loading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-            Refresh
-          </button>
         </div>
         {canEdit && !openFolder && (
           <button onClick={() => setFolderModal({})}
@@ -178,36 +279,38 @@ export default function SyllabusLibrary({
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-3 sm:gap-4">
-            {filtered.map(f => (
-              <div key={f.id} role="button" tabIndex={0}
-                onClick={() => setOpenFolderId(f.id)}
-                onKeyDown={e => { if (e.key === 'Enter') setOpenFolderId(f.id); }}
-                className="group bg-white rounded-lg ring-1 ring-black/5 shadow-sm hover:ring-primary/30 transition-colors cursor-pointer p-4 flex items-start gap-3 outline-none focus-visible:ring-2 focus-visible:ring-primary/40">
-                <div className="size-10 rounded-lg bg-amber-50 text-amber-500 flex items-center justify-center shrink-0">
-                  <Folder className="size-5" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="font-semibold text-sm text-zinc-900 truncate group-hover:text-primary transition-colors" title={f.name}>{f.name}</p>
-                  <p className="text-[11px] text-zinc-500 mt-0.5 truncate">{f.subject_name} - {f.class_group}</p>
-                  <p className="text-[11px] text-zinc-400 mt-2">
-                    {f.file_count} file{Number(f.file_count) === 1 ? '' : 's'}
-                    {Number(f.total_size) > 0 ? `, ${fmtSize(f.total_size)}` : ''}
-                    {f.updated_at ? ` - updated ${fmtDate(f.updated_at)}` : ''}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3 sm:gap-4">
+            {filtered.map((f, i) => (
+              <div key={f.id}
+                className="group bg-white rounded-lg ring-1 ring-black/5 shadow-sm hover:ring-primary/30 hover:shadow-md transition-all flex flex-col overflow-hidden">
+                <button onClick={() => setOpenFolderId(f.id)} className="text-left outline-none focus-visible:ring-2 focus-visible:ring-primary/40">
+                  <CoverThumb cover={f.cover_data} folder index={i} />
+                </button>
+                <div className="p-3 flex flex-col flex-1">
+                  <button onClick={() => setOpenFolderId(f.id)}
+                    className="text-left font-semibold text-sm text-zinc-900 truncate hover:text-primary transition-colors" title={f.name}>
+                    {f.name}
+                  </button>
+                  <p className="text-[11px] text-zinc-500 mt-0.5 truncate">{f.subject_name} · {f.class_group}</p>
+                  <p className="text-[11px] text-zinc-400 mt-1.5 leading-snug">
+                    {f.file_count} file{Number(f.file_count) === 1 ? '' : 's'}{Number(f.total_size) > 0 ? ` · ${fmtSize(f.total_size)}` : ''}
                   </p>
+                  <p className="text-[10px] text-zinc-400 mt-0.5 truncate" title={byLine(f.updated_by_name, f.updated_at)}>
+                    {byLine(f.updated_by_name, f.updated_at)}
+                  </p>
+                  {canEdit && (
+                    <div className="flex items-center gap-1 mt-2 pt-2 border-t border-zinc-100">
+                      <button onClick={() => setFolderModal({ editing: f })} title="Edit folder"
+                        className="flex-1 h-7 rounded-md text-zinc-500 hover:text-primary hover:bg-zinc-50 flex items-center justify-center transition-colors">
+                        <Edit className="size-3.5" />
+                      </button>
+                      <button onClick={() => deleteFolder(f)} title="Delete folder"
+                        className="flex-1 h-7 rounded-md text-zinc-500 hover:text-red-600 hover:bg-zinc-50 flex items-center justify-center transition-colors">
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    </div>
+                  )}
                 </div>
-                {canEdit && (
-                  <div className="flex flex-col gap-1 shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                    <button onClick={e => { e.stopPropagation(); setFolderModal({ editing: f }); }} title="Edit folder"
-                      className="p-1.5 text-zinc-400 hover:text-primary hover:bg-zinc-50 rounded-md transition-colors">
-                      <Edit className="size-3.5" />
-                    </button>
-                    <button onClick={e => { e.stopPropagation(); deleteFolder(f); }} title="Delete folder"
-                      className="p-1.5 text-zinc-400 hover:text-red-600 hover:bg-zinc-50 rounded-md transition-colors">
-                      <Trash2 className="size-3.5" />
-                    </button>
-                  </div>
-                )}
               </div>
             ))}
           </div>
@@ -232,12 +335,14 @@ export default function SyllabusLibrary({
 }
 
 // =====================================================================
-//  Create / edit a folder (class + subject + name)
+//  Create / edit a folder (class + subject + name + cover)
 // =====================================================================
 function FolderModal({ editing, syllabusType, classes, subjects, subjectClasses, defaultClassId, onClose, onSaved }) {
   const [classId, setClassId]     = useState(editing ? String(editing.class_id) : String(defaultClassId || ''));
   const [subjectId, setSubjectId] = useState(editing ? String(editing.subject_id) : '');
   const [name, setName]           = useState(editing?.name || '');
+  const [cover, setCover]         = useState(editing?.cover_data || null);
+  const [coverTouched, setCT]     = useState(false);
   const [saving, setSaving]       = useState(false);
 
   const subjectsForClass = useMemo(() => {
@@ -263,6 +368,8 @@ function FolderModal({ editing, syllabusType, classes, subjects, subjectClasses,
         subject_id: parseInt(subjectId, 10),
         name: name.trim() || subjectName
       };
+      // On create always send the cover; on edit only if the user touched it.
+      if (!editing || coverTouched) body.cover_data = cover;
       const res = await fetch(
         editing ? `${API_BASE_URL}/admin/syllabus/library/folders/${editing.id}` : `${API_BASE_URL}/admin/syllabus/library/folders`,
         { method: editing ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -277,15 +384,15 @@ function FolderModal({ editing, syllabusType, classes, subjects, subjectClasses,
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-md shadow-xl flex flex-col animate-in fade-in zoom-in-95 duration-200">
-        <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 rounded-t-lg">
+      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-md shadow-xl flex flex-col animate-in fade-in zoom-in-95 duration-200 max-h-[90vh]">
+        <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 rounded-t-lg shrink-0">
           <h2 className="text-lg font-semibold text-zinc-900 flex items-center gap-2">
             <FolderPlus className="size-4 text-primary" /> {editing ? 'Edit Folder' : 'New Folder'}
           </h2>
           <button onClick={onClose} className="text-zinc-400 hover:text-zinc-700 transition-colors p-1.5 hover:bg-zinc-100 rounded-md"><X className="size-4" /></button>
         </div>
-        <form onSubmit={submit} className="flex flex-col">
-          <div className="p-5 sm:p-6 space-y-4">
+        <form onSubmit={submit} className="flex flex-col overflow-hidden">
+          <div className="p-5 sm:p-6 space-y-4 overflow-y-auto custom-scrollbar">
             <div className="space-y-1.5">
               <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Syllabus Type</label>
               <div className="h-9 w-full bg-zinc-50 border border-zinc-200 rounded-md px-3 text-sm text-zinc-700 font-medium flex items-center gap-1.5">
@@ -324,8 +431,13 @@ function FolderModal({ editing, syllabusType, classes, subjects, subjectClasses,
                 className={inputCls} />
               <p className="text-[11px] text-zinc-400">Leave blank to name it after the subject.</p>
             </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Cover Image</label>
+              <CoverPicker value={cover} onChange={v => { setCover(v); setCT(true); }} />
+            </div>
           </div>
-          <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg">
+          <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
             <button type="button" onClick={onClose} disabled={saving}
               className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 rounded-md font-semibold text-xs hover:bg-zinc-50 transition-colors">Cancel</button>
             <button type="submit" disabled={saving}
@@ -341,7 +453,7 @@ function FolderModal({ editing, syllabusType, classes, subjects, subjectClasses,
 }
 
 // =====================================================================
-//  Inside a folder: upload / view / download / delete files
+//  Inside a folder: file cover cards + upload / preview / rename / delete
 // =====================================================================
 function FolderView({ folder, canEdit, onBack, onChanged }) {
   const [files, setFiles]       = useState([]);
@@ -349,6 +461,8 @@ function FolderView({ folder, canEdit, onBack, onChanged }) {
   const [progress, setProgress] = useState(null); // { done, total } | null
   const [busyId, setBusyId]     = useState(null);
   const [dragOver, setDragOver] = useState(false);
+  const [fileModal, setFileModal] = useState(null); // { file } | null
+  const [preview, setPreview]   = useState(null);    // { name, url } | null
   const inputRef = useRef(null);
 
   const load = useCallback(async () => {
@@ -399,18 +513,20 @@ function FolderView({ folder, canEdit, onBack, onChanged }) {
     return res.blob();
   };
 
+  // View in an in-app modal (reliable - avoids the blank pop-up tab).
   const viewFile = async (file) => {
-    // open the tab first (synchronously) so pop-up blockers allow it
-    const win = window.open('', '_blank');
     setBusyId(file.id);
     try {
       const blob = await fetchBlob(file, true);
       const url = URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
-      if (win) win.location.href = url; else window.open(url, '_blank');
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch (e) { if (win) win.close(); alert(e.message); }
+      setPreview({ name: file.file_name, url });
+    } catch (e) { alert(e.message); }
     setBusyId(null);
   };
+  const closePreview = () => {
+    setPreview(p => { if (p?.url) URL.revokeObjectURL(p.url); return null; });
+  };
+  useEffect(() => () => { if (preview?.url) URL.revokeObjectURL(preview.url); }, [preview]);
 
   const downloadFile = async (file) => {
     setBusyId(file.id);
@@ -420,7 +536,7 @@ function FolderView({ folder, canEdit, onBack, onChanged }) {
       const a = document.createElement('a');
       a.href = url; a.download = file.file_name;
       document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
     } catch (e) { alert(e.message); }
     setBusyId(null);
   };
@@ -438,23 +554,23 @@ function FolderView({ folder, canEdit, onBack, onChanged }) {
   const uploading = !!progress;
 
   return (
-    <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm flex flex-col overflow-hidden"
+    <div className="space-y-4"
       onDragOver={canEdit ? (e => { e.preventDefault(); setDragOver(true); }) : undefined}
       onDragLeave={canEdit ? (() => setDragOver(false)) : undefined}
       onDrop={canEdit ? (e => { e.preventDefault(); setDragOver(false); if (!uploading) uploadFiles(e.dataTransfer.files); }) : undefined}>
 
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 border-b border-zinc-100 bg-zinc-50/50">
+      {/* Folder header bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white rounded-lg ring-1 ring-black/5 shadow-sm p-4">
         <div className="flex items-center gap-1.5 min-w-0 text-sm">
           <button onClick={onBack} className="font-semibold text-zinc-500 hover:text-primary transition-colors shrink-0">All folders</button>
           <ChevronRight className="size-3.5 text-zinc-300 shrink-0" />
           <Folder className="size-4 text-amber-500 shrink-0" />
           <span className="font-semibold text-zinc-900 truncate">{folder.name}</span>
-          <span className="text-[11px] text-zinc-400 truncate hidden md:inline">- {folder.subject_name}, {folder.class_group}</span>
+          <span className="text-[11px] text-zinc-400 truncate hidden md:inline">· {folder.subject_name}, {folder.class_group}</span>
         </div>
         {canEdit && (
           <>
-            <input ref={inputRef} type="file" multiple accept={ACCEPT} className="hidden"
-              onChange={e => uploadFiles(e.target.files)} />
+            <input ref={inputRef} type="file" multiple accept={ACCEPT} className="hidden" onChange={e => uploadFiles(e.target.files)} />
             <button onClick={() => inputRef.current?.click()} disabled={uploading}
               className="h-9 px-4 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors shrink-0">
               {uploading ? <Loader2 className="size-3.5 animate-spin" /> : <Upload className="size-3.5" />}
@@ -465,7 +581,7 @@ function FolderView({ folder, canEdit, onBack, onChanged }) {
       </div>
 
       {canEdit && dragOver && (
-        <div className="m-3 rounded-md border-2 border-dashed border-primary/40 bg-primary/5 p-6 text-center text-sm font-semibold text-primary">
+        <div className="rounded-md border-2 border-dashed border-primary/40 bg-primary/5 p-6 text-center text-sm font-semibold text-primary">
           Drop PDF, Word or Excel files to upload
         </div>
       )}
@@ -473,64 +589,149 @@ function FolderView({ folder, canEdit, onBack, onChanged }) {
       {loading ? (
         <div className="h-48 flex items-center justify-center"><Loader2 className="animate-spin size-7 text-primary" /></div>
       ) : files.length === 0 ? (
-        <div className="p-12 text-center flex flex-col items-center">
+        <div className="bg-white rounded-lg ring-1 ring-black/5 p-12 text-center flex flex-col items-center">
           <FileText className="size-10 text-zinc-300 mb-3" />
           <p className="text-zinc-500 text-sm font-medium">This folder is empty.</p>
           {canEdit && <p className="text-zinc-400 text-xs mt-1.5">Upload PDF, Word or Excel files (up to {MAX_MB} MB each), or drag them here.</p>}
         </div>
       ) : (
-        <div className="overflow-x-auto custom-scrollbar">
-          <table className="w-full text-left border-collapse min-w-[720px]">
-            <thead className="bg-zinc-50/80">
-              <tr>
-                <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">File</th>
-                <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 w-20">Type</th>
-                <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 w-24">Size</th>
-                <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 w-44">Uploaded</th>
-                <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 text-right w-40">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {files.map(f => (
-                <tr key={f.id} className="hover:bg-zinc-50/60 transition-colors group">
-                  <td className="px-5 py-3">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <FileTypeIcon ext={f.file_ext} />
-                      <span className="text-sm font-medium text-zinc-900 truncate max-w-[380px]" title={f.file_name}>{f.file_name}</span>
-                    </div>
-                  </td>
-                  <td className="px-5 py-3 text-[11px] font-semibold text-zinc-500 uppercase">{f.file_ext}</td>
-                  <td className="px-5 py-3 text-xs text-zinc-600 tabular-nums">{fmtSize(f.file_size)}</td>
-                  <td className="px-5 py-3 whitespace-nowrap">
-                    <div className="text-xs font-semibold text-zinc-700">{f.uploaded_by_name || '-'}</div>
-                    <div className="text-[11px] text-zinc-400 mt-0.5">{fmtDate(f.created_at)}</div>
-                  </td>
-                  <td className="px-5 py-3 text-right whitespace-nowrap">
-                    <div className="flex items-center justify-end gap-1">
-                      {f.file_ext === 'pdf' && (
-                        <button onClick={() => viewFile(f)} disabled={busyId === f.id} title="View"
-                          className="size-8 bg-white hover:bg-zinc-50 text-zinc-600 hover:text-primary rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5">
-                          <Eye className="size-3.5" />
-                        </button>
-                      )}
-                      <button onClick={() => downloadFile(f)} disabled={busyId === f.id} title="Download"
-                        className="size-8 bg-white hover:bg-zinc-50 text-zinc-600 hover:text-primary rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5">
-                        {busyId === f.id ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
-                      </button>
-                      {canEdit && (
-                        <button onClick={() => deleteFile(f)} title="Delete"
-                          className="size-8 bg-white hover:bg-zinc-50 text-zinc-600 hover:text-red-600 rounded-md flex items-center justify-center transition-colors shadow-sm ring-1 ring-black/5">
-                          <Trash2 className="size-3.5" />
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3 sm:gap-4">
+          {files.map((f, i) => (
+            <div key={f.id} className="group bg-white rounded-lg ring-1 ring-black/5 shadow-sm hover:ring-primary/30 hover:shadow-md transition-all flex flex-col overflow-hidden">
+              <button onClick={() => (f.file_ext === 'pdf' ? viewFile(f) : downloadFile(f))}
+                title={f.file_ext === 'pdf' ? 'View' : 'Download'}
+                className="text-left outline-none focus-visible:ring-2 focus-visible:ring-primary/40">
+                <CoverThumb cover={f.cover_data} ext={f.file_ext} index={i} />
+              </button>
+              <div className="p-3 flex flex-col flex-1">
+                <p className="font-semibold text-sm text-zinc-900 truncate" title={f.file_name}>{stripExt(f.file_name)}</p>
+                <p className="text-[11px] text-zinc-400 mt-0.5">{f.file_ext.toUpperCase()} · {fmtSize(f.file_size)}</p>
+                <p className="text-[10px] text-zinc-400 mt-1.5 truncate" title={byLine(f.uploaded_by_name, f.created_at)}>
+                  {byLine(f.uploaded_by_name, f.created_at)}
+                </p>
+                <div className="flex items-center gap-1 mt-2 pt-2 border-t border-zinc-100">
+                  {f.file_ext === 'pdf' && (
+                    <button onClick={() => viewFile(f)} disabled={busyId === f.id} title="View"
+                      className="flex-1 h-7 rounded-md text-zinc-500 hover:text-primary hover:bg-zinc-50 flex items-center justify-center transition-colors">
+                      {busyId === f.id ? <Loader2 className="size-3.5 animate-spin" /> : <Eye className="size-3.5" />}
+                    </button>
+                  )}
+                  <button onClick={() => downloadFile(f)} disabled={busyId === f.id} title="Download"
+                    className="flex-1 h-7 rounded-md text-zinc-500 hover:text-primary hover:bg-zinc-50 flex items-center justify-center transition-colors">
+                    {busyId === f.id ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+                  </button>
+                  {canEdit && (
+                    <button onClick={() => setFileModal({ file: f })} title="Rename / cover"
+                      className="flex-1 h-7 rounded-md text-zinc-500 hover:text-primary hover:bg-zinc-50 flex items-center justify-center transition-colors">
+                      <Edit className="size-3.5" />
+                    </button>
+                  )}
+                  {canEdit && (
+                    <button onClick={() => deleteFile(f)} title="Delete"
+                      className="flex-1 h-7 rounded-md text-zinc-500 hover:text-red-600 hover:bg-zinc-50 flex items-center justify-center transition-colors">
+                      <Trash2 className="size-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       )}
+
+      {fileModal && (
+        <FileModal file={fileModal.file}
+          onClose={() => setFileModal(null)}
+          onSaved={() => { setFileModal(null); load(); onChanged(); }} />
+      )}
+
+      {preview && (
+        <div className="fixed inset-0 z-[100] flex flex-col bg-zinc-900/80 backdrop-blur-sm p-3 sm:p-6">
+          <div className="flex items-center justify-between gap-3 mb-3 text-white shrink-0">
+            <span className="font-semibold text-sm truncate">{preview.name}</span>
+            <div className="flex items-center gap-2 shrink-0">
+              <a href={preview.url} target="_blank" rel="noreferrer"
+                className="h-8 px-3 bg-white/10 hover:bg-white/20 rounded-md text-xs font-semibold inline-flex items-center gap-1.5 transition-colors">
+                <ExternalLink className="size-3.5" /> New tab
+              </a>
+              <button onClick={closePreview}
+                className="h-8 px-3 bg-white/10 hover:bg-white/20 rounded-md text-xs font-semibold inline-flex items-center gap-1.5 transition-colors">
+                <X className="size-4" /> Close
+              </button>
+            </div>
+          </div>
+          <iframe src={preview.url} title={preview.name} className="flex-1 w-full rounded-lg bg-white border-0" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// =====================================================================
+//  Rename a file / set its cover
+// =====================================================================
+function FileModal({ file, onClose, onSaved }) {
+  const [name, setName]       = useState(stripExt(file.file_name));
+  const [cover, setCover]     = useState(file.cover_data || null);
+  const [coverTouched, setCT] = useState(false);
+  const [saving, setSaving]   = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!name.trim()) return alert('A file name is required.');
+    setSaving(true);
+    try {
+      const body = { file_name: name.trim() };
+      if (coverTouched) body.cover_data = cover;
+      const res = await fetch(`${API_BASE_URL}/admin/syllabus/library/files/${file.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || 'Save failed');
+      onSaved();
+    } catch (e2) { alert(e2.message); }
+    setSaving(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
+      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-md shadow-xl flex flex-col animate-in fade-in zoom-in-95 duration-200 max-h-[90vh]">
+        <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 rounded-t-lg shrink-0">
+          <h2 className="text-lg font-semibold text-zinc-900 flex items-center gap-2">
+            <Edit className="size-4 text-primary" /> Edit File
+          </h2>
+          <button onClick={onClose} className="text-zinc-400 hover:text-zinc-700 transition-colors p-1.5 hover:bg-zinc-100 rounded-md"><X className="size-4" /></button>
+        </div>
+        <form onSubmit={submit} className="flex flex-col overflow-hidden">
+          <div className="p-5 sm:p-6 space-y-4 overflow-y-auto custom-scrollbar">
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">
+                File Name <span className="text-red-500">*</span>
+              </label>
+              <div className="flex items-center gap-2">
+                <input value={name} onChange={e => setName(e.target.value)} required autoFocus maxLength={240}
+                  className="h-9 flex-1 bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
+                <span className="text-xs font-semibold text-zinc-400 uppercase shrink-0">.{file.file_ext}</span>
+              </div>
+              <p className="text-[11px] text-zinc-400">The .{file.file_ext} extension stays the same.</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Cover Image</label>
+              <CoverPicker value={cover} onChange={v => { setCover(v); setCT(true); }} />
+            </div>
+          </div>
+          <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
+            <button type="button" onClick={onClose} disabled={saving}
+              className="h-9 px-4 bg-white border border-zinc-200 text-zinc-700 rounded-md font-semibold text-xs hover:bg-zinc-50 transition-colors">Cancel</button>
+            <button type="submit" disabled={saving}
+              className="h-9 px-6 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors min-w-[120px]">
+              {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+              {saving ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }
@@ -543,17 +744,18 @@ const GUIDES = {
     title: 'Library',
     steps: [
       ['1 - One library per type', 'Each syllabus type (State Board, CBSE...) has its own library. You are in the library of the tab you came from.'],
-      ['2 - Create a folder', 'New Folder asks for the class and subject. Give it a name like "Textbooks" or "Worksheets", or leave it blank to use the subject name.'],
+      ['2 - Create a folder', 'New Folder asks for the class and subject, and lets you add a cover image. Name it like "Textbooks" or "Worksheets", or leave it blank to use the subject name.'],
       ['3 - Add files', 'Open a folder and use Upload Files, or drag files onto it. PDF, Word (.doc, .docx) and Excel (.xls, .xlsx) up to 50 MB each.'],
-      ['4 - Open and share', 'PDFs open in a new tab with the eye button; every file can be downloaded.'],
+      ['4 - Rename & cover a file', 'Each file card has an edit button to rename it and set a cover image. The card shows who uploaded it, with the date and time.'],
+      ['5 - View & download', 'Tap a PDF card to preview it in place; use New tab for full screen. Any file can be downloaded.'],
     ],
     note: 'Deleting a folder deletes every file inside it. The class you pick here is the same one used in Syllabus Management.'
   },
   view: {
     title: 'Library',
     steps: [
-      ['1 - Browse', 'Pick a class to see its folders, then open a folder to see its files.'],
-      ['2 - Open and download', 'PDFs open in a new tab with the eye button; any file can be downloaded.'],
+      ['1 - Browse', 'Pick a class to see its folders, then open a folder to see its files as cards.'],
+      ['2 - View & download', 'Tap a PDF card to preview it; any file can be downloaded.'],
     ],
     note: 'This is a read-only view - folders and files are added by teachers.'
   }
