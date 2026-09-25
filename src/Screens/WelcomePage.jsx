@@ -62,11 +62,11 @@ export default function WelcomePage() {
           {/* Text Content */}
           <div className="space-y-4 sm:space-y-6">
             <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight text-zinc-900 animate-fade-in-up-delay-1 opacity-0 leading-tight">
-              Complete Educational ERP Solution for Schools, Colleges &amp; Educational Institutions
+              Complete ERP Solution for Schools, Colleges &amp; Educational Institutions
             </h1>
 
             <p className="mx-auto max-w-md text-base sm:text-lg font-medium text-zinc-600 animate-fade-in-up-delay-2 opacity-0 leading-relaxed">
-              A unified Educational ERP platform to manage students, academics, administration, fees, transport, communication, and your entire institution seamlessly.
+              A unified ERP platform for educational institutions to manage students, academics, administration, fees, transport, communication, and entire institutional activities seamlessly.
             </p>
 
             {/* CTA Button */}
