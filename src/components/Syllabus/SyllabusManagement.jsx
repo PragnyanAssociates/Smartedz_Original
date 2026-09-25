@@ -227,7 +227,7 @@ export default function SyllabusManagement({
             {canEdit && (
               <button onClick={() => setTypeModal({})}
                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-xs font-semibold whitespace-nowrap shrink-0 text-primary ring-1 ring-dashed ring-primary/30 hover:bg-primary/5 transition-colors">
-                <Plus className="size-3.5" /> New Type
+                <Plus className="size-3.5" /> Add Syllabus
               </button>
             )}
 
