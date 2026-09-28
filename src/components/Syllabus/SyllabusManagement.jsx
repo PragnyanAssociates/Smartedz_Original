@@ -518,7 +518,7 @@ const GUIDES = {
   manage: {
     title: 'Syllabus Management',
     steps: [
-      ['1 - Syllabus Types (tabs)', 'Syllabuses are grouped under types shown as tabs (e.g. State Board, CBSE). Add a type once with New Type; after that just click its tab. The tab you pick is remembered, even after you leave this page.'],
+      ['1 - Syllabus Types (tabs)', 'Syllabuses are grouped under types shown as tabs (e.g. State Board, CBSE). Add a type once with New Syllabus type; after that just click its tab. The tab you pick is remembered, even after you leave this page.'],
       ['2 - Class filter', 'One class is always selected. Switching tabs keeps the same class, and it is remembered too.'],
       ['3 - Create a syllabus', 'Create Syllabus adds one under the selected type tab, with the filtered class already chosen. One syllabus per class + subject per type.'],
       ['4 - Manage (Subject Index)', 'The green Manage button opens the Subject Index: upload the textbook, auto-detect chapters, add keywords and set lesson periods.'],
