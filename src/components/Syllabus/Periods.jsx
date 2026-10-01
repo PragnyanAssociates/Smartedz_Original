@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { API_BASE_URL } from '../../apiConfig';
-import { Clock, Loader2, ArrowLeft, Save, Check, BookOpen, HelpCircle, X, ShieldCheck } from 'lucide-react';
+import { Clock, Loader2, ArrowLeft, Save, Check, BookOpen, HelpCircle, X, ShieldCheck, Layers } from 'lucide-react';
 
 // Date + time rendered in IST (Railway stores UTC), so each lesson row can
 // show "updated by" name / date / time.
@@ -114,9 +114,16 @@ export default function Periods({ syllabus, canEdit, onBackToIndex }) {
           <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
             Manage time allocation and schedules for syllabus lessons.
           </p>
-          <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider mt-1.5">
-            {syllabus.class_group} - {syllabus.subject_name}
-          </p>
+          <div className="flex items-center gap-2 flex-wrap mt-1.5">
+            {syllabus.type_name && (
+              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary bg-primary/5 ring-1 ring-inset ring-primary/15 px-2 py-0.5 rounded">
+                <Layers className="size-3 shrink-0" /> {syllabus.type_name}
+              </span>
+            )}
+            <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
+              {syllabus.class_group} - {syllabus.subject_name}
+            </span>
+          </div>
         </div>
         <SyllabusHelp canEdit={canEdit} />
       </header>

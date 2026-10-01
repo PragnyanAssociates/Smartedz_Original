@@ -2,11 +2,14 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import { API_BASE_URL } from '../../apiConfig';
-import { Calendar, Search, Loader2, CheckCheck, Save, Info, AlertTriangle, ChevronDown } from 'lucide-react';
+import { Calendar, Search, Loader2, CheckCheck, Eraser, Save, Info, AlertTriangle, ChevronDown } from 'lucide-react';
 
 // =====================================================================
 //  RosterMarker — bulk attendance marker
 //  Statuses: P (Present) / A (Absent). (Late was removed.)
+//  "All Clear" deletes the day's marks for the shown people and records
+//  who cleared them, so a Sunday (or any non-teaching day) can be wiped
+//  back to "not marked" without turning Sundays off globally.
 // =====================================================================
 
 const STATUS_OPTIONS = [
@@ -15,7 +18,7 @@ const STATUS_OPTIONS = [
 ];
 
 // Backend (e.g. Railway) stores marked_at / updated_at in UTC as a naive
-// string. Tag it as UTC so the browser localises it correctly.
+// string. Tag it as UTC so the browser localises it.
 const fmtDateTime = (s) => {
   if (!s) return '';
   let v = String(s);
@@ -58,6 +61,7 @@ export default function RosterMarker({ category }) {
   const [edits, setEdits] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [search, setSearch] = useState('');
 
   // Error/warning surface
@@ -184,6 +188,46 @@ export default function RosterMarker({ category }) {
   };
 
   // -----------------------------------------------------------------
+  // All Clear — delete the day's marks for the shown people
+  // -----------------------------------------------------------------
+  const handleClearAll = async () => {
+    const ids = filtered.map(u => u.id);
+    if (ids.length === 0) return;
+
+    // Only worth warning/clearing if something is actually saved.
+    const anySaved = filtered.some(u => u.marked_by_name);
+    if (!anySaved) {
+      setEdits({});
+      return alert('Nothing is marked for this day yet.');
+    }
+
+    if (!window.confirm(
+      `The marked attendance for ${filtered.length} ${category} on ${date} will be DELETED and the day will show as not marked.\n\n` +
+      `This cannot be undone. Continue?`
+    )) return;
+
+    setClearing(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/attendance/clear`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          institutionId: user.institutionId,
+          date,
+          actor_id: user.id,
+          user_ids: ids
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Clear failed');
+      setEdits({});
+      alert(data.cleared ? `Cleared attendance for ${data.cleared} ${category} on ${date}.` : 'Nothing to clear for this day.');
+      loadRoster();
+    } catch (e) { alert(e.message); }
+    setClearing(false);
+  };
+
+  // -----------------------------------------------------------------
   // Filter for search (roster is already sorted)
   // -----------------------------------------------------------------
   const filtered = useMemo(() => {
@@ -222,7 +266,7 @@ export default function RosterMarker({ category }) {
 
   return (
     <div className="space-y-4 sm:space-y-6 animate-in fade-in duration-500">
-      
+
       {/* Error banner */}
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-md p-3 sm:p-4 flex items-start gap-3">
@@ -255,7 +299,7 @@ export default function RosterMarker({ category }) {
       {/* Filter bar - Optimized for Mobile Grid */}
       <div className="bg-white border border-zinc-200 rounded-lg p-3 sm:p-5 shadow-sm">
         <div className="grid grid-cols-2 sm:flex sm:flex-row lg:flex-nowrap gap-3 sm:gap-4 items-end">
-          
+
           <Field label="Date" icon={Calendar} className={category === 'students' ? 'col-span-1' : 'col-span-2 sm:col-span-1'}>
             <input type="date" value={date} max={today}
               onChange={e => setDate(e.target.value)}
@@ -278,7 +322,7 @@ export default function RosterMarker({ category }) {
             </Field>
           )}
 
-          {/* Search and Action Button share a row on mobile */}
+          {/* Search and action buttons share a row on mobile */}
           <div className="col-span-2 sm:flex-1 flex gap-2 items-end">
             <Field label="Search" className="flex-1">
               <div className="relative w-full">
@@ -290,11 +334,20 @@ export default function RosterMarker({ category }) {
             </Field>
 
             <button onClick={markAllPresent}
-              disabled={filtered.length === 0}
+              disabled={filtered.length === 0 || clearing}
               className="h-9 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40 text-emerald-700 px-3 sm:px-4 rounded-md text-[10px] sm:text-xs font-semibold uppercase tracking-wider flex items-center justify-center gap-1.5 shrink-0 transition-colors">
               <CheckCheck className="size-3.5 sm:size-4" />
               <span className="hidden sm:inline">All Present</span>
               <span className="sm:hidden">All</span>
+            </button>
+
+            <button onClick={handleClearAll}
+              disabled={filtered.length === 0 || clearing}
+              title="Delete the marked attendance for this day"
+              className="h-9 bg-red-50 hover:bg-red-100 disabled:opacity-40 text-red-700 px-3 sm:px-4 rounded-md text-[10px] sm:text-xs font-semibold uppercase tracking-wider flex items-center justify-center gap-1.5 shrink-0 transition-colors">
+              {clearing ? <Loader2 className="size-3.5 sm:size-4 animate-spin" /> : <Eraser className="size-3.5 sm:size-4" />}
+              <span className="hidden sm:inline">All Clear</span>
+              <span className="sm:hidden">Clear</span>
             </button>
           </div>
         </div>
@@ -373,6 +426,14 @@ export default function RosterMarker({ category }) {
                             </div>
                           )}
                         </div>
+                      ) : u.cleared_by_name ? (
+                        <div className="flex flex-col gap-0.5">
+                          <div className="text-red-600/90 truncate">
+                            Cleared by <span className="font-medium">{u.cleared_by_name}</span>
+                            {u.cleared_by_role && <span className="opacity-80"> ({u.cleared_by_role})</span>}
+                          </div>
+                          <div className="text-zinc-400 whitespace-nowrap">{fmtDateTime(u.cleared_at)}</div>
+                        </div>
                       ) : (
                         <span className="text-zinc-300 italic">Not yet marked</span>
                       )}
@@ -405,7 +466,7 @@ export default function RosterMarker({ category }) {
       {/* Submit Button */}
       {filtered.length > 0 && (
         <div className="flex justify-end pt-2 pb-6">
-          <button onClick={handleSubmit} disabled={saving}
+          <button onClick={handleSubmit} disabled={saving || clearing}
             className="w-full sm:w-auto h-10 px-6 bg-primary hover:bg-primary/90 disabled:bg-zinc-200 disabled:text-zinc-400 text-white rounded-md text-[11px] sm:text-xs font-semibold transition-colors flex items-center justify-center gap-2 shadow-sm">
             {saving ? <Loader2 className="size-4 animate-spin shrink-0" /> : <Save className="size-4 shrink-0" />}
             {saving ? 'Saving...' : 'Submit Attendance'}

@@ -3092,20 +3092,30 @@ app.put('/api/profile/:id', async (req, res) => {
 //   One row per user per day. Tracks marker + last editor.
 //   Status codes: P (Present), A (Absent).
 //
-//   REPLACE your whole Section 15 block with this. Only 15.2 (bulk mark)
-//   changed: each user is notified when their attendance is marked. To
-//   avoid spamming on every re-save, a user is notified ONLY when their
-//   row is newly created for that date OR their status actually changes.
-//   Present and absent both notify, with a matching message.
+//   REPLACE your whole Section 15 block with this.
 //
-//   Uses createNotifications from Section 25. 'Attendance' is the module
-//   id from Screens/Modules.js. The notify is wrapped so it can never
-//   fail the marking. The marker (actor_id) is excluded automatically.
+//   What's here:
+//     15.1  Roster for marking  (now also shows "Cleared by …" for days
+//           whose marks were wiped with All Clear).
+//     15.2  Bulk mark / update  (+ notifies marked users; also drops any
+//           stale clear-log note when a cleared day is re-marked).
+//     15.3  History for one user.
+//     15.4  Teacher's marking scope.
+//     15.5  Category overview + analysis series.
+//     15.6  Bulk CLEAR attendance for a date  (All Clear) — deletes the
+//           day's marks and records WHO cleared them.
+//     30.A  Attendance Excel export (per-module download).
+//
+//   Requires (run once each, if not already):
+//     • the attendance table migration (Late removed, academic_year_id added)
+//     • attendance_clear_log.sql   (for the All Clear audit)
+//
+//   Uses createNotifications (Section 25), resolveYearId, sameTenant.
+//   The notify / clear-log cleanup are wrapped so they can never fail the
+//   marking. The marker (actor_id) is excluded from notifications.
 //
 //   >> Want ABSENT-ONLY notifications? Delete the `presentIds` block in
 //      15.2 (clearly marked) — that's the only change needed.
-//
-//   (Migrations unchanged — Late removed, academic_year_id added.)
 // =====================================================================
 
 // --- 15.1 Roster for marking ---------------------------------------
@@ -3113,13 +3123,13 @@ app.get('/api/admin/attendance/roster/:instId', async (req, res) => {
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     const { category = 'students', date, class_id } = req.query;
     const targetDate = date || new Date().toISOString().slice(0, 10);
- 
+
     try {
         const yearId = await resolveYearId(instId, req.query.academic_year_id);
 
         let where = 'u.institutionId = ?';
         const params = [parseInt(instId, 10)];
- 
+
         if (category === 'students') {
             where += " AND LOWER(TRIM(u.role)) = 'student'";
             if (class_id) {
@@ -3133,22 +3143,25 @@ app.get('/api/admin/attendance/roster/:instId', async (req, res) => {
                   +  " AND LOWER(TRIM(u.role)) NOT IN ('student','super admin','developer')";
         }
         where += " AND (u.status IS NULL OR LOWER(TRIM(u.status)) = 'active')";
- 
+
         const userSql = `
             SELECT u.id, u.name, u.username, u.role, u.profile_pic,
                    u.roll_no, u.class_id, u.section, u.status
               FROM users u
              WHERE ${where}
              ORDER BY u.name`;
- 
+
         const [users] = await db.execute(userSql, params);
- 
+
         const attMap = {};
+        const clearMap = {};
         let attendanceWarning = null;
         if (users.length > 0) {
+            const ids = users.map(u => u.id);
+            const placeholders = ids.map(() => '?').join(',');
+
+            // Existing marks for this date/year
             try {
-                const ids = users.map(u => u.id);
-                const placeholders = ids.map(() => '?').join(',');
                 const attSql = `
                     SELECT a.user_id, a.status, a.marked_by, a.marked_at,
                            a.updated_by, a.updated_at,
@@ -3166,12 +3179,40 @@ app.get('/api/admin/attendance/roster/:instId', async (req, res) => {
                 console.warn('[attendance roster] attendance lookup failed:', attErr.message);
                 attendanceWarning = attErr.message;
             }
+
+            // Who cleared this date/year (only matters for users with no mark)
+            try {
+                const clrSql = `
+                    SELECT c.user_id, c.cleared_at,
+                           cb.name AS cleared_by_name, cb.role AS cleared_by_role
+                      FROM attendance_clear_log c
+                      LEFT JOIN users cb ON cb.id = c.cleared_by
+                     WHERE c.user_id IN (${placeholders})
+                       AND c.attendance_date = ?
+                       AND c.academic_year_id = ?`;
+                const [clr] = await db.execute(clrSql, [...ids, targetDate, yearId]);
+                clr.forEach(r => { clearMap[r.user_id] = r; });
+            } catch (clrErr) {
+                // Table may not exist until the migration is run — non-fatal.
+                console.warn('[attendance roster] clear-log lookup failed:', clrErr.message);
+            }
         }
- 
-        const merged = users.map(u => ({ ...u, ...(attMap[u.id] || {}) }));
- 
+
+        const merged = users.map(u => {
+            const att = attMap[u.id];
+            if (att) return { ...u, ...att };          // a real mark wins
+            const cl = clearMap[u.id];
+            if (cl) return {
+                ...u,
+                cleared_by_name: cl.cleared_by_name,
+                cleared_by_role: cl.cleared_by_role,
+                cleared_at: cl.cleared_at
+            };
+            return { ...u };
+        });
+
         console.log(`[attendance roster] inst=${instId} year=${yearId} category=${category} class_id=${class_id || '—'} date=${targetDate} → ${merged.length} users`);
- 
+
         res.json({
             date: targetDate,
             academic_year_id: yearId,
@@ -3186,7 +3227,6 @@ app.get('/api/admin/attendance/roster/:instId', async (req, res) => {
 });
 
 
-
 // --- 15.2 Bulk mark / update attendance (+ notify marked users) -----
 //   POST /api/admin/attendance/mark
 //   Body: { institutionId, date, actor_id, entries: [{user_id, status}] }
@@ -3195,9 +3235,9 @@ app.post('/api/admin/attendance/mark', async (req, res) => {
     const { date, entries } = req.body;
     const institutionId = req.auth.institutionId;   // from token
     const actor_id = req.auth.userId;               // marker = the logged-in user
-               if (!date || !Array.isArray(entries)) {
-                   return res.status(400).json({ error: 'date and entries[] are required.' });
-             }
+    if (!date || !Array.isArray(entries)) {
+        return res.status(400).json({ error: 'date and entries[] are required.' });
+    }
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
 
     const conn = await db.getConnection();
@@ -3209,10 +3249,12 @@ app.post('/api/admin/attendance/mark', async (req, res) => {
         // actually changed, so re-saving the roster doesn't re-ping everyone.
         const presentIds = [];
         const absentIds = [];
+        const markedIds = [];
 
         await conn.beginTransaction();
         for (const e of entries) {
             if (!e.user_id || !['P', 'A'].includes(e.status)) continue;
+            markedIds.push(parseInt(e.user_id, 10));
 
             // Does a row already exist for this user/date in this year?
             const [exists] = await conn.execute(
@@ -3243,6 +3285,19 @@ app.post('/api/admin/attendance/mark', async (req, res) => {
             }
         }
         await conn.commit();
+
+        // A re-marked day is no longer "cleared" — drop any stale clear note
+        // so the roster shows the fresh mark. Wrapped: never fails the mark.
+        try {
+            if (markedIds.length) {
+                const ph = markedIds.map(() => '?').join(',');
+                await db.execute(
+                    `DELETE FROM attendance_clear_log
+                      WHERE attendance_date = ? AND academic_year_id = ? AND user_id IN (${ph})`,
+                    [date, yearId, ...markedIds]
+                );
+            }
+        } catch (e) { console.warn('[attendance clear-log cleanup]', e.message); }
 
         // 🔔 Notify the marked users. Grouped by status (≤2 calls). Wrapped
         //    so a notify issue can't fail the marking; actor is excluded.
@@ -3447,18 +3502,75 @@ app.get('/api/admin/attendance/overview/:instId', async (req, res) => {
     }
 });
 
+
+// --- 15.6 Bulk CLEAR attendance for a date (All Clear) -------------
+//   POST /api/admin/attendance/clear
+//   Body: { date, user_ids: [...] }  (institution + actor come from token)
+//   Deletes those users' marks for the date in the active year and logs
+//   WHO cleared it, so the roster can show "Cleared by …". The day then
+//   reads as "not marked" everywhere (history / % / working-days / export).
+app.post('/api/admin/attendance/clear', async (req, res) => {
+    const { date, user_ids } = req.body;
+    const institutionId = req.auth.institutionId;
+    const actor_id = req.auth.userId;
+    if (!date || !Array.isArray(user_ids) || user_ids.length === 0) {
+        return res.status(400).json({ error: 'date and user_ids[] are required.' });
+    }
+    const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+
+    const conn = await db.getConnection();
+    try {
+        const yearId = await resolveYearId(institutionId, req.body.academic_year_id);
+        if (!yearId) throw new Error('No active academic year.');
+
+        await conn.beginTransaction();
+        let cleared = 0;
+        for (const raw of user_ids) {
+            const uid = parseInt(raw, 10);
+            if (!uid) continue;
+
+            const [del] = await conn.execute(
+                `DELETE FROM attendance
+                  WHERE user_id = ? AND attendance_date = ? AND academic_year_id = ? AND institutionId = ?`,
+                [uid, date, yearId, institutionId]
+            );
+
+            if (del.affectedRows > 0) {
+                cleared += del.affectedRows;
+                // Remember who cleared it (one row per user/date/year).
+                await conn.execute(
+                    `INSERT INTO attendance_clear_log
+                       (institutionId, academic_year_id, user_id, attendance_date, cleared_by, cleared_at)
+                     VALUES (?, ?, ?, ?, ?, ?)
+                     ON DUPLICATE KEY UPDATE cleared_by = VALUES(cleared_by), cleared_at = VALUES(cleared_at)`,
+                    [institutionId, yearId, uid, date, actor_id, now]
+                );
+            }
+        }
+        await conn.commit();
+
+        res.json({ success: true, cleared, academic_year_id: yearId });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally {
+        conn.release();
+    }
+});
+
+
 // === 30.A ATTENDANCE EXPORT (per-module download) ====================
 
 app.get('/api/admin/attendance-export/:instId', async (req, res) => {
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     try {
         const ExcelJS = require('exceljs');
- 
+
         const BRAND = 'FF3284C7';
         const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
         const dateStr = (v) => (v instanceof Date) ? v.toISOString().slice(0, 10) : String(v).slice(0, 10);
         const rollNum = (r) => { const n = parseInt(r, 10); return isNaN(n) ? Number.MAX_SAFE_INTEGER : n; };
- 
+
         // ---- scope ----
         const scope = (req.query.scope || 'all').toString();
         const isClassScope = scope.startsWith('class:');
@@ -3466,7 +3578,7 @@ app.get('/api/admin/attendance-export/:instId', async (req, res) => {
         const includeStudents = scope === 'all' || scope === 'students' || isClassScope;
         const includeTeachers = scope === 'all' || scope === 'teachers';
         const includeOther = scope === 'all' || scope === 'other';
- 
+
         // ---- year ----
         let year;
         if (req.query.yearId) {
@@ -3480,26 +3592,26 @@ app.get('/api/admin/attendance-export/:instId', async (req, res) => {
         }
         const yearId = year.id;
         const yLabel = year.name || '';
- 
+
         const [instRows] = await db.execute('SELECT id, name FROM institutions WHERE id = ?', [instId]);
         const inst = instRows[0] || { name: 'Institution' };
- 
+
         const [classes] = await db.execute('SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section', [instId]);
         const classById = {}; classes.forEach(c => { classById[c.id] = c; });
         const labelOf = (cid) => { const c = classById[cid]; return c ? `${c.className}${c.section ? ' - ' + c.section : ''}` : 'Unassigned'; };
- 
+
         const [users] = await db.execute('SELECT id, name, role, roll_no, class_id FROM users WHERE institutionId = ?', [instId]);
         const userById = {}; users.forEach(u => { userById[u.id] = u; });
         const roleLc = (u) => (u.role || '').toLowerCase().trim();
         const isStudent = (u) => roleLc(u) === 'student';
         const isTeacher = (u) => roleLc(u).includes('teacher');
         const isAdmin = (u) => ['super admin', 'developer', 'group admin'].includes(roleLc(u));
- 
+
         // Historical class (correct grouping for an old year); else current.
         const [hc] = await db.execute('SELECT DISTINCT student_id, class_id FROM student_marks WHERE institutionId = ? AND academic_year_id = ?', [instId, yearId]);
         const histClass = {}; hc.forEach(r => { if (histClass[r.student_id] == null) histClass[r.student_id] = r.class_id; });
         const classOf = (u) => (histClass[u.id] != null ? histClass[u.id] : u.class_id);
- 
+
         // All attendance for the year, in one pass -> perUser[uid].months[YYYY-MM] = {p, t}
         const [att] = await db.execute('SELECT user_id, attendance_date, status FROM attendance WHERE institutionId = ? AND academic_year_id = ?', [instId, yearId]);
         const perUser = {};
@@ -3509,7 +3621,7 @@ app.get('/api/admin/attendance-export/:instId', async (req, res) => {
             const mm = (pu.months[mk] = pu.months[mk] || { p: 0, t: 0 });
             mm.t++; if (rw.status === 'P') mm.p++;
         });
- 
+
         // Month columns from the academic year span; else from data range.
         const buildMonths = (start, end) => {
             const out = []; let d = new Date(start.getFullYear(), start.getMonth(), 1);
@@ -3530,26 +3642,26 @@ app.get('/api/admin/attendance-export/:instId', async (req, res) => {
         }
         const months = buildMonths(start, end);
         const totalCols = 2 + months.length + 2; // id, name, months, Total, %
- 
+
         // group rosters
         const studentsByClass = {};
         users.filter(isStudent).forEach(u => { const cid = classOf(u); (studentsByClass[cid] = studentsByClass[cid] || []).push(u); });
         Object.values(studentsByClass).forEach(list => list.sort((a, b) => rollNum(a.roll_no) - rollNum(b.roll_no) || (a.name || '').localeCompare(b.name || '')));
         const teacherUsers = users.filter(isTeacher).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
         const otherUsers = users.filter(u => !isStudent(u) && !isTeacher(u) && !isAdmin(u)).sort((a, b) => (a.role || '').localeCompare(b.role || '') || (a.name || '').localeCompare(b.name || ''));
- 
+
         // ---- workbook ----
         const wb = new ExcelJS.Workbook();
         wb.creator = 'SmartEdz'; wb.created = new Date();
         const ws = wb.addWorksheet('Attendance Register');
         let r = 1;
- 
+
         ws.mergeCells(r, 1, r, totalCols);
         const tt = ws.getCell(r, 1); tt.value = inst.name || 'Institution'; tt.font = { bold: true, size: 14, color: { argb: 'FF111827' } }; r++;
         ws.mergeCells(r, 1, r, totalCols);
         const sub = ws.getCell(r, 1); sub.value = `Attendance Register · ${yLabel}   (each cell = present / days marked)`; sub.font = { size: 10, color: { argb: 'FF6B7280' } }; r++;
         r++;
- 
+
         const sectionHeading = (text) => {
             ws.mergeCells(r, 1, r, totalCols);
             const c = ws.getCell(r, 1); c.value = text;
@@ -3594,7 +3706,7 @@ app.get('/api/admin/attendance-export/:instId', async (req, res) => {
             for (let i = 1; i <= totalCols; i++) { const c = row.getCell(i); if (!c.font) c.font = { size: 9, color: { argb: 'FF374151' } }; }
             r++;
         };
- 
+
         if (includeStudents) {
             sectionHeading('STUDENTS');
             const cids = (specificClass != null ? [specificClass] : Object.keys(studentsByClass).map(Number))
@@ -3608,7 +3720,7 @@ app.get('/api/admin/attendance-export/:instId', async (req, res) => {
                 r++;
             });
         }
- 
+
         if (includeTeachers) {
             sectionHeading('TEACHERS');
             headerRow('S.No');
@@ -3616,7 +3728,7 @@ app.get('/api/admin/attendance-export/:instId', async (req, res) => {
             teacherUsers.forEach((u, i) => dataRow(String(i + 1), u.name, perUser[u.id]));
             r++;
         }
- 
+
         if (includeOther) {
             sectionHeading('OTHER STAFF');
             headerRow('S.No');
@@ -3624,14 +3736,14 @@ app.get('/api/admin/attendance-export/:instId', async (req, res) => {
             otherUsers.forEach((u, i) => dataRow(String(i + 1), u.name, perUser[u.id]));
             r++;
         }
- 
+
         // widths + freeze
         ws.getColumn(1).width = 8; ws.getColumn(2).width = 26;
         months.forEach((m, i) => { ws.getColumn(3 + i).width = 9; });
         ws.getColumn(2 + months.length + 1).width = 11;
         ws.getColumn(2 + months.length + 2).width = 8;
         ws.views = [{ state: 'frozen', xSplit: 2 }];
- 
+
         const scopeTag = isClassScope ? `Class_${labelOf(specificClass)}` : scope.charAt(0).toUpperCase() + scope.slice(1);
         const fileSafe = `${inst.name || 'institution'}_Attendance_${scopeTag}_${year.name || 'year'}`
             .replace(/[^a-z0-9\-_ ]/gi, '_').replace(/\s+/g, '_');
@@ -3645,6 +3757,8 @@ app.get('/api/admin/attendance-export/:instId', async (req, res) => {
         else res.end();
     }
 });
+
+
 
 
 

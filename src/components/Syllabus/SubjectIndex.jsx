@@ -3,7 +3,7 @@ import { API_BASE_URL } from '../../apiConfig';
 import {
   FolderOpen, FileText, Loader2, Plus, Trash2, Edit, X, Upload,
   Maximize2, Tag, Search, BookMarked, ArrowLeft, Clock, Save, BookOpen, RefreshCw,
-  HelpCircle, ShieldCheck
+  HelpCircle, ShieldCheck, Layers
 } from 'lucide-react';
 import { pageLabel, fileToBase64 } from './SyllabusUtils';
 
@@ -99,9 +99,16 @@ export default function SubjectIndex({ syllabus, canEdit, onBack, onOpenPeriods 
           <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
             Upload the textbook and the chapters are detected and split automatically.
           </p>
-          <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider mt-1.5">
-            {syllabus.class_group} - {syllabus.subject_name}
-          </p>
+          <div className="flex items-center gap-2 flex-wrap mt-1.5">
+            {syllabus.type_name && (
+              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary bg-primary/5 ring-1 ring-inset ring-primary/15 px-2 py-0.5 rounded">
+                <Layers className="size-3 shrink-0" /> {syllabus.type_name}
+              </span>
+            )}
+            <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
+              {syllabus.class_group} - {syllabus.subject_name}
+            </span>
+          </div>
         </header>
 
         <div className="flex items-center gap-2 w-full sm:w-auto shrink-0">
