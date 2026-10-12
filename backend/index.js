@@ -15078,7 +15078,7 @@ app.get('/api/admin/module-order/:instId', async (req, res) => {
     try {
         const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
         const [rows] = await db.execute(
-            `SELECT module_name, sort_order
+            `SELECT module_name, sort_order, updated_at
                FROM module_order
               WHERE institutionId = ?
               ORDER BY sort_order ASC`,
@@ -15128,19 +15128,6 @@ app.post('/api/admin/module-order', async (req, res) => {
     } finally { conn.release(); }
 });
 
-app.get('/api/admin/module-order/:instId', async (req, res) => {
-    try {
-        const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
-        const [rows] = await db.execute(
-            `SELECT module_name, sort_order, updated_at
-               FROM module_order
-              WHERE institutionId = ?
-              ORDER BY sort_order ASC`,
-            [instId]
-        );
-        res.json(rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
 
 // --- 31.1 Read this school's role order (any authenticated member) ---
 app.get('/api/admin/role-order/:instId', async (req, res) => {
