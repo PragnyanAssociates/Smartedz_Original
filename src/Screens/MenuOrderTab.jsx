@@ -1,5 +1,5 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { Save, ChevronUp, ChevronDown, RotateCcw, ListOrdered, Info, GripVertical } from 'lucide-react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { RotateCcw, ListOrdered, Info, GripVertical } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
 import { MODULES } from './Modules';
 
@@ -15,6 +15,10 @@ import { MODULES } from './Modules';
 //    hasn't positioned yet falls in behind, in Modules.js order.
 //  - This is order only. Whether a role SEES a module is still decided
 //    entirely by the Permissions tab.
+//
+//  Reordering is now drag-and-drop (the up/down buttons are gone) and
+//  every drop saves automatically. The numbered badge shows the live
+//  position (1, 2, 3 ...).
 //
 //  Props: { user }
 // =====================================================================
@@ -38,6 +42,12 @@ export default function MenuOrderTab({ user }) {
   const [saving, setSaving]   = useState(false);
   const [saved, setSaved]     = useState(false);
 
+  // Drag-and-drop state (replaces the old up/down move buttons).
+  const [dragName, setDragName] = useState(null);
+  const [overName, setOverName] = useState(null);
+  const orderRef = useRef(order);
+  useEffect(() => { orderRef.current = order; }, [order]);
+
   useEffect(() => {
     if (!user?.institutionId) return;
     let alive = true;
@@ -58,31 +68,20 @@ export default function MenuOrderTab({ user }) {
 
   const dirty = useMemo(() => order.join('|') !== initial.join('|'), [order, initial]);
 
-  const moveTo = (name, target) => {
-    setSaved(false);
-    setOrder(prev => {
-      const arr = [...prev];
-      const from = arr.indexOf(name);
-      if (from < 0) return prev;
-      const to = Math.max(0, Math.min(arr.length - 1, target));
-      if (to === from) return prev;
-      arr.splice(to, 0, arr.splice(from, 1)[0]);
-      return arr;
-    });
-  };
-
-  const resetDefault = () => { setSaved(false); setOrder(DEFAULT_ORDER); };
-
-  const save = async () => {
+  // Persist. Accepts the array to save explicitly so a drop can save the
+  // freshly-computed order without waiting on a state flush.
+  const save = async (ord) => {
+    const payloadOrder = ord || orderRef.current;
     setSaving(true);
+    setSaved(false);
     try {
       const res = await fetch(`${API_BASE_URL}/admin/module-order`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ institutionId: user.institutionId, order })
+        body: JSON.stringify({ institutionId: user.institutionId, order: payloadOrder })
       });
       if (res.ok) {
-        setInitial(order);
+        setInitial(payloadOrder);
         setSaved(true);
       } else {
         const e = await res.json().catch(() => ({}));
@@ -91,6 +90,41 @@ export default function MenuOrderTab({ user }) {
     } catch (e) { alert('Network error.'); }
     setSaving(false);
   };
+
+  const resetDefault = () => {
+    setSaved(false);
+    setOrder(DEFAULT_ORDER);
+    save(DEFAULT_ORDER);
+  };
+
+  // ---- Drag and drop --------------------------------------------------
+  const handleDragStart = (e, name) => {
+    setDragName(name);
+    setSaved(false);
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', name); } catch (_) {}
+  };
+  const handleDragOver = (e, name) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (name !== overName) setOverName(name);
+  };
+  const handleDragLeave = (name) => {
+    if (name === overName) setOverName(null);
+  };
+  const handleDrop = (e, targetName) => {
+    e.preventDefault();
+    const from = order.indexOf(dragName);
+    const to   = order.indexOf(targetName);
+    setOverName(null);
+    setDragName(null);
+    if (!dragName || from < 0 || to < 0 || from === to) return;
+    const arr = [...order];
+    arr.splice(to, 0, arr.splice(from, 1)[0]);
+    setOrder(arr);
+    save(arr);           // auto-save on drop
+  };
+  const handleDragEnd = () => { setDragName(null); setOverName(null); };
 
   if (loading) {
     return (
@@ -107,18 +141,14 @@ export default function MenuOrderTab({ user }) {
         <div>
           <h3 className="text-lg font-semibold text-zinc-900 tracking-tight">Menu Order</h3>
           <p className="text-[11px] text-zinc-500 mt-1 max-w-2xl">
-            Arrange the sidebar the way your school works. This order applies to everyone here.
+            Drag any item to arrange the sidebar the way your school works. Changes save automatically
+            and apply to everyone here.
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <button type="button" onClick={resetDefault}
             className="h-9 px-3 inline-flex items-center gap-1.5 bg-white border border-zinc-200 text-zinc-700 rounded-md text-xs font-medium hover:bg-zinc-50 transition-colors shadow-sm">
             <RotateCcw className="size-3.5" /> Reset to default
-          </button>
-          <button type="button" onClick={save} disabled={saving || !dirty}
-            className="h-9 px-4 inline-flex items-center justify-center gap-1.5 bg-primary hover:bg-primary/90 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed text-white rounded-md text-xs font-medium transition-colors shadow-sm">
-            <Save className="size-3.5 shrink-0" />
-            {saving ? 'Saving...' : 'Save Order'}
           </button>
         </div>
       </div>
@@ -131,9 +161,9 @@ export default function MenuOrderTab({ user }) {
             <p className="text-sm font-semibold text-zinc-900 truncate">Sidebar, top to bottom</p>
           </div>
           <span className={`text-[10px] font-semibold uppercase tracking-wider shrink-0 ${
-            saved && !dirty ? 'text-emerald-600' : 'text-zinc-400'
+            saving ? 'text-primary' : (saved && !dirty) ? 'text-emerald-600' : 'text-zinc-400'
           }`}>
-            {saved && !dirty ? 'Saved' : dirty ? 'Unsaved changes' : `${order.length} modules`}
+            {saving ? 'Saving...' : (saved && !dirty) ? 'Saved' : `${order.length} modules`}
           </span>
         </div>
 
@@ -141,25 +171,24 @@ export default function MenuOrderTab({ user }) {
           {order.map((name, idx) => {
             const m = byName[name];
             if (!m) return null;
+            const isDragging = dragName === name;
+            const isOver = overName === name && dragName && dragName !== name;
             return (
               <div key={name}
-                className="flex items-center gap-3 p-2.5 rounded-md ring-1 ring-inset ring-black/5 bg-white hover:bg-zinc-50/60 transition-colors shadow-sm">
+                draggable
+                onDragStart={(e) => handleDragStart(e, name)}
+                onDragOver={(e) => handleDragOver(e, name)}
+                onDragLeave={() => handleDragLeave(name)}
+                onDrop={(e) => handleDrop(e, name)}
+                onDragEnd={handleDragEnd}
+                className={`flex items-center gap-3 p-2.5 rounded-md ring-1 ring-inset bg-white transition-all shadow-sm cursor-grab active:cursor-grabbing select-none ${
+                  isDragging ? 'opacity-40 ring-primary/40' : 'ring-black/5 hover:bg-zinc-50/60'
+                } ${isOver ? 'ring-2 ring-primary/50 bg-primary/5' : ''}`}>
 
-                <div className="flex flex-col items-center gap-0.5 shrink-0">
-                  <button type="button" onClick={() => moveTo(name, idx - 1)} disabled={idx === 0}
-                    title="Move up"
-                    className="text-zinc-400 hover:text-primary disabled:opacity-30 disabled:hover:text-zinc-400 transition-colors">
-                    <ChevronUp className="size-3.5" />
-                  </button>
-                  <input type="number" min={1} max={order.length} value={idx + 1}
-                    onChange={e => { const v = parseInt(e.target.value, 10); if (!isNaN(v)) moveTo(name, v - 1); }}
-                    className="w-9 h-6 text-center text-xs font-semibold tabular-nums rounded border border-zinc-200 bg-white text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 shadow-sm" />
-                  <button type="button" onClick={() => moveTo(name, idx + 1)} disabled={idx === order.length - 1}
-                    title="Move down"
-                    className="text-zinc-400 hover:text-primary disabled:opacity-30 disabled:hover:text-zinc-400 transition-colors">
-                    <ChevronDown className="size-3.5" />
-                  </button>
-                </div>
+                {/* Live position number (1, 2, 3 ...) */}
+                <span className="w-7 h-7 shrink-0 flex items-center justify-center rounded-md bg-primary/10 text-primary text-xs font-semibold tabular-nums">
+                  {idx + 1}
+                </span>
 
                 <div className="p-1 rounded bg-zinc-50 ring-1 ring-black/5 shrink-0">
                   <img src={m.imageSource} alt="" className="size-5 object-contain" />
@@ -170,7 +199,7 @@ export default function MenuOrderTab({ user }) {
                   <p className="text-[10px] text-zinc-400 font-medium uppercase tracking-wider truncate">{m.module_name}</p>
                 </div>
 
-                <GripVertical className="size-4 text-zinc-200 shrink-0" />
+                <GripVertical className="size-4 text-zinc-300 shrink-0" />
               </div>
             );
           })}

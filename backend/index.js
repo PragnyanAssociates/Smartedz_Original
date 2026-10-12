@@ -15120,6 +15120,71 @@ app.post('/api/admin/module-order', async (req, res) => {
     } finally { conn.release(); }
 });
 
+// --- 31.1 Read this school's role order (any authenticated member) ---
+app.get('/api/admin/role-order/:instId', async (req, res) => {
+    try {
+        const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+        const [rows] = await db.execute(
+            `SELECT role_id, sort_order
+               FROM role_order
+              WHERE institutionId = ?
+              ORDER BY sort_order ASC`,
+            [instId]
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+ 
+// --- 31.2 Save the role order (Super Admin / Developer only) ---------
+//   Body: { institutionId?, order: [12, 4, 7, ...] }   // role ids
+//   The array's index IS the sort order. Sending an empty array clears
+//   the config and puts the school back on the default order.
+app.post('/api/admin/role-order', async (req, res) => {
+    const role = String(req.auth.role || '');
+    if (role !== 'Super Admin' && role !== 'Developer') {
+        return res.status(403).json({ error: 'Only a Super Admin can change the role order.' });
+    }
+ 
+    const instId = role === 'Developer' && req.body.institutionId
+        ? req.body.institutionId
+        : req.auth.institutionId;
+ 
+    const order = Array.isArray(req.body.order) ? req.body.order : null;
+    if (!order) return res.status(400).json({ error: 'order must be an array of role ids.' });
+ 
+    // Keep only this school's own role ids, de-duped, in the given order -
+    // so a stale or foreign id can never land in the table.
+    const [ownRows] = await db.execute('SELECT id FROM roles WHERE institutionId = ?', [instId]);
+    const ownIds = new Set(ownRows.map(r => Number(r.id)));
+    const seen = new Set();
+    const clean = [];
+    order.forEach(v => {
+        const idNum = Number(v);
+        if (!Number.isInteger(idNum) || !ownIds.has(idNum) || seen.has(idNum)) return;
+        seen.add(idNum);
+        clean.push(idNum);
+    });
+ 
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        await conn.execute('DELETE FROM role_order WHERE institutionId = ?', [instId]);
+        if (clean.length > 0) {
+            const rows = clean.map((rid, i) => [instId, rid, i, req.auth.userId]);
+            await conn.query(
+                'INSERT INTO role_order (institutionId, role_id, sort_order, updated_by) VALUES ?',
+                [rows]
+            );
+        }
+        await conn.commit();
+        res.json({ success: true, count: clean.length });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally { conn.release(); }
+});
+ 
+
 
 
 // =====================================================================
