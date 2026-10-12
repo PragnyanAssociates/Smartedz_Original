@@ -11,7 +11,6 @@ export default function UserTab({ data, fetchData, user }) {
   const [viewingUser, setViewingUser]     = useState(null); // read-only "Eye" detail view
   const [search, setSearch]               = useState('');
   const [errors, setErrors]               = useState({});   // per-field validation messages
-  const [roleOrderIds, setRoleOrderIds]   = useState(null); // saved role order (ids); null until loaded
 
   const emptyForm = {
     name: '', email: '', username: '', password: '', role: '',
@@ -34,50 +33,18 @@ export default function UserTab({ data, fetchData, user }) {
     [data.users]
   );
 
-  // Map role_name -> role id, so the role tabs can be ordered by the
-  // saved role order (which is keyed by id).
-  const roleIdByName = useMemo(() => {
-    const m = {};
-    (data.roles || []).forEach(r => { m[r.role_name] = String(r.id); });
-    return m;
-  }, [data.roles]);
-
-  // Load the saved role order so these tabs match the order set on the
-  // Roles screen. Roles without a saved position keep their existing
-  // relative order (they fall in at the end).
-  useEffect(() => {
-    if (!user?.institutionId) return;
-    let alive = true;
-    (async () => {
-      try {
-        const res = await fetch(`${API_BASE_URL}/admin/role-order/${user.institutionId}`);
-        const rows = res.ok ? await res.json() : [];
-        if (alive) setRoleOrderIds(Array.isArray(rows) ? rows.map(r => String(r.role_id)) : []);
-      } catch (e) {
-        if (alive) setRoleOrderIds([]);
-      }
-    })();
-    return () => { alive = false; };
-  }, [user?.institutionId]);
-
+  // Role tabs follow whatever order `data.roles` arrives in. The backend
+  // now returns roles already sorted by the saved role order (set on the
+  // Roles screen), so these tabs match it automatically - and update the
+  // moment the shared data refreshes after a reorder. Any role that only
+  // shows up via user counts is appended at the end.
   const roleTabs = useMemo(() => {
     const counts = {};
     activeUsers.forEach(u => { counts[u.role] = (counts[u.role] || 0) + 1; });
     const knownRoles = data.roles.map(r => r.role_name);
     const merged = Array.from(new Set([...knownRoles, ...Object.keys(counts)]));
-    // Follow the saved role order (set on the Roles screen) when present.
-    // Array.sort is stable, so same-position roles keep their order.
-    if (roleOrderIds && roleOrderIds.length) {
-      const pos = {};
-      roleOrderIds.forEach((id, i) => { pos[id] = i; });
-      merged.sort((a, b) => {
-        const pa = pos[roleIdByName[a]] ?? Number.POSITIVE_INFINITY;
-        const pb = pos[roleIdByName[b]] ?? Number.POSITIVE_INFINITY;
-        return pa - pb;
-      });
-    }
     return merged.map(r => ({ name: r, count: counts[r] || 0 }));
-  }, [activeUsers, data.roles, roleOrderIds, roleIdByName]);
+  }, [activeUsers, data.roles]);
 
   const classFilters = useMemo(() => {
     const counts = {};
@@ -402,7 +369,7 @@ export default function UserTab({ data, fetchData, user }) {
                 ? 'bg-primary/10 text-primary ring-1 ring-primary/20'
                 : 'bg-white text-zinc-500 ring-1 ring-zinc-200 hover:bg-zinc-50 hover:text-zinc-700'
             }`}>
-            All <span className="ml-1 opacity-80 tabular-nums">{activeUsers.length}</span>
+            All <span className="ml-1 opacity-80 tabular-nums">({activeUsers.length})</span>
           </button>
           {roleTabs.map(t => (
             <button key={t.name} onClick={() => handleRoleTab(t.name)}
@@ -411,7 +378,7 @@ export default function UserTab({ data, fetchData, user }) {
                   ? 'bg-primary/10 text-primary ring-1 ring-primary/20'
                   : 'bg-white text-zinc-500 ring-1 ring-zinc-200 hover:bg-zinc-50 hover:text-zinc-700'
               }`}>
-              {t.name} <span className="ml-1 opacity-80 tabular-nums">{t.count}</span>
+              {t.name} <span className="ml-1 opacity-80 tabular-nums">({t.count})</span>
             </button>
           ))}
         </div>

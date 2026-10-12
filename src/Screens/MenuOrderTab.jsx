@@ -42,11 +42,24 @@ export default function MenuOrderTab({ user }) {
   const [saving, setSaving]   = useState(false);
   const [saved, setSaved]     = useState(false);
 
+  const [lastSaved, setLastSaved] = useState(null); // ISO string of last save
+
   // Drag-and-drop state (replaces the old up/down move buttons).
   const [dragName, setDragName] = useState(null);
   const [overName, setOverName] = useState(null);
   const orderRef = useRef(order);
   useEffect(() => { orderRef.current = order; }, [order]);
+
+  // Human-readable "12 Oct 2026, 4:44 PM" in the viewer's local time.
+  const fmtSaved = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleString('en-IN', {
+      day: '2-digit', month: 'short', year: 'numeric',
+      hour: 'numeric', minute: '2-digit', hour12: true
+    });
+  };
 
   useEffect(() => {
     if (!user?.institutionId) return;
@@ -57,7 +70,16 @@ export default function MenuOrderTab({ user }) {
         const rows = res.ok ? await res.json() : [];
         const names = Array.isArray(rows) ? rows.map(r => r.module_name) : [];
         const merged = mergeWithDefaults(names);
-        if (alive) { setOrder(merged); setInitial(merged); }
+        // Latest updated_at across the saved rows = when it was last saved.
+        const times = Array.isArray(rows)
+          ? rows.map(r => (r.updated_at ? new Date(r.updated_at).getTime() : 0)).filter(Boolean)
+          : [];
+        const latest = times.length ? Math.max(...times) : null;
+        if (alive) {
+          setOrder(merged);
+          setInitial(merged);
+          setLastSaved(latest ? new Date(latest).toISOString() : null);
+        }
       } catch (e) {
         console.error('Menu order fetch error:', e);
       }
@@ -83,6 +105,7 @@ export default function MenuOrderTab({ user }) {
       if (res.ok) {
         setInitial(payloadOrder);
         setSaved(true);
+        setLastSaved(new Date().toISOString());
       } else {
         const e = await res.json().catch(() => ({}));
         alert(e.error || 'Failed to save the menu order.');
@@ -144,6 +167,11 @@ export default function MenuOrderTab({ user }) {
             Drag any item to arrange the sidebar the way your school works. Changes save automatically
             and apply to everyone here.
           </p>
+          {lastSaved && (
+            <p className="text-[11px] text-zinc-400 mt-1">
+              Last saved: <span className="font-medium text-zinc-500">{fmtSaved(lastSaved)}</span>
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <button type="button" onClick={resetDefault}

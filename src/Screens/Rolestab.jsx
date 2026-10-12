@@ -37,6 +37,7 @@ export default function RolesTab({ data, fetchData, user }) {
   const [order, setOrder] = useState([]);   // array of role ids (strings)
   const [saving, setSaving] = useState(false);
   const [saveState, setSaveState] = useState(''); // '', 'saved', 'error'
+  const [saveErr, setSaveErr] = useState('');     // detail shown on failure
   const [dragId, setDragId] = useState(null);
   const [overId, setOverId] = useState(null);
   const orderRef = useRef(order);
@@ -113,16 +114,29 @@ export default function RolesTab({ data, fetchData, user }) {
   const saveOrder = async (ids) => {
     setSaving(true);
     setSaveState('');
+    setSaveErr('');
     try {
       const res = await fetch(`${API_BASE_URL}/admin/role-order`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ institutionId: user.institutionId, order: ids })
       });
-      setSaveState(res.ok ? 'saved' : 'error');
+      if (res.ok) {
+        setSaveState('saved');
+        // Push the new order into the shared data so every screen that
+        // reads roles (e.g. the Users tab's role filters) follows it.
+        if (typeof fetchData === 'function') fetchData();
+      } else {
+        const body = await res.json().catch(() => ({}));
+        const detail = `${res.status} ${body.error || res.statusText || ''}`.trim();
+        console.error('Role order save failed:', detail);
+        setSaveState('error');
+        setSaveErr(detail);
+      }
     } catch (e) {
       console.error('Role order save error:', e);
       setSaveState('error');
+      setSaveErr('Network error');
     }
     setSaving(false);
   };
@@ -215,13 +229,14 @@ export default function RolesTab({ data, fetchData, user }) {
     }
   };
 
-  // Small saved/saving indicator shown next to "Add Role".
+  // Small saved/saving indicator shown next to "Add Role". On failure it
+  // shows the HTTP status so a missing table/route is obvious at a glance.
   const statusLabel = saving
     ? 'Saving...'
     : saveState === 'saved'
       ? 'Order saved'
       : saveState === 'error'
-        ? "Couldn't save"
+        ? (saveErr ? `Couldn't save · ${saveErr}` : "Couldn't save")
         : '';
 
   return (
@@ -239,9 +254,10 @@ export default function RolesTab({ data, fetchData, user }) {
         </div>
         <div className="flex items-center gap-3 shrink-0">
           {statusLabel && (
-            <span className={`text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap ${
-              saving ? 'text-primary' : saveState === 'saved' ? 'text-emerald-600' : 'text-red-500'
-            }`}>
+            <span title={saveErr}
+              className={`text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap ${
+                saving ? 'text-primary' : saveState === 'saved' ? 'text-emerald-600' : 'text-red-500'
+              }`}>
               {statusLabel}
             </span>
           )}

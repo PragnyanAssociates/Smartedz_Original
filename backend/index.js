@@ -998,7 +998,15 @@ app.get('/api/admin/data/:instId', async (req, res) => {
         }
         const [classes]  = await db.execute('SELECT * FROM classes WHERE institutionId = ? ORDER BY className, section', [instId]);
         const [years]    = await db.execute('SELECT * FROM academic_years WHERE institutionId = ? ORDER BY startDate DESC', [instId]);
-        const [roles]    = await db.execute('SELECT * FROM roles WHERE institutionId = ? ORDER BY role_name', [instId]);
+       const [roles] = await db.execute(
+    `SELECT r.*
+       FROM roles r
+       LEFT JOIN role_order ro
+         ON ro.role_id = r.id AND ro.institutionId = r.institutionId
+      WHERE r.institutionId = ?
+      ORDER BY (ro.sort_order IS NULL) ASC, ro.sort_order ASC, r.role_name ASC`,
+    [instId]
+);
         const [inst]     = await db.execute('SELECT * FROM institutions WHERE id = ?', [instId]);
         const [subjects] = await db.execute('SELECT * FROM subjects WHERE institutionId = ? ORDER BY name', [instId]);
         const [tsRows] = await db.execute(
@@ -15118,6 +15126,20 @@ app.post('/api/admin/module-order', async (req, res) => {
         await conn.rollback();
         res.status(500).json({ error: err.message });
     } finally { conn.release(); }
+});
+
+app.get('/api/admin/module-order/:instId', async (req, res) => {
+    try {
+        const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+        const [rows] = await db.execute(
+            `SELECT module_name, sort_order, updated_at
+               FROM module_order
+              WHERE institutionId = ?
+              ORDER BY sort_order ASC`,
+            [instId]
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // --- 31.1 Read this school's role order (any authenticated member) ---
