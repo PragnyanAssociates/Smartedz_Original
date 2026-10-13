@@ -38,6 +38,31 @@ export default function Directory() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // Which roles are eligible for attendance (set in Attendance Settings).
+  // A Set of role names, or null while it loads. Passed to the profile
+  // detail so its Attendance tab matches the Attendance module exactly
+  // (Students & Teachers are always eligible there; every other role only
+  // when it's turned on).
+  const [attendanceRoles, setAttendanceRoles] = useState(null);
+  useEffect(() => {
+    if (!user?.institutionId) return;
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/admin/attendance-settings/${user.institutionId}`);
+        const rows = await res.json();
+        if (alive) {
+          setAttendanceRoles(new Set(
+            (Array.isArray(rows) ? rows : []).filter(r => r.eligible).map(r => r.role_name)
+          ));
+        }
+      } catch (e) {
+        if (alive) setAttendanceRoles(new Set());
+      }
+    })();
+    return () => { alive = false; };
+  }, [user]);
+
   // Active (non-alumni) members only — passed-out students are excluded.
   const activeUsers = useMemo(
     () => (data.users || []).filter(u => (u.status || '').toLowerCase() !== 'alumni'),
@@ -76,6 +101,7 @@ export default function Directory() {
         userId={selected.id}
         seedProfile={selected}
         classes={data.classes || []}
+        attendanceRoles={attendanceRoles}
         onBack={() => setSelected(null)}
       />
     );
@@ -215,7 +241,7 @@ const DIRECTORY_GUIDE = {
     ['4 \u00b7 Search', 'Type a name, username or email to jump straight to someone across every role at once.'],
     ['5 \u00b7 Open a profile', 'Click any card for the full profile: Basic Info for everyone, plus Performance and Attendance for students and teachers.'],
   ],
-  note: 'Inside a profile, the Performance and Attendance tabs are read-only views of the same live data as those modules (current academic year). To change a mark or a day, use the Reports or Attendance module \u2014 the profile updates on its own.'
+  note: 'Inside a profile, the Performance and Attendance tabs are read-only views of the same live data as those modules (current academic year). The Attendance tab appears for Students, Teachers and any role turned on in Attendance Settings. To change a mark or a day, use the Reports or Attendance module \u2014 the profile updates on its own.'
 };
 
 function DirectoryHelp({ className = '' }) {

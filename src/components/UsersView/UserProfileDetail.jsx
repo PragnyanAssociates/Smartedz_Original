@@ -38,7 +38,7 @@ const fmtMoney = (v) => {
   return `₹${n.toLocaleString('en-IN')}`;
 };
 
-export default function UserProfileDetail({ userId, seedProfile = null, classes = [], onBack }) {
+export default function UserProfileDetail({ userId, seedProfile = null, classes = [], attendanceRoles = null, onBack }) {
   // `seedProfile` is the complete user row handed down from the Directory
   // (it comes from /admin/data and carries every column). `fetched` is the
   // /profile lookup. We merge them so the screen always has the full set.
@@ -72,17 +72,31 @@ export default function UserProfileDetail({ userId, seedProfile = null, classes 
     const roleLc = (profile?.role || '').trim().toLowerCase();
     const isStudent = roleLc === 'student';
     const isTeacher = roleLc.includes('teacher');
-    // Super Admin (and Developer) are never marked in the Attendance module,
-    // so they get Basic Info only. Everyone else — Student, Teacher, and any
-    // other role (Principal, custom roles…) — gets an Attendance tab.
+    // The Attendance tab mirrors the Attendance module's eligibility:
+    //  • Students and Teachers always have attendance (their fixed tabs).
+    //  • Every other role has it only when it's turned ON in Attendance
+    //    Settings. `attendanceRoles` is the set of eligible role names
+    //    from the Directory. While it's still null (loading), fall back to
+    //    "everyone except Super Admin / Developer" so the tab isn't wrongly
+    //    hidden for a split second.
     // Performance stays limited to Students and Teachers.
-    const noAttendance = roleLc === 'super admin' || roleLc === 'developer';
+    const hasAttendance = isStudent || isTeacher || (
+      attendanceRoles
+        ? attendanceRoles.has(profile?.role)
+        : (roleLc !== 'super admin' && roleLc !== 'developer')
+    );
 
     const t = [{ id: 'info', label: 'Basic Info', icon: User }];
     if (isStudent || isTeacher) t.push({ id: 'performance', label: 'Performance', icon: Award });
-    if (!noAttendance) t.push({ id: 'attendance', label: 'Attendance', icon: ShieldCheck });
+    if (hasAttendance) t.push({ id: 'attendance', label: 'Attendance', icon: ShieldCheck });
     return t;
-  }, [profile]);
+  }, [profile, attendanceRoles]);
+
+  // If the eligible-roles data loads and removes the tab we're on, drop back
+  // to Basic Info so we never render a tab that no longer exists.
+  useEffect(() => {
+    if (!tabs.some(t => t.id === activeTab)) setActiveTab('info');
+  }, [tabs, activeTab]);
 
   if (loading || !profile) {
     return (

@@ -29,6 +29,9 @@ const classLabel = (c) => `${c.className}${c.section ? ' - ' + c.section : ''}`;
 //  which remembers them, so coming back to this screen - or to the
 //  module later - reopens the same tab and class.
 //  There is no "All Classes" option: exactly one class is always shown.
+//
+//  The type tabs can be DRAGGED to reorder (Super Admin only). The order
+//  saves automatically and is kept for next time.
 // =====================================================================
 export default function SyllabusManagement({
   user, canEdit, classes, subjects, subjectClasses, teachers,
@@ -50,6 +53,13 @@ export default function SyllabusManagement({
   const [editing, setEditing]     = useState(null);
   const [form, setForm] = useState({ class_id: '', subject_id: '', teacher_id: '', syllabus_type_id: '' });
   const [saving, setSaving] = useState(false);
+
+  // ---- type tab drag-to-reorder (Super Admin only) ----
+  const isSuperAdmin = (user?.role || '') === 'Super Admin';
+  const [dragId, setDragId]         = useState(null);
+  const [overId, setOverId]         = useState(null);
+  const [orderSaving, setOrderSaving] = useState(false);
+  const [orderState, setOrderState]   = useState(''); // '', 'saved', 'error'
 
   const activeType  = useMemo(() => types.find(t => String(t.id) === String(activeTypeId)) || null, [types, activeTypeId]);
   const activeClass = useMemo(() => classes.find(c => String(c.id) === String(filterClass)) || null, [classes, filterClass]);
@@ -97,6 +107,68 @@ export default function SyllabusManagement({
   }, [user, filterClass, activeTypeId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // ---- save the type order (Super Admin) ----
+  const saveTypeOrder = async (ids) => {
+    setOrderSaving(true);
+    setOrderState('');
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/syllabus/types/reorder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order: ids })
+      });
+      setOrderState(res.ok ? 'saved' : 'error');
+      if (!res.ok) console.error('Syllabus type reorder failed:', res.status);
+    } catch (e) {
+      console.error('Syllabus type reorder error:', e);
+      setOrderState('error');
+    }
+    setOrderSaving(false);
+  };
+
+  // ---- drag handlers for the type tabs ----
+  const handleTypeDragStart = (e, id) => {
+    if (!isSuperAdmin) return;
+    setDragId(String(id));
+    setOrderState('');
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', String(id)); } catch (_) {}
+  };
+  const handleTypeDragOver = (e, id) => {
+    if (!isSuperAdmin || !dragId) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const sid = String(id);
+    if (sid !== overId) setOverId(sid);
+  };
+  const handleTypeDragLeave = (id) => {
+    if (String(id) === overId) setOverId(null);
+  };
+  const handleTypeDrop = (e, targetId) => {
+    if (!isSuperAdmin) return;
+    e.preventDefault();
+    const src = dragId;
+    const tgt = String(targetId);
+    setOverId(null);
+    setDragId(null);
+    if (!src || src === tgt) return;
+    const arr = types.map(t => String(t.id));
+    const from = arr.indexOf(src);
+    const to   = arr.indexOf(tgt);
+    if (from < 0 || to < 0 || from === to) return;
+    const next = [...types];
+    next.splice(to, 0, next.splice(from, 1)[0]);
+    setTypes(next);                          // optimistic
+    saveTypeOrder(next.map(t => String(t.id)));
+  };
+  const handleTypeDragEnd = () => { setDragId(null); setOverId(null); };
+
+  const orderLabel = orderSaving
+    ? 'Saving...'
+    : orderState === 'saved' ? 'Order saved'
+    : orderState === 'error' ? "Couldn't save"
+    : '';
 
   // ---- subjects available for the class chosen in the modal ----
   const subjectsForClass = useMemo(() => {
@@ -201,9 +273,21 @@ export default function SyllabusManagement({
 
       {/* ---- SYLLABUS TYPE TABS ---- */}
       <div className="border-b border-zinc-200 pb-3">
-        <div className="flex items-center gap-1.5 mb-1">
-          <Layers className="size-3.5 text-zinc-400" />
-          <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Syllabus Type</span>
+        <div className="flex items-center justify-between gap-2 mb-1">
+          <div className="flex items-center gap-1.5">
+            <Layers className="size-3.5 text-zinc-400" />
+            <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Syllabus Type</span>
+            {isSuperAdmin && types.length > 1 && (
+              <span className="text-[10px] font-medium text-zinc-400 normal-case tracking-normal hidden sm:inline">· drag to reorder</span>
+            )}
+          </div>
+          {isSuperAdmin && orderLabel && (
+            <span className={`text-[10px] font-semibold uppercase tracking-wider ${
+              orderSaving ? 'text-primary' : orderState === 'saved' ? 'text-emerald-600' : 'text-red-500'
+            }`}>
+              {orderLabel}
+            </span>
+          )}
         </div>
         {typesLoading && types.length === 0 ? (
           <div className="h-9 flex items-center"><Loader2 className="size-4 animate-spin text-primary" /></div>
@@ -211,11 +295,23 @@ export default function SyllabusManagement({
           <div className="flex items-center gap-2 overflow-x-auto custom-scrollbar">
             {types.map(t => {
               const active = String(t.id) === String(activeTypeId);
+              const dragging = isSuperAdmin && dragId === String(t.id);
+              const over = isSuperAdmin && overId === String(t.id) && dragId && dragId !== String(t.id);
               return (
-                <button key={t.id} onClick={() => onTypeChange(String(t.id))}
+                <button key={t.id}
+                  onClick={() => onTypeChange(String(t.id))}
+                  draggable={isSuperAdmin}
+                  onDragStart={(e) => handleTypeDragStart(e, t.id)}
+                  onDragOver={(e) => handleTypeDragOver(e, t.id)}
+                  onDragLeave={() => handleTypeDragLeave(t.id)}
+                  onDrop={(e) => handleTypeDrop(e, t.id)}
+                  onDragEnd={handleTypeDragEnd}
+                  title={isSuperAdmin ? 'Drag to reorder' : undefined}
                   className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-md text-xs font-semibold whitespace-nowrap shrink-0 transition-colors ${
                     active ? 'bg-primary text-white shadow-sm' : 'bg-white text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-50'
-                  }`}>
+                  } ${isSuperAdmin ? 'cursor-grab active:cursor-grabbing select-none' : ''} ${
+                    dragging ? 'opacity-40' : ''
+                  } ${over ? 'ring-2 ring-primary/60' : ''}`}>
                   {t.name}
                   <span className={`text-[10px] font-bold tabular-nums px-1.5 py-0.5 rounded ${active ? 'bg-white/20 text-white' : 'bg-zinc-100 text-zinc-500'}`}>
                     {t.syllabus_count}
@@ -518,7 +614,7 @@ const GUIDES = {
   manage: {
     title: 'Syllabus Management',
     steps: [
-      ['1 - Syllabus Types (tabs)', 'Syllabuses are grouped under types shown as tabs (e.g. State Board, CBSE). Add a type once with New Syllabus type; after that just click its tab. The tab you pick is remembered, even after you leave this page.'],
+      ['1 - Syllabus Types (tabs)', 'Syllabuses are grouped under types shown as tabs (e.g. State Board, CBSE). Add a type once with New Syllabus type; after that just click its tab. The tab you pick is remembered, even after you leave this page. A Super Admin can drag the tabs to reorder them.'],
       ['2 - Class filter', 'One class is always selected. Switching tabs keeps the same class, and it is remembered too.'],
       ['3 - Create a syllabus', 'Create Syllabus adds one under the selected type tab, with the filtered class already chosen. One syllabus per class + subject per type.'],
       ['4 - Manage (Subject Index)', 'The green Manage button opens the Subject Index: upload the textbook, auto-detect chapters, add keywords and set lesson periods.'],

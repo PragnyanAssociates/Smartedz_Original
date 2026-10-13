@@ -10257,6 +10257,45 @@ app.delete('/api/admin/syllabus/library/files/:id', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+app.post('/api/admin/syllabus/types/reorder', async (req, res) => {
+    const roleAuth = String(req.auth.role || '');
+    if (roleAuth !== 'Super Admin' && roleAuth !== 'Developer') {
+        return res.status(403).json({ error: 'Only a Super Admin can reorder syllabus types.' });
+    }
+    const institutionId = req.auth.institutionId;
+    const order = Array.isArray(req.body.order) ? req.body.order : null;
+    if (!order) return res.status(400).json({ error: 'order must be an array of type ids.' });
+ 
+    // Keep only this institution's own type ids, de-duped, in the given order.
+    const [own] = await db.execute('SELECT id FROM syllabus_types WHERE institutionId = ?', [institutionId]);
+    const ownIds = new Set(own.map(r => Number(r.id)));
+    const seen = new Set();
+    const clean = [];
+    order.forEach(v => {
+        const id = Number(v);
+        if (!Number.isInteger(id) || !ownIds.has(id) || seen.has(id)) return;
+        seen.add(id);
+        clean.push(id);
+    });
+ 
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        for (let i = 0; i < clean.length; i++) {
+            await conn.execute(
+                'UPDATE syllabus_types SET sort_order = ? WHERE id = ? AND institutionId = ?',
+                [i, clean[i], institutionId]
+            );
+        }
+        await conn.commit();
+        res.json({ success: true, count: clean.length });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally { conn.release(); }
+});
+
+
 
 
 // ====================================================================
