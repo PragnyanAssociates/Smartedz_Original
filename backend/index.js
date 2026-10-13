@@ -3154,10 +3154,10 @@ app.get('/api/admin/attendance/roster/:instId', async (req, res) => {
             }
         } else if (category === 'teachers') {
             where += " AND LOWER(TRIM(u.role)) LIKE '%teacher%'";
-               } else if (category === 'other') {
-            where += " AND LOWER(TRIM(u.role)) NOT LIKE '%teacher%' "
-                  +  " AND LOWER(TRIM(u.role)) NOT IN ('student','developer')";
-        }
+               } else if (category === 'role' && req.query.role) {
+    where += " AND LOWER(TRIM(u.role)) = ?";
+    params.push(String(req.query.role).toLowerCase().trim());
+}
         where += " AND (u.status IS NULL OR LOWER(TRIM(u.status)) = 'active')";
 
         const userSql = `
@@ -3423,10 +3423,10 @@ app.get('/api/admin/attendance/overview/:instId', async (req, res) => {
             if (class_id) { where += ' AND u.class_id = ?'; params.push(parseInt(class_id, 10)); }
         } else if (category === 'teachers') {
             where += " AND LOWER(TRIM(u.role)) LIKE '%teacher%'";
-        } else if (category === 'other') {
-            where += " AND LOWER(TRIM(u.role)) NOT LIKE '%teacher%' "
-                  +  " AND LOWER(TRIM(u.role)) NOT IN ('student','super admin','developer')";
-        }
+        } else if (category === 'role' && req.query.role) {
+    where += " AND LOWER(TRIM(u.role)) = ?";
+    params.push(String(req.query.role).toLowerCase().trim());
+}
         where += " AND (u.status IS NULL OR LOWER(TRIM(u.status)) = 'active')";
 
         const [users] = await db.execute(`SELECT u.id FROM users u WHERE ${where}`, params);
