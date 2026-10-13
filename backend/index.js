@@ -9573,7 +9573,9 @@ app.get('/api/admin/syllabus/types/:instId', async (req, res) => {
         const [rows] = await db.execute(
             `SELECT t.id, t.name,
                     (SELECT COUNT(*) FROM syllabus s WHERE s.syllabus_type_id = t.id) AS syllabus_count
-                             ORDER BY t.sort_order ASC, t.name ASC`, [instId]);
+               FROM syllabus_types t
+              WHERE t.institutionId = ?
+              ORDER BY t.sort_order ASC, t.name ASC`, [instId]);
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
