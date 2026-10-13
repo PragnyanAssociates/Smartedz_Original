@@ -7,9 +7,12 @@ import { Calendar, Search, Loader2, CheckCheck, Eraser, Save, Info, AlertTriangl
 // =====================================================================
 //  RosterMarker — bulk attendance marker
 //  Statuses: P (Present) / A (Absent). (Late was removed.)
-//  "All Clear" deletes the day's marks for the shown people and records
-//  who cleared them, so a Sunday (or any non-teaching day) can be wiped
-//  back to "not marked" without turning Sundays off globally.
+//
+//  category: 'students' | 'teachers' | 'role'
+//    • 'role' marks one specific role (role prop = its name) — its own
+//      tab, a flat list, S.No 1…N. The role tabs and which roles exist
+//      come from Attendance Settings.
+//  label: the display name for the current tab (e.g. "Principal").
 // =====================================================================
 
 const STATUS_OPTIONS = [
@@ -49,11 +52,12 @@ const sortRoster = (list, category) => {
   return arr;
 };
 
-export default function RosterMarker({ category }) {
+export default function RosterMarker({ category, role = null, label }) {
   const { user } = useAuth();
   const { isAllAccess } = usePermissions();
-  const role = (user?.role || '').toLowerCase();
-  const isTeacher = role.includes('teacher');
+  const role_ = (user?.role || '').toLowerCase();
+  const isTeacher = role_.includes('teacher');
+  const catLabel = label || (category === 'students' ? 'students' : category === 'teachers' ? 'teachers' : 'users');
 
   const today = new Date().toISOString().slice(0, 10);
   const [date, setDate] = useState(today);
@@ -77,7 +81,7 @@ export default function RosterMarker({ category }) {
   const teacherCantMark = isTeacher && !isAllAccess && category === 'teachers';
 
   // -----------------------------------------------------------------
-  // Load classes
+  // Load classes (students only)
   // -----------------------------------------------------------------
   useEffect(() => {
     if (category !== 'students') { setClasses([]); setClassId(''); setClassesLoaded(false); return; }
@@ -106,8 +110,6 @@ export default function RosterMarker({ category }) {
     if (!valid) setClassId(String(classes[0].id));
   }, [classes, category, classId]);
 
-  // Hold off loading the student roster until the default class resolves,
-  // so we never briefly show every class together.
   const awaitingClass = category === 'students' && !classId && (!classesLoaded || classes.length > 0);
 
   // -----------------------------------------------------------------
@@ -122,11 +124,11 @@ export default function RosterMarker({ category }) {
     try {
       let url = `${API_BASE_URL}/admin/attendance/roster/${user.institutionId}?category=${category}&date=${date}`;
       if (category === 'students' && classId) url += `&class_id=${classId}`;
+      if (category === 'role' && role) url += `&role=${encodeURIComponent(role)}`;
 
       const res = await fetch(url);
       const data = await res.json();
 
-      // Surface backend errors and warnings
       if (!res.ok || data.error) {
         setError(data.error || `Server returned ${res.status}`);
         setRoster([]);
@@ -144,7 +146,7 @@ export default function RosterMarker({ category }) {
       setError(e.message || 'Network error');
     }
     setLoading(false);
-  }, [user, category, date, classId, teacherCantMark, awaitingClass]);
+  }, [user, category, role, date, classId, teacherCantMark, awaitingClass]);
 
   useEffect(() => { loadRoster(); }, [loadRoster]);
 
@@ -165,7 +167,7 @@ export default function RosterMarker({ category }) {
       .map(([uid, code]) => ({ user_id: parseInt(uid, 10), status: code }));
 
     if (entries.length === 0) return alert('Mark at least one user before submitting.');
-    if (!window.confirm(`Save attendance for ${entries.length} ${category} on ${date}?`)) return;
+    if (!window.confirm(`Save attendance for ${entries.length} ${catLabel} on ${date}?`)) return;
 
     setSaving(true);
     try {
@@ -194,7 +196,6 @@ export default function RosterMarker({ category }) {
     const ids = filtered.map(u => u.id);
     if (ids.length === 0) return;
 
-    // Only worth warning/clearing if something is actually saved.
     const anySaved = filtered.some(u => u.marked_by_name);
     if (!anySaved) {
       setEdits({});
@@ -202,7 +203,7 @@ export default function RosterMarker({ category }) {
     }
 
     if (!window.confirm(
-      `The marked attendance for ${filtered.length} ${category} on ${date} will be DELETED and the day will show as not marked.\n\n` +
+      `The marked attendance for ${filtered.length} ${catLabel} on ${date} will be DELETED and the day will show as not marked.\n\n` +
       `This cannot be undone. Continue?`
     )) return;
 
@@ -221,7 +222,7 @@ export default function RosterMarker({ category }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Clear failed');
       setEdits({});
-      alert(data.cleared ? `Cleared attendance for ${data.cleared} ${category} on ${date}.` : 'Nothing to clear for this day.');
+      alert(data.cleared ? `Cleared attendance for ${data.cleared} ${catLabel} on ${date}.` : 'Nothing to clear for this day.');
       loadRoster();
     } catch (e) { alert(e.message); }
     setClearing(false);
@@ -240,7 +241,7 @@ export default function RosterMarker({ category }) {
     );
   }, [roster, search]);
 
-  // Running serial numbers for non-student categories (1 … N by sorted order)
+  // Running serial numbers for non-student categories (1 … N by sorted order).
   const serialMap = useMemo(() => {
     if (category === 'students') return {};
     const map = {};
@@ -373,7 +374,7 @@ export default function RosterMarker({ category }) {
             <p className="text-[11px] sm:text-xs text-zinc-400 mt-1">
               {category === 'students' && classId
                 ? 'No students assigned to this class.'
-                : `No ${category} in this institution. Add some in Manage Logins → Users.`}
+                : `No ${catLabel} in this institution. Add some in Manage Logins → Users.`}
             </p>
           )}
         </div>
@@ -390,7 +391,7 @@ export default function RosterMarker({ category }) {
             <tbody className="divide-y divide-zinc-100">
               {filtered.map(u => {
                 const status = edits[u.id];
-                // Students show their roll number; everyone else shows a serial number.
+                // Students show their roll number; everyone else a serial.
                 const idLabel = category === 'students'
                   ? (u.roll_no ? `Roll ${u.roll_no}` : (u.username ? `@${u.username}` : u.role))
                   : `S.No ${serialMap[u.id] || '—'}`;

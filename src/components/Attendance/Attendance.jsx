@@ -2,18 +2,22 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   GraduationCap, Users as UsersIcon, UserCog, ClipboardCheck, History,
   Search, ChevronLeft, ChevronDown, BarChart3, CalendarCheck, CalendarX,
-  CalendarRange, List, PieChart, HelpCircle, X, ShieldCheck, AlertTriangle
+  CalendarRange, List, PieChart, HelpCircle, X, ShieldCheck, AlertTriangle,
+  SlidersHorizontal
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import RosterMarker from './RosterMarker';
 import AttendanceHistory from './AttendanceHistory';
+import AttendanceSettings from './AttendanceSettings';
 import { API_BASE_URL } from '../../apiConfig';
 
 // =====================================================================
 //  Attendance — Top-level container
-//  (Downloads now live on the dedicated Downloads tab in System
-//   Configuration, so there is no export control here.)
+//  Tabs: Students · Teachers · [one tab per ELIGIBLE role].
+//  The role tabs (which roles, in what order) are controlled by the
+//  Super Admin in "Attendance Settings" (button beside How to use).
+//  Students and Teachers are permanent, dedicated tabs.
 // =====================================================================
 
 export default function Attendance() {
@@ -31,6 +35,7 @@ export default function Attendance() {
   const [activeYearName, setActiveYearName] = useState('');
   const [yearKnown, setYearKnown] = useState(false);
   const [help, setHelp] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
     if (!user?.institutionId) return;
@@ -39,9 +44,6 @@ export default function Attendance() {
         const res = await fetch(`${API_BASE_URL}/admin/data/${user.institutionId}`);
         const data = await res.json();
         const list = data.academicYears || [];
-        // ACTIVE only — no fallback to list[0]. Attendance is stamped with
-        // whatever the backend resolves as active; if that's nothing, the
-        // badge must not claim a year.
         const active = list.find(y => y.isActive);
         setActiveYearName(active ? (active.name || '') : '');
       } catch (e) { console.error('academic year load:', e); }
@@ -49,28 +51,47 @@ export default function Attendance() {
     })();
   }, [user]);
 
-  // Which category tabs are visible to this user?
-  const categories = useMemo(() => {
-    if (isSuper)   return ['students', 'teachers', 'other'];
-    if (isTeacher) return ['students', 'teachers'];
-    if (isStudent) return ['students'];
-    return ['students', 'teachers', 'other'];
-  }, [isSuper, isTeacher, isStudent]);
+  // ---- Attendance role settings (which roles get a tab, + order) -----
+  const [roleSettings, setRoleSettings] = useState([]);
+  const reloadRoleSettings = useCallback(async () => {
+    if (!user?.institutionId || !isSuper) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/attendance-settings/${user.institutionId}`);
+      const data = await res.json();
+      setRoleSettings(Array.isArray(data) ? data : []);
+    } catch (e) { /* no role tabs if it fails */ }
+  }, [user, isSuper]);
+  useEffect(() => { reloadRoleSettings(); }, [reloadRoleSettings]);
 
-  const [category, setCategory] = useState(categories[0]);
-  const [mode, setMode] = useState('mark'); // 'mark' | 'history'
+  // Build the tab set. Students + Teachers are fixed; eligible roles
+  // follow, in the order set in Attendance Settings. Role tabs are shown
+  // to the Super Admin only.
+  const tabs = useMemo(() => {
+    const out = [{ key: 'students', label: 'Students', icon: GraduationCap }];
+    if (isSuper || isTeacher) out.push({ key: 'teachers', label: 'Teachers', icon: UsersIcon });
+    if (isSuper) {
+      roleSettings.filter(r => r.eligible).forEach(r => {
+        out.push({ key: `role:${r.role_name}`, label: r.role_name, icon: UserCog });
+      });
+    }
+    return out;
+  }, [isSuper, isTeacher, roleSettings]);
 
+  const [activeKey, setActiveKey] = useState('students');
   useEffect(() => {
-    if (!canMark) setMode('history');
-  }, [canMark]);
+    if (!tabs.some(t => t.key === activeKey)) setActiveKey(tabs[0]?.key || 'students');
+  }, [tabs, activeKey]);
+
+  const [mode, setMode] = useState('mark'); // 'mark' | 'history'
+  useEffect(() => { if (!canMark) setMode('history'); }, [canMark]);
 
   const forceSelfHistory = isStudent || (!isSuper && !isTeacher && !can('Attendance', 'edit'));
 
-  const categoryConfig = {
-    students: { label: 'Students', icon: GraduationCap },
-    teachers: { label: 'Teachers', icon: UsersIcon },
-    other:    { label: 'Other',    icon: UserCog }
-  };
+  // Resolve the current tab into category + role + label.
+  const active = tabs.find(t => t.key === activeKey) || tabs[0] || { key: 'students', label: 'Students' };
+  const isRoleTab = (active.key || '').startsWith('role:');
+  const cat = isRoleTab ? 'role' : active.key;
+  const roleName = isRoleTab ? active.label : null;
 
   const YearBadge = () => {
     if (!yearKnown) return null;
@@ -96,6 +117,13 @@ export default function Attendance() {
     </button>
   );
 
+  const SettingsButton = () => (
+    <button onClick={() => setSettingsOpen(true)}
+      className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors shrink-0">
+      <SlidersHorizontal className="size-3.5" /> Attendance settings
+    </button>
+  );
+
   // -----------------------------------------------------------------
   if (forceSelfHistory) {
     return (
@@ -117,7 +145,8 @@ export default function Attendance() {
     <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-3 sm:space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <Header subtitle="Mark and review daily attendance" />
-        <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+        <div className="flex items-center gap-2 self-start sm:self-auto shrink-0 flex-wrap">
+          {isSuper && <SettingsButton />}
           <HelpButton />
           <YearBadge />
         </div>
@@ -125,19 +154,18 @@ export default function Attendance() {
 
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar w-full sm:w-auto pb-1 sm:pb-0">
-          {categories.map(key => {
-            const cfg = categoryConfig[key];
-            const Icon = cfg.icon;
-            const active = category === key;
+          {tabs.map(t => {
+            const Icon = t.icon;
+            const on = activeKey === t.key;
             return (
-              <button key={key}
-                onClick={() => setCategory(key)}
+              <button key={t.key}
+                onClick={() => setActiveKey(t.key)}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
-                  active
+                  on
                     ? 'bg-primary text-white shadow-sm'
                     : 'text-zinc-600 hover:bg-zinc-50 border border-zinc-200 bg-white'
                 }`}>
-                <Icon className="size-3.5 shrink-0" /> {cfg.label}
+                <Icon className="size-3.5 shrink-0" /> {t.label}
               </button>
             );
           })}
@@ -164,12 +192,15 @@ export default function Attendance() {
       </div>
 
       {mode === 'mark' ? (
-        <RosterMarker category={category} />
+        <RosterMarker key={active.key} category={cat} role={roleName} label={active.label} />
       ) : (
-        <HistoryPicker category={category} yearName={activeYearName} />
+        <HistoryPicker key={active.key} category={cat} role={roleName} label={active.label} yearName={activeYearName} />
       )}
 
       {help && <HelpModal topic={mode === 'mark' ? 'mark' : 'history'} onClose={() => setHelp(false)} />}
+      {settingsOpen && (
+        <AttendanceSettings onClose={() => setSettingsOpen(false)} onSaved={reloadRoleSettings} />
+      )}
     </div>
   );
 }
@@ -184,21 +215,19 @@ function Header({ subtitle }) {
 }
 
 // =====================================================================
-//  How-to-use notes — the guide follows what you're doing right now
-//  (marking, reviewing, or reading your own record). Same shell as the
-//  Transport module guide.
+//  How-to-use notes
 // =====================================================================
 const GUIDES = {
   mark: {
     title: 'Marking attendance',
     steps: [
-      ['1 \u00b7 Pick who', 'The tabs decide who you are marking \u2014 Students, Teachers, or Other staff. Teachers see Students and Teachers; a Super Admin sees all three.'],
+      ['1 \u00b7 Pick who', 'The tabs decide who you are marking \u2014 Students, Teachers, or any other role turned on in Attendance Settings. Each role is its own tab.'],
       ['2 \u00b7 Then the class and the date', 'For students, choose the class. Teachers only ever see their own classes here. Check the date before you mark \u2014 it is the one thing people get wrong.'],
       ['3 \u00b7 Present or Absent', 'Those are the only two options \u2014 there is no Late. If your school used to mark Late, those days now count as Present.'],
-      ['4 \u00b7 Mark and save', 'Set everyone, then save. Marking the same class and date again simply updates it, so a mistake is fixed by re-marking, not by deleting anything.'],
-      ['5 \u00b7 Then check History', 'Switch to History to see what the marking adds up to \u2014 per person, per month, or across the whole year.'],
+      ['4 \u00b7 Mark and save', 'Set everyone, then save. Marking the same group and date again simply updates it, so a mistake is fixed by re-marking, not by deleting anything.'],
+      ['5 \u00b7 Attendance settings', 'A Super Admin controls which roles are marked for attendance and the order of their tabs under Attendance settings (beside How to use).'],
     ],
-    note: 'Attendance is stamped with the ACTIVE academic year shown in the badge. Marking against the wrong active year puts the day in the wrong year\u2019s records \u2014 if the badge looks wrong, fix it in Manage Logins \u2192 Academics Year before you mark.'
+    note: 'Attendance is stamped with the ACTIVE academic year shown in the badge. If the badge looks wrong, fix it in Manage Logins \u2192 Academics Year before you mark.'
   },
   history: {
     title: 'Reviewing attendance',
@@ -206,7 +235,7 @@ const GUIDES = {
       ['1 \u00b7 Choose the period', 'Daily for one date, Monthly for a month, Yearly for the whole active academic year, or Custom for any two dates.'],
       ['2 \u00b7 Read the top bar', 'Working Days is how many days were actually marked \u2014 not calendar days, so an unmarked day never counts against anyone. On Daily, Present and Absent are head counts; on Monthly, Yearly and Custom they are percentages of everything marked.'],
       ['3 \u00b7 The list', 'Total / Present per person for the period. Click any row to open that person\u2019s full history \u2014 their calendar, their summary and their chart.'],
-      ['4 \u00b7 Analysis', 'Flips the list into a bar per person, sorted High \u2192 Low, Low \u2192 High, or by roll number. Green is 80% and above, blue 50\u201380%, red below 50% \u2014 the same bands as the Performance screens.'],
+      ['4 \u00b7 Analysis', 'Flips the list into a bar per person, sorted High \u2192 Low, Low \u2192 High, or by roll number. Green is 80% and above, blue 50\u201380%, red below 50%.'],
       ['5 \u00b7 Finding someone', 'Search by name, username or roll number.'],
     ],
     note: 'Read-only \u2014 nothing here changes a mark; that\u2019s the Mark tab. To export attendance, use Manage Logins \u2192 Downloads, which pulls a full academic year to Excel.'
@@ -249,13 +278,14 @@ function HelpModal({ topic, onClose }) {
 }
 
 // =====================================================================
-//  HistoryPicker — unchanged behaviour
+//  HistoryPicker
 // =====================================================================
-function HistoryPicker({ category, yearName }) {
+function HistoryPicker({ category, role = null, label, yearName }) {
   const { user } = useAuth();
   const { isAllAccess } = usePermissions();
-  const role = (user?.role || '').toLowerCase();
-  const isTeacher = role.includes('teacher');
+  const roleLc = (user?.role || '').toLowerCase();
+  const isTeacher = roleLc.includes('teacher');
+  const catName = label || (category === 'students' ? 'Students' : category === 'teachers' ? 'Teachers' : 'Users');
 
   const [users, setUsers] = useState([]);
   const [search, setSearch] = useState('');
@@ -327,12 +357,13 @@ function HistoryPicker({ category, yearName }) {
       const today = new Date().toISOString().slice(0, 10);
       let url = `${API_BASE_URL}/admin/attendance/roster/${user.institutionId}?category=${category}&date=${today}`;
       if (category === 'students' && classId) url += `&class_id=${classId}`;
+      if (category === 'role' && role) url += `&role=${encodeURIComponent(role)}`;
       const res = await fetch(url);
       const data = await res.json();
       setUsers(data.users || []);
     } catch (e) { console.error(e); }
     setLoading(false);
-  }, [user, category, classId, awaitingClass]);
+  }, [user, category, role, classId, awaitingClass]);
 
   useEffect(() => {
     if (!teacherViewingTeachers) loadRoster();
@@ -348,12 +379,13 @@ function HistoryPicker({ category, yearName }) {
       let url = `${API_BASE_URL}/admin/attendance/overview/${user.institutionId}?category=${category}`;
       if (r.from && r.to) url += `&from=${r.from}&to=${r.to}`;
       if (category === 'students' && classId) url += `&class_id=${classId}`;
+      if (category === 'role' && role) url += `&role=${encodeURIComponent(role)}`;
       const res = await fetch(url);
       const data = await res.json();
       setOverview(data);
     } catch (e) { console.error(e); setOverview(null); }
     setOvLoading(false);
-  }, [user, category, classId, resolveRange, teacherViewingTeachers, awaitingClass]);
+  }, [user, category, role, classId, resolveRange, teacherViewingTeachers, awaitingClass]);
 
   useEffect(() => { loadOverview(); }, [loadOverview]);
 
@@ -407,7 +439,7 @@ function HistoryPicker({ category, yearName }) {
 
   const analysisData = useMemo(() => {
     const arr = sortedAll.map(u => {
-      const st = statsById[u.id] || { present: 0, absent: 0, late: 0, total: workingDays, pct: 0 };
+      const st = statsById[u.id] || { present: 0, absent: 0, total: workingDays, pct: 0 };
       return {
         id: u.id, name: u.name, roll_no: u.roll_no, serial: serialMap[u.id],
         present: st.present, total: workingDays, pct: st.pct
@@ -421,8 +453,6 @@ function HistoryPicker({ category, yearName }) {
     return arr;
   }, [sortedAll, statsById, serialMap, workingDays, analysisSort]);
 
-  const categoryLabel = category === 'students' ? 'Students' : (category === 'teachers' ? 'Teachers' : 'Other');
-
   if (teacherViewingTeachers) {
     return <AttendanceHistory userId={user.id} userName={user.name} selfOnly yearName={yearName} />;
   }
@@ -432,7 +462,7 @@ function HistoryPicker({ category, yearName }) {
       <div className="space-y-4 animate-in fade-in">
         <button onClick={() => setPicked(null)}
           className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
-          <ChevronLeft className="size-4" /> Back to {category} list
+          <ChevronLeft className="size-4" /> Back to {catName} list
         </button>
         <AttendanceHistory userId={picked.id} userName={picked.name} yearName={yearName} />
       </div>
@@ -507,14 +537,14 @@ function HistoryPicker({ category, yearName }) {
       <div className="relative w-full sm:w-80">
         <Search className="size-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
         <input
-          placeholder={`Search ${category}...`}
+          placeholder={`Search ${catName}...`}
           value={search}
           onChange={e => setSearch(e.target.value)}
           className="h-9 w-full rounded-md border border-zinc-200 bg-white pl-9 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm"
         />
       </div>
 
-      <OverviewBar overview={overview} loading={ovLoading} category={category} mode={mode} />
+      <OverviewBar overview={overview} loading={ovLoading} category={category} label={catName} mode={mode} />
 
       {view === 'analysis' ? (
         ovLoading ? (
@@ -525,7 +555,7 @@ function HistoryPicker({ category, yearName }) {
           <div className="space-y-3">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <h3 className="text-xs font-semibold text-zinc-700 flex items-center gap-1.5">
-                <BarChart3 className="size-3.5 text-primary" /> Attendance % per {category === 'students' ? 'student' : (category === 'teachers' ? 'teacher' : 'person')}
+                <BarChart3 className="size-3.5 text-primary" /> Attendance % per {category === 'students' ? 'student' : 'person'}
               </h3>
               <div className="inline-flex bg-zinc-100/80 p-1 rounded-md self-start sm:self-auto">
                 {[
@@ -552,12 +582,12 @@ function HistoryPicker({ category, yearName }) {
           </div>
         ) : filtered.length === 0 ? (
           <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center">
-            <p className="text-zinc-500 text-sm font-medium">No {category} found.</p>
+            <p className="text-zinc-500 text-sm font-medium">No {catName.toLowerCase()} found.</p>
           </div>
         ) : (
           <div className="space-y-3">
             <h3 className="text-xs font-semibold text-zinc-700 flex items-center gap-1.5">
-              <List className="size-3.5 text-primary" /> {categoryLabel}
+              <List className="size-3.5 text-primary" /> {catName}
               <span className="text-zinc-400 font-medium tabular-nums">({filtered.length})</span>
             </h3>
 
@@ -634,7 +664,7 @@ function HistoryPicker({ category, yearName }) {
 // =====================================================================
 //  OverviewBar
 // =====================================================================
-function OverviewBar({ overview, loading, category, mode }) {
+function OverviewBar({ overview, loading, category, label, mode }) {
   if (loading) {
     return (
       <div className="bg-white rounded-lg ring-1 ring-black/5 p-4 flex items-center justify-center h-20">
@@ -655,7 +685,7 @@ function OverviewBar({ overview, loading, category, mode }) {
     { icon: BarChart3,      label: 'Avg %',        value: `${overview.avg_percentage ?? '0.0'}%`, color: 'blue' },
     { icon: CalendarCheck,  label: 'Present',      value: isDaily ? present : share(present), color: 'emerald' },
     { icon: CalendarX,      label: 'Absent',       value: isDaily ? absent  : share(absent),  color: 'red' },
-    { icon: GraduationCap,  label: category === 'students' ? 'Students' : (category === 'teachers' ? 'Teachers' : 'People'), value: overview.user_count ?? 0, color: 'zinc' }
+    { icon: GraduationCap,  label: label || 'People', value: overview.user_count ?? 0, color: 'zinc' }
   ];
 
   const map = {

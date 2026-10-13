@@ -3154,9 +3154,9 @@ app.get('/api/admin/attendance/roster/:instId', async (req, res) => {
             }
         } else if (category === 'teachers') {
             where += " AND LOWER(TRIM(u.role)) LIKE '%teacher%'";
-        } else if (category === 'other') {
+               } else if (category === 'other') {
             where += " AND LOWER(TRIM(u.role)) NOT LIKE '%teacher%' "
-                  +  " AND LOWER(TRIM(u.role)) NOT IN ('student','super admin','developer')";
+                  +  " AND LOWER(TRIM(u.role)) NOT IN ('student','developer')";
         }
         where += " AND (u.status IS NULL OR LOWER(TRIM(u.status)) = 'active')";
 
@@ -3772,6 +3772,82 @@ app.get('/api/admin/attendance-export/:instId', async (req, res) => {
         if (!res.headersSent) res.status(500).json({ error: err.message });
         else res.end();
     }
+});
+
+app.get('/api/admin/attendance-settings/:instId', async (req, res) => {
+    try {
+        const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+        const [rows] = await db.execute(
+            `SELECT r.id AS role_id, r.role_name,
+                    COALESCE(ars.eligible, 1) AS eligible,
+                    ars.sort_order AS sort_order
+               FROM roles r
+               LEFT JOIN attendance_role_settings ars
+                 ON ars.role_id = r.id AND ars.institutionId = r.institutionId
+               LEFT JOIN role_order ro
+                 ON ro.role_id = r.id AND ro.institutionId = r.institutionId
+              WHERE r.institutionId = ?
+                AND LOWER(TRIM(r.role_name)) <> 'student'
+                AND LOWER(TRIM(r.role_name)) NOT LIKE '%teacher%'
+              ORDER BY (ars.sort_order IS NULL) ASC, ars.sort_order ASC,
+                       (ro.sort_order IS NULL) ASC, ro.sort_order ASC,
+                       r.role_name ASC`,
+            [instId]
+        );
+        res.json(rows.map(r => ({
+            role_id: r.role_id,
+            role_name: r.role_name,
+            eligible: Number(r.eligible) === 1,
+            sort_order: r.sort_order
+        })));
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+ 
+// --- 32.2 Save attendance role settings (Super Admin / Developer) ----
+//   Body: { institutionId?, settings: [{ role_id, eligible, sort_order }] }
+//   Index of the array IS the order; `eligible` decides whether the role
+//   gets a tab. Roles not in the array fall back to the defaults above.
+app.post('/api/admin/attendance-settings', async (req, res) => {
+    const roleAuth = String(req.auth.role || '');
+    if (roleAuth !== 'Super Admin' && roleAuth !== 'Developer') {
+        return res.status(403).json({ error: 'Only a Super Admin can change attendance settings.' });
+    }
+    const instId = roleAuth === 'Developer' && req.body.institutionId
+        ? req.body.institutionId
+        : req.auth.institutionId;
+ 
+    const settings = Array.isArray(req.body.settings) ? req.body.settings : null;
+    if (!settings) return res.status(400).json({ error: 'settings[] is required.' });
+ 
+    // Keep only this school's own role ids, de-duped, in the given order.
+    const [ownRows] = await db.execute('SELECT id FROM roles WHERE institutionId = ?', [instId]);
+    const ownIds = new Set(ownRows.map(r => Number(r.id)));
+    const seen = new Set();
+    const clean = [];
+    settings.forEach((s, i) => {
+        const rid = Number(s.role_id);
+        if (!Number.isInteger(rid) || !ownIds.has(rid) || seen.has(rid)) return;
+        seen.add(rid);
+        const order = Number.isInteger(Number(s.sort_order)) ? Number(s.sort_order) : i;
+        clean.push([instId, rid, s.eligible ? 1 : 0, order, req.auth.userId]);
+    });
+ 
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        await conn.execute('DELETE FROM attendance_role_settings WHERE institutionId = ?', [instId]);
+        if (clean.length > 0) {
+            await conn.query(
+                'INSERT INTO attendance_role_settings (institutionId, role_id, eligible, sort_order, updated_by) VALUES ?',
+                [clean]
+            );
+        }
+        await conn.commit();
+        res.json({ success: true, count: clean.length });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally { conn.release(); }
 });
 
 
