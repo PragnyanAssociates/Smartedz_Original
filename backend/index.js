@@ -2468,7 +2468,7 @@ app.get('/api/admin/timetable/:instId', async (req, res) => {
         const [periods]  = await db.execute('SELECT * FROM timetable_periods WHERE institutionId = ? AND academic_year_id = ? ORDER BY period_index', [instId, yearId]);
         const [entries]  = await db.execute('SELECT * FROM timetable_entries WHERE institutionId = ? AND academic_year_id = ?', [instId, yearId]);
         const [classes]  = await db.execute('SELECT * FROM classes WHERE institutionId = ? ORDER BY className, section', [instId]);
-        const [teachers] = await db.execute("SELECT id, name, email FROM users WHERE institutionId = ? AND LOWER(role) LIKE '%teacher%'", [instId]);
+                const [teachers] = await db.execute("SELECT id, name, email FROM users WHERE institutionId = ? AND LOWER(role) LIKE '%teacher%' AND LOWER(COALESCE(status, 'active')) = 'active'", [instId]);
         const [subjects] = await db.execute('SELECT * FROM subjects WHERE institutionId = ? ORDER BY name', [instId]);
         const [tsRows] = await db.execute(
             `SELECT ts.teacher_id, ts.subject_id FROM teacher_subjects ts
@@ -2500,7 +2500,15 @@ app.get('/api/admin/timetable/:instId', async (req, res) => {
             };
         });
 
-        res.json({ academic_year_id: yearId, days, periods, entries, classes, teachers, subjects, teacherSubjects, metaByClass });
+               // An inactive teacher's assignments vanish from the grid: null out
+        // their teacher_id so the slot shows empty and is re-selectable.
+        // (Reversible — reactivating the teacher restores their saved slots.)
+        const activeTeacherIds = new Set(teachers.map(t => t.id));
+        const cleanedEntries = entries.map(e =>
+            (e.teacher_id && !activeTeacherIds.has(e.teacher_id)) ? { ...e, teacher_id: null } : e
+        );
+
+        res.json({ academic_year_id: yearId, days, periods, entries: cleanedEntries, classes, teachers, subjects, teacherSubjects, metaByClass });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 // ---------------------------------------------------------------------
@@ -2576,7 +2584,7 @@ app.get('/api/timetable/my/:userId', async (req, res) => {
                             t.name AS teacher_name
                        FROM timetable_entries e
                        LEFT JOIN subjects s ON s.id = e.subject_id
-                       LEFT JOIN users    t ON t.id = e.teacher_id
+                    LEFT JOIN users    t ON t.id = e.teacher_id AND LOWER(COALESCE(t.status, 'active')) = 'active'
                       WHERE e.institutionId = ? AND e.academic_year_id = ? AND e.class_id = ?`,
                     [me.institutionId, yearId, me.class_id]
                 );
