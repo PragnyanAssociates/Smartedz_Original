@@ -19,6 +19,7 @@ import DigitalLabs from '../components/Labs/DigitalLabs';
 import Meals from '../components/Meals/Meals';
 import PTM from '../components/PTM/PTM';
 import PreAdmissions from '../components/preadmissions/PreAdmissions';
+import Admissions from '../components/Admissions/Admissions';
 import StudyMaterialsScreen from '../components/study-materials/StudyMaterialsScreen';
 import Syllabus from '../components/Syllabus/Syllabus';
 import WhatsAppLayout from '../components/chat/WhatsAppLayout';
@@ -150,6 +151,7 @@ function DashboardShell() {
       case 'OnlineClasses':     return <OnlineClasses/>;
       case 'DigitalLabs':       return <DigitalLabs/>;
       case 'PreAdmissions':     return <PreAdmissions/>;
+      case 'Admissions':        return <Admissions/>;
       case 'StudyMaterials':    return <StudyMaterialsScreen/>;
       case 'Syllabus':          return <Syllabus/>;
       case 'GroupChat':         return <WhatsAppLayout/>;

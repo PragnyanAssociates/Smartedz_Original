@@ -188,6 +188,14 @@ export const MODULES = [
     navigateTo: '/PreAdmissionsScreen'
   },
   {
+    id: 'Admissions',
+    module_name: 'Admissions',
+    label: 'Admissions',
+    title: 'Admissions',
+    imageSource: 'https://cdn-icons-png.flaticon.com/128/16495/16495874.png',
+    navigateTo: '/Admissions'
+  },
+  {
     id: 'StudyMaterials',
     module_name: 'StudyMaterials',
     label: 'Study Materials',
