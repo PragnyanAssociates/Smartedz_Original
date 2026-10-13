@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
@@ -77,8 +77,12 @@ export default function AdmissionsScreen() {
   const [years, setYears] = useState([]);              // calendar years present in admissions
   const [filterYear, setFilterYear] = useState('');    // selected year, or 'all'
 
+  // Guards against an out-of-order response (an earlier tab's fetch
+  // resolving after a later one and overwriting it).
+  const reqSeq = useRef(0);
   const fetchData = useCallback(async () => {
     if (!user?.institutionId || (!canRead && !isAdmin)) return;
+    const seq = ++reqSeq.current;
     setLoading(true);
     try {
       const params = new URLSearchParams();
@@ -87,9 +91,9 @@ export default function AdmissionsScreen() {
       if (filterYear && filterYear !== 'all') params.append('year', filterYear);
       const res = await fetch(`${API_BASE_URL}/admin/admissions/${user.institutionId}?${params.toString()}`);
       const records = await res.json();
-      setData(Array.isArray(records) ? records : []);
+      if (seq === reqSeq.current) setData(Array.isArray(records) ? records : []);
     } catch (e) { console.error(e); }
-    finally { setLoading(false); }
+    finally { if (seq === reqSeq.current) setLoading(false); }
   }, [user, isAdmin, canRead, searchText, filterStatus, filterYear]);
 
   const loadMeta = useCallback(async () => {
@@ -250,7 +254,7 @@ export default function AdmissionsScreen() {
                   className="h-9 w-full bg-zinc-50/50 border border-transparent rounded-md pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:bg-white transition-colors placeholder:text-zinc-400" />
               </div>
               <div className="relative shrink-0">
-                <select value={filterYear} onChange={e => setFilterYear(e.target.value)}
+                <select value={filterYear} onChange={e => { setFilterYear(e.target.value); setSelectedItem(null); }}
                   className="h-9 bg-zinc-50/50 border border-transparent rounded-md pl-3 pr-8 text-sm font-semibold text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer appearance-none max-w-[150px]">
                   {yearOptions.map(y => (<option key={y} value={y}>{y}</option>))}
                   <option value="all">All Years</option>
@@ -260,7 +264,7 @@ export default function AdmissionsScreen() {
             </div>
             <div className="flex gap-1">
               {['Approved', 'Rejected'].map(s => (
-                <button key={s} onClick={() => setFilterStatus(s)} className={statusTab(s)}>{s}</button>
+                <button key={s} onClick={() => { setFilterStatus(s); setSelectedItem(null); }} className={statusTab(s)}>{s}</button>
               ))}
             </div>
           </div>
