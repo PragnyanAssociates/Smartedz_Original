@@ -605,8 +605,16 @@ function GridTab({ data, fetchData, user, canEdit, ttAllowed }) {
     return map;
   }, [data.entries, selectedClassId]);
 
-  const [cells, setCells] = useState(initialMap);
-  useEffect(() => { setCells(initialMap); }, [initialMap]);
+   const [cells, setCells] = useState(initialMap);
+  const [syncedMap, setSyncedMap] = useState(initialMap);
+  // Swap to the new class's cells in the SAME render that selectedClassId
+  // changes, so the grid is never evaluated with the previous class's
+  // values. That one-frame mismatch is what flashed the red
+  // "teacher already assigned" note. Replaces the post-render effect sync.
+  if (syncedMap !== initialMap) {
+    setSyncedMap(initialMap);
+    setCells(initialMap);
+  }
 
   const [saving, setSaving] = useState(false);
 
@@ -912,8 +920,14 @@ function TeachersTimetableTab({ data, fetchData, user, canEdit, ttAllowed }) {
     return map;
   }, [data.entries, selectedTeacherId]);
 
-  const [cells, setCells] = useState(initialCells);
-  useEffect(() => { setCells(initialCells); }, [initialCells]);
+   const [cells, setCells] = useState(initialCells);
+  const [syncedCells, setSyncedCells] = useState(initialCells);
+  // Same fix as GridTab: swap cells in-render when the selected teacher
+  // changes, so the clash note never flashes for one frame on a switch.
+  if (syncedCells !== initialCells) {
+    setSyncedCells(initialCells);
+    setCells(initialCells);
+  }
 
   const classLabel = (c) => `${c.className}${c.section ? ' - ' + c.section : ''}`;
 

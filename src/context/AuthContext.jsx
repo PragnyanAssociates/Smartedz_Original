@@ -80,11 +80,32 @@ export function AuthProvider({ children }) {
     setIsInitializing(false);
   }, []);
 
+  // Write the user to localStorage without letting an oversized profile
+  // picture (base64) crash the app on a quota error — the picture still
+  // lives in memory for this session and is re-fetched on the next load.
+  const persistUser = (u) => {
+    try { localStorage.setItem('smartedz_user', JSON.stringify(u)); }
+    catch (e) { /* quota exceeded — keep it in memory only */ }
+  };
+
+  // -------- merge new fields into the logged-in user (keeps token) ----
+  //  Used by the Profile screen after an edit, and by the hydration
+  //  effect below. This is what keeps the sidebar / header avatar in
+  //  sync everywhere without a re-login.
+  const updateUser = useCallback((partial) => {
+    if (!partial) return;
+    setUser(prev => {
+      const merged = { ...(prev || {}), ...partial };
+      persistUser(merged);
+      return merged;
+    });
+  }, []);
+
   // -------- login / logout ---------------------------------------
   const login = (newUser, newToken) => {
     setUser(newUser);
     setToken(newToken);
-    localStorage.setItem('smartedz_user', JSON.stringify(newUser));
+    persistUser(newUser);
     localStorage.setItem('smartedz_token', newToken);
   };
 
@@ -97,6 +118,34 @@ export function AuthProvider({ children }) {
     localStorage.removeItem('smartedz_token');
     window.location.href = '/login';
   };
+
+  // -------- Hydrate the full user (incl. profile_pic) after login -----
+  //  The login response and the light /admin/data query don't carry the
+  //  profile picture, so the stored `user` only has the basics and the
+  //  sidebar falls back to the initial. Here we pull the complete record
+  //  once (the same endpoint the Profile page uses) and merge in the
+  //  display fields, so the avatar shows up app-wide on every load.
+  useEffect(() => {
+    if (!user?.id) return;
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/profile/${user.id}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const p = data && data.user ? data.user : data;   // GET returns the record; PUT returns { user }
+        if (!alive || !p) return;
+        const patch = {};
+        ['name', 'email', 'username', 'profile_pic'].forEach(k => {
+          if (p[k] !== undefined) patch[k] = p[k];
+        });
+        if (Object.keys(patch).length) updateUser(patch);
+      } catch (e) { /* silent — sidebar just keeps the initial until next load */ }
+    })();
+    return () => { alive = false; };
+    // Runs once per login / session-restore (user id change).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   // -------- Developer-only: refresh institutions + global user list ----
   const refreshData = useCallback(async () => {
@@ -125,7 +174,7 @@ export function AuthProvider({ children }) {
       user, token,
       API_URL: API_ROOT,
       API_BASE_URL,
-      login, logout,
+      login, logout, updateUser, setUser,
       institutions, usersList, refreshData
     }}>
       {children}

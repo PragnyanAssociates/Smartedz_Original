@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Plus, Edit, Trash2, X, ShieldCheck, Lock, Users } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
 
@@ -12,54 +12,20 @@ const isSystem = (name) => SYSTEM_ROLES.includes(name);
 // excluded from the live user counts so Roles matches the Users screen.
 const isAlumni = (u) => (u.status || '').toLowerCase() === 'alumni';
 
-// Saved order (array of role ids) first, in saved order; then any role
-// that has never been positioned, in its default order. This keeps a
-// brand-new role visible instead of dropping off the screen.
-const buildOrder = (saved, defaults) => {
-  const d = (defaults || []).map(String);
-  const dSet = new Set(d);
-  const kept = (saved || []).map(String).filter(id => dSet.has(id));
-  const keptSet = new Set(kept);
-  const rest = d.filter(id => !keptSet.has(id));
-  return [...kept, ...rest];
-};
-
 export default function RolesTab({ data, fetchData, user }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingRole, setEditingRole] = useState(null);
   const [roleName, setRoleName]       = useState('');
 
   // ---- Custom role order (drag to reorder, auto-saved, persisted) -----
-  // `savedOrderIds` is the intended/persisted order (array of role ids,
-  // null until loaded). `order` is what we actually render - kept in sync
-  // with savedOrderIds + whatever roles currently exist.
-  const [savedOrderIds, setSavedOrderIds] = useState(null);
-  const [order, setOrder] = useState([]);   // array of role ids (strings)
   const [saving, setSaving] = useState(false);
   const [saveState, setSaveState] = useState(''); // '', 'saved', 'error'
   const [saveErr, setSaveErr] = useState('');     // detail shown on failure
   const [dragId, setDragId] = useState(null);
   const [overId, setOverId] = useState(null);
-  const orderRef = useRef(order);
-  useEffect(() => { orderRef.current = order; }, [order]);
 
   const systemRoles = data.systemRoles && data.systemRoles.length ? data.systemRoles : SYSTEM_ROLES;
   const isRoleSystem = (name) => systemRoles.includes(name);
-
-  // Default order = system roles (in system order) then custom roles A-Z.
-  // This is only the fallback for roles that have no saved position yet.
-  const sortedRoles = useMemo(() => {
-    const sys = [];
-    const custom = [];
-    (data.roles || []).forEach(r => {
-      if (isRoleSystem(r.role_name)) sys.push(r);
-      else custom.push(r);
-    });
-    sys.sort((a, b) => systemRoles.indexOf(a.role_name) - systemRoles.indexOf(b.role_name));
-    custom.sort((a, b) => a.role_name.localeCompare(b.role_name));
-    return [...sys, ...custom];
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.roles]);
 
   const roleById = useMemo(() => {
     const m = {};
@@ -67,34 +33,21 @@ export default function RolesTab({ data, fetchData, user }) {
     return m;
   }, [data.roles]);
 
-  const defaultOrderIds = useMemo(() => sortedRoles.map(r => String(r.id)), [sortedRoles]);
+  // The backend returns roles ALREADY in the saved order (the Section 3
+  // data query sorts by role_order), so data.roles *is* the order. We keep
+  // a local copy of it so a drag can reorder instantly before the save
+  // round-trips. Seeding `order` from data.roles on the first render means
+  // the cards paint in the correct order straight away - no spinner, and no
+  // re-shuffle animation each time the screen is opened.
+  const orderFromData = useMemo(() => (data.roles || []).map(r => String(r.id)), [data.roles]);
+  const [order, setOrder] = useState(() => (data.roles || []).map(r => String(r.id)));
 
-  // Load the saved order once per institution.
+  // Adopt the server order whenever data.roles changes (a role added or
+  // removed, or a refresh after saving). Identical content is ignored, so
+  // there is never a needless re-render or any visible movement.
   useEffect(() => {
-    if (!user?.institutionId) return;
-    let alive = true;
-    (async () => {
-      try {
-        const res = await fetch(`${API_BASE_URL}/admin/role-order/${user.institutionId}`);
-        const rows = res.ok ? await res.json() : [];
-        const ids = Array.isArray(rows) ? rows.map(r => String(r.role_id)) : [];
-        if (alive) setSavedOrderIds(ids);
-      } catch (e) {
-        console.error('Role order fetch error:', e);
-        if (alive) setSavedOrderIds([]);
-      }
-    })();
-    return () => { alive = false; };
-  }, [user?.institutionId]);
-
-  // Keep `order` in sync with the saved intent + the roles that exist now.
-  // Runs on load, and again whenever a role is added or deleted.
-  useEffect(() => {
-    setOrder(prev => {
-      const next = buildOrder(savedOrderIds, defaultOrderIds);
-      return next.join('|') === prev.join('|') ? prev : next;
-    });
-  }, [savedOrderIds, defaultOrderIds]);
+    setOrder(prev => (prev.join('|') === orderFromData.join('|') ? prev : orderFromData));
+  }, [orderFromData]);
 
   const orderedRoles = useMemo(
     () => order.map(id => roleById[id]).filter(Boolean),
@@ -123,8 +76,9 @@ export default function RolesTab({ data, fetchData, user }) {
       });
       if (res.ok) {
         setSaveState('saved');
-        // Push the new order into the shared data so every screen that
-        // reads roles (e.g. the Users tab's role filters) follows it.
+        // Refresh the shared data so every screen that reads roles (e.g. the
+        // Users tab's role filters) follows the new order. data.roles comes
+        // back already sorted, matching what we just set - no visible jump.
         if (typeof fetchData === 'function') fetchData();
       } else {
         const body = await res.json().catch(() => ({}));
@@ -169,9 +123,8 @@ export default function RolesTab({ data, fetchData, user }) {
     const to   = arr.indexOf(tgt);
     if (from < 0 || to < 0 || from === to) return;
     arr.splice(to, 0, arr.splice(from, 1)[0]);
-    setOrder(arr);            // immediate (optimistic) reorder
-    setSavedOrderIds(arr);    // record the new intent
-    saveOrder(arr);           // auto-save on drop
+    setOrder(arr);   // immediate (optimistic) reorder
+    saveOrder(arr);  // auto-save on drop
   };
   const handleDragEnd = () => { setDragId(null); setOverId(null); };
 
@@ -240,7 +193,7 @@ export default function RolesTab({ data, fetchData, user }) {
         : '';
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-300">
+    <div className="space-y-6">
 
       {/* Header - Fixed for Mobile */}
       <div className="flex flex-col sm:flex-row justify-between gap-4 sm:items-start mb-6 shrink-0">
