@@ -10,10 +10,12 @@ export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMo
   const { isVisible, loading } = usePermissions();
   const [query, setQuery] = useState('');
   const [unreadCount, setUnreadCount] = useState(0);
-  const [order, setOrder] = useState(null); // module_name -> position, set by the school
+  const [order, setOrder] = useState(null);   // module_name -> position (school's order)
+  const [labels, setLabels] = useState({});   // module_name -> alias (school's name)
 
-  // The school's own menu order (Manage Logins -> Menu Order). Until it
-  // arrives — or if the school never set one — Modules.js order stands.
+  // The school's own Menu Settings (Manage Logins -> Menu Settings): the
+  // sidebar ORDER and the NAME aliases. Until it arrives — or if the school
+  // never set one — Modules.js order and the default labels stand.
   useEffect(() => {
     if (!user?.institutionId) return;
     let active = true;
@@ -24,19 +26,27 @@ export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMo
         const rows = await res.json();
         if (!active || !Array.isArray(rows)) return;
         const map = {};
-        rows.forEach(r => { map[r.module_name] = Number(r.sort_order); });
+        const lmap = {};
+        rows.forEach(r => {
+          map[r.module_name] = Number(r.sort_order);
+          if (r.alias) lmap[r.module_name] = r.alias;
+        });
         setOrder(Object.keys(map).length ? map : null);
-      } catch (e) { /* silent — fall back to the default order */ }
+        setLabels(lmap);
+      } catch (e) { /* silent — fall back to the default order + names */ }
     })();
     return () => { active = false; };
   }, [user?.institutionId]);
+
+  // The display name for a module: the school's alias if set, else default.
+  const nameOf = (m) => labels[m.module_name] || m.label;
 
   const visibleItems = useMemo(() => {
     const q = query.trim().toLowerCase();
     const items = MODULES.filter(m => {
       if (m.hideFromSidebar) return false;
       if (!m.alwaysVisible && !isVisible(m.module_name)) return false;
-      if (q && !m.label.toLowerCase().includes(q)) return false;
+      if (q && !nameOf(m).toLowerCase().includes(q)) return false;
       return true;
     });
     if (!order) return items;
@@ -48,10 +58,10 @@ export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMo
       const bi = order[b.module_name] ?? (fallback + MODULES.indexOf(b));
       return ai - bi;
     });
-  }, [query, isVisible, order]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, isVisible, order, labels]);
 
-  // Poll the unread notification count for the bell badge. Re-fetches when
-  // the active tab changes too, so opening Notifications updates it quickly.
+  // Poll the unread notification count for the bell badge.
   useEffect(() => {
     if (!user?.id) return;
     let active = true;
@@ -60,14 +70,13 @@ export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMo
         const res = await fetch(`${API_BASE_URL}/notifications/${user.id}/unread-count`);
         const d = await res.json();
         if (active) setUnreadCount(d.count || 0);
-      } catch (e) { /* silent — badge just stays as-is */ }
+      } catch (e) { /* silent */ }
     };
     loadCount();
     const t = setInterval(loadCount, 30000);
     return () => { active = false; clearInterval(t); };
   }, [user?.id]);
 
-  // Intercept tab clicks to close the mobile menu automatically
   const handleTabClick = (id) => {
     setActiveTab(id);
     setIsMobileOpen(false);
@@ -81,7 +90,6 @@ export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMo
 
   return (
     <>
-      {/* MOBILE OVERLAY: Dims the background when sidebar is open on small screens */}
       {isMobileOpen && (
         <div
           className="fixed inset-0 z-40 bg-zinc-900/40 backdrop-blur-sm md:hidden transition-opacity"
@@ -89,7 +97,6 @@ export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMo
         />
       )}
 
-      {/* SIDEBAR CONTAINER: Sliding on mobile, fixed static on desktop */}
       <aside
         className={`fixed inset-y-0 left-0 z-50 w-72 bg-white border-r border-zinc-200 flex flex-col h-[100dvh] shrink-0 transition-transform duration-300 ease-in-out md:static md:translate-x-0 shadow-2xl md:shadow-none ${
           isMobileOpen ? 'translate-x-0' : '-translate-x-full'
@@ -101,10 +108,7 @@ export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMo
               {user?.role || 'Super Admin'}
             </h2>
 
-            {/* Quick Actions (Calendar & Notifications) */}
             <div className="flex items-center gap-1 shrink-0">
-
-              {/* LINKED EXACTLY LIKE PROFILE: Passes 'academic-calendar' to DashboardShell */}
               <button
                 onClick={() => handleTabClick('academic-calendar')}
                 className={`p-1.5 rounded-md transition-colors ${activeTab === 'academic-calendar' ? 'bg-primary/10 text-primary' : 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100'}`}
@@ -126,7 +130,6 @@ export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMo
                 )}
               </button>
 
-              {/* Mobile Close Button */}
               <button
                 onClick={() => setIsMobileOpen(false)}
                 className="md:hidden p-1.5 text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 rounded-md transition-colors ml-1"
@@ -166,40 +169,39 @@ export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMo
               No modules available.
             </div>
           ) : (
-            visibleItems.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => handleTabClick(item.id)}
-                className={`w-full flex items-center gap-3 px-3 py-2 rounded-md transition-colors group ${
-                  activeTab === item.id
-                    ? 'bg-primary text-white shadow-sm'
-                    : 'text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900'
-                }`}
-              >
-                <div className={`p-1 rounded transition-colors ${activeTab === item.id ? 'bg-white/20' : 'bg-transparent group-hover:bg-zinc-200/50'}`}>
-                  <img
-                    src={item.imageSource}
-                    alt={item.label}
-                    className="size-5 object-contain shrink-0"
-                    style={{ filter: activeTab === item.id ? 'brightness(1.2)' : 'none' }}
-                  />
-                </div>
-                <span className={`text-sm font-medium tracking-tight ${activeTab === item.id ? 'text-white' : 'text-zinc-700 group-hover:text-zinc-900'}`}>
-                  {item.label}
-                </span>
-              </button>
-            ))
+            visibleItems.map((item) => {
+              const name = nameOf(item);
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => handleTabClick(item.id)}
+                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-md transition-colors group ${
+                    activeTab === item.id
+                      ? 'bg-primary text-white shadow-sm'
+                      : 'text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900'
+                  }`}
+                >
+                  <div className={`p-1 rounded transition-colors ${activeTab === item.id ? 'bg-white/20' : 'bg-transparent group-hover:bg-zinc-200/50'}`}>
+                    <img
+                      src={item.imageSource}
+                      alt={name}
+                      className="size-5 object-contain shrink-0"
+                      style={{ filter: activeTab === item.id ? 'brightness(1.2)' : 'none' }}
+                    />
+                  </div>
+                  <span className={`text-sm font-medium tracking-tight truncate ${activeTab === item.id ? 'text-white' : 'text-zinc-700 group-hover:text-zinc-900'}`}>
+                    {name}
+                  </span>
+                </button>
+              );
+            })
           )}
         </nav>
 
-        {/* User Profile Card + separate Logout button */}
         <div className="p-4 border-t border-zinc-200 bg-zinc-50/50 shrink-0">
-
           <div className={`flex items-stretch rounded-lg ring-1 bg-white overflow-hidden transition-all ${
             activeTab === 'profile' ? 'ring-primary/40 shadow-sm' : 'ring-black/5'
           }`}>
-
-            {/* Profile — unchanged behaviour */}
             <button
               onClick={() => handleTabClick('profile')}
               className={`flex-1 min-w-0 flex items-center gap-3 p-3 text-left transition-colors ${
@@ -227,10 +229,8 @@ export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMo
               </div>
             </button>
 
-            {/* Divider */}
             <div className="w-px bg-zinc-200 shrink-0" />
 
-            {/* Logout — clearly its own control */}
             <button
               type="button"
               onClick={handleLogout}

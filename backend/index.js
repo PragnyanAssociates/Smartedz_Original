@@ -15233,12 +15233,12 @@ app.get('/api/transport/service-export/:institutionId', async (req, res) => {
 //   Modules with no row fall back to their default order on the client.
 // =====================================================================
 
-// --- 26.1 Read this school's order (any authenticated member) --------
+// --- 30.1 Read this school's order + aliases (any member) -----------
 app.get('/api/admin/module-order/:instId', async (req, res) => {
     try {
         const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
         const [rows] = await db.execute(
-            `SELECT module_name, sort_order, updated_at
+            `SELECT module_name, sort_order, alias, updated_at
                FROM module_order
               WHERE institutionId = ?
               ORDER BY sort_order ASC`,
@@ -15248,35 +15248,45 @@ app.get('/api/admin/module-order/:instId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 26.2 Save the order (Super Admin / Developer only) -------------
-//   Body: { institutionId?, order: ['Overview', 'Attendance', ...] }
-//   The array's index IS the sort order. Sending an empty array clears
-//   the config and puts the school back on the default order.
+// --- 30.2 Save order + aliases (Super Admin / Developer only) --------
+//   Body: {
+//     order:   ['Overview', 'Attendance', ...],         // module_names, in order
+//     aliases: { Attendance: 'Daily Register', ... }    // module_name -> display name
+//   }
+//   The array's index IS the sort order. An empty/absent alias clears it
+//   (that module falls back to its default label). Sending an empty order
+//   clears everything, back to defaults.
 app.post('/api/admin/module-order', async (req, res) => {
     const role = String(req.auth.role || '');
     if (role !== 'Super Admin' && role !== 'Developer') {
-        return res.status(403).json({ error: 'Only a Super Admin can change the menu order.' });
+        return res.status(403).json({ error: 'Only a Super Admin can change the menu settings.' });
     }
-
+ 
     const instId = role === 'Developer' && req.body.institutionId
         ? req.body.institutionId
         : req.auth.institutionId;
-
+ 
     const order = Array.isArray(req.body.order) ? req.body.order : null;
     if (!order) return res.status(400).json({ error: 'order must be an array of module names.' });
-
+ 
+    const aliases = (req.body.aliases && typeof req.body.aliases === 'object') ? req.body.aliases : {};
+ 
     // De-dupe, drop blanks, cap the column width.
     const clean = [...new Set(order.map(n => String(n || '').trim()).filter(Boolean))]
         .map(n => n.slice(0, 100));
-
+ 
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
         await conn.execute('DELETE FROM module_order WHERE institutionId = ?', [instId]);
         if (clean.length > 0) {
-            const rows = clean.map((name, i) => [instId, name, i, req.auth.userId]);
+            const rows = clean.map((name, i) => {
+                const raw = aliases[name];
+                const a = (raw != null ? String(raw).trim().slice(0, 100) : '');
+                return [instId, name, i, a || null, req.auth.userId];   // alias → NULL when blank
+            });
             await conn.query(
-                'INSERT INTO module_order (institutionId, module_name, sort_order, updated_by) VALUES ?',
+                'INSERT INTO module_order (institutionId, module_name, sort_order, alias, updated_by) VALUES ?',
                 [rows]
             );
         }

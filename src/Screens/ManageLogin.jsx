@@ -62,7 +62,7 @@ export default function ManageLogin() {
     { id: 'users',       label: 'Users',          icon: Users },
     { id: 'roles',       label: 'Roles',          icon: ShieldCheck },
     { id: 'permissions', label: 'Permissions',    icon: CircleCheck },
-    ...(canOrderMenu ? [{ id: 'menu-order', label: 'Menu Order', icon: ListOrdered }] : []),
+    ...(canOrderMenu ? [{ id: 'menu-order', label: 'Menu Settings', icon: ListOrdered }] : []),
     { id: 'classes',     label: 'Classes',        icon: Layers },
     { id: 'subjects',    label: 'Subjects',       icon: BookOpen },
     { id: 'promotion',   label: 'Promotion',      icon: CircleArrowUp },
