@@ -7975,6 +7975,181 @@ app.post('/api/admin/meals/menu', async (req, res) => {
     } finally { conn.release(); }
 });
 
+// =====================================================================
+//  KITCHEN — daily provisions + usage
+// =====================================================================
+ 
+// --- 21.1 List provisions (with remaining quantity) -----------------
+app.get('/api/admin/kitchen/:instId/inventory', async (req, res) => {
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    try {
+        const [rows] = await db.execute(
+            `SELECT id, item_name, unit, total_quantity, quantity_remaining, image, created_at
+               FROM kitchen_inventory
+              WHERE institutionId = ?
+              ORDER BY item_name ASC`,
+            [instId]
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+ 
+// --- 21.2 Usage for a given date (?date=YYYY-MM-DD) -----------------
+app.get('/api/admin/kitchen/:instId/usage', async (req, res) => {
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    const date = req.query.date || new Date().toISOString().slice(0, 10);
+    try {
+        const [rows] = await db.execute(
+            `SELECT u.id, u.inventory_id, u.quantity_used, u.usage_date,
+                    i.item_name, i.unit, cu.name AS used_by_name
+               FROM kitchen_usage u
+               JOIN kitchen_inventory i ON i.id = u.inventory_id
+               LEFT JOIN users cu ON cu.id = u.created_by
+              WHERE u.institutionId = ? AND u.usage_date = ?
+              ORDER BY u.created_at DESC`,
+            [instId, date]
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+ 
+// --- 21.3 Add a provision -------------------------------------------
+//   Body: { item_name, unit, quantity, image? }  (total = remaining = quantity)
+app.post('/api/admin/kitchen/inventory', async (req, res) => {
+    const institutionId = req.auth.institutionId;
+    const { item_name, unit } = req.body;
+    const qty = Number(req.body.quantity);
+    if (!item_name || !item_name.trim()) return res.status(400).json({ error: 'Item name is required.' });
+    if (isNaN(qty) || qty < 0) return res.status(400).json({ error: 'Quantity must be a number.' });
+    try {
+        await db.execute(
+            `INSERT INTO kitchen_inventory
+                (institutionId, item_name, unit, total_quantity, quantity_remaining, image, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [institutionId, item_name.trim(), (unit || 'g'), qty, qty, req.body.image || null, req.auth.userId]
+        );
+        res.status(201).json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+ 
+// --- 21.4 Log usage (decrements remaining, records the entry) -------
+//   Body: { inventoryId, quantityUsed, usageDate }
+app.post('/api/admin/kitchen/usage', async (req, res) => {
+    const institutionId = req.auth.institutionId;
+    const invId = parseInt(req.body.inventoryId, 10);
+    const used = Number(req.body.quantityUsed);
+    const date = req.body.usageDate || new Date().toISOString().slice(0, 10);
+    if (!invId) return res.status(400).json({ error: 'inventoryId is required.' });
+    if (isNaN(used) || used <= 0) return res.status(400).json({ error: 'Quantity used must be greater than 0.' });
+ 
+    const conn = await db.getConnection();
+    try {
+        const [own] = await conn.execute(
+            'SELECT id FROM kitchen_inventory WHERE id = ? AND institutionId = ?', [invId, institutionId]);
+        if (own.length === 0) { conn.release(); return res.status(404).json({ error: 'Provision not found.' }); }
+ 
+        await conn.beginTransaction();
+        await conn.execute(
+            'UPDATE kitchen_inventory SET quantity_remaining = GREATEST(0, quantity_remaining - ?) WHERE id = ?',
+            [used, invId]
+        );
+        await conn.execute(
+            `INSERT INTO kitchen_usage (institutionId, inventory_id, quantity_used, usage_date, created_by)
+             VALUES (?, ?, ?, ?, ?)`,
+            [institutionId, invId, used, date, req.auth.userId]
+        );
+        await conn.commit();
+        res.status(201).json({ success: true });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally { conn.release(); }
+});
+ 
+// --- 21.5 Delete a provision (also clears its usage via cascade) ----
+app.delete('/api/admin/kitchen/inventory/:id', async (req, res) => {
+    try {
+        const [own] = await db.execute('SELECT institutionId FROM kitchen_inventory WHERE id = ?', [req.params.id]);
+        if (own.length === 0) return res.status(404).json({ error: 'Provision not found.' });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This item belongs to another institution.' });
+        await db.execute('DELETE FROM kitchen_inventory WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+ 
+// =====================================================================
+//  STORE — permanent assets
+// =====================================================================
+ 
+// --- 21.6 List assets (optional ?search=) ---------------------------
+app.get('/api/admin/store/:instId', async (req, res) => {
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    const { search } = req.query;
+    try {
+        const where = ['institutionId = ?'];
+        const params = [instId];
+        if (search) { where.push('(item_name LIKE ? OR rack LIKE ?)'); const t = `%${search}%`; params.push(t, t); }
+        const [rows] = await db.execute(
+            `SELECT id, item_name, quantity, rack, image, created_at
+               FROM store_assets
+              WHERE ${where.join(' AND ')}
+              ORDER BY item_name ASC`,
+            params
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+ 
+// --- 21.7 Add an asset ----------------------------------------------
+app.post('/api/admin/store', async (req, res) => {
+    const institutionId = req.auth.institutionId;
+    const { item_name, rack } = req.body;
+    const qty = parseInt(req.body.quantity, 10);
+    if (!item_name || !item_name.trim()) return res.status(400).json({ error: 'Item name is required.' });
+    try {
+        await db.execute(
+            `INSERT INTO store_assets (institutionId, item_name, quantity, rack, image, created_by)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [institutionId, item_name.trim(), isNaN(qty) ? 0 : qty, (rack || '').trim() || null, req.body.image || null, req.auth.userId]
+        );
+        res.status(201).json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+ 
+// --- 21.8 Update an asset -------------------------------------------
+app.put('/api/admin/store/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        const [own] = await db.execute('SELECT institutionId FROM store_assets WHERE id = ?', [id]);
+        if (own.length === 0) return res.status(404).json({ error: 'Asset not found.' });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This asset belongs to another institution.' });
+ 
+        const setClauses = [];
+        const params = [];
+        if (req.body.item_name !== undefined) { setClauses.push('item_name = ?'); params.push(String(req.body.item_name).trim()); }
+        if (req.body.quantity !== undefined)  { const q = parseInt(req.body.quantity, 10); setClauses.push('quantity = ?'); params.push(isNaN(q) ? 0 : q); }
+        if (req.body.rack !== undefined)      { setClauses.push('rack = ?'); params.push((String(req.body.rack).trim()) || null); }
+        if (req.body.image !== undefined)     { setClauses.push('image = ?'); params.push(req.body.image || null); }
+        if (setClauses.length === 0) return res.status(400).json({ error: 'No fields to update.' });
+ 
+        params.push(id);
+        await db.execute(`UPDATE store_assets SET ${setClauses.join(', ')} WHERE id = ?`, params);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+ 
+// --- 21.9 Delete an asset -------------------------------------------
+app.delete('/api/admin/store/:id', async (req, res) => {
+    try {
+        const [own] = await db.execute('SELECT institutionId FROM store_assets WHERE id = ?', [req.params.id]);
+        if (own.length === 0) return res.status(404).json({ error: 'Asset not found.' });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This asset belongs to another institution.' });
+        await db.execute('DELETE FROM store_assets WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
 
 
 // =====================================================================
