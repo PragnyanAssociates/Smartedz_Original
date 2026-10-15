@@ -48,6 +48,9 @@ export default function SyllabusManagement({
   const [loading, setLoading] = useState(true);
   const reqSeq = useRef(0);
 
+  // ---- subject filter (local; resets when type/class changes) ----
+  const [filterSubject, setFilterSubject] = useState('');
+
   // ---- create / edit syllabus modal ----
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing]     = useState(null);
@@ -107,6 +110,22 @@ export default function SyllabusManagement({
   }, [user, filterClass, activeTypeId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Reset the subject filter whenever the type or class changes.
+  useEffect(() => { setFilterSubject(''); }, [activeTypeId, filterClass]);
+
+  // Subjects present in the current rows (options for the Subject filter).
+  const subjectOptions = useMemo(() => {
+    const map = new Map();
+    rows.forEach(r => { if (r.subject_id != null && !map.has(String(r.subject_id))) map.set(String(r.subject_id), r.subject_name); });
+    return Array.from(map, ([id, name]) => ({ id, name })).sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+  }, [rows]);
+
+  // Rows after the Subject filter.
+  const filteredRows = useMemo(() => {
+    if (!filterSubject) return rows;
+    return rows.filter(r => String(r.subject_id) === String(filterSubject));
+  }, [rows, filterSubject]);
 
   // ---- save the type order (Super Admin) ----
   const saveTypeOrder = async (ids) => {
@@ -307,15 +326,12 @@ export default function SyllabusManagement({
                   onDrop={(e) => handleTypeDrop(e, t.id)}
                   onDragEnd={handleTypeDragEnd}
                   title={isSuperAdmin ? 'Drag to reorder' : undefined}
-                  className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-md text-xs font-semibold whitespace-nowrap shrink-0 transition-colors ${
-                    active ? 'bg-primary text-white shadow-sm' : 'bg-white text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-50'
+                  className={`inline-flex items-center gap-1.5 h-9 px-4 rounded-md text-xs font-semibold whitespace-nowrap shrink-0 shadow-sm transition-colors ${
+                    active ? 'bg-primary text-white' : 'bg-white border border-zinc-200 text-zinc-700 hover:bg-zinc-50'
                   } ${isSuperAdmin ? 'cursor-grab active:cursor-grabbing select-none' : ''} ${
                     dragging ? 'opacity-40' : ''
                   } ${over ? 'ring-2 ring-primary/60' : ''}`}>
                   {t.name}
-                  <span className={`text-[10px] font-bold tabular-nums px-1.5 py-0.5 rounded ${active ? 'bg-white/20 text-white' : 'bg-zinc-100 text-zinc-500'}`}>
-                    {t.syllabus_count}
-                  </span>
                 </button>
               );
             })}
@@ -374,6 +390,16 @@ export default function SyllabusManagement({
                 {loading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
                 Refresh
               </button>
+
+              <div className="relative w-full sm:w-48 shrink-0">
+                <select value={filterSubject} onChange={e => setFilterSubject(e.target.value)}
+                  disabled={subjectOptions.length === 0}
+                  className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors disabled:opacity-60">
+                  <option value="">All Subjects</option>
+                  {subjectOptions.map(s => (<option key={s.id} value={s.id}>{s.name}</option>))}
+                </select>
+                <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
             </div>
 
             <div className="flex items-center gap-2 w-full md:w-auto">
@@ -395,19 +421,22 @@ export default function SyllabusManagement({
           <div className="flex-1">
             {loading ? (
               <div className="h-64 flex items-center justify-center"><Loader2 className="animate-spin size-8 text-primary" /></div>
-            ) : rows.length === 0 ? (
+            ) : filteredRows.length === 0 ? (
               <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
                 <BookOpen className="size-10 text-zinc-300 mb-3" />
                 <p className="text-zinc-500 text-sm font-medium">
-                  No syllabuses for {activeClass ? classLabel(activeClass) : 'this class'} in {activeType ? `"${activeType.name}"` : 'this type'} yet.
+                  {rows.length === 0
+                    ? <>No syllabuses for {activeClass ? classLabel(activeClass) : 'this class'} in {activeType ? `"${activeType.name}"` : 'this type'} yet.</>
+                    : 'No syllabus matches the selected subject.'}
                 </p>
-                {canEdit && <p className="text-zinc-400 text-xs mt-1.5">Click "Create Syllabus" to begin.</p>}
+                {rows.length === 0 && canEdit && <p className="text-zinc-400 text-xs mt-1.5">Click "Create Syllabus" to begin.</p>}
               </div>
             ) : (
               <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-x-auto custom-scrollbar flex-1">
-                <table className="w-full text-left border-collapse min-w-[860px]">
+                <table className="w-full text-left border-collapse min-w-[900px]">
                   <thead className="bg-zinc-50/80">
                     <tr>
+                      <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 w-16 text-center">S.No</th>
                       <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Subject</th>
                       <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Class</th>
                       <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 text-center">Lessons</th>
@@ -417,8 +446,9 @@ export default function SyllabusManagement({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-100">
-                    {rows.map(row => (
+                    {filteredRows.map((row, idx) => (
                       <tr key={row.id} className="hover:bg-zinc-50/60 transition-colors group">
+                        <td className="px-5 py-4 text-center text-sm font-semibold text-zinc-400 tabular-nums">{idx + 1}</td>
                         <td className="px-5 py-4 font-semibold text-zinc-900 text-sm">{row.subject_name}</td>
                         <td className="px-5 py-4">
                           <span className="inline-flex items-center px-2 py-1 rounded text-[11px] font-semibold bg-zinc-100 text-zinc-700 ring-1 ring-inset ring-black/5">

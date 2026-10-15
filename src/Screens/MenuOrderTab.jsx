@@ -1,12 +1,12 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { RotateCcw, ListOrdered, Info, GripVertical } from 'lucide-react';
+import { ListOrdered, Info } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
 import { MODULES } from './Modules';
 
 // =====================================================================
 //  MenuOrderTab  (shown as "Menu Settings")
 //  Super Admin controls two things for their school's sidebar:
-//    1. ORDER  — drag any row (by its handle) to reorder; auto-saves.
+//    1. ORDER  — drag any row up or down to reorder; auto-saves.
 //    2. NAME   — type an Alias on the right to rename a module for the
 //               whole school. Blank = the default (developer) name.
 //  Both live on the module_order table (one row per module, carrying
@@ -38,6 +38,7 @@ export default function MenuOrderTab({ user }) {
 
   const [dragName, setDragName] = useState(null);
   const [overName, setOverName] = useState(null);
+  const [noDrag, setNoDrag]     = useState(false);   // true while the Alias box is in use
 
   const orderRef   = useRef(order);
   const aliasesRef = useRef(aliases);
@@ -107,13 +108,6 @@ export default function MenuOrderTab({ user }) {
     setSaving(false);
   };
 
-  const resetDefault = () => {
-    setSaved(false);
-    setOrder(DEFAULT_ORDER);
-    setAliases({}); aliasesRef.current = {};
-    save(DEFAULT_ORDER);
-  };
-
   // ---- alias editing --------------------------------------------------
   const setAlias = (name, val) => {
     setSaved(false);
@@ -158,7 +152,7 @@ export default function MenuOrderTab({ user }) {
   return (
     <div className="space-y-6">
 
-      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-6">
+      <div className="mb-6">
         <div>
           <h3 className="text-lg font-semibold text-zinc-900 tracking-tight">Menu Settings</h3>
           <p className="text-[11px] text-zinc-500 mt-1 max-w-2xl">
@@ -166,17 +160,14 @@ export default function MenuOrderTab({ user }) {
             The name on the left is the default; type an <strong className="text-zinc-700 font-semibold">Alias</strong> on
             the right to show a different name to everyone here. Changes save automatically.
           </p>
+          <p className="text-[11px] font-semibold text-primary mt-1 max-w-2xl">
+            After changing the order or names, refresh the browser to see the changes in the sidebar.
+          </p>
           {lastSaved && (
             <p className="text-[11px] text-zinc-400 mt-1">
               Last saved: <span className="font-medium text-zinc-500">{fmtSaved(lastSaved)}</span>
             </p>
           )}
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <button type="button" onClick={resetDefault}
-            className="h-9 px-3 inline-flex items-center gap-1.5 bg-white border border-zinc-200 text-zinc-700 rounded-md text-xs font-medium hover:bg-zinc-50 transition-colors shadow-sm">
-            <RotateCcw className="size-3.5" /> Reset to default
-          </button>
         </div>
       </div>
 
@@ -200,7 +191,6 @@ export default function MenuOrderTab({ user }) {
           <span className="p-1 shrink-0 w-7" />
           <span className="flex-1 text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">Default name</span>
           <span className="w-40 sm:w-56 shrink-0 text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">Alias (shown to everyone)</span>
-          <span className="w-6 shrink-0" />
         </div>
 
         <div className="p-3 sm:p-4 space-y-2">
@@ -211,11 +201,15 @@ export default function MenuOrderTab({ user }) {
             const isOver = overName === name && dragName && dragName !== name;
             return (
               <div key={name}
+                draggable={!noDrag}
+                onDragStart={(e) => handleDragStart(e, name)}
                 onDragOver={(e) => handleDragOver(e, name)}
                 onDragLeave={() => handleDragLeave(name)}
                 onDrop={(e) => handleDrop(e, name)}
-                className={`flex items-center gap-3 p-2.5 rounded-md ring-1 ring-inset bg-white transition-all shadow-sm ${
-                  isDragging ? 'opacity-40 ring-primary/40' : 'ring-black/5'
+                onDragEnd={handleDragEnd}
+                title="Drag up or down to reorder"
+                className={`flex items-center gap-3 p-2.5 rounded-md ring-1 ring-inset bg-white transition-all shadow-sm cursor-grab active:cursor-grabbing select-none ${
+                  isDragging ? 'opacity-40 ring-primary/40' : 'ring-black/5 hover:bg-zinc-50/60'
                 } ${isOver ? 'ring-2 ring-primary/50 bg-primary/5' : ''}`}>
 
                 <span className="w-7 h-7 shrink-0 flex items-center justify-center rounded-md bg-primary/10 text-primary text-xs font-semibold tabular-nums">
@@ -232,26 +226,20 @@ export default function MenuOrderTab({ user }) {
                   <p className="text-[10px] text-zinc-400 font-medium uppercase tracking-wider truncate">{m.module_name}</p>
                 </div>
 
-                {/* right: alias */}
+                {/* right: alias — hovering/focusing it suspends row-drag so you can type & select text */}
                 <div className="w-40 sm:w-56 shrink-0">
                   <input
                     value={aliases[name] || ''}
                     onChange={(e) => setAlias(name, e.target.value)}
-                    onBlur={() => onAliasBlur(name)}
+                    onFocus={() => setNoDrag(true)}
+                    onMouseEnter={() => setNoDrag(true)}
+                    onMouseLeave={() => setNoDrag(false)}
+                    onBlur={() => { setNoDrag(false); onAliasBlur(name); }}
                     maxLength={100}
                     placeholder={m.label}
-                    className="h-8 w-full rounded-md border border-zinc-200 bg-white px-2.5 text-xs text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors"
+                    className="h-8 w-full rounded-md border border-zinc-200 bg-white px-2.5 text-xs text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors cursor-text select-text"
                   />
                 </div>
-
-                {/* drag handle */}
-                <span draggable
-                  onDragStart={(e) => handleDragStart(e, name)}
-                  onDragEnd={handleDragEnd}
-                  title="Drag to reorder"
-                  className="cursor-grab active:cursor-grabbing text-zinc-300 hover:text-zinc-500 shrink-0 p-1 select-none">
-                  <GripVertical className="size-4" />
-                </span>
               </div>
             );
           })}
