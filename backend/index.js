@@ -16791,6 +16791,62 @@ app.delete('/api/admin/library/issues/:id', async (req, res) => {
 
 
 
+
+// =====================================================================
+//  PRESENCE / "USERS ONLINE"  (heartbeat, TENANT-SCOPED)
+//
+//   Every signed-in browser POSTs /api/presence/ping every ~30s. The
+//   server stamps last_seen. "Online" = a user whose last_seen is within
+//   ONLINE_WINDOW_SECONDS. The Overview polls the count route.
+// =====================================================================
+
+// A user counts as "online" if seen within this many seconds. The client
+// pings every ~10s, so 25s tolerates one slightly-late ping + latency
+// while still dropping someone who left within ~25s.
+const ONLINE_WINDOW_SECONDS = 25;
+
+// --- P.1 Heartbeat — mark the signed-in user online (any member) -----
+app.post('/api/presence/ping', async (req, res) => {
+    try {
+        // A Developer has no institutionId of their own; skip them quietly
+        // (they aren't part of any single school's "online" count).
+        if (!req.auth.institutionId) return res.json({ success: true, skipped: true });
+        await db.execute(
+            `INSERT INTO user_presence (user_id, institutionId, last_seen)
+             VALUES (?, ?, NOW())
+             ON DUPLICATE KEY UPDATE institutionId = VALUES(institutionId), last_seen = NOW()`,
+            [req.auth.userId, req.auth.institutionId]
+        );
+        res.json({ success: true });
+    } catch (err) {
+        // Presence is best-effort — never surface an error to the UI.
+        res.json({ success: false });
+    }
+});
+
+// --- P.2 Online count for a school (Super Admin / Developer only) ----
+app.get('/api/admin/online-count/:instId', async (req, res) => {
+    const role = String(req.auth.role || '');
+    if (role !== 'Super Admin' && role !== 'Developer') {
+        return res.status(403).json({ error: 'Not allowed.' });
+    }
+    const instId = role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    try {
+        const [rows] = await db.execute(
+            `SELECT COUNT(*) AS c
+               FROM user_presence
+              WHERE institutionId = ?
+                AND last_seen > (NOW() - INTERVAL ? SECOND)`,
+            [instId, ONLINE_WINDOW_SECONDS]
+        );
+        res.json({ count: Number(rows[0]?.c || 0), window_seconds: ONLINE_WINDOW_SECONDS });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
+
 // =====================================================================
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {

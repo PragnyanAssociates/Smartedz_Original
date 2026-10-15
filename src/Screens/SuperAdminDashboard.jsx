@@ -34,6 +34,7 @@ import Support from './Support';
 
 import { PermissionsProvider, usePermissions } from './PermissionsContext';
 import { useAuth } from '../context/AuthContext';
+import { API_BASE_URL } from '../apiConfig';
 import { MODULES } from './Modules';
 import { ShieldOff } from 'lucide-react';
 
@@ -75,6 +76,27 @@ function DashboardShell() {
   useEffect(() => {
     try { localStorage.removeItem(TAB_KEY); } catch { /* ignore */ }
   }, []);
+
+  // Presence heartbeat — every signed-in user pings so the Overview's
+  // "Users Online" count stays live. Fires now, every 10s, and whenever
+  // the tab regains focus/visibility. Token rides via the fetch interceptor.
+  useEffect(() => {
+    if (!token) return;
+    let alive = true;
+    const ping = () => { fetch(`${API_BASE_URL}/presence/ping`, { method: 'POST' }).catch(() => {}); };
+    ping();
+    const t = setInterval(() => { if (alive) ping(); }, 10000);
+    const onFocus = () => ping();
+    const onVis = () => { if (document.visibilityState === 'visible') ping(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      alive = false;
+      clearInterval(t);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [token]);
 
   // Fresh login (not a refresh): once permissions have loaded, land on the
   // first module this user can see — so a hidden Overview is skipped.

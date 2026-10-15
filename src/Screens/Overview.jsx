@@ -122,6 +122,7 @@ export default function Overview() {
   const [loading, setLoading] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [onlineCount, setOnlineCount] = useState(null);
 
   const isSuperAdmin = (user?.role || '') === 'Super Admin';
 
@@ -169,6 +170,20 @@ export default function Overview() {
     return () => { alive = false; };
   }, [user]);
 
+  // Live "Users Online" count — Super Admin only. Polls every 8s. The
+  // heartbeat that FEEDS this (every user's ping) lives in SuperAdminDashboard.
+  useEffect(() => {
+    if (!isSuperAdmin || !user?.institutionId) return;
+    let alive = true;
+    const load = async () => {
+      const d = await safeJson(`${API_BASE_URL}/admin/online-count/${user.institutionId}`);
+      if (alive && d && typeof d.count === 'number') setOnlineCount(d.count);
+    };
+    load();
+    const t = setInterval(load, 8000);
+    return () => { alive = false; clearInterval(t); };
+  }, [isSuperAdmin, user]);
+
   const persona = getPersona(user?.role);
 
   if (loading) return <Spinner />;
@@ -187,7 +202,7 @@ export default function Overview() {
   const distinctClasses = new Set(entries.map(e => e.class_id).filter(Boolean)).size;
 
   const VALUES = {
-    total_users:    { value: users.length, sub: 'System wide' },
+    total_users:    { value: users.length, sub: 'System Authorized users' },
     students:       { value: users.filter(isStudent).length, sub: 'Enrolled' },
     teachers_staff: { value: users.filter(u => !isStudent(u)).length, sub: 'Active members' },
     classes:        { value: (admin.classes || []).length, sub: 'Configured' },
@@ -232,7 +247,14 @@ export default function Overview() {
           <p className="text-sm text-zinc-500 max-w-[56ch]">Here is what is happening at {admin.institution?.name || 'your institution'} today.</p>
         </div>
         {isSuperAdmin && (
-          <div className="flex items-center gap-2 self-start shrink-0">
+          <div className="flex flex-wrap items-center gap-2 self-start shrink-0">
+            <span className="inline-flex items-center gap-2 h-9 px-3 rounded-md bg-emerald-50 ring-1 ring-emerald-200 text-emerald-700 text-xs font-semibold whitespace-nowrap">
+              <span className="relative flex size-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex rounded-full size-2 bg-emerald-500" />
+              </span>
+              Users Online: <span className="tabular-nums">{onlineCount == null ? '\u2014' : onlineCount}</span>
+            </span>
             <button onClick={() => setHelpOpen(true)}
               className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors">
               <HelpCircle className="size-3.5" /> How to use
