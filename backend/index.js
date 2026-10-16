@@ -8052,7 +8052,7 @@ app.get('/api/admin/kitchen/:instId/usage', async (req, res) => {
     try {
         const [rows] = await db.execute(
             `SELECT u.id, u.inventory_id, u.quantity_used, u.usage_date, u.created_at,
-       i.item_name, i.unit, cu.name AS used_by_name
+       i.item_name, i.unit, i.image, cu.name AS used_by_name
                FROM kitchen_usage u
                JOIN kitchen_inventory i ON i.id = u.inventory_id
                LEFT JOIN users cu ON cu.id = u.created_by

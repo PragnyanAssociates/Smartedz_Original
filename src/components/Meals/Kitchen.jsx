@@ -262,9 +262,12 @@ export default function Kitchen({ user, canEdit, canDelete }) {
                 </div>
               ) : filteredUsage.map(u => (
                 <div key={u.id} className="p-3 flex items-center gap-3">
-                  <div className="size-9 rounded-md bg-amber-50 text-amber-600 ring-1 ring-amber-600/15 flex items-center justify-center shrink-0">
-                    <Utensils className="size-4" />
-                  </div>
+                  <button
+                    onClick={() => u.image && setPreview(u.image)}
+                    title={u.image ? 'View image' : undefined}
+                    className={`size-10 rounded-md bg-zinc-100 ring-1 ring-black/5 overflow-hidden flex items-center justify-center shrink-0 ${u.image ? 'cursor-zoom-in hover:ring-primary/40 transition-all' : ''}`}>
+                    {u.image ? <img src={u.image} alt="" className="w-full h-full object-cover" /> : <Utensils className="size-4 text-amber-500" />}
+                  </button>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold text-zinc-900 truncate">{u.item_name}</p>
                     {(u.used_by_name || u.created_at) && (
