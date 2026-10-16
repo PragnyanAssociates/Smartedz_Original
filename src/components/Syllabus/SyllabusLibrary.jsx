@@ -19,6 +19,11 @@ const ALLOWED = ['pdf', 'doc', 'docx', 'xls', 'xlsx'];
 const COVER_ACCEPT = 'image/png,image/jpeg,image/webp';
 
 const classLabel = (c) => `${c.className}${c.section ? ' - ' + c.section : ''}`;
+
+// Natural, number-aware compare so "Class 2" sorts before "Class 10".
+const natCmp = (a, b) =>
+  String(a ?? '').localeCompare(String(b ?? ''), undefined, { numeric: true, sensitivity: 'base' });
+
 const extOf = (name = '') => (name.includes('.') ? name.split('.').pop() : '').toLowerCase();
 const stripExt = (name = '') => name.replace(/\.(pdf|docx?|xlsx?)$/i, '');
 const fmtSize = (b) => {
@@ -153,13 +158,39 @@ export default function SyllabusLibrary({
   const [openFolderId, setOpenFolderId] = useState(null);
   const reqSeq = useRef(0);
 
+  // Class order (Ascending / Descending) is set school-wide on the Classes
+  // tab; fetch it so this dropdown matches every other module.
+  const [classSortDir, setClassSortDir] = useState('asc');
+  useEffect(() => {
+    if (!user?.institutionId) return;
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/admin/class-sort/${user.institutionId}`);
+        const d = res.ok ? await res.json() : null;
+        if (alive && d && (d.dir === 'asc' || d.dir === 'desc')) setClassSortDir(d.dir);
+      } catch (_) { /* default stays ascending */ }
+    })();
+    return () => { alive = false; };
+  }, [user?.institutionId]);
+
+  // The class list in this screen's own natural + chosen-direction order.
+  const sortedClasses = useMemo(() => {
+    const dir = classSortDir === 'desc' ? -1 : 1;
+    return [...(classes || [])].sort((a, b) => {
+      const byClass = natCmp(a.className, b.className);
+      if (byClass !== 0) return byClass * dir;
+      return natCmp(a.section, b.section);   // sections stay A → Z
+    });
+  }, [classes, classSortDir]);
+
   const activeClass = useMemo(() => classes.find(c => String(c.id) === String(filterClass)) || null, [classes, filterClass]);
   const openFolder  = useMemo(() => folders.find(f => f.id === openFolderId) || null, [folders, openFolderId]);
 
   useEffect(() => {
-    if (classes.length === 0) return;
-    if (!classes.some(c => String(c.id) === String(filterClass))) onClassChange(String(classes[0].id));
-  }, [classes, filterClass, onClassChange]);
+    if (sortedClasses.length === 0) return;
+    if (!sortedClasses.some(c => String(c.id) === String(filterClass))) onClassChange(String(sortedClasses[0].id));
+  }, [sortedClasses, filterClass, onClassChange]);
 
   const load = useCallback(async () => {
     const seq = ++reqSeq.current;
@@ -233,10 +264,10 @@ export default function SyllabusLibrary({
           <div className="flex items-center gap-2 w-full sm:w-auto">
             <span className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider shrink-0">Class:</span>
             <div className="relative w-full sm:w-48">
-              <select value={filterClass} onChange={e => onClassChange(e.target.value)} disabled={classes.length === 0}
+              <select value={filterClass} onChange={e => onClassChange(e.target.value)} disabled={sortedClasses.length === 0}
                 className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
-                {classes.length === 0 && <option value="">No classes</option>}
-                {classes.map(c => (<option key={c.id} value={String(c.id)}>{classLabel(c)}</option>))}
+                {sortedClasses.length === 0 && <option value="">No classes</option>}
+                {sortedClasses.map(c => (<option key={c.id} value={String(c.id)}>{classLabel(c)}</option>))}
               </select>
               <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
@@ -321,7 +352,7 @@ export default function SyllabusLibrary({
         <FolderModal
           editing={folderModal.editing}
           syllabusType={syllabusType}
-          classes={classes} subjects={subjects} subjectClasses={subjectClasses}
+          classes={sortedClasses} subjects={subjects} subjectClasses={subjectClasses}
           defaultClassId={filterClass}
           onClose={() => setFolderModal(null)}
           onSaved={(savedClassId) => {

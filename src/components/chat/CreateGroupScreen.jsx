@@ -1,12 +1,16 @@
 "use client"
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import apiClient from '../../api/client';
 import { MdArrowBack } from 'react-icons/md';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import { Users, Loader2, Check, Megaphone, ChevronDown, ChevronRight, Camera } from 'lucide-react';
+
+// Natural, number-aware compare so "Class 2" sorts before "Class 10".
+const natCmp = (a, b) =>
+  String(a ?? '').localeCompare(String(b ?? ''), undefined, { numeric: true, sensitivity: 'base' });
 
 const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
     const { user } = useAuth();
@@ -21,19 +25,23 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
     const [description, setDescription] = useState('');
     const [isReadOnly, setIsReadOnly] = useState(false);
     const [groupDp, setGroupDp] = useState(null); // NEW: State for Group DP
-    
+
     // Selection States
     const [selectedCategories, setSelectedCategories] = useState([]);
-    const [selectedUserIds, setSelectedUserIds] = useState([]); 
-    
+    const [selectedUserIds, setSelectedUserIds] = useState([]);
+
     // Accordion State
     const [expandedSection, setExpandedSection] = useState(null);
 
     // Data States
     const [options, setOptions] = useState({ classes: [], roles: [] });
-    const [usersList, setUsersList] = useState([]); 
+    const [usersList, setUsersList] = useState([]);
     const [isLoadingOptions, setIsLoadingOptions] = useState(true);
     const [isCreating, setIsCreating] = useState(false);
+
+    // Class order (Ascending / Descending) set school-wide on the Classes tab,
+    // so the class accordion matches every other module.
+    const [classSortDir, setClassSortDir] = useState('asc');
 
     useEffect(() => {
         const fetchOptions = async () => {
@@ -43,7 +51,7 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
                     apiClient.get('/groups/options', { params: { userId: user.id, instId: user.institutionId } }),
                     apiClient.get('/groups/users-options', { params: { instId: user.institutionId } })
                 ]);
-                
+
                 setOptions(resOptions.data);
                 setUsersList(resUsers.data);
             } catch (error) {
@@ -55,6 +63,26 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
         fetchOptions();
     }, [user?.id, user?.institutionId]);
 
+    // Read the school's saved class-sort direction (best-effort).
+    useEffect(() => {
+        if (!user?.institutionId) return;
+        let alive = true;
+        (async () => {
+            try {
+                const res = await apiClient.get(`/admin/class-sort/${user.institutionId}`);
+                const dir = res?.data?.dir;
+                if (alive && (dir === 'asc' || dir === 'desc')) setClassSortDir(dir);
+            } catch (_) { /* default stays ascending */ }
+        })();
+        return () => { alive = false; };
+    }, [user?.institutionId]);
+
+    // Class categories in natural order + the chosen direction.
+    const sortedClasses = useMemo(() => {
+        const dir = classSortDir === 'desc' ? -1 : 1;
+        return [...(options.classes || [])].sort((a, b) => natCmp(a, b) * dir);
+    }, [options.classes, classSortDir]);
+
     // --- Image Handling ---
     const handlePickImage = (e) => {
         const file = e.target.files[0];
@@ -62,14 +90,14 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
 
         if (!file.type.startsWith('image/')) {
             alert('Please select a valid image file.');
-            e.target.value = ''; 
+            e.target.value = '';
             return;
         }
 
         const MAX_SIZE = 3 * 1024 * 1024; // 3MB
         if (file.size > MAX_SIZE) {
             alert('Image is too large! Please select a file under 3MB.');
-            e.target.value = ''; 
+            e.target.value = '';
             return;
         }
 
@@ -124,9 +152,9 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
             // 2. If a DP was selected, upload it immediately
             if (groupDp) {
                 try {
-                    await apiClient.put(`/groups/${newGroupId}/dp`, { 
-                        userId: user.id, 
-                        group_dp: groupDp 
+                    await apiClient.put(`/groups/${newGroupId}/dp`, {
+                        userId: user.id,
+                        group_dp: groupDp
                     });
                 } catch (dpError) {
                     console.error("Failed to upload DP during creation:", dpError);
@@ -157,8 +185,8 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
                     {items.map(categoryName => {
                         const isExpanded = expandedSection === categoryName;
                         const isCategorySelected = selectedCategories.includes(categoryName);
-                        
-                        const categoryUsers = usersList.filter(u => 
+
+                        const categoryUsers = usersList.filter(u =>
                             isClass ? u.class_name === categoryName : u.role === categoryName
                         );
 
@@ -175,8 +203,8 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
                                     <button
                                         onClick={(e) => { e.stopPropagation(); toggleCategory(categoryName); }}
                                         className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide transition-all ${
-                                            isCategorySelected 
-                                            ? 'bg-primary/10 text-primary hover:bg-primary/20' 
+                                            isCategorySelected
+                                            ? 'bg-primary/10 text-primary hover:bg-primary/20'
                                             : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'
                                         }`}
                                     >
@@ -194,8 +222,8 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
                                                     onClick={() => { if (!isCategorySelected) toggleUser(u.id); }}
                                                     disabled={isCategorySelected}
                                                     className={`px-3 py-1.5 rounded-full text-xs font-semibold ring-1 ring-inset transition-all flex items-center gap-1.5 ${
-                                                        isUserSelected 
-                                                        ? 'bg-blue-600 text-white ring-blue-600 shadow-sm opacity-100' 
+                                                        isUserSelected
+                                                        ? 'bg-blue-600 text-white ring-blue-600 shadow-sm opacity-100'
                                                         : 'bg-white text-zinc-700 ring-zinc-200 hover:bg-zinc-50'
                                                     } ${isCategorySelected && !selectedUserIds.includes(u.id) ? 'opacity-60 cursor-not-allowed' : ''}`}
                                                 >
@@ -315,8 +343,8 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
                                     <button
                                         onClick={() => toggleCategory('All')}
                                         className={`px-4 py-1.5 rounded-full text-xs font-semibold ring-1 ring-inset transition-all ${
-                                            selectedCategories.includes('All') 
-                                            ? 'bg-primary text-white ring-primary shadow-sm' 
+                                            selectedCategories.includes('All')
+                                            ? 'bg-primary text-white ring-primary shadow-sm'
                                             : 'bg-white text-zinc-700 ring-zinc-200 hover:bg-zinc-50 hover:ring-zinc-300'
                                         }`}
                                     >
@@ -326,8 +354,8 @@ const CreateGroupScreen = ({ onBack, onGroupCreated, isEmbedded = false }) => {
                             )}
 
                             {renderAccordionSection('Staff Roles', options.roles, false)}
-                            {renderAccordionSection('Classes (Students)', options.classes, true)}
-                            
+                            {renderAccordionSection('Classes (Students)', sortedClasses, true)}
+
                         </div>
                     )}
                 </div>

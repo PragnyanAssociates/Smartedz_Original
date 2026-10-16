@@ -19,6 +19,10 @@ import { PerfBar, BarRow, ChartModal } from './PerfBar';
 //  Bands: 100-80 green, 80-50 blue, 50-0 red. Active academic year only.
 // =====================================================================
 
+// Natural, number-aware compare so "Class 2" sorts before "Class 10".
+const natCmp = (a, b) =>
+  String(a ?? '').localeCompare(String(b ?? ''), undefined, { numeric: true, sensitivity: 'base' });
+
 // Compute a teacher's obtained/possible (+ per class/subject breakdown)
 // under the given class/subject/exam filters.
 function teacherTotals(teacher, { classId = 'all', subjectId = 'all', examTypeId = 'all' } = {}) {
@@ -60,6 +64,22 @@ export default function TeacherPerformance() {
   const [examTypeId, setExamTypeId] = useState('all');
   const [sortOrder, setSortOrder]   = useState('high');   // 'high' | 'low'
 
+  // Class order (Ascending / Descending) set school-wide on the Classes tab,
+  // so this screen's Class dropdown matches every other module.
+  const [classSortDir, setClassSortDir] = useState('asc');
+  useEffect(() => {
+    if (!user?.institutionId) return;
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/admin/class-sort/${user.institutionId}`);
+        const d = res.ok ? await res.json() : null;
+        if (alive && d && (d.dir === 'asc' || d.dir === 'desc')) setClassSortDir(d.dir);
+      } catch (_) { /* default stays ascending */ }
+    })();
+    return () => { alive = false; };
+  }, [user?.institutionId]);
+
   // Modals
   const [showAnalysis, setShowAnalysis] = useState(false);
   const [showTable, setShowTable]       = useState(false);
@@ -79,13 +99,15 @@ export default function TeacherPerformance() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Filter option lists derived from the data
+  // Filter option lists derived from the data. Classes use natural order +
+  // the school's chosen direction; subjects stay A -> Z.
   const classOptions = useMemo(() => {
     const m = new Map();
     data.teachers.forEach(t => (t.detail || []).forEach(d => m.set(String(d.class_id), d.class_group)));
+    const dir = classSortDir === 'desc' ? -1 : 1;
     return [...m.entries()].map(([value, label]) => ({ value, label }))
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }, [data]);
+      .sort((a, b) => natCmp(a.label, b.label) * dir);
+  }, [data, classSortDir]);
 
   const subjectOptions = useMemo(() => {
     const m = new Map();
