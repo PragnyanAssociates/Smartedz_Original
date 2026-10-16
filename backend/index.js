@@ -5750,7 +5750,7 @@ app.get('/api/admin/reports/class-summaries/:instId', async (req, res) => {
 
         const summaries = [];
 
-        for (const c of classes) {
+                for (const c of sortClassesNatural(classes, await getClassSortDir(instId))) {
             const [totalRow] = await db.execute(
                 `SELECT COALESCE(SUM(sm.marks_obtained), 0) AS total
                    FROM student_marks sm
@@ -6648,7 +6648,7 @@ app.get('/api/admin/performance/classes/:instId', async (req, res) => {
                 [instId]
             );
         }
-        res.json(rows.map(c => ({
+            res.json(sortClassesNatural(rows, await getClassSortDir(instId)).map(c => ({
             id: c.id,
             className: c.className,
             section: c.section,
@@ -14618,7 +14618,7 @@ app.get('/api/transport/classes/:institutionId', async (req, res) => {
       'SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section',
       [req.params.institutionId]
     );
-    res.json(rows);
+    res.json(sortClassesNatural(rows, await getClassSortDir(req.params.institutionId)));
   } catch (err) { console.error('transport/classes error:', err); res.status(500).json({ error: err.message }); }
 });
 

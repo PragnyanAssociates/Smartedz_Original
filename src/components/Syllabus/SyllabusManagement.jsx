@@ -22,6 +22,10 @@ const fmtTimeIST = (val) => {
 
 const classLabel = (c) => `${c.className}${c.section ? ' - ' + c.section : ''}`;
 
+// Natural, number-aware compare so "Class 2" sorts before "Class 10".
+const natCmp = (a, b) =>
+  String(a ?? '').localeCompare(String(b ?? ''), undefined, { numeric: true, sensitivity: 'base' });
+
 // =====================================================================
 //  Syllabus Management
 //
@@ -67,6 +71,32 @@ export default function SyllabusManagement({
   const activeType  = useMemo(() => types.find(t => String(t.id) === String(activeTypeId)) || null, [types, activeTypeId]);
   const activeClass = useMemo(() => classes.find(c => String(c.id) === String(filterClass)) || null, [classes, filterClass]);
 
+  // Class order (Ascending / Descending) is set school-wide on the Classes
+  // tab; fetch it so this dropdown matches every other module.
+  const [classSortDir, setClassSortDir] = useState('asc');
+  useEffect(() => {
+    if (!user?.institutionId) return;
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/admin/class-sort/${user.institutionId}`);
+        const d = res.ok ? await res.json() : null;
+        if (alive && d && (d.dir === 'asc' || d.dir === 'desc')) setClassSortDir(d.dir);
+      } catch (_) { /* default stays ascending */ }
+    })();
+    return () => { alive = false; };
+  }, [user?.institutionId]);
+
+  // The class list in this screen's own natural + chosen-direction order.
+  const sortedClasses = useMemo(() => {
+    const dir = classSortDir === 'desc' ? -1 : 1;
+    return [...(classes || [])].sort((a, b) => {
+      const byClass = natCmp(a.className, b.className);
+      if (byClass !== 0) return byClass * dir;
+      return natCmp(a.section, b.section);   // sections stay A → Z
+    });
+  }, [classes, classSortDir]);
+
   // ---- load types ----
   const loadTypes = useCallback(async () => {
     if (!user?.institutionId) return;
@@ -89,11 +119,12 @@ export default function SyllabusManagement({
     if (!types.some(t => String(t.id) === String(activeTypeId))) onTypeChange(String(types[0].id));
   }, [types, typesLoading, activeTypeId, onTypeChange]);
 
-  // Keep a valid class selected (no "All Classes").
+  // Keep a valid class selected (no "All Classes"). Default to the first in
+  // the chosen order.
   useEffect(() => {
-    if (classes.length === 0) return;
-    if (!classes.some(c => String(c.id) === String(filterClass))) onClassChange(String(classes[0].id));
-  }, [classes, filterClass, onClassChange]);
+    if (sortedClasses.length === 0) return;
+    if (!sortedClasses.some(c => String(c.id) === String(filterClass))) onClassChange(String(sortedClasses[0].id));
+  }, [sortedClasses, filterClass, onClassChange]);
 
   // ---- load syllabus rows for the active type + class ----
   const load = useCallback(async () => {
@@ -376,10 +407,10 @@ export default function SyllabusManagement({
                 <span className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider shrink-0">Filter:</span>
                 <div className="relative w-full sm:w-48">
                   <select value={filterClass} onChange={e => onClassChange(e.target.value)}
-                    disabled={classes.length === 0}
+                    disabled={sortedClasses.length === 0}
                     className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-3 pr-8 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer appearance-none shadow-sm transition-colors">
-                    {classes.length === 0 && <option value="">No classes</option>}
-                    {classes.map(c => (<option key={c.id} value={String(c.id)}>{classLabel(c)}</option>))}
+                    {sortedClasses.length === 0 && <option value="">No classes</option>}
+                    {sortedClasses.map(c => (<option key={c.id} value={String(c.id)}>{classLabel(c)}</option>))}
                   </select>
                   <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
@@ -531,7 +562,7 @@ export default function SyllabusManagement({
 
                 <Field label="Class" type="select" required value={form.class_id}
                   onChange={v => setForm({ ...form, class_id: v, subject_id: '' })}
-                  options={[{ value: '', label: 'Select class' }, ...classes.map(c => ({ value: String(c.id), label: classLabel(c) }))]} />
+                  options={[{ value: '', label: 'Select class' }, ...sortedClasses.map(c => ({ value: String(c.id), label: classLabel(c) }))]} />
 
                 <Field label="Subject" type="select" required value={form.subject_id}
                   onChange={v => setForm({ ...form, subject_id: v })}
