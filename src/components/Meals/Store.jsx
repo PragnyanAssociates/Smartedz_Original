@@ -2,8 +2,11 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   Warehouse, Plus, Trash2, Edit, Loader2, X, Save, Camera,
-  Search, MapPin, Archive, Minus, Hash, Boxes, Clock, User, PencilLine
+  Search, MapPin, Archive, Minus, Hash, Boxes, User, PencilLine,
+  LayoutGrid, List as ListIcon, Eye
 } from 'lucide-react';
+
+const VIEW_KEY = 'store_view_mode';
 
 // --- date / time helpers (Railway stores UTC → show IST) ---
 const toDate = (val) => {
@@ -21,23 +24,28 @@ const fmtDateTime = (v) => {
   const d = toDate(v);
   return d ? d.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }) : '';
 };
-// Was it edited after being created? (updated_at defaults equal to created_at on insert)
 const wasEdited = (created, updated) => {
   const c = toDate(created), u = toDate(updated);
   if (!c || !u) return false;
-  return (u.getTime() - c.getTime()) > 1500; // >1.5s apart = a real edit
+  return (u.getTime() - c.getTime()) > 1500;
 };
 
 // =====================================================================
-//  Store — permanent assets (furniture, equipment, etc). Edit permission
-//  manages it; not shown to read-only users.
+//  Store — permanent assets. Grid / List views; click a card (grid) or the
+//  eye (list) to see full details. Edit permission manages it.
 // =====================================================================
 export default function Store({ user, canEdit, canDelete }) {
   const [items, setItems]     = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch]   = useState('');
-  const [modal, setModal]     = useState(null); // { item? } | null
-  const [preview, setPreview] = useState(null);
+  const [modal, setModal]     = useState(null);   // { item? } | null  (add / edit form)
+  const [detail, setDetail]   = useState(null);   // item for the details modal
+  const [preview, setPreview] = useState(null);   // enlarged image src
+
+  const [view, setView] = useState(() => {
+    try { return localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'grid'; } catch { return 'grid'; }
+  });
+  const setViewMode = (v) => { setView(v); try { localStorage.setItem(VIEW_KEY, v); } catch {} };
 
   const fetchItems = useCallback(async () => {
     if (!user?.institutionId) return;
@@ -65,6 +73,7 @@ export default function Store({ user, canEdit, canDelete }) {
     try {
       const res = await fetch(`${API_BASE_URL}/admin/store/${item.id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Delete failed');
+      setDetail(null);
       fetchItems();
     } catch (e) { alert(e.message); }
   };
@@ -85,12 +94,30 @@ export default function Store({ user, canEdit, canDelete }) {
             </span>
           )}
         </div>
-        {canEdit && (
-          <button onClick={() => setModal({})}
-            className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors shrink-0">
-            <Plus className="size-3.5" /> Add Asset
-          </button>
-        )}
+
+        <div className="flex items-center gap-2 shrink-0">
+          {/* Grid / List toggle */}
+          <div className="inline-flex items-center bg-zinc-100/80 p-1 rounded-md">
+            <button type="button" onClick={() => setViewMode('grid')} title="Grid view"
+              className={`inline-flex items-center gap-1 px-2.5 h-7 rounded text-[11px] font-semibold transition-colors ${
+                view === 'grid' ? 'bg-white text-primary shadow-sm ring-1 ring-black/5' : 'text-zinc-500 hover:text-zinc-700'
+              }`}>
+              <LayoutGrid className="size-3.5" /> Grid
+            </button>
+            <button type="button" onClick={() => setViewMode('list')} title="List view"
+              className={`inline-flex items-center gap-1 px-2.5 h-7 rounded text-[11px] font-semibold transition-colors ${
+                view === 'list' ? 'bg-white text-primary shadow-sm ring-1 ring-black/5' : 'text-zinc-500 hover:text-zinc-700'
+              }`}>
+              <ListIcon className="size-3.5" /> List
+            </button>
+          </div>
+          {canEdit && (
+            <button onClick={() => setModal({})}
+              className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors shrink-0">
+              <Plus className="size-3.5" /> Add Asset
+            </button>
+          )}
+        </div>
       </div>
 
       {loading ? (
@@ -106,24 +133,21 @@ export default function Store({ user, canEdit, canDelete }) {
             </button>
           )}
         </div>
-      ) : (
+      ) : view === 'grid' ? (
+        /* ---------------- GRID VIEW ---------------- */
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3">
           {filtered.map((item, idx) => {
             const edited = wasEdited(item.created_at, item.updated_at);
             return (
-              <div key={item.id} className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col group hover:ring-primary/30 hover:shadow-md transition-all">
-                <div className="aspect-[4/3] bg-zinc-100 relative overflow-hidden cursor-zoom-in"
-                  onClick={() => item.image && setPreview(item.image)}>
+              <div key={item.id} onClick={() => setDetail(item)}
+                className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col group hover:ring-primary/40 hover:shadow-md transition-all cursor-pointer">
+                <div className="aspect-[4/3] bg-zinc-100 relative overflow-hidden">
                   {item.image
                     ? <img src={item.image} alt="" className="w-full h-full object-cover" />
                     : <div className="w-full h-full flex items-center justify-center"><Archive className="size-8 text-zinc-300" /></div>}
-
-                  {/* Serial number — plain circle, top-left */}
                   <span className="absolute top-2 left-2 inline-flex items-center justify-center min-w-6 h-6 px-1.5 rounded-full bg-white/90 text-zinc-700 text-[11px] font-bold ring-1 ring-black/10 shadow-sm tabular-nums backdrop-blur-sm">
                     {idx + 1}
                   </span>
-
-                  {/* Quantity — labelled colour pill, top-right (clearly not the S.No) */}
                   <span className="absolute top-2 right-2 inline-flex items-center gap-1 bg-primary text-white text-[10px] font-bold px-2 py-1 rounded-md shadow-sm uppercase tracking-wider">
                     <Boxes className="size-3" /> Qty {item.quantity}
                   </span>
@@ -140,24 +164,22 @@ export default function Store({ user, canEdit, canDelete }) {
                     <MapPin className="size-3 shrink-0 text-zinc-400" /> {item.rack || 'Unassigned'}
                   </p>
 
-                  {/* Audit — who added / last edited, with date & time */}
                   <div className="mt-2 pt-2 border-t border-zinc-100 space-y-1">
-                    <p className="text-[10px] text-zinc-400 flex items-center gap-1 truncate" title={`Added by ${item.created_by_name || 'Unknown'} · ${fmtDateTime(item.created_at)}`}>
+                    <p className="text-[10px] text-zinc-400 flex items-center gap-1 truncate">
                       <User className="size-2.5 shrink-0" />
                       Added by <span className="font-semibold text-zinc-500">{item.created_by_name || '—'}</span>
                       <span className="text-zinc-300">·</span> {fmtDate(item.created_at)}
                     </p>
                     {edited && (
-                      <p className="text-[10px] text-amber-600/90 flex items-center gap-1 truncate" title={`Edited by ${item.updated_by_name || 'Unknown'} · ${fmtDateTime(item.updated_at)}`}>
+                      <p className="text-[10px] text-amber-600/90 flex items-center gap-1 truncate">
                         <PencilLine className="size-2.5 shrink-0" />
-                        Edited by <span className="font-semibold">{item.updated_by_name || '—'}</span>
-                        <span className="text-amber-300">·</span> {fmtDateTime(item.updated_at)}
+                        Edited <span className="text-amber-300">·</span> {fmtDate(item.updated_at)}
                       </p>
                     )}
                   </div>
 
                   {(canEdit || canDelete) && (
-                    <div className="flex items-center gap-1.5 mt-3 pt-3 border-t border-zinc-100">
+                    <div className="flex items-center gap-1.5 mt-3 pt-3 border-t border-zinc-100" onClick={e => e.stopPropagation()}>
                       {canEdit && (
                         <button onClick={() => setModal({ item })}
                           className="flex-1 h-8 rounded-md text-xs font-semibold text-zinc-600 bg-zinc-50 hover:bg-zinc-100 ring-1 ring-zinc-200 flex items-center justify-center gap-1 transition-colors">
@@ -177,10 +199,83 @@ export default function Store({ user, canEdit, canDelete }) {
             );
           })}
         </div>
+      ) : (
+        /* ---------------- LIST VIEW ---------------- */
+        <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-x-auto custom-scrollbar">
+          <table className="w-full text-left border-collapse min-w-[760px]">
+            <thead className="bg-zinc-50/80">
+              <tr>
+                <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 w-14 text-center">S.No</th>
+                <th className="px-3 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 w-16">Image</th>
+                <th className="px-3 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Item</th>
+                <th className="px-3 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 w-24 text-center">Qty</th>
+                <th className="px-3 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Room</th>
+                <th className="px-3 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Added By</th>
+                <th className="px-5 py-3 text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100 text-right w-28">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100">
+              {filtered.map((item, idx) => (
+                <tr key={item.id} className="hover:bg-zinc-50/60 transition-colors cursor-pointer" onClick={() => setDetail(item)}>
+                  <td className="px-5 py-3 text-center text-sm font-semibold text-primary tabular-nums">{idx + 1}</td>
+                  <td className="px-3 py-3">
+                    <div className="size-10 rounded-md bg-zinc-100 ring-1 ring-black/5 overflow-hidden flex items-center justify-center">
+                      {item.image ? <img src={item.image} alt="" className="w-full h-full object-cover" /> : <Archive className="size-4 text-zinc-300" />}
+                    </div>
+                  </td>
+                  <td className="px-3 py-3 font-semibold text-sm text-zinc-900">{item.item_name}</td>
+                  <td className="px-3 py-3 text-center">
+                    <span className="text-sm font-bold text-zinc-900 tabular-nums">{item.quantity}</span>
+                    <span className="text-[10px] text-zinc-400 font-medium ml-1">Nos</span>
+                  </td>
+                  <td className="px-3 py-3 text-sm font-medium text-zinc-600">{item.rack || <span className="text-zinc-400">-</span>}</td>
+                  <td className="px-3 py-3">
+                    <div className="text-xs font-semibold text-zinc-700">{item.created_by_name || '—'}</div>
+                    <div className="text-[10px] text-zinc-400 font-medium mt-0.5">{fmtDate(item.created_at)}</div>
+                  </td>
+                  <td className="px-5 py-3" onClick={e => e.stopPropagation()}>
+                    <div className="flex items-center justify-end gap-1">
+                      <button onClick={() => setDetail(item)} title="View details"
+                        className="size-8 rounded-md text-zinc-400 hover:text-primary hover:bg-primary/5 ring-1 ring-zinc-200 flex items-center justify-center transition-colors">
+                        <Eye className="size-4" />
+                      </button>
+                      {canEdit && (
+                        <button onClick={() => setModal({ item })} title="Edit"
+                          className="size-8 rounded-md text-zinc-400 hover:text-primary hover:bg-zinc-50 ring-1 ring-zinc-200 flex items-center justify-center transition-colors">
+                          <Edit className="size-4" />
+                        </button>
+                      )}
+                      {canDelete && (
+                        <button onClick={() => handleDelete(item)} title="Delete"
+                          className="size-8 rounded-md text-zinc-400 hover:text-red-600 hover:bg-red-50 ring-1 ring-zinc-200 flex items-center justify-center transition-colors">
+                          <Trash2 className="size-4" />
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
+      {/* Details modal (opened from a grid card or the list eye button) */}
+      {detail && (
+        <DetailModal
+          item={detail}
+          canEdit={canEdit}
+          canDelete={canDelete}
+          onClose={() => setDetail(null)}
+          onEnlarge={(src) => setPreview(src)}
+          onEdit={() => { const it = detail; setDetail(null); setModal({ item: it }); }}
+          onDelete={() => handleDelete(detail)}
+        />
+      )}
+
+      {/* Image lightbox */}
       {preview && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setPreview(null)}>
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setPreview(null)}>
           <button className="absolute top-4 right-4 text-white/80 hover:text-white p-2"><X className="size-6" /></button>
           <img src={preview} alt="" onClick={e => e.stopPropagation()} className="max-w-full max-h-[90vh] rounded-lg object-contain shadow-2xl" />
         </div>
@@ -189,6 +284,83 @@ export default function Store({ user, canEdit, canDelete }) {
       {modal && (
         <AssetModal user={user} item={modal.item} onClose={() => setModal(null)} onSaved={() => { setModal(null); fetchItems(); }} />
       )}
+    </div>
+  );
+}
+
+// =====================================================================
+//  Details modal — all info for one asset, clearly laid out.
+// =====================================================================
+function DetailModal({ item, canEdit, canDelete, onClose, onEnlarge, onEdit, onDelete }) {
+  const edited = wasEdited(item.created_at, item.updated_at);
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={onClose}>
+      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg shadow-xl flex flex-col animate-in fade-in zoom-in-95 duration-200 max-h-[92vh]" onClick={e => e.stopPropagation()}>
+        {/* header */}
+        <div className="p-5 border-b border-zinc-100 flex justify-between items-start gap-3 bg-zinc-50/50 rounded-t-lg shrink-0">
+          <div className="min-w-0">
+            <h2 className="text-lg font-semibold text-zinc-900 truncate flex items-center gap-2">
+              <Warehouse className="size-4 text-primary shrink-0" /> {item.item_name}
+            </h2>
+            <span className="inline-flex items-center gap-1 mt-1.5 text-[10px] font-bold text-primary bg-primary/10 ring-1 ring-primary/15 px-2 py-0.5 rounded uppercase tracking-wider">
+              <Boxes className="size-3" /> Qty {item.quantity}
+            </span>
+          </div>
+          <button onClick={onClose} className="text-zinc-400 hover:text-zinc-700 p-1.5 hover:bg-zinc-100 rounded-md transition-colors shrink-0"><X className="size-4" /></button>
+        </div>
+
+        <div className="p-5 sm:p-6 overflow-y-auto custom-scrollbar space-y-5">
+          {/* image */}
+          <div className={`w-full aspect-[16/9] rounded-lg bg-zinc-100 ring-1 ring-black/5 overflow-hidden flex items-center justify-center ${item.image ? 'cursor-zoom-in' : ''}`}
+            onClick={() => item.image && onEnlarge(item.image)}>
+            {item.image ? <img src={item.image} alt="" className="w-full h-full object-contain" /> : <Archive className="size-10 text-zinc-300" />}
+          </div>
+
+          {/* key fields */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <InfoTile icon={Boxes} label="Quantity" value={`${item.quantity} Nos`} />
+            <InfoTile icon={MapPin} label="Room / Location" value={item.rack || '-'} />
+          </div>
+
+          {/* audit */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+            <InfoTile icon={User} label="Added By" value={item.created_by_name || '—'} sub={fmtDateTime(item.created_at)} />
+            <InfoTile icon={PencilLine} label="Last Updated By"
+              value={edited ? (item.updated_by_name || '—') : (item.created_by_name || '—')}
+              sub={edited ? fmtDateTime(item.updated_at) : 'Not edited yet'} tone={edited ? 'amber' : 'default'} />
+          </div>
+        </div>
+
+        {/* footer */}
+        {(canEdit || canDelete) && (
+          <div className="p-4 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
+            {canDelete && (
+              <button onClick={onDelete} className="h-9 px-4 bg-white border border-zinc-200 text-red-600 rounded-md font-semibold text-xs hover:bg-red-50 transition-colors flex items-center gap-1.5">
+                <Trash2 className="size-3.5" /> Delete
+              </button>
+            )}
+            {canEdit && (
+              <button onClick={onEdit} className="h-9 px-6 bg-primary hover:bg-primary/90 text-white rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors">
+                <Edit className="size-3.5" /> Edit
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function InfoTile({ icon: Icon, label, value, sub, tone = 'default' }) {
+  const iconCls = tone === 'amber' ? 'bg-amber-50 text-amber-600 ring-amber-600/15' : 'bg-primary/5 text-primary ring-black/5';
+  return (
+    <div className="flex items-start gap-3 bg-white p-3 rounded-md ring-1 ring-black/5 shadow-sm">
+      <div className={`size-9 rounded-md flex items-center justify-center ring-1 shrink-0 ${iconCls}`}><Icon className="size-4" /></div>
+      <div className="min-w-0 flex-1">
+        <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">{label}</p>
+        <p className="text-sm font-semibold text-zinc-900 mt-0.5 break-words">{value}</p>
+        {sub && <p className="text-[11px] text-zinc-400 mt-0.5">{sub}</p>}
+      </div>
     </div>
   );
 }
@@ -230,7 +402,7 @@ function AssetModal({ user, item, onClose, onSaved }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
       <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-md shadow-xl flex flex-col animate-in fade-in zoom-in-95 duration-200 max-h-[92vh]">
         <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 rounded-t-lg shrink-0">
           <h2 className="text-lg font-semibold text-zinc-900 flex items-center gap-2"><Warehouse className="size-4 text-primary" /> {isEdit ? 'Edit Asset' : 'Add Asset'}</h2>
