@@ -34,6 +34,8 @@ const resolvePhoto = (p) => {
   if (/^(data:|https?:|blob:)/i.test(p)) return p;
   return `${API_BASE_URL.replace('/api', '')}${p}`;
 };
+// Normalise a grade so "Class 5", "class  5" and "5" all match.
+const normGrade = (s) => String(s ?? '').trim().toLowerCase().replace(/^class\s*/, '').trim();
 
 const StatusPill = ({ status }) => {
   const styles = {
@@ -76,6 +78,7 @@ export default function AdmissionsScreen() {
   const [filterStatus, setFilterStatus] = useState('Approved'); // 'Approved' | 'Rejected'
   const [years, setYears] = useState([]);              // calendar years present in admissions
   const [filterYear, setFilterYear] = useState('');    // selected year, or 'all'
+  const [filterJoiningClass, setFilterJoiningClass] = useState(''); // '' = all classes
 
   // Guards against an out-of-order response (an earlier tab's fetch
   // resolving after a later one and overwriting it).
@@ -131,6 +134,8 @@ export default function AdmissionsScreen() {
     return Array.from(set).sort((a, b) => Number(b) - Number(a));
   }, [years, currentYear]);
 
+  // Keep the order /admin/data returns — it already follows the school-wide
+  // class sort direction (ascending / descending), same as Pre-Admissions.
   const classOptions = useMemo(
     () => Array.from(new Set((classes || []).map(c => c.className).filter(Boolean))), [classes]);
   const gradeSelectOptions = useMemo(
@@ -139,6 +144,12 @@ export default function AdmissionsScreen() {
     if (!val) return gradeSelectOptions;
     return gradeSelectOptions.some(o => o.value === val) ? gradeSelectOptions : [...gradeSelectOptions, { value: val, label: val }];
   };
+
+  // Apply the Joining Class filter to whatever the server returned.
+  const displayData = useMemo(() => {
+    if (!filterJoiningClass) return data;
+    return data.filter(it => normGrade(it.joining_grade) === normGrade(filterJoiningClass));
+  }, [data, filterJoiningClass]);
 
   const handleDownload = useCallback(async () => {
     if (!user?.institutionId) return;
@@ -267,26 +278,42 @@ export default function AdmissionsScreen() {
                 <button key={s} onClick={() => { setFilterStatus(s); setSelectedItem(null); }} className={statusTab(s)}>{s}</button>
               ))}
             </div>
+            {/* Joining Class filter */}
+            <div className="pt-2 mt-1 border-t border-zinc-100">
+              <div className="flex flex-col gap-1">
+                <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider pl-1">Joining Class</span>
+                <div className="relative">
+                  <select value={filterJoiningClass} onChange={e => { setFilterJoiningClass(e.target.value); setSelectedItem(null); }}
+                    className="h-8 w-full bg-zinc-50/50 border border-transparent rounded-md pl-3 pr-8 text-xs outline-none focus:ring-2 focus:ring-primary/20 focus:bg-white appearance-none shadow-sm cursor-pointer transition-colors text-zinc-700 font-medium">
+                    <option value="">All Classes</option>
+                    {classOptions.map(n => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                  <ChevronDown className="size-3 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+              </div>
+            </div>
           </div>
 
           <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col h-[70vh]">
             <div className="p-4 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 shrink-0">
-              <h2 className="font-semibold text-zinc-800 text-sm">{filterStatus} ({data.length})</h2>
+              <h2 className="font-semibold text-zinc-800 text-sm">{filterStatus} ({displayData.length})</h2>
             </div>
             <div className="overflow-y-auto custom-scrollbar flex-1 divide-y divide-zinc-100">
               {loading ? (
                 <div className="p-10 flex justify-center"><Loader2 className="animate-spin text-primary size-6" /></div>
-              ) : data.length === 0 ? (
-                <div className="p-10 text-center text-zinc-400 font-medium text-sm">No {filterStatus.toLowerCase()} admissions.</div>
+              ) : displayData.length === 0 ? (
+                <div className="p-10 text-center text-zinc-400 font-medium text-sm">
+                  {filterJoiningClass ? `No ${filterStatus.toLowerCase()} admissions for ${filterJoiningClass}.` : `No ${filterStatus.toLowerCase()} admissions.`}
+                </div>
               ) : (
-                data.map((item, idx) => (
+                displayData.map((item, idx) => (
                   <div key={item.id} onClick={() => setSelectedItem(item)}
                     className={`p-3 sm:p-4 flex items-center cursor-pointer transition-colors ${selectedItem?.id === item.id ? 'bg-primary/5' : 'hover:bg-zinc-50/80'}`}>
                     <span className="w-6 text-center text-xs font-semibold text-zinc-400 tabular-nums shrink-0 mr-1">{idx + 1}</span>
                     <img src={resolvePhoto(item.photo_url)} alt="" className="size-10 rounded-md object-cover bg-zinc-100 mr-3 ring-1 ring-black/5 shadow-sm" />
                     <div className="flex-1 min-w-0 pr-2">
                       <h4 className={`font-semibold text-sm truncate ${selectedItem?.id === item.id ? 'text-primary' : 'text-zinc-900'}`}>{item.student_name}</h4>
-                      <p className="text-xs text-zinc-500 font-medium mt-0.5">Grade: {item.joining_grade} {'\u2022'} ID: {item.admission_no}</p>
+                      <p className="text-xs text-zinc-500 font-medium mt-0.5">Grade: {item.joining_grade} {'•'} ID: {item.admission_no}</p>
                     </div>
                     <StatusPill status={item.status} />
                   </div>
@@ -318,7 +345,7 @@ export default function AdmissionsScreen() {
                   </div>
                   <p className="text-xs font-medium text-zinc-500 mt-1 truncate">
                     Grade: {selectedItem.joining_grade} - ID: {selectedItem.admission_no}
-                    {selectedItem.admission_year ? ` \u2022 ${selectedItem.admission_year}` : ''}
+                    {selectedItem.admission_year ? ` • ${selectedItem.admission_year}` : ''}
                   </p>
                 </div>
                 {canAct && (
@@ -338,7 +365,7 @@ export default function AdmissionsScreen() {
                     icon={selectedItem.status === 'Approved' ? Check : X}
                     label={`${selectedItem.status} By`} name={selectedItem.verified_by_name}
                     time={fmtIST(selectedItem.verified_at)} tone={selectedItem.status === 'Approved' ? 'emerald' : 'red'} />
-                  <AuditRow icon={CalendarRange} label="Admission Year" name={selectedItem.admission_year || '\u2014'} time="" />
+                  <AuditRow icon={CalendarRange} label="Admission Year" name={selectedItem.admission_year || '—'} time="" />
                   {selectedItem.updated_by_name && (
                     <AuditRow icon={Edit} label="Last Updated By" name={selectedItem.updated_by_name} time={fmtIST(selectedItem.updated_at)} />
                   )}
@@ -458,7 +485,7 @@ const AuditRow = ({ icon: Icon, label, name, time, tone }) => {
       <div className={`size-8 rounded-md flex items-center justify-center ring-1 shrink-0 ${iconCls}`}><Icon className="size-4" /></div>
       <div className="flex-1 min-w-0">
         <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">{label}</p>
-        <p className="text-sm font-medium text-zinc-900 mt-0.5 break-words">{name || '\u2014'}</p>
+        <p className="text-sm font-medium text-zinc-900 mt-0.5 break-words">{name || '—'}</p>
         {time && <p className="text-[11px] text-zinc-400 mt-0.5">{time}</p>}
       </div>
     </div>
@@ -491,22 +518,22 @@ const GUIDES = {
   manage: {
     title: 'Admissions',
     steps: [
-      ['1 \u00b7 What this is', 'Applications that were Approved or Rejected in Pre-Admissions land here, stamped with the calendar year the decision was made in.'],
-      ['2 \u00b7 Approved / Rejected', 'Switch between the Approved and Rejected lists with the tabs. Each list is numbered (S.No).'],
-      ['3 \u00b7 By year', 'Pick a year to see only that year\u2019s admissions. It defaults to the current year. The year is a saved plain value \u2014 it is never linked to the Academics module, so deleting an academic year never affects these records.'],
-      ['4 \u00b7 Edit & delete', 'Open a record to edit its details, flip Approved \u2194 Rejected, or delete it.'],
-      ['5 \u00b7 Download', 'Export the current year (or All Years, grouped by year) to Excel.'],
+      ['1 · What this is', 'Applications that were Approved or Rejected in Pre-Admissions land here, stamped with the calendar year the decision was made in.'],
+      ['2 · Approved / Rejected', 'Switch between the Approved and Rejected lists with the tabs. Each list is numbered (S.No).'],
+      ['3 · By year & class', 'Pick a year and, if you like, a Joining Class to narrow the list. The year defaults to the current year and is a saved plain value — never linked to the Academics module, so deleting an academic year never affects these records.'],
+      ['4 · Edit & delete', 'Open a record to edit its details, flip Approved ↔ Rejected, or delete it.'],
+      ['5 · Download', 'Export the current year (or All Years, grouped by year) to Excel.'],
     ],
     note: 'Decisions are made in Pre-Admissions; this module is where decided records live and are managed year-wise.'
   },
   view: {
     title: 'Admissions',
     steps: [
-      ['1 \u00b7 Browse', 'Pick a record to see the full profile and the decision audit.'],
-      ['2 \u00b7 Filter', 'Switch Approved / Rejected, pick a year, and search by name or ID.'],
-      ['3 \u00b7 Download', 'Export the selection to a spreadsheet.'],
+      ['1 · Browse', 'Pick a record to see the full profile and the decision audit.'],
+      ['2 · Filter', 'Switch Approved / Rejected, pick a year and a joining class, and search by name or ID.'],
+      ['3 · Download', 'Export the selection to a spreadsheet.'],
     ],
-    note: 'Read-only view \u2014 editing and deleting needs the right permissions.'
+    note: 'Read-only view — editing and deleting needs the right permissions.'
   }
 };
 
