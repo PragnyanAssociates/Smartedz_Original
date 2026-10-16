@@ -1055,7 +1055,9 @@ app.get('/api/admin/data/:instId', async (req, res) => {
         }
  
         res.json({
-            users, classes, academicYears: years, roles, subjects,
+            users,
+            classes: sortClassesNatural(classes, inst[0] && inst[0].class_sort_dir),
+            academicYears: years, roles, subjects,
             teacherSubjects, subjectClasses, modules: DEFAULT_MODULES, institution,
             systemRoles: SYSTEM_ROLES
         });
@@ -2394,6 +2396,54 @@ app.delete('/api/admin/classes/:id', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ---- helpers (function declarations are hoisted, so they can sit here
+//      and still be used by endpoints defined above) --------------------
+ 
+// Natural, number-aware sort of a classes array. `dir` flips the CLASS
+// order only; sections stay ascending so a class still reads A, B, C.
+function sortClassesNatural(classes, dir) {
+    const d = (dir === 'desc') ? -1 : 1;
+    const col = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
+    return [...(classes || [])].sort((a, b) => {
+        const byClass = col.compare(String(a.className ?? ''), String(b.className ?? ''));
+        if (byClass !== 0) return byClass * d;
+        return col.compare(String(a.section ?? ''), String(b.section ?? ''));
+    });
+}
+ 
+// The school's saved direction (defaults to ascending; never throws).
+async function getClassSortDir(instId) {
+    try {
+        const [r] = await db.execute('SELECT class_sort_dir FROM institutions WHERE id = ?', [instId]);
+        return (r.length && r[0].class_sort_dir === 'desc') ? 'desc' : 'asc';
+    } catch (e) { return 'asc'; }
+}
+ 
+ 
+// ---- routes (read by the Classes tab; written by Super Admin) --------
+ 
+// Read the current direction (any signed-in member).
+app.get('/api/admin/class-sort/:instId', async (req, res) => {
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    res.json({ dir: await getClassSortDir(instId) });
+});
+ 
+// Save the direction (Super Admin / Developer only).
+app.post('/api/admin/class-sort', async (req, res) => {
+    const role = String(req.auth.role || '');
+    if (role !== 'Super Admin' && role !== 'Developer') {
+        return res.status(403).json({ error: 'Only a Super Admin can change the class order.' });
+    }
+    const instId = (role === 'Developer' && req.body.institutionId) ? req.body.institutionId : req.auth.institutionId;
+    const dir = req.body.dir === 'desc' ? 'desc' : 'asc';
+    try {
+        await db.execute('UPDATE institutions SET class_sort_dir = ? WHERE id = ?', [dir, instId]);
+        res.json({ success: true, dir });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+ 
+
+
 
 // =====================================================================
 // === 9. STUDENT PROMOTION ============================================
@@ -2509,9 +2559,10 @@ app.get('/api/admin/timetable/:instId', async (req, res) => {
             (e.teacher_id && !activeTeacherIds.has(e.teacher_id)) ? { ...e, teacher_id: null } : e
         );
 
-        res.json({ academic_year_id: yearId, days, periods, entries: cleanedEntries, classes, teachers, subjects, teacherSubjects, metaByClass });
+        res.json({ academic_year_id: yearId, days, periods, entries: cleanedEntries, classes: sortClassesNatural(classes, await getClassSortDir(instId)), teachers, subjects, teacherSubjects, metaByClass });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
 // ---------------------------------------------------------------------
 //  11.b  PERSONAL TIMETABLE  ->  GET /api/timetable/my/:userId
 // ---------------------------------------------------------------------

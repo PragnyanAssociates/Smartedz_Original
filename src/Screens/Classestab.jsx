@@ -1,14 +1,46 @@
-import React, { useState, useMemo } from 'react';
-import { Plus, Edit, Trash2, X, Layers } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Plus, Edit, Trash2, X, Layers, ArrowUpNarrowWide, ArrowDownWideNarrow } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
 
 // Passed-out students (status 'alumni') have left the school, so they are
 // not counted in a class's live student tally - matches the Users screen.
 const isAlumni = (u) => (u.status || '').toLowerCase() === 'alumni';
 
+// Natural, number-aware compare so "Class 2" sorts before "Class 10"
+// (a plain string sort puts 10 before 2). Case-insensitive.
+const natCmp = (a, b) =>
+  String(a ?? '').localeCompare(String(b ?? ''), undefined, { numeric: true, sensitivity: 'base' });
+
 export default function ClassesTab({ data, fetchData, user }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editing, setEditing]         = useState(null);
+
+  // Only a Super Admin changes the order (it's saved school-wide).
+  const canSort = user?.role === 'Super Admin' || user?.role === 'Developer';
+
+  // Ascending / Descending — SAVED PER SCHOOL on the institution, so every
+  // module's class dropdown follows it. Seeded from the data we already load.
+  const [sortDir, setSortDir] = useState(() =>
+    (data?.institution?.class_sort_dir === 'desc' ? 'desc' : 'asc'));
+
+  // Keep in step if the data reloads (e.g. another admin changed it).
+  useEffect(() => {
+    const d = data?.institution?.class_sort_dir;
+    if (d === 'asc' || d === 'desc') setSortDir(d);
+  }, [data?.institution?.class_sort_dir]);
+
+  const changeSort = async (dir) => {
+    if (dir === sortDir) return;
+    setSortDir(dir);                       // reorder this screen instantly
+    if (!canSort) return;
+    try {
+      await fetch(`${API_BASE_URL}/admin/class-sort`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ institutionId: user.institutionId, dir })
+      });
+      fetchData();                         // reload so every module picks up the new order
+    } catch (e) { /* the local reorder is already applied */ }
+  };
 
   // -------- Form state --------
   // CREATE mode -> uses className + sections[] (chip array) + hasSections
@@ -26,15 +58,23 @@ export default function ClassesTab({ data, fetchData, user }) {
   const studentsInClass = (classId) =>
     data.users.filter(u => u.class_id === classId && !isAlumni(u)).length;
 
-  // Group rows by className so multiple sections of the same class appear together.
+  // Group rows by className so multiple sections of the same class appear
+  // together. Classes are natural-sorted (1,2,3…10) and flipped for Descending;
+  // sections inside a class stay in natural ascending order (A, B, C…).
   const grouped = useMemo(() => {
     const out = {};
     data.classes.forEach(c => {
       if (!out[c.className]) out[c.className] = [];
       out[c.className].push(c);
     });
-    return Object.entries(out).map(([className, rows]) => ({ className, rows }));
-  }, [data.classes]);
+    const groups = Object.entries(out).map(([className, rows]) => ({
+      className,
+      rows: [...rows].sort((x, y) => natCmp(x.section || '', y.section || ''))
+    }));
+    groups.sort((a, b) => natCmp(a.className, b.className));
+    if (sortDir === 'desc') groups.reverse();
+    return groups;
+  }, [data.classes, sortDir]);
 
   const openAdd = () => {
     setEditing(null);
@@ -161,10 +201,34 @@ export default function ClassesTab({ data, fetchData, user }) {
             and add as many sections as you need in one go - A, B, C, D...
           </p>
         </div>
-        <button onClick={openAdd}
-          className="bg-primary text-white px-4 py-2 rounded-md text-xs font-medium hover:bg-primary/90 transition-colors flex items-center gap-1.5 shadow-sm shrink-0 w-fit self-start sm:self-auto">
-          <Plus className="size-3.5 shrink-0" /> Add Class
-        </button>
+
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0 self-start sm:self-auto">
+          {/* Ascending / Descending — saved school-wide, drives every module's class list */}
+          {canSort && (
+            <div className="inline-flex items-center gap-2">
+              <span className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider shrink-0">Sort</span>
+              <div className="inline-flex items-center bg-zinc-100/80 p-1 rounded-md">
+                <button type="button" onClick={() => changeSort('asc')}
+                  className={`inline-flex items-center gap-1 px-3 h-7 rounded text-[11px] font-semibold transition-colors ${
+                    sortDir === 'asc' ? 'bg-white text-primary shadow-sm ring-1 ring-black/5' : 'text-zinc-500 hover:text-zinc-700'
+                  }`}>
+                  <ArrowUpNarrowWide className="size-3.5" /> Ascending
+                </button>
+                <button type="button" onClick={() => changeSort('desc')}
+                  className={`inline-flex items-center gap-1 px-3 h-7 rounded text-[11px] font-semibold transition-colors ${
+                    sortDir === 'desc' ? 'bg-white text-primary shadow-sm ring-1 ring-black/5' : 'text-zinc-500 hover:text-zinc-700'
+                  }`}>
+                  <ArrowDownWideNarrow className="size-3.5" /> Descending
+                </button>
+              </div>
+            </div>
+          )}
+
+          <button onClick={openAdd}
+            className="bg-primary text-white px-4 py-2 rounded-md text-xs font-medium hover:bg-primary/90 transition-colors flex items-center justify-center gap-1.5 shadow-sm shrink-0 w-full sm:w-auto">
+            <Plus className="size-3.5 shrink-0" /> Add Class
+          </button>
+        </div>
       </div>
 
       {grouped.length === 0 ? (
