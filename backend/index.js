@@ -8051,8 +8051,8 @@ app.get('/api/admin/kitchen/:instId/usage', async (req, res) => {
     const date = req.query.date || new Date().toISOString().slice(0, 10);
     try {
         const [rows] = await db.execute(
-            `SELECT u.id, u.inventory_id, u.quantity_used, u.usage_date,
-                    i.item_name, i.unit, cu.name AS used_by_name
+            `SELECT u.id, u.inventory_id, u.quantity_used, u.usage_date, u.created_at,
+       i.item_name, i.unit, cu.name AS used_by_name
                FROM kitchen_usage u
                JOIN kitchen_inventory i ON i.id = u.inventory_id
                LEFT JOIN users cu ON cu.id = u.created_by
@@ -8164,29 +8164,43 @@ app.delete('/api/admin/kitchen/inventory/:id', async (req, res) => {
 });
  
 // =====================================================================
-//  STORE — permanent assets
+//  STORE — permanent assets   (replace routes 21.6 – 21.9)
+//
+//   Now tracks + returns WHO added / last edited each asset, and WHEN,
+//   so the cards can show "Added by … · date" and "Edited by … · time".
+//
+//   >>> SQL — run once <<<
+//     ALTER TABLE `store_assets`
+//       ADD COLUMN `updated_by` INT DEFAULT NULL,
+//       ADD CONSTRAINT `fk_store_updater`
+//         FOREIGN KEY (`updated_by`) REFERENCES `users`(`id`) ON DELETE SET NULL;
 // =====================================================================
- 
+
 // --- 21.6 List assets (optional ?search=) ---------------------------
 app.get('/api/admin/store/:instId', async (req, res) => {
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     const { search } = req.query;
     try {
-        const where = ['institutionId = ?'];
+        const where = ['s.institutionId = ?'];
         const params = [instId];
-        if (search) { where.push('(item_name LIKE ? OR rack LIKE ?)'); const t = `%${search}%`; params.push(t, t); }
+        if (search) { where.push('(s.item_name LIKE ? OR s.rack LIKE ?)'); const t = `%${search}%`; params.push(t, t); }
         const [rows] = await db.execute(
-            `SELECT id, item_name, quantity, rack, image, created_at
-               FROM store_assets
+            `SELECT s.id, s.item_name, s.quantity, s.rack, s.image,
+                    s.created_at, s.updated_at,
+                    cu.name AS created_by_name,
+                    uu.name AS updated_by_name
+               FROM store_assets s
+               LEFT JOIN users cu ON cu.id = s.created_by
+               LEFT JOIN users uu ON uu.id = s.updated_by
               WHERE ${where.join(' AND ')}
-              ORDER BY item_name ASC`,
+              ORDER BY s.item_name ASC`,
             params
         );
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
- 
-// --- 21.7 Add an asset ----------------------------------------------
+
+// --- 21.7 Add an asset (stamps creator + updater) -------------------
 app.post('/api/admin/store', async (req, res) => {
     const institutionId = req.auth.institutionId;
     const { item_name, rack } = req.body;
@@ -8194,22 +8208,23 @@ app.post('/api/admin/store', async (req, res) => {
     if (!item_name || !item_name.trim()) return res.status(400).json({ error: 'Item name is required.' });
     try {
         await db.execute(
-            `INSERT INTO store_assets (institutionId, item_name, quantity, rack, image, created_by)
-             VALUES (?, ?, ?, ?, ?, ?)`,
-            [institutionId, item_name.trim(), isNaN(qty) ? 0 : qty, (rack || '').trim() || null, req.body.image || null, req.auth.userId]
+            `INSERT INTO store_assets (institutionId, item_name, quantity, rack, image, created_by, updated_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [institutionId, item_name.trim(), isNaN(qty) ? 0 : qty, (rack || '').trim() || null,
+             req.body.image || null, req.auth.userId, req.auth.userId]
         );
         res.status(201).json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
- 
-// --- 21.8 Update an asset -------------------------------------------
+
+// --- 21.8 Update an asset (stamps the editor) ----------------------
 app.put('/api/admin/store/:id', async (req, res) => {
     const { id } = req.params;
     try {
         const [own] = await db.execute('SELECT institutionId FROM store_assets WHERE id = ?', [id]);
         if (own.length === 0) return res.status(404).json({ error: 'Asset not found.' });
         if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This asset belongs to another institution.' });
- 
+
         const setClauses = [];
         const params = [];
         if (req.body.item_name !== undefined) { setClauses.push('item_name = ?'); params.push(String(req.body.item_name).trim()); }
@@ -8217,13 +8232,16 @@ app.put('/api/admin/store/:id', async (req, res) => {
         if (req.body.rack !== undefined)      { setClauses.push('rack = ?'); params.push((String(req.body.rack).trim()) || null); }
         if (req.body.image !== undefined)     { setClauses.push('image = ?'); params.push(req.body.image || null); }
         if (setClauses.length === 0) return res.status(400).json({ error: 'No fields to update.' });
- 
+
+        // Always record who edited it (updated_at auto-updates via the column).
+        setClauses.push('updated_by = ?'); params.push(req.auth.userId);
+
         params.push(id);
         await db.execute(`UPDATE store_assets SET ${setClauses.join(', ')} WHERE id = ?`, params);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
- 
+
 // --- 21.9 Delete an asset -------------------------------------------
 app.delete('/api/admin/store/:id', async (req, res) => {
     try {

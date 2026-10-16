@@ -2,8 +2,31 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   Warehouse, Plus, Trash2, Edit, Loader2, X, Save, Camera,
-  Search, MapPin, Archive, Minus
+  Search, MapPin, Archive, Minus, Hash, Boxes, Clock, User, PencilLine
 } from 'lucide-react';
+
+// --- date / time helpers (Railway stores UTC → show IST) ---
+const toDate = (val) => {
+  if (!val) return null;
+  let d;
+  if (typeof val === 'string' && !val.includes('T') && !val.endsWith('Z')) d = new Date(val.replace(' ', 'T') + 'Z');
+  else d = new Date(val);
+  return isNaN(d.getTime()) ? null : d;
+};
+const fmtDate = (v) => {
+  const d = toDate(v);
+  return d ? d.toLocaleDateString('en-GB', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' }) : '';
+};
+const fmtDateTime = (v) => {
+  const d = toDate(v);
+  return d ? d.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }) : '';
+};
+// Was it edited after being created? (updated_at defaults equal to created_at on insert)
+const wasEdited = (created, updated) => {
+  const c = toDate(created), u = toDate(updated);
+  if (!c || !u) return false;
+  return (u.getTime() - c.getTime()) > 1500; // >1.5s apart = a real edit
+};
 
 // =====================================================================
 //  Store — permanent assets (furniture, equipment, etc). Edit permission
@@ -35,6 +58,8 @@ export default function Store({ user, canEdit, canDelete }) {
     return items.filter(i => (i.item_name || '').toLowerCase().includes(q) || (i.rack || '').toLowerCase().includes(q));
   }, [items, search]);
 
+  const totalUnits = useMemo(() => items.reduce((s, i) => s + (Number(i.quantity) || 0), 0), [items]);
+
   const handleDelete = async (item) => {
     if (!window.confirm(`Delete "${item.item_name}"?`)) return;
     try {
@@ -46,15 +71,23 @@ export default function Store({ user, canEdit, canDelete }) {
 
   return (
     <div className="space-y-5">
+      {/* top bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
-          <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search assets or rack..."
-            className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors placeholder:text-zinc-400" />
+        <div className="flex items-center gap-2 flex-1">
+          <div className="relative flex-1 max-w-sm">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
+            <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search assets or rack..."
+              className="h-9 w-full bg-white border border-zinc-200 rounded-md pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors placeholder:text-zinc-400" />
+          </div>
+          {!loading && items.length > 0 && (
+            <span className="hidden md:inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-white ring-1 ring-black/5 text-[11px] font-semibold text-zinc-500 shadow-sm whitespace-nowrap">
+              <Boxes className="size-3.5 text-primary" /> {items.length} asset{items.length === 1 ? '' : 's'} · {totalUnits} units
+            </span>
+          )}
         </div>
         {canEdit && (
           <button onClick={() => setModal({})}
-            className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors">
+            className="h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors shrink-0">
             <Plus className="size-3.5" /> Add Asset
           </button>
         )}
@@ -66,44 +99,83 @@ export default function Store({ user, canEdit, canDelete }) {
         <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center flex flex-col items-center">
           <Archive className="size-10 text-zinc-300 mb-3" />
           <p className="text-zinc-500 text-sm font-medium">{search ? 'No assets match your search.' : 'No assets in storage yet.'}</p>
+          {!search && canEdit && (
+            <button onClick={() => setModal({})}
+              className="mt-3 h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold inline-flex items-center gap-1.5 shadow-sm transition-colors">
+              <Plus className="size-3.5" /> Add your first asset
+            </button>
+          )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {filtered.map(item => (
-            <div key={item.id} className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col group">
-              <div className="aspect-[4/3] bg-zinc-100 relative overflow-hidden cursor-zoom-in"
-                onClick={() => item.image && setPreview(item.image)}>
-                {item.image
-                  ? <img src={item.image} alt="" className="w-full h-full object-cover" />
-                  : <div className="w-full h-full flex items-center justify-center"><Archive className="size-8 text-zinc-300" /></div>}
-                <span className="absolute top-2 right-2 text-[11px] font-bold text-white bg-black/55 px-2 py-0.5 rounded">
-                  {item.quantity}
-                </span>
-              </div>
-              <div className="p-3 flex-1 flex flex-col">
-                <p className="text-sm font-semibold text-zinc-900 truncate">{item.item_name}</p>
-                <p className="text-[11px] text-zinc-500 font-medium mt-1 flex items-center gap-1 truncate">
-                  <MapPin className="size-3 shrink-0 text-zinc-400" /> {item.rack || 'Unassigned'}
-                </p>
-                {(canEdit || canDelete) && (
-                  <div className="flex items-center gap-1.5 mt-3 pt-3 border-t border-zinc-100">
-                    {canEdit && (
-                      <button onClick={() => setModal({ item })}
-                        className="flex-1 h-8 rounded-md text-xs font-semibold text-zinc-600 bg-zinc-50 hover:bg-zinc-100 ring-1 ring-zinc-200 flex items-center justify-center gap-1 transition-colors">
-                        <Edit className="size-3.5" /> Edit
-                      </button>
-                    )}
-                    {(canDelete || canEdit) && (
-                      <button onClick={() => handleDelete(item)}
-                        className="size-8 rounded-md text-zinc-400 hover:text-red-600 hover:bg-red-50 ring-1 ring-zinc-200 flex items-center justify-center transition-colors shrink-0">
-                        <Trash2 className="size-4" />
-                      </button>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3">
+          {filtered.map((item, idx) => {
+            const edited = wasEdited(item.created_at, item.updated_at);
+            return (
+              <div key={item.id} className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col group hover:ring-primary/30 hover:shadow-md transition-all">
+                <div className="aspect-[4/3] bg-zinc-100 relative overflow-hidden cursor-zoom-in"
+                  onClick={() => item.image && setPreview(item.image)}>
+                  {item.image
+                    ? <img src={item.image} alt="" className="w-full h-full object-cover" />
+                    : <div className="w-full h-full flex items-center justify-center"><Archive className="size-8 text-zinc-300" /></div>}
+
+                  {/* Serial number — plain circle, top-left */}
+                  <span className="absolute top-2 left-2 inline-flex items-center justify-center min-w-6 h-6 px-1.5 rounded-full bg-white/90 text-zinc-700 text-[11px] font-bold ring-1 ring-black/10 shadow-sm tabular-nums backdrop-blur-sm">
+                    {idx + 1}
+                  </span>
+
+                  {/* Quantity — labelled colour pill, top-right (clearly not the S.No) */}
+                  <span className="absolute top-2 right-2 inline-flex items-center gap-1 bg-primary text-white text-[10px] font-bold px-2 py-1 rounded-md shadow-sm uppercase tracking-wider">
+                    <Boxes className="size-3" /> Qty {item.quantity}
+                  </span>
+                </div>
+
+                <div className="p-3 flex-1 flex flex-col">
+                  <div className="flex items-start gap-2">
+                    <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-primary bg-primary/10 ring-1 ring-primary/15 px-1.5 py-0.5 rounded shrink-0 mt-0.5 tabular-nums">
+                      <Hash className="size-2.5" />{idx + 1}
+                    </span>
+                    <p className="text-sm font-semibold text-zinc-900 truncate flex-1">{item.item_name}</p>
+                  </div>
+                  <p className="text-[11px] text-zinc-500 font-medium mt-1 flex items-center gap-1 truncate">
+                    <MapPin className="size-3 shrink-0 text-zinc-400" /> {item.rack || 'Unassigned'}
+                  </p>
+
+                  {/* Audit — who added / last edited, with date & time */}
+                  <div className="mt-2 pt-2 border-t border-zinc-100 space-y-1">
+                    <p className="text-[10px] text-zinc-400 flex items-center gap-1 truncate" title={`Added by ${item.created_by_name || 'Unknown'} · ${fmtDateTime(item.created_at)}`}>
+                      <User className="size-2.5 shrink-0" />
+                      Added by <span className="font-semibold text-zinc-500">{item.created_by_name || '—'}</span>
+                      <span className="text-zinc-300">·</span> {fmtDate(item.created_at)}
+                    </p>
+                    {edited && (
+                      <p className="text-[10px] text-amber-600/90 flex items-center gap-1 truncate" title={`Edited by ${item.updated_by_name || 'Unknown'} · ${fmtDateTime(item.updated_at)}`}>
+                        <PencilLine className="size-2.5 shrink-0" />
+                        Edited by <span className="font-semibold">{item.updated_by_name || '—'}</span>
+                        <span className="text-amber-300">·</span> {fmtDateTime(item.updated_at)}
+                      </p>
                     )}
                   </div>
-                )}
+
+                  {(canEdit || canDelete) && (
+                    <div className="flex items-center gap-1.5 mt-3 pt-3 border-t border-zinc-100">
+                      {canEdit && (
+                        <button onClick={() => setModal({ item })}
+                          className="flex-1 h-8 rounded-md text-xs font-semibold text-zinc-600 bg-zinc-50 hover:bg-zinc-100 ring-1 ring-zinc-200 flex items-center justify-center gap-1 transition-colors">
+                          <Edit className="size-3.5" /> Edit
+                        </button>
+                      )}
+                      {canDelete && (
+                        <button onClick={() => handleDelete(item)}
+                          className="size-8 rounded-md text-zinc-400 hover:text-red-600 hover:bg-red-50 ring-1 ring-zinc-200 flex items-center justify-center transition-colors shrink-0">
+                          <Trash2 className="size-4" />
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

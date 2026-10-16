@@ -208,7 +208,7 @@ function MenuMeta({ meta }) {
       )}
       {fc?.by && (
         <span className="inline-flex items-center gap-1.5 text-zinc-400">
-          <span className="text-zinc-300">{'\u2022'}</span>
+          <span className="text-zinc-300">{'•'}</span>
           Created by <span className="font-medium text-zinc-600">{fc.by}</span>
         </span>
       )}
@@ -399,15 +399,15 @@ function MenuTab({ data, fetchData, user, canEdit }) {
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      <div className="flex justify-end">
-        <button onClick={handleSave} disabled={saving} className="h-10 w-full sm:w-auto bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white px-6 rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors">
+      {/* Guidelines on the left (wraps to a 2nd line in place), Save button straight on the right */}
+      <div className="flex flex-col sm:flex-row sm:items-start gap-3">
+        <div className="flex-1 min-w-0 bg-blue-50/50 border border-blue-100 rounded-md px-4 py-2.5 text-[11px] font-medium text-blue-700 leading-relaxed flex gap-2 items-start">
+          <AlertCircle className="size-4 shrink-0 text-blue-500 mt-0.5" />
+          <p>Type the food items for each meal, separated by commas. Leave a cell empty if there's no meal scheduled for that slot on that day. Meals are shown in start-time order, from morning to night.</p>
+        </div>
+        <button onClick={handleSave} disabled={saving} className="h-10 shrink-0 w-full sm:w-auto bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white px-6 rounded-md font-semibold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors">
           {saving ? <Loader2 className="size-4 animate-spin shrink-0" /> : <Save className="size-4 shrink-0" />} {saving ? 'Saving...' : 'Save Weekly Menu'}
         </button>
-      </div>
-
-      <div className="bg-blue-50/50 border border-blue-100 rounded-md p-4 text-[11px] font-medium text-blue-700 leading-relaxed flex gap-2">
-        <AlertCircle className="size-4 shrink-0 text-blue-500" />
-        <p>Type the food items for each meal, separated by commas. Leave a cell empty if there's no meal scheduled for that slot on that day. Meals are shown in start-time order, from morning to night.</p>
       </div>
 
       <MenuMeta meta={data.menuMeta} />
@@ -460,40 +460,40 @@ const GUIDES = {
   dining: {
     title: 'Dining Time',
     steps: [
-      ['1 \u00b7 Meal Slots', 'Under the Meal Slots sub-tab, add the one to four meals your school serves (Breakfast, Lunch\u2026). Each needs a name; times are optional.'],
-      ['2 \u00b7 Weekly Menu', 'The grid\u2019s rows are the seven days and columns are your slots. Type the items for each meal, separated by commas.'],
-      ['3 \u00b7 Save', 'Each sub-tab saves on its own \u2014 Save Meal Slots and Save Weekly Menu. Slots run in start-time order, morning first.'],
-      ['4 \u00b7 Who sees it', 'Students, parents and staff see the weekly menu read-only, with a \u201cLast updated by\u201d line.'],
+      ['1 · Meal Slots', 'Under the Meal Slots sub-tab, add the one to four meals your school serves (Breakfast, Lunch…). Each needs a name; times are optional.'],
+      ['2 · Weekly Menu', 'The grid’s rows are the seven days and columns are your slots. Type the items for each meal, separated by commas.'],
+      ['3 · Save', 'Each sub-tab saves on its own — Save Meal Slots and Save Weekly Menu. Slots run in start-time order, morning first.'],
+      ['4 · Who sees it', 'Students, parents and staff see the weekly menu read-only, with a “Last updated by” line.'],
     ],
-    note: 'The Kitchen and Store tabs are for staff with edit access \u2014 read-only users only ever see this Dining Time view.'
+    note: 'The Kitchen and Store tabs are for staff with edit access — read-only users only ever see this Dining Time view.'
   },
   kitchen: {
     title: 'Kitchen',
     steps: [
-      ['1 \u00b7 Add provisions', 'Add Provision records a stock item \u2014 name, quantity, unit and an optional photo. It starts with its full quantity remaining.'],
-      ['2 \u00b7 Log usage', 'Hit Use on a provision to record how much was consumed on a day. The remaining quantity drops automatically.'],
-      ['3 \u00b7 Pick the day', 'The date picker at the top sets which day\u2019s usage you\u2019re viewing and logging against. It defaults to today.'],
-      ['4 \u00b7 Remove', 'Deleting a provision also removes its usage history.'],
+      ['1 · Add provisions', 'Add Provision records a stock item — name, quantity, unit and an optional photo. It starts with its full quantity remaining.'],
+      ['2 · Log usage', 'Hit Use on a provision to record how much was consumed on a day. The remaining quantity drops automatically.'],
+      ['3 · Pick the day', 'The date picker at the top sets which day’s usage you’re viewing and logging against. Only today and yesterday can be logged; older days are view-only.'],
+      ['4 · Edit / restock & remove', 'Use the edit button to fix details or add newly-bought stock to an item. Deleting a provision also removes its usage history.'],
     ],
     note: 'Kitchen is for day-to-day consumables. Permanent items (furniture, equipment) belong in the Store tab.'
   },
   store: {
     title: 'Store',
     steps: [
-      ['1 \u00b7 Add assets', 'Add Asset records a permanent item \u2014 name, quantity, a location/rack and an optional photo.'],
-      ['2 \u00b7 Find', 'Search by name or rack to narrow a long list.'],
-      ['3 \u00b7 Edit & delete', 'Each card has Edit and delete. Tap a photo to view it full-size.'],
+      ['1 · Add assets', 'Add Asset records a permanent item — name, quantity, a location/rack and an optional photo.'],
+      ['2 · Find', 'Search by name or rack to narrow a long list.'],
+      ['3 · Edit & delete', 'Each card has Edit and delete. Tap a photo to view it full-size.'],
     ],
     note: 'Store is for assets that stay with the school. Consumable stock belongs in Kitchen.'
   },
   view: {
     title: 'Weekly Menu',
     steps: [
-      ['1 \u00b7 Your week of meals', 'Each card is a day. Inside it, every meal slot shows what\u2019s planned, in the order it\u2019s served.'],
-      ['2 \u00b7 Reading it', '\u201cNot planned\u201d means nothing is scheduled for that meal that day. Meal times, if set, show beside each slot.'],
-      ['3 \u00b7 Always current', 'The \u201cLast updated\u201d line tells you when the kitchen last changed the menu, and by whom.'],
+      ['1 · Your week of meals', 'Each card is a day. Inside it, every meal slot shows what’s planned, in the order it’s served.'],
+      ['2 · Reading it', '“Not planned” means nothing is scheduled for that meal that day. Meal times, if set, show beside each slot.'],
+      ['3 · Always current', 'The “Last updated” line tells you when the kitchen last changed the menu, and by whom.'],
     ],
-    note: 'This is read-only \u2014 the school sets the menu. If something looks off, let the office know.'
+    note: 'This is read-only — the school sets the menu. If something looks off, let the office know.'
   }
 };
 

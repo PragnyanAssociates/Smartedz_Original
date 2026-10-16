@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   ChefHat, Plus, Trash2, Loader2, X, Save, Camera, Calendar,
-  Package, Utensils, ChevronRight, ScanBarcode, Pencil, Lock, PackagePlus, AlertTriangle
+  Package, Utensils, ChevronRight, ScanBarcode, Pencil, Lock, PackagePlus, AlertTriangle, Search
 } from 'lucide-react';
 
 const UNITS = ['g', 'kg', 'l', 'ml', 'pcs', 'pkt'];
@@ -14,6 +14,16 @@ const fmtDay = (d) => {
   const x = new Date(d + 'T00:00:00');
   if (isNaN(x.getTime())) return d;
   return x.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+};
+
+// Time-of-day in IST (Railway stores UTC) — e.g. "1:05 PM".
+const fmtTimeIST = (val) => {
+  if (!val) return '';
+  let d;
+  if (typeof val === 'string' && !val.includes('T') && !val.endsWith('Z')) d = new Date(val.replace(' ', 'T') + 'Z');
+  else d = new Date(val);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true });
 };
 
 // How many whole days ago is the picked date (0 = today, 1 = yesterday).
@@ -57,6 +67,8 @@ export default function Kitchen({ user, canEdit, canDelete }) {
   const [logItem, setLogItem]   = useState(null); // provision being logged
   const [editItem, setEditItem] = useState(null); // provision being edited / restocked
   const [preview, setPreview]   = useState(null);  // enlarged image src
+  const [provSearch, setProvSearch]   = useState(''); // search in Remaining Provisions
+  const [usageSearch, setUsageSearch] = useState(''); // search in Usage
 
   // Only today & yesterday are loggable; everything older is history-only.
   const dAgo = useMemo(() => daysAgoOf(date), [date]);
@@ -80,6 +92,22 @@ export default function Kitchen({ user, canEdit, canDelete }) {
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
+  // Clear both searches when the day changes so results aren't confusing.
+  useEffect(() => { setProvSearch(''); setUsageSearch(''); }, [date]);
+
+  const filteredProvisions = useMemo(() => {
+    const q = provSearch.trim().toLowerCase();
+    if (!q) return provisions;
+    return provisions.filter(p => (p.item_name || '').toLowerCase().includes(q));
+  }, [provisions, provSearch]);
+
+  const filteredUsage = useMemo(() => {
+    const q = usageSearch.trim().toLowerCase();
+    if (!q) return usage;
+    return usage.filter(u =>
+      (u.item_name || '').toLowerCase().includes(q) || (u.used_by_name || '').toLowerCase().includes(q));
+  }, [usage, usageSearch]);
+
   const handleDelete = async (item) => {
     if (!window.confirm(`Delete "${item.item_name}" from provisions? Its usage history will be removed too.`)) return;
     try {
@@ -88,8 +116,6 @@ export default function Kitchen({ user, canEdit, canDelete }) {
       fetchAll();
     } catch (e) { alert(e.message); }
   };
-
-  const usageTotalLabel = usage.length === 1 ? '1 entry' : `${usage.length} entries`;
 
   return (
     <div className="space-y-5">
@@ -128,10 +154,18 @@ export default function Kitchen({ user, canEdit, canDelete }) {
 
           {/* Remaining provisions */}
           <section className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col">
-            <div className="px-5 py-3 border-b border-zinc-100 bg-zinc-50/50 flex items-center gap-2">
-              <Package className="size-4 text-primary" />
-              <h3 className="text-sm font-semibold text-zinc-800">Remaining Provisions</h3>
-              <span className="ml-auto text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">{provisions.length} item{provisions.length === 1 ? '' : 's'}</span>
+            <div className="px-4 py-3 border-b border-zinc-100 bg-zinc-50/50 flex items-center gap-2">
+              <Package className="size-4 text-primary shrink-0" />
+              <h3 className="text-sm font-semibold text-zinc-800 shrink-0">Remaining Provisions</h3>
+              <div className="relative ml-auto w-32 sm:w-44">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-zinc-400 pointer-events-none" />
+                <input value={provSearch} onChange={e => setProvSearch(e.target.value)} placeholder="Search..."
+                  className="h-8 w-full bg-white border border-zinc-200 rounded-md pl-8 pr-6 text-xs text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
+                {provSearch && (
+                  <button onClick={() => setProvSearch('')} className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 text-zinc-400 hover:text-zinc-600"><X className="size-3" /></button>
+                )}
+              </div>
+              <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider shrink-0">{filteredProvisions.length}</span>
             </div>
             <div className="divide-y divide-zinc-100 max-h-[62vh] overflow-y-auto custom-scrollbar">
               {provisions.length === 0 ? (
@@ -140,7 +174,12 @@ export default function Kitchen({ user, canEdit, canDelete }) {
                   <p className="text-zinc-500 text-sm font-medium">No provisions yet.</p>
                   {canEdit && <p className="text-zinc-400 text-xs mt-1">Click "Add Provision" to stock your kitchen.</p>}
                 </div>
-              ) : provisions.map(p => {
+              ) : filteredProvisions.length === 0 ? (
+                <div className="p-12 text-center flex flex-col items-center">
+                  <Search className="size-9 text-zinc-300 mb-2" />
+                  <p className="text-zinc-400 text-sm font-medium">No provisions match "{provSearch}".</p>
+                </div>
+              ) : filteredProvisions.map(p => {
                 const tone = stockTone(p.quantity_remaining, p.total_quantity);
                 return (
                   <div key={p.id} className="p-3 flex items-center gap-3 hover:bg-zinc-50/60 transition-colors">
@@ -181,7 +220,7 @@ export default function Kitchen({ user, canEdit, canDelete }) {
                           <Pencil className="size-4" />
                         </button>
                       )}
-                      {(canDelete || canEdit) && (
+                      {canDelete && (
                         <button onClick={() => handleDelete(p)} title="Delete"
                           className="size-8 rounded-md text-zinc-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition-colors">
                           <Trash2 className="size-4" />
@@ -196,11 +235,19 @@ export default function Kitchen({ user, canEdit, canDelete }) {
 
           {/* Usage for the day */}
           <section className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col">
-            <div className="px-5 py-3 border-b border-zinc-100 bg-zinc-50/50 flex items-center gap-2">
-              <ScanBarcode className="size-4 text-amber-500" />
-              <h3 className="text-sm font-semibold text-zinc-800">Usage</h3>
-              <span className="text-[11px] text-zinc-400 font-medium truncate">· {fmtDay(date)}</span>
-              <span className="ml-auto text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">{usageTotalLabel}</span>
+            <div className="px-4 py-3 border-b border-zinc-100 bg-zinc-50/50 flex items-center gap-2">
+              <ScanBarcode className="size-4 text-amber-500 shrink-0" />
+              <h3 className="text-sm font-semibold text-zinc-800 shrink-0">Usage</h3>
+              <span className="text-[11px] text-zinc-400 font-medium truncate hidden md:inline">· {fmtDay(date)}</span>
+              <div className="relative ml-auto w-32 sm:w-44">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-zinc-400 pointer-events-none" />
+                <input value={usageSearch} onChange={e => setUsageSearch(e.target.value)} placeholder="Search..."
+                  className="h-8 w-full bg-white border border-zinc-200 rounded-md pl-8 pr-6 text-xs text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
+                {usageSearch && (
+                  <button onClick={() => setUsageSearch('')} className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 text-zinc-400 hover:text-zinc-600"><X className="size-3" /></button>
+                )}
+              </div>
+              <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider shrink-0">{filteredUsage.length}</span>
             </div>
             <div className="divide-y divide-zinc-100 max-h-[62vh] overflow-y-auto custom-scrollbar">
               {usage.length === 0 ? (
@@ -208,14 +255,25 @@ export default function Kitchen({ user, canEdit, canDelete }) {
                   <ScanBarcode className="size-9 text-zinc-300 mb-2" />
                   <p className="text-zinc-400 text-sm font-medium">Nothing logged on this day.</p>
                 </div>
-              ) : usage.map(u => (
+              ) : filteredUsage.length === 0 ? (
+                <div className="p-12 text-center flex flex-col items-center">
+                  <Search className="size-9 text-zinc-300 mb-2" />
+                  <p className="text-zinc-400 text-sm font-medium">No usage matches "{usageSearch}".</p>
+                </div>
+              ) : filteredUsage.map(u => (
                 <div key={u.id} className="p-3 flex items-center gap-3">
                   <div className="size-9 rounded-md bg-amber-50 text-amber-600 ring-1 ring-amber-600/15 flex items-center justify-center shrink-0">
                     <Utensils className="size-4" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold text-zinc-900 truncate">{u.item_name}</p>
-                    {u.used_by_name && <p className="text-[11px] text-zinc-400 font-medium mt-0.5">by {u.used_by_name}</p>}
+                    {(u.used_by_name || u.created_at) && (
+                      <p className="text-[11px] text-zinc-400 font-medium mt-0.5 truncate">
+                        {u.used_by_name ? `by ${u.used_by_name}` : ''}
+                        {u.used_by_name && u.created_at ? ' · ' : ''}
+                        {u.created_at ? fmtTimeIST(u.created_at) : ''}
+                      </p>
+                    )}
                   </div>
                   <span className="text-xs font-bold text-amber-700 bg-amber-50 ring-1 ring-amber-600/15 px-2 py-1 rounded shrink-0">
                     {num(u.quantity_used)} {u.unit}
