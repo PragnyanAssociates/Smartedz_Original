@@ -8082,6 +8082,41 @@ app.post('/api/admin/kitchen/inventory', async (req, res) => {
         res.status(201).json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+app.put('/api/admin/kitchen/inventory/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        const [own] = await db.execute('SELECT institutionId FROM kitchen_inventory WHERE id = ?', [id]);
+        if (own.length === 0) return res.status(404).json({ error: 'Provision not found.' });
+        if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This item belongs to another institution.' });
+ 
+        const sets = [];
+        const params = [];
+ 
+        if (req.body.item_name !== undefined) {
+            const nm = String(req.body.item_name).trim();
+            if (!nm) return res.status(400).json({ error: 'Item name cannot be empty.' });
+            sets.push('item_name = ?'); params.push(nm);
+        }
+        if (req.body.unit !== undefined)  { sets.push('unit = ?');  params.push(req.body.unit || 'g'); }
+        if (req.body.image !== undefined) { sets.push('image = ?'); params.push(req.body.image || null); }
+ 
+        // Restock — they bought more of this item.
+        if (req.body.addQuantity !== undefined && req.body.addQuantity !== '' && req.body.addQuantity !== null) {
+            const add = Number(req.body.addQuantity);
+            if (isNaN(add) || add < 0) return res.status(400).json({ error: 'Added quantity must be a positive number.' });
+            if (add > 0) {
+                sets.push('total_quantity = total_quantity + ?');     params.push(add);
+                sets.push('quantity_remaining = quantity_remaining + ?'); params.push(add);
+            }
+        }
+ 
+        if (sets.length === 0) return res.status(400).json({ error: 'Nothing to update.' });
+        params.push(id);
+        await db.execute(`UPDATE kitchen_inventory SET ${sets.join(', ')} WHERE id = ?`, params);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
  
 // --- 21.4 Log usage (decrements remaining, records the entry) -------
 //   Body: { inventoryId, quantityUsed, usageDate }

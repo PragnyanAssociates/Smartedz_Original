@@ -1,21 +1,51 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   ChefHat, Plus, Trash2, Loader2, X, Save, Camera, Calendar,
-  Package, Utensils, ChevronRight, ScanBarcode
+  Package, Utensils, ChevronRight, ScanBarcode, Pencil, Lock, PackagePlus, AlertTriangle
 } from 'lucide-react';
 
 const UNITS = ['g', 'kg', 'l', 'ml', 'pcs', 'pkt'];
+
 const todayStr = () => new Date().toISOString().slice(0, 10);
+const shiftStr = (days) => { const d = new Date(); d.setDate(d.getDate() + days); return d.toISOString().slice(0, 10); };
+
 const fmtDay = (d) => {
   const x = new Date(d + 'T00:00:00');
   if (isNaN(x.getTime())) return d;
   return x.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
 };
 
+// How many whole days ago is the picked date (0 = today, 1 = yesterday).
+const daysAgoOf = (d) => {
+  const sel = new Date(d + 'T00:00:00');
+  if (isNaN(sel.getTime())) return 0;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return Math.round((today - sel) / 86400000);
+};
+
+const num = (v) => {
+  const n = Number(v);
+  if (isNaN(n)) return 0;
+  return Number.isInteger(n) ? n : n.toFixed(2).replace(/\.00$/, '');
+};
+
+// Stock band from remaining / total — drives the badge + bar colour.
+const stockTone = (remaining, total) => {
+  const t = Number(total) || 0, r = Number(remaining) || 0;
+  const pct = t > 0 ? (r / t) * 100 : 0;
+  if (r <= 0)      return { key: 'empty', badge: 'text-red-700 bg-red-50 ring-red-600/15',       bar: 'bg-red-500',     pct: 0 };
+  if (pct <= 15)   return { key: 'low',   badge: 'text-red-700 bg-red-50 ring-red-600/15',       bar: 'bg-red-500',     pct };
+  if (pct <= 40)   return { key: 'mid',   badge: 'text-amber-700 bg-amber-50 ring-amber-600/15', bar: 'bg-amber-500',   pct };
+  return              { key: 'ok',    badge: 'text-emerald-700 bg-emerald-50 ring-emerald-600/15', bar: 'bg-emerald-500', pct };
+};
+
 // =====================================================================
 //  Kitchen — daily provisions + usage. Edit permission manages it;
 //  this tab isn't shown to read-only users at all.
+//
+//  Usage can only be logged for TODAY or YESTERDAY. Older dates are
+//  view-only (history) — the "Use" button is hidden for them.
 // =====================================================================
 export default function Kitchen({ user, canEdit, canDelete }) {
   const [provisions, setProvisions] = useState([]);
@@ -25,6 +55,12 @@ export default function Kitchen({ user, canEdit, canDelete }) {
 
   const [addOpen, setAddOpen]   = useState(false);
   const [logItem, setLogItem]   = useState(null); // provision being logged
+  const [editItem, setEditItem] = useState(null); // provision being edited / restocked
+  const [preview, setPreview]   = useState(null);  // enlarged image src
+
+  // Only today & yesterday are loggable; everything older is history-only.
+  const dAgo = useMemo(() => daysAgoOf(date), [date]);
+  const canLogForDate = canEdit && dAgo >= 0 && dAgo <= 1;
 
   const fetchAll = useCallback(async () => {
     if (!user?.institutionId) return;
@@ -45,7 +81,7 @@ export default function Kitchen({ user, canEdit, canDelete }) {
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
   const handleDelete = async (item) => {
-    if (!window.confirm(`Delete "${item.item_name}" from provisions?`)) return;
+    if (!window.confirm(`Delete "${item.item_name}" from provisions? Its usage history will be removed too.`)) return;
     try {
       const res = await fetch(`${API_BASE_URL}/admin/kitchen/inventory/${item.id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Delete failed');
@@ -53,10 +89,7 @@ export default function Kitchen({ user, canEdit, canDelete }) {
     } catch (e) { alert(e.message); }
   };
 
-  const num = (v) => {
-    const n = Number(v);
-    return Number.isInteger(n) ? n : n.toFixed(2).replace(/\.00$/, '');
-  };
+  const usageTotalLabel = usage.length === 1 ? '1 entry' : `${usage.length} entries`;
 
   return (
     <div className="space-y-5">
@@ -69,6 +102,8 @@ export default function Kitchen({ user, canEdit, canDelete }) {
               className="h-9 pl-8 pr-3 bg-white border border-zinc-200 rounded-md text-sm text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm" />
           </div>
           <span className="text-[11px] text-zinc-400 font-medium hidden sm:inline">usage date</span>
+          {dAgo === 0 && <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 ring-1 ring-emerald-600/15 px-2 py-1 rounded uppercase tracking-wider">Today</span>}
+          {dAgo === 1 && <span className="text-[10px] font-semibold text-primary bg-primary/10 ring-1 ring-primary/15 px-2 py-1 rounded uppercase tracking-wider">Yesterday</span>}
         </div>
         {canEdit && (
           <button onClick={() => setAddOpen(true)}
@@ -77,6 +112,14 @@ export default function Kitchen({ user, canEdit, canDelete }) {
           </button>
         )}
       </div>
+
+      {/* View-only notice for dates older than yesterday */}
+      {canEdit && dAgo > 1 && (
+        <div className="flex items-start gap-2 bg-amber-50/70 ring-1 ring-amber-200/70 rounded-md px-4 py-2.5 text-[11px] font-medium text-amber-800 leading-relaxed">
+          <Lock className="size-3.5 shrink-0 mt-0.5 text-amber-500" />
+          <span>You're viewing <strong>{fmtDay(date)}</strong> in history. Usage can only be logged for today or yesterday, so the <strong>Use</strong> buttons are hidden here.</span>
+        </div>
+      )}
 
       {loading ? (
         <div className="h-64 flex items-center justify-center"><Loader2 className="size-8 text-primary animate-spin" /></div>
@@ -88,39 +131,66 @@ export default function Kitchen({ user, canEdit, canDelete }) {
             <div className="px-5 py-3 border-b border-zinc-100 bg-zinc-50/50 flex items-center gap-2">
               <Package className="size-4 text-primary" />
               <h3 className="text-sm font-semibold text-zinc-800">Remaining Provisions</h3>
-              <span className="ml-auto text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">{provisions.length}</span>
+              <span className="ml-auto text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">{provisions.length} item{provisions.length === 1 ? '' : 's'}</span>
             </div>
-            <div className="divide-y divide-zinc-100 max-h-[60vh] overflow-y-auto custom-scrollbar">
+            <div className="divide-y divide-zinc-100 max-h-[62vh] overflow-y-auto custom-scrollbar">
               {provisions.length === 0 ? (
-                <div className="p-10 text-center text-zinc-400 text-sm font-medium">No provisions yet.</div>
-              ) : provisions.map(p => (
-                <div key={p.id} className="p-3 flex items-center gap-3 hover:bg-zinc-50/60 transition-colors">
-                  <div className="size-11 rounded-md bg-zinc-100 ring-1 ring-black/5 overflow-hidden flex items-center justify-center shrink-0">
-                    {p.image ? <img src={p.image} alt="" className="w-full h-full object-cover" /> : <Utensils className="size-4 text-zinc-400" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-zinc-900 truncate">{p.item_name}</p>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 ring-1 ring-emerald-600/15 px-1.5 py-0.5 rounded">
-                        Left: {num(p.quantity_remaining)} {p.unit}
-                      </span>
-                      <span className="text-[10px] text-zinc-400 font-medium">of {num(p.total_quantity)} {p.unit}</span>
+                <div className="p-12 text-center flex flex-col items-center">
+                  <Package className="size-9 text-zinc-300 mb-2" />
+                  <p className="text-zinc-500 text-sm font-medium">No provisions yet.</p>
+                  {canEdit && <p className="text-zinc-400 text-xs mt-1">Click "Add Provision" to stock your kitchen.</p>}
+                </div>
+              ) : provisions.map(p => {
+                const tone = stockTone(p.quantity_remaining, p.total_quantity);
+                return (
+                  <div key={p.id} className="p-3 flex items-center gap-3 hover:bg-zinc-50/60 transition-colors">
+                    <button
+                      onClick={() => p.image && setPreview(p.image)}
+                      title={p.image ? 'View image' : undefined}
+                      className={`size-12 rounded-md bg-zinc-100 ring-1 ring-black/5 overflow-hidden flex items-center justify-center shrink-0 ${p.image ? 'cursor-zoom-in hover:ring-primary/40 transition-all' : ''}`}>
+                      {p.image ? <img src={p.image} alt="" className="w-full h-full object-cover" /> : <Utensils className="size-4 text-zinc-400" />}
+                    </button>
+
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-semibold text-zinc-900 truncate">{p.item_name}</p>
+                        {tone.key === 'empty' && <span className="text-[9px] font-bold text-red-600 bg-red-50 ring-1 ring-red-600/15 px-1.5 py-0.5 rounded uppercase tracking-wider shrink-0">Out</span>}
+                        {tone.key === 'low' && <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-red-600 bg-red-50 ring-1 ring-red-600/15 px-1.5 py-0.5 rounded uppercase tracking-wider shrink-0"><AlertTriangle className="size-2.5" /> Low</span>}
+                      </div>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className={`text-[11px] font-semibold ring-1 px-1.5 py-0.5 rounded ${tone.badge}`}>
+                          Left: {num(p.quantity_remaining)} {p.unit}
+                        </span>
+                        <span className="text-[10px] text-zinc-400 font-medium">of {num(p.total_quantity)} {p.unit}</span>
+                      </div>
+                      <div className="w-full h-1.5 bg-zinc-100 rounded-full overflow-hidden mt-1.5 max-w-[200px]">
+                        <div className={`h-1.5 rounded-full ${tone.bar} transition-all`} style={{ width: `${Math.max(tone.pct, p.quantity_remaining > 0 ? 4 : 0)}%` }} />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1 shrink-0">
+                      {canLogForDate && (
+                        <button onClick={() => setLogItem(p)} title="Log usage"
+                          className="h-8 px-3 rounded-md text-xs font-semibold text-primary bg-primary/10 hover:bg-primary/20 flex items-center gap-1 transition-colors">
+                          Use <ChevronRight className="size-3.5" />
+                        </button>
+                      )}
+                      {canEdit && (
+                        <button onClick={() => setEditItem(p)} title="Edit / restock"
+                          className="size-8 rounded-md text-zinc-400 hover:text-primary hover:bg-primary/5 flex items-center justify-center transition-colors">
+                          <Pencil className="size-4" />
+                        </button>
+                      )}
+                      {(canDelete || canEdit) && (
+                        <button onClick={() => handleDelete(p)} title="Delete"
+                          className="size-8 rounded-md text-zinc-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition-colors">
+                          <Trash2 className="size-4" />
+                        </button>
+                      )}
                     </div>
                   </div>
-                  {canEdit && (
-                    <button onClick={() => setLogItem(p)} title="Log usage"
-                      className="h-8 px-3 rounded-md text-xs font-semibold text-primary bg-primary/10 hover:bg-primary/20 flex items-center gap-1 transition-colors shrink-0">
-                      Use <ChevronRight className="size-3.5" />
-                    </button>
-                  )}
-                  {(canDelete || canEdit) && (
-                    <button onClick={() => handleDelete(p)} title="Delete"
-                      className="size-8 rounded-md text-zinc-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition-colors shrink-0">
-                      <Trash2 className="size-4" />
-                    </button>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           </section>
 
@@ -130,11 +200,14 @@ export default function Kitchen({ user, canEdit, canDelete }) {
               <ScanBarcode className="size-4 text-amber-500" />
               <h3 className="text-sm font-semibold text-zinc-800">Usage</h3>
               <span className="text-[11px] text-zinc-400 font-medium truncate">· {fmtDay(date)}</span>
-              <span className="ml-auto text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">{usage.length}</span>
+              <span className="ml-auto text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">{usageTotalLabel}</span>
             </div>
-            <div className="divide-y divide-zinc-100 max-h-[60vh] overflow-y-auto custom-scrollbar">
+            <div className="divide-y divide-zinc-100 max-h-[62vh] overflow-y-auto custom-scrollbar">
               {usage.length === 0 ? (
-                <div className="p-10 text-center text-zinc-400 text-sm font-medium">Nothing logged on this day.</div>
+                <div className="p-12 text-center flex flex-col items-center">
+                  <ScanBarcode className="size-9 text-zinc-300 mb-2" />
+                  <p className="text-zinc-400 text-sm font-medium">Nothing logged on this day.</p>
+                </div>
               ) : usage.map(u => (
                 <div key={u.id} className="p-3 flex items-center gap-3">
                   <div className="size-9 rounded-md bg-amber-50 text-amber-600 ring-1 ring-amber-600/15 flex items-center justify-center shrink-0">
@@ -157,9 +230,20 @@ export default function Kitchen({ user, canEdit, canDelete }) {
       {addOpen && (
         <AddProvisionModal user={user} onClose={() => setAddOpen(false)} onSaved={() => { setAddOpen(false); fetchAll(); }} />
       )}
+      {editItem && (
+        <EditProvisionModal item={editItem} onClose={() => setEditItem(null)} onSaved={() => { setEditItem(null); fetchAll(); }} />
+      )}
       {logItem && (
-        <LogUsageModal item={logItem} date={date} user={user} onClose={() => setLogItem(null)}
+        <LogUsageModal item={logItem} date={date} onClose={() => setLogItem(null)}
           onSaved={() => { setLogItem(null); fetchAll(); }} />
+      )}
+
+      {/* Image lightbox */}
+      {preview && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={() => setPreview(null)}>
+          <button onClick={() => setPreview(null)} className="absolute top-4 right-4 text-white/80 hover:text-white p-2 rounded-md hover:bg-white/10 transition-colors"><X className="size-6" /></button>
+          <img src={preview} alt="" onClick={e => e.stopPropagation()} className="max-w-full max-h-[90vh] rounded-lg object-contain shadow-2xl ring-1 ring-white/10" />
+        </div>
       )}
     </div>
   );
@@ -229,7 +313,93 @@ function AddProvisionModal({ user, onClose, onSaved }) {
   );
 }
 
-function LogUsageModal({ item, date, user, onClose, onSaved }) {
+// Edit details + RESTOCK (add newly-bought quantity to the existing stock).
+function EditProvisionModal({ item, onClose, onSaved }) {
+  const [form, setForm] = useState({ item_name: item.item_name || '', unit: item.unit || 'g', image: item.image || null });
+  const [addQty, setAddQty] = useState('');
+  const [saving, setSaving] = useState(false);
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  const onPhoto = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 3 * 1024 * 1024) return alert('Image must be under 3 MB.');
+    const reader = new FileReader();
+    reader.onloadend = () => set('image', reader.result);
+    reader.readAsDataURL(file);
+  };
+
+  const addN = Number(addQty) || 0;
+  const newRemaining = Number(item.quantity_remaining || 0) + (addN > 0 ? addN : 0);
+  const newTotal = Number(item.total_quantity || 0) + (addN > 0 ? addN : 0);
+
+  const save = async () => {
+    if (!form.item_name.trim()) return alert('Item name is required.');
+    if (addQty !== '' && (isNaN(Number(addQty)) || Number(addQty) < 0)) return alert('Added quantity must be a positive number.');
+    setSaving(true);
+    try {
+      const body = { item_name: form.item_name.trim(), unit: form.unit, image: form.image };
+      if (addN > 0) body.addQuantity = addN;
+      const res = await fetch(`${API_BASE_URL}/admin/kitchen/inventory/${item.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || 'Save failed'); }
+      onSaved();
+    } catch (e) { alert(e.message); }
+    setSaving(false);
+  };
+
+  return (
+    <ModalShell title="Edit Provision" onClose={onClose}>
+      <div className="flex flex-col items-center mb-5">
+        <div className="relative">
+          <div className="size-20 rounded-lg bg-zinc-50 ring-1 ring-black/5 overflow-hidden flex items-center justify-center">
+            {form.image ? <img src={form.image} alt="" className="w-full h-full object-cover" /> : <Package className="size-7 text-zinc-300" />}
+          </div>
+          <label className="absolute -bottom-1 -right-1 bg-primary hover:bg-primary/90 text-white p-1.5 rounded-full cursor-pointer shadow-sm ring-2 ring-white transition-colors">
+            <Camera className="size-3" />
+            <input type="file" accept="image/*" onChange={onPhoto} className="hidden" />
+          </label>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <LabeledInput label="Item Name" required value={form.item_name} onChange={v => set('item_name', v)} />
+        <div className="space-y-1.5">
+          <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Unit</label>
+          <div className="flex flex-wrap gap-1.5">
+            {UNITS.map(u => (
+              <button key={u} type="button" onClick={() => set('unit', u)}
+                className={`h-8 px-2.5 rounded-md text-xs font-semibold ring-1 transition-colors ${form.unit === u ? 'bg-primary text-white ring-primary' : 'bg-white text-zinc-600 ring-zinc-200 hover:bg-zinc-50'}`}>
+                {u}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Restock block */}
+        <div className="rounded-md ring-1 ring-primary/15 bg-primary/5 p-3 space-y-2.5">
+          <div className="flex items-center gap-1.5 text-[11px] font-semibold text-primary uppercase tracking-wider">
+            <PackagePlus className="size-3.5" /> Bought more? Add stock
+          </div>
+          <div className="flex items-end gap-2">
+            <div className="flex-1">
+              <LabeledInput label={`Add quantity (${form.unit})`} type="number" value={addQty} onChange={setAddQty} placeholder="e.g. 10" />
+            </div>
+          </div>
+          <p className="text-[11px] text-zinc-500 leading-relaxed">
+            Current left: <strong className="text-zinc-700">{num(item.quantity_remaining)} {item.unit}</strong> of {num(item.total_quantity)} {item.unit}.
+            {addN > 0 && <> After adding: <strong className="text-emerald-700">{num(newRemaining)} {form.unit}</strong> of {num(newTotal)} {form.unit}.</>}
+          </p>
+        </div>
+      </div>
+
+      <ModalFooter saving={saving} onClose={onClose} onSave={save} label="Save Changes" />
+    </ModalShell>
+  );
+}
+
+function LogUsageModal({ item, date, onClose, onSaved }) {
   const [qty, setQty] = useState('');
   const [useDate, setUseDate] = useState(date);
   const [saving, setSaving] = useState(false);
@@ -256,12 +426,13 @@ function LogUsageModal({ item, date, user, onClose, onSaved }) {
         </div>
         <div>
           <p className="text-sm font-semibold text-zinc-900">{item.item_name}</p>
-          <p className="text-[11px] text-zinc-500 font-medium">Remaining: {item.quantity_remaining} {item.unit}</p>
+          <p className="text-[11px] text-zinc-500 font-medium">Remaining: {num(item.quantity_remaining)} {item.unit}</p>
         </div>
       </div>
       <div className="space-y-4">
         <LabeledInput label={`Quantity used (${item.unit})`} required type="number" value={qty} onChange={setQty} placeholder="e.g. 5" />
-        <LabeledInput label="Date" type="date" value={useDate} onChange={setUseDate} />
+        {/* Only today or yesterday are loggable. */}
+        <LabeledInput label="Date" type="date" value={useDate} onChange={setUseDate} min={shiftStr(-1)} max={todayStr()} />
       </div>
       <ModalFooter saving={saving} onClose={onClose} onSave={save} label="Log Usage" />
     </ModalShell>
@@ -292,11 +463,11 @@ function ModalFooter({ saving, onClose, onSave, label }) {
     </div>
   );
 }
-function LabeledInput({ label, value, onChange, type = 'text', required, placeholder }) {
+function LabeledInput({ label, value, onChange, type = 'text', required, placeholder, min, max }) {
   return (
     <div className="space-y-1.5">
       <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">{label} {required && <span className="text-red-500">*</span>}</label>
-      <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+      <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} min={min} max={max}
         className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm" />
     </div>
   );
