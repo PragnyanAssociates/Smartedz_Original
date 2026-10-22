@@ -5,10 +5,11 @@ import { API_BASE_URL } from '../../apiConfig';
 import {
   UtensilsCrossed, Clock, CalendarDays, Plus, Trash2, Save,
   Loader2, AlertCircle, Coffee, Sun, Moon, Cookie, ChevronDown, User,
-  HelpCircle, X, ShieldCheck, ChefHat, Warehouse
+  HelpCircle, X, ShieldCheck, ChefHat, Warehouse, Users
 } from 'lucide-react';
 import Kitchen from './Kitchen';
 import Store from './Store';
+import KitchenStaff from './KitchenStaff';
 
 // =====================================================================
 //  Food Menu — three tabs:
@@ -103,10 +104,11 @@ export default function Meals() {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const mainTabs = [
-    { id: 'dining', label: 'Dining Time', icon: UtensilsCrossed },
+    { id: 'dining', label: 'Dining', icon: UtensilsCrossed },
     ...(manage ? [
-      { id: 'kitchen', label: 'Kitchen', icon: ChefHat },
-      { id: 'store',   label: 'Store',   icon: Warehouse },
+      { id: 'kitchen', label: 'Kitchen Groceries', icon: ChefHat },
+      { id: 'store',   label: 'Inventory',   icon: Warehouse },
+      { id: 'staff',   label: 'Kitchen Staff', icon: Users },
     ] : []),
   ];
 
@@ -119,10 +121,10 @@ export default function Meals() {
         <div className="flex flex-col">
           <h2 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
             <UtensilsCrossed className="text-primary size-5" />
-            Food Menu
+            Food Management
           </h2>
           <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
-            Plan meals, track the kitchen, and manage store assets.
+         Plan Kitchen & Dining and Track Diet
           </p>
         </div>
         <MealsHelp topic={helpTopic} />
@@ -146,6 +148,7 @@ export default function Meals() {
         {mainTab === 'dining' && <DiningTime data={data} fetchData={fetchData} user={user} canEdit={canEdit} loading={loading} />}
         {mainTab === 'kitchen' && manage && <Kitchen user={user} canEdit={canEdit} canDelete={canDelete} />}
         {mainTab === 'store'   && manage && <Store   user={user} canEdit={canEdit} canDelete={canDelete} />}
+        {mainTab === 'staff'   && manage && <KitchenStaff user={user} />}
       </div>
     </div>
   );
@@ -163,7 +166,7 @@ function DiningTime({ data, fetchData, user, canEdit, loading }) {
 
   const tabs = [
     { id: 'menu',  label: 'Weekly Menu', icon: CalendarDays },
-    { id: 'slots', label: 'Meal Slots',  icon: Clock }
+    { id: 'slots', label: 'Diet Slots',  icon: Clock }
   ];
   const tabProps = { data, fetchData, user, canEdit };
 
@@ -231,6 +234,21 @@ function SlotsTab({ data, fetchData, user }) {
   );
   const [saving, setSaving] = useState(false);
 
+  // Re-sync the editor whenever the saved slots change (after a save or a
+  // refresh), so the time inputs always reflect what's actually stored —
+  // without this, SlotsTab keeps the values it was first seeded with.
+  useEffect(() => {
+    setSlots(
+      data.slots.length > 0
+        ? sortSlotsByTime(data.slots).map(s => {
+            const start = parse24to12(s.start_time);
+            const end = parse24to12(s.end_time);
+            return { id: s.id, name: s.name, start_time: start.time, start_period: start.period, end_time: end.time, end_period: end.period };
+          })
+        : [{ id: null, name: 'Lunch', start_time: '12:30', start_period: 'PM', end_time: '01:15', end_period: 'PM' }]
+    );
+  }, [data.slots]);
+
   const addSlot = () => setSlots(p => [...p, { id: null, name: '', start_time: '09:00', start_period: 'AM', end_time: '09:45', end_period: 'AM' }]);
   const updateSlot = (i, key, val) => setSlots(p => p.map((s, idx) => idx === i ? { ...s, [key]: val } : s));
   const removeSlot = (i) => setSlots(p => p.filter((_, idx) => idx !== i));
@@ -258,7 +276,7 @@ function SlotsTab({ data, fetchData, user }) {
         <div className="flex items-center gap-3 mb-6">
           <div className="size-10 bg-primary/10 rounded-md flex items-center justify-center text-primary ring-1 ring-primary/20"><Clock className="size-5" /></div>
           <div>
-            <h3 className="text-sm font-semibold text-zinc-900">Meal Slots</h3>
+            <h3 className="text-sm font-semibold text-zinc-900">Diet Slots</h3>
             <p className="text-[11px] text-zinc-500 mt-0.5">Add the meals your school serves - one, two, three or four.</p>
           </div>
         </div>
@@ -356,7 +374,7 @@ function MenuTab({ data, fetchData, user, canEdit }) {
     return (
       <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center max-w-2xl mx-auto flex flex-col items-center">
         <AlertCircle className="text-amber-400 mb-3 size-10" />
-        <h3 className="text-lg font-semibold text-zinc-900">No Meal Slots Yet</h3>
+        <h3 className="text-lg font-semibold text-zinc-900">No Diet Slots Yet</h3>
         <p className="text-zinc-500 mt-1 text-sm font-medium">
           {canEdit ? <>Open the <strong>Meal Slots</strong> tab and add the meals your school serves first.</> : 'The school has not set up its meal plan yet.'}
         </p>
@@ -485,6 +503,16 @@ const GUIDES = {
       ['3 · Edit & delete', 'Each card has Edit and delete. Tap a photo to view it full-size.'],
     ],
     note: 'Store is for assets that stay with the school. Consumable stock belongs in Kitchen.'
+  },
+  staff: {
+    title: 'Kitchen Staff',
+    steps: [
+      ['1 · Who shows up here', 'Every app user whose role has the Food module assigned is listed as kitchen staff — you don’t add them here.'],
+      ['2 · Pick the day', 'The date picker chooses which day you’re viewing. Each staff member shows what they did in the Kitchen and Inventory tabs that day.'],
+      ['3 · What’s tracked', 'Logging usage, adding or restocking provisions, and adding, editing or removing inventory are all recorded automatically, with the time.'],
+      ['4 · Present / absent', 'The presence badge is read from the Attendance module — attendance is still marked there, not on this screen.'],
+    ],
+    note: 'This is a read-only activity view. Staff access to act in the Kitchen and Inventory tabs follows the same Food permission.'
   },
   view: {
     title: 'Weekly Menu',

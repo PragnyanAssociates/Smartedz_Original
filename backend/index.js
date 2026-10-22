@@ -7870,16 +7870,44 @@ app.put('/api/admin/homework/grade/:submissionId', async (req, res) => {
 
 
 // =====================================================================
-//  BACKEND — Section 20: MEALS  (TENANT-SCOPED)
-//   institutionId/actor from req.auth. Slots are scoped by institutionId;
-//   the weekly menu only writes to this institution's own slot ids
-//   (slot_id is global and the menu's unique key is slot-based).
+//  BACKEND — Section 20: MEALS  +  Section 21: KITCHEN / STORE
+//            + Kitchen Staff activity tracking
 //
-//   AUDIT: the weekly menu now records created_by + updated_by (and a
-//   created_at) so EVERY user can see when the food menu was last updated
-//   and by whom. Run meal_menu_add_audit.sql once. 20.1 returns a
-//   `menuMeta` block with the latest update + first creation; 20.3 stamps
-//   the acting user on every upsert.
+//  Tables already created:
+//    kitchen_activity_log, kitchen_inventory.updated_by, store_assets.updated_by
+//
+//  Kitchen staff = app users whose role has the 'Meals' module permission.
+//  Every kitchen/store action is logged so the Kitchen Staff tab can show
+//  what each staff member did on a given day. "Present" is read from the
+//  Attendance module (wired in once that table is shared).
+// =====================================================================
+
+
+// ---------------------------------------------------------------------
+//  Activity-log helpers (shared by Kitchen + Store routes)
+// ---------------------------------------------------------------------
+
+// Today's date in IST, so an evening action lands on the right local day.
+function _istDate() {
+    return new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+// Fire-and-forget activity logger. Never throws into the caller.
+async function logKitchenActivity({ institutionId, user_id, action, area, entity_id, detail, activity_date }) {
+    try {
+        await db.execute(
+            `INSERT INTO kitchen_activity_log
+               (institutionId, user_id, action, area, entity_id, detail, activity_date)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [institutionId, user_id || null, action, area, entity_id || null,
+             (detail || '').slice(0, 255), activity_date || _istDate()]
+        );
+    } catch (e) { console.warn('[kitchen activity log]', e.message); }
+}
+
+
+// =====================================================================
+//  Section 20: MEALS  (TENANT-SCOPED)
 // =====================================================================
 
 // --- 20.1 Full meals data for a school ------------------------------
@@ -7902,8 +7930,6 @@ app.get('/api/admin/meals/:instId', async (req, res) => {
             [instId]
         );
 
-        // Roll the per-cell audit up into one "last updated" + "first created"
-        // for the whole menu (the UI shows a single line to every user).
         let lastUpdated = null, firstCreated = null;
         for (const r of menu) {
             if (r.updated_at &&
@@ -7971,9 +7997,6 @@ app.post('/api/admin/meals/slots', async (req, res) => {
 
 
 // --- 20.3 Save the weekly menu (+ notify all active users) ----------
-//   Every upserted cell is stamped with the acting user:
-//     • new cell  -> created_by = updated_by = actor
-//     • edited    -> updated_by = actor (created_by/created_at untouched)
 app.post('/api/admin/meals/menu', async (req, res) => {
     const { entries } = req.body;
     const institutionId = req.auth.institutionId;
@@ -7983,7 +8006,6 @@ app.post('/api/admin/meals/menu', async (req, res) => {
     }
     const conn = await db.getConnection();
     try {
-        // slot_id is a global id; only let this school write to its own slots.
         const [vSlot] = await conn.execute('SELECT id FROM meal_slots WHERE institutionId = ?', [institutionId]);
         const slotOk = new Set(vSlot.map(r => r.id));
 
@@ -8026,10 +8048,11 @@ app.post('/api/admin/meals/menu', async (req, res) => {
     } finally { conn.release(); }
 });
 
+
 // =====================================================================
-//  KITCHEN — daily provisions + usage
+//  Section 21: KITCHEN — daily provisions + usage
 // =====================================================================
- 
+
 // --- 21.1 List provisions (with remaining quantity) -----------------
 app.get('/api/admin/kitchen/:instId/inventory', async (req, res) => {
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
@@ -8044,15 +8067,15 @@ app.get('/api/admin/kitchen/:instId/inventory', async (req, res) => {
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
- 
+
 // --- 21.2 Usage for a given date (?date=YYYY-MM-DD) -----------------
 app.get('/api/admin/kitchen/:instId/usage', async (req, res) => {
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
-    const date = req.query.date || new Date().toISOString().slice(0, 10);
+    const date = req.query.date || _istDate();
     try {
         const [rows] = await db.execute(
             `SELECT u.id, u.inventory_id, u.quantity_used, u.usage_date, u.created_at,
-       i.item_name, i.unit, i.image, cu.name AS used_by_name
+                    i.item_name, i.unit, i.image, cu.name AS used_by_name
                FROM kitchen_usage u
                JOIN kitchen_inventory i ON i.id = u.inventory_id
                LEFT JOIN users cu ON cu.id = u.created_by
@@ -8063,9 +8086,8 @@ app.get('/api/admin/kitchen/:instId/usage', async (req, res) => {
         res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
- 
-// --- 21.3 Add a provision -------------------------------------------
-//   Body: { item_name, unit, quantity, image? }  (total = remaining = quantity)
+
+// --- 21.3 Add a provision  (logs provision_added) -------------------
 app.post('/api/admin/kitchen/inventory', async (req, res) => {
     const institutionId = req.auth.institutionId;
     const { item_name, unit } = req.body;
@@ -8073,26 +8095,33 @@ app.post('/api/admin/kitchen/inventory', async (req, res) => {
     if (!item_name || !item_name.trim()) return res.status(400).json({ error: 'Item name is required.' });
     if (isNaN(qty) || qty < 0) return res.status(400).json({ error: 'Quantity must be a number.' });
     try {
-        await db.execute(
+        const [ins] = await db.execute(
             `INSERT INTO kitchen_inventory
                 (institutionId, item_name, unit, total_quantity, quantity_remaining, image, created_by)
              VALUES (?, ?, ?, ?, ?, ?, ?)`,
             [institutionId, item_name.trim(), (unit || 'g'), qty, qty, req.body.image || null, req.auth.userId]
         );
+        logKitchenActivity({
+            institutionId, user_id: req.auth.userId, action: 'provision_added', area: 'kitchen',
+            entity_id: ins.insertId, detail: `Added ${qty} ${unit || 'g'} of ${item_name.trim()}`
+        });
         res.status(201).json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// --- PUT inventory  (logs provision_restocked / provision_edited) ---
 app.put('/api/admin/kitchen/inventory/:id', async (req, res) => {
     const { id } = req.params;
     try {
-        const [own] = await db.execute('SELECT institutionId FROM kitchen_inventory WHERE id = ?', [id]);
+        const [own] = await db.execute(
+            'SELECT institutionId, item_name, unit FROM kitchen_inventory WHERE id = ?', [id]);
         if (own.length === 0) return res.status(404).json({ error: 'Provision not found.' });
         if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This item belongs to another institution.' });
- 
+
         const sets = [];
         const params = [];
- 
+        let restocked = 0;
+
         if (req.body.item_name !== undefined) {
             const nm = String(req.body.item_name).trim();
             if (!nm) return res.status(400).json({ error: 'Item name cannot be empty.' });
@@ -8100,40 +8129,54 @@ app.put('/api/admin/kitchen/inventory/:id', async (req, res) => {
         }
         if (req.body.unit !== undefined)  { sets.push('unit = ?');  params.push(req.body.unit || 'g'); }
         if (req.body.image !== undefined) { sets.push('image = ?'); params.push(req.body.image || null); }
- 
+
         // Restock — they bought more of this item.
         if (req.body.addQuantity !== undefined && req.body.addQuantity !== '' && req.body.addQuantity !== null) {
             const add = Number(req.body.addQuantity);
             if (isNaN(add) || add < 0) return res.status(400).json({ error: 'Added quantity must be a positive number.' });
             if (add > 0) {
-                sets.push('total_quantity = total_quantity + ?');     params.push(add);
+                restocked = add;
+                sets.push('total_quantity = total_quantity + ?');        params.push(add);
                 sets.push('quantity_remaining = quantity_remaining + ?'); params.push(add);
             }
         }
- 
+
         if (sets.length === 0) return res.status(400).json({ error: 'Nothing to update.' });
+        sets.push('updated_by = ?'); params.push(req.auth.userId);
+
         params.push(id);
         await db.execute(`UPDATE kitchen_inventory SET ${sets.join(', ')} WHERE id = ?`, params);
+
+        const name = (req.body.item_name && String(req.body.item_name).trim()) || own[0].item_name;
+        const unit = (req.body.unit !== undefined ? (req.body.unit || 'g') : own[0].unit) || 'g';
+        if (restocked > 0) {
+            logKitchenActivity({ institutionId: own[0].institutionId, user_id: req.auth.userId,
+                action: 'provision_restocked', area: 'kitchen', entity_id: Number(id),
+                detail: `Restocked +${restocked} ${unit} of ${name}` });
+        } else {
+            logKitchenActivity({ institutionId: own[0].institutionId, user_id: req.auth.userId,
+                action: 'provision_edited', area: 'kitchen', entity_id: Number(id),
+                detail: `Edited provision ${name}` });
+        }
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
- 
-// --- 21.4 Log usage (decrements remaining, records the entry) -------
-//   Body: { inventoryId, quantityUsed, usageDate }
+
+// --- 21.4 Log usage  (logs usage_logged, on the usage date) ---------
 app.post('/api/admin/kitchen/usage', async (req, res) => {
     const institutionId = req.auth.institutionId;
     const invId = parseInt(req.body.inventoryId, 10);
     const used = Number(req.body.quantityUsed);
-    const date = req.body.usageDate || new Date().toISOString().slice(0, 10);
+    const date = req.body.usageDate || _istDate();
     if (!invId) return res.status(400).json({ error: 'inventoryId is required.' });
     if (isNaN(used) || used <= 0) return res.status(400).json({ error: 'Quantity used must be greater than 0.' });
- 
+
     const conn = await db.getConnection();
     try {
         const [own] = await conn.execute(
-            'SELECT id FROM kitchen_inventory WHERE id = ? AND institutionId = ?', [invId, institutionId]);
+            'SELECT id, item_name, unit FROM kitchen_inventory WHERE id = ? AND institutionId = ?', [invId, institutionId]);
         if (own.length === 0) { conn.release(); return res.status(404).json({ error: 'Provision not found.' }); }
- 
+
         await conn.beginTransaction();
         await conn.execute(
             'UPDATE kitchen_inventory SET quantity_remaining = GREATEST(0, quantity_remaining - ?) WHERE id = ?',
@@ -8145,35 +8188,35 @@ app.post('/api/admin/kitchen/usage', async (req, res) => {
             [institutionId, invId, used, date, req.auth.userId]
         );
         await conn.commit();
+
+        logKitchenActivity({ institutionId, user_id: req.auth.userId, action: 'usage_logged', area: 'kitchen',
+            entity_id: invId, detail: `Used ${used} ${own[0].unit || ''} of ${own[0].item_name}`, activity_date: date });
+
         res.status(201).json({ success: true });
     } catch (err) {
         await conn.rollback();
         res.status(500).json({ error: err.message });
     } finally { conn.release(); }
 });
- 
-// --- 21.5 Delete a provision (also clears its usage via cascade) ----
+
+// --- 21.5 Delete a provision  (logs provision_deleted) --------------
 app.delete('/api/admin/kitchen/inventory/:id', async (req, res) => {
     try {
-        const [own] = await db.execute('SELECT institutionId FROM kitchen_inventory WHERE id = ?', [req.params.id]);
+        const [own] = await db.execute(
+            'SELECT institutionId, item_name FROM kitchen_inventory WHERE id = ?', [req.params.id]);
         if (own.length === 0) return res.status(404).json({ error: 'Provision not found.' });
         if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This item belongs to another institution.' });
         await db.execute('DELETE FROM kitchen_inventory WHERE id = ?', [req.params.id]);
+        logKitchenActivity({ institutionId: own[0].institutionId, user_id: req.auth.userId,
+            action: 'provision_deleted', area: 'kitchen', entity_id: Number(req.params.id),
+            detail: `Deleted provision ${own[0].item_name}` });
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
- 
+
+
 // =====================================================================
-//  STORE — permanent assets   (replace routes 21.6 – 21.9)
-//
-//   Now tracks + returns WHO added / last edited each asset, and WHEN,
-//   so the cards can show "Added by … · date" and "Edited by … · time".
-//
-//   >>> SQL — run once <<<
-//     ALTER TABLE `store_assets`
-//       ADD COLUMN `updated_by` INT DEFAULT NULL,
-//       ADD CONSTRAINT `fk_store_updater`
-//         FOREIGN KEY (`updated_by`) REFERENCES `users`(`id`) ON DELETE SET NULL;
+//  Section 21: STORE — permanent assets
 // =====================================================================
 
 // --- 21.6 List assets (optional ?search=) ---------------------------
@@ -8200,28 +8243,31 @@ app.get('/api/admin/store/:instId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 21.7 Add an asset (stamps creator + updater) -------------------
+// --- 21.7 Add an asset  (logs asset_added) --------------------------
 app.post('/api/admin/store', async (req, res) => {
     const institutionId = req.auth.institutionId;
     const { item_name, rack } = req.body;
     const qty = parseInt(req.body.quantity, 10);
     if (!item_name || !item_name.trim()) return res.status(400).json({ error: 'Item name is required.' });
     try {
-        await db.execute(
+        const [ins] = await db.execute(
             `INSERT INTO store_assets (institutionId, item_name, quantity, rack, image, created_by, updated_by)
              VALUES (?, ?, ?, ?, ?, ?, ?)`,
             [institutionId, item_name.trim(), isNaN(qty) ? 0 : qty, (rack || '').trim() || null,
              req.body.image || null, req.auth.userId, req.auth.userId]
         );
+        logKitchenActivity({ institutionId, user_id: req.auth.userId, action: 'asset_added', area: 'store',
+            entity_id: ins.insertId, detail: `Added inventory asset ${item_name.trim()}` });
         res.status(201).json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 21.8 Update an asset (stamps the editor) ----------------------
+// --- 21.8 Update an asset  (logs asset_updated) --------------------
 app.put('/api/admin/store/:id', async (req, res) => {
     const { id } = req.params;
     try {
-        const [own] = await db.execute('SELECT institutionId FROM store_assets WHERE id = ?', [id]);
+        const [own] = await db.execute(
+            'SELECT institutionId, item_name FROM store_assets WHERE id = ?', [id]);
         if (own.length === 0) return res.status(404).json({ error: 'Asset not found.' });
         if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This asset belongs to another institution.' });
 
@@ -8233,26 +8279,102 @@ app.put('/api/admin/store/:id', async (req, res) => {
         if (req.body.image !== undefined)     { setClauses.push('image = ?'); params.push(req.body.image || null); }
         if (setClauses.length === 0) return res.status(400).json({ error: 'No fields to update.' });
 
-        // Always record who edited it (updated_at auto-updates via the column).
         setClauses.push('updated_by = ?'); params.push(req.auth.userId);
-
         params.push(id);
         await db.execute(`UPDATE store_assets SET ${setClauses.join(', ')} WHERE id = ?`, params);
+
+        const name = (req.body.item_name && String(req.body.item_name).trim()) || own[0].item_name;
+        logKitchenActivity({ institutionId: own[0].institutionId, user_id: req.auth.userId,
+            action: 'asset_updated', area: 'store', entity_id: Number(id),
+            detail: `Updated inventory asset ${name}` });
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 21.9 Delete an asset -------------------------------------------
+// --- 21.9 Delete an asset  (logs asset_deleted) --------------------
 app.delete('/api/admin/store/:id', async (req, res) => {
     try {
-        const [own] = await db.execute('SELECT institutionId FROM store_assets WHERE id = ?', [req.params.id]);
+        const [own] = await db.execute(
+            'SELECT institutionId, item_name FROM store_assets WHERE id = ?', [req.params.id]);
         if (own.length === 0) return res.status(404).json({ error: 'Asset not found.' });
         if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'This asset belongs to another institution.' });
         await db.execute('DELETE FROM store_assets WHERE id = ?', [req.params.id]);
+        logKitchenActivity({ institutionId: own[0].institutionId, user_id: req.auth.userId,
+            action: 'asset_deleted', area: 'store', entity_id: Number(req.params.id),
+            detail: `Deleted inventory asset ${own[0].item_name}` });
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
+// =====================================================================
+//  Section 22: KITCHEN STAFF — who worked in the Food module & what they did
+//    GET /api/admin/kitchen/:instId/staff-activity?date=YYYY-MM-DD
+//  Returns every kitchen-staff user (role has the Meals module) with their
+//  activity entries for the day. `present` is null until Attendance is wired.
+// =====================================================================
+app.get('/api/admin/kitchen/:instId/staff-activity', async (req, res) => {
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    const date = req.query.date || _istDate();
+    try {
+        // 1) Kitchen staff = active users whose role has the Meals module.
+        const [staff] = await db.execute(
+            `SELECT DISTINCT u.id, u.name, u.role, u.profile_pic
+               FROM users u
+               JOIN roles r       ON r.role_name = u.role AND r.institutionId = u.institutionId
+               JOIN permissions p  ON p.role_id = r.id AND p.module_name = 'Meals'
+              WHERE u.institutionId = ?
+                AND (p.can_edit = 1 OR p.can_read = 1)
+                AND LOWER(COALESCE(u.status, 'active')) = 'active'
+              ORDER BY u.name ASC`,
+            [instId]
+        );
+
+        // 2) All activity for that day.
+        const [acts] = await db.execute(
+            `SELECT user_id, action, area, entity_id, detail, created_at
+               FROM kitchen_activity_log
+              WHERE institutionId = ? AND activity_date = ?
+              ORDER BY created_at DESC`,
+            [instId, date]
+        );
+
+        // 3) Group activity by user.
+        const byUser = {};
+        acts.forEach(a => {
+            const k = a.user_id == null ? 'null' : String(a.user_id);
+            (byUser[k] = byUser[k] || []).push({
+                action: a.action, area: a.area, entity_id: a.entity_id,
+                detail: a.detail, created_at: a.created_at
+            });
+        });
+
+        // 4) Users who acted but aren't in the staff set (e.g. an admin) —
+        //    pull their names so they still show up.
+        const staffIds = new Set(staff.map(s => s.id));
+        const extraIds = [...new Set(acts.map(a => a.user_id).filter(id => id != null && !staffIds.has(id)))];
+        let extras = [];
+        if (extraIds.length) {
+            const ph = extraIds.map(() => '?').join(',');
+            const [er] = await db.execute(
+                `SELECT id, name, role, profile_pic FROM users WHERE id IN (${ph})`, extraIds);
+            extras = er;
+        }
+
+        const combine = (u) => ({
+            user_id: u.id, name: u.name, role: u.role, profile_pic: u.profile_pic || null,
+            present: null,                              // TODO: fill from Attendance
+            activities: byUser[String(u.id)] || []
+        });
+
+        const rows = [...staff.map(combine), ...extras.map(combine)];
+        rows.sort((a, b) =>
+            (b.activities.length > 0) - (a.activities.length > 0) ||
+            String(a.name || '').localeCompare(String(b.name || '')));
+
+        res.json({ date, staff: rows });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
 
 
