@@ -7867,7 +7867,7 @@ app.put('/api/admin/homework/grade/:submissionId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// =====================================================================
+/// =====================================================================
 //  BACKEND — Section 20: MEALS  +  Section 21: KITCHEN / STORE
 //            + Kitchen Staff activity tracking
 //
@@ -8306,66 +8306,68 @@ app.delete('/api/admin/store/:id', async (req, res) => {
 
 
 // =====================================================================
-//  Section 22: KITCHEN STAFF — who worked in the Food module & what they did
-//    GET /api/admin/kitchen/:instId/staff-activity?date=YYYY-MM-DD
-//  Returns every kitchen-staff user (role has the Meals module) with their
-//  activity entries for the day. `present` is null until Attendance is wired.
+//  Section 22: KITCHEN STAFF — an explicit, hand-picked roster.
+//    Nobody appears automatically. The Super Admin adds specific app
+//    users as kitchen staff; only those users show here, with what they
+//    did on the chosen day. `present` comes from Attendance (wired later).
+//
+//   >>> SQL — run once <<<
+//     CREATE TABLE `kitchen_staff` (
+//       `id` INT NOT NULL AUTO_INCREMENT,
+//       `institutionId` INT NOT NULL,
+//       `user_id` INT NOT NULL,
+//       `added_by` INT DEFAULT NULL,
+//       `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+//       PRIMARY KEY (`id`),
+//       UNIQUE KEY `uq_inst_user` (`institutionId`,`user_id`),
+//       KEY `idx_inst` (`institutionId`),
+//       CONSTRAINT `fk_kstaff_inst` FOREIGN KEY (`institutionId`) REFERENCES `institutions`(`id`) ON DELETE CASCADE,
+//       CONSTRAINT `fk_kstaff_user` FOREIGN KEY (`user_id`)       REFERENCES `users`(`id`)        ON DELETE CASCADE
+//     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 // =====================================================================
+
+// --- 22.1 Assigned kitchen staff + their activity for a day ---------
 app.get('/api/admin/kitchen/:instId/staff-activity', async (req, res) => {
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     const date = req.query.date || _istDate();
     try {
-        // 1) Kitchen staff = active users whose role has the Meals module.
+        // Only the users explicitly added as kitchen staff.
         const [staff] = await db.execute(
-            `SELECT DISTINCT u.id, u.name, u.role, u.profile_pic
-               FROM users u
-               JOIN roles r       ON r.role_name = u.role AND r.institutionId = u.institutionId
-               JOIN permissions p  ON p.role_id = r.id AND p.module_name = 'Meals'
-              WHERE u.institutionId = ?
-                AND (p.can_edit = 1 OR p.can_delete = 1)
-                AND LOWER(COALESCE(u.status, 'active')) = 'active'
+            `SELECT u.id, u.name, u.role, u.profile_pic
+               FROM kitchen_staff ks
+               JOIN users u ON u.id = ks.user_id
+              WHERE ks.institutionId = ?
               ORDER BY u.name ASC`,
             [instId]
         );
 
-        // 2) All activity for that day.
-        const [acts] = await db.execute(
-            `SELECT user_id, action, area, entity_id, detail, created_at
-               FROM kitchen_activity_log
-              WHERE institutionId = ? AND activity_date = ?
-              ORDER BY created_at DESC`,
-            [instId, date]
-        );
+        let acts = [];
+        if (staff.length) {
+            const ids = staff.map(s => s.id);
+            const ph = ids.map(() => '?').join(',');
+            const [rows] = await db.execute(
+                `SELECT user_id, action, area, entity_id, detail, created_at
+                   FROM kitchen_activity_log
+                  WHERE institutionId = ? AND activity_date = ? AND user_id IN (${ph})
+                  ORDER BY created_at DESC`,
+                [instId, date, ...ids]
+            );
+            acts = rows;
+        }
 
-        // 3) Group activity by user.
         const byUser = {};
         acts.forEach(a => {
-            const k = a.user_id == null ? 'null' : String(a.user_id);
-            (byUser[k] = byUser[k] || []).push({
+            (byUser[String(a.user_id)] = byUser[String(a.user_id)] || []).push({
                 action: a.action, area: a.area, entity_id: a.entity_id,
                 detail: a.detail, created_at: a.created_at
             });
         });
 
-        // 4) Users who acted but aren't in the staff set (e.g. an admin) —
-        //    pull their names so they still show up.
-        const staffIds = new Set(staff.map(s => s.id));
-        const extraIds = [...new Set(acts.map(a => a.user_id).filter(id => id != null && !staffIds.has(id)))];
-        let extras = [];
-        if (extraIds.length) {
-            const ph = extraIds.map(() => '?').join(',');
-            const [er] = await db.execute(
-                `SELECT id, name, role, profile_pic FROM users WHERE id IN (${ph})`, extraIds);
-            extras = er;
-        }
-
-        const combine = (u) => ({
+        const rows = staff.map(u => ({
             user_id: u.id, name: u.name, role: u.role, profile_pic: u.profile_pic || null,
             present: null,                              // TODO: fill from Attendance
             activities: byUser[String(u.id)] || []
-        });
-
-        const rows = [...staff.map(combine), ...extras.map(combine)];
+        }));
         rows.sort((a, b) =>
             (b.activities.length > 0) - (a.activities.length > 0) ||
             String(a.name || '').localeCompare(String(b.name || '')));
@@ -8374,6 +8376,72 @@ app.get('/api/admin/kitchen/:instId/staff-activity', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// --- 22.2 Candidate users to add (active users not yet staff) -------
+app.get('/api/admin/kitchen/:instId/staff-candidates', async (req, res) => {
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    const search = (req.query.search || '').trim();
+    try {
+        const params = [instId, instId];
+        let extra = '';
+        if (search) { extra = 'AND (u.name LIKE ? OR u.role LIKE ?)'; const t = `%${search}%`; params.push(t, t); }
+        const [rows] = await db.execute(
+            `SELECT u.id, u.name, u.role, u.profile_pic
+               FROM users u
+              WHERE u.institutionId = ?
+                AND LOWER(COALESCE(u.status, 'active')) = 'active'
+                AND u.id NOT IN (SELECT user_id FROM kitchen_staff WHERE institutionId = ?)
+                ${extra}
+              ORDER BY u.name ASC
+              LIMIT 200`,
+            params
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 22.2b Every role defined in this institution (for the picker) --
+app.get('/api/admin/kitchen/:instId/roles', async (req, res) => {
+    const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+    try {
+        const [rows] = await db.execute(
+            'SELECT role_name FROM roles WHERE institutionId = ? ORDER BY role_name ASC',
+            [instId]
+        );
+        res.json(rows.map(r => r.role_name));
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 22.3 Add a user as kitchen staff -------------------------------
+app.post('/api/admin/kitchen/staff', async (req, res) => {
+    const institutionId = req.auth.institutionId;
+    const userId = parseInt(req.body.userId, 10);
+    if (!userId) return res.status(400).json({ error: 'userId is required.' });
+    try {
+        // Make sure the user belongs to this institution.
+        const [u] = await db.execute(
+            'SELECT id FROM users WHERE id = ? AND institutionId = ?', [userId, institutionId]);
+        if (u.length === 0) return res.status(404).json({ error: 'User not found in this institution.' });
+
+        await db.execute(
+            `INSERT IGNORE INTO kitchen_staff (institutionId, user_id, added_by)
+             VALUES (?, ?, ?)`,
+            [institutionId, userId, req.auth.userId]
+        );
+        res.status(201).json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 22.4 Remove a user from kitchen staff --------------------------
+app.delete('/api/admin/kitchen/staff/:userId', async (req, res) => {
+    const institutionId = req.auth.institutionId;
+    try {
+        await db.execute(
+            'DELETE FROM kitchen_staff WHERE institutionId = ? AND user_id = ?',
+            [institutionId, req.params.userId]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
 // =====================================================================
 // === 21. PARENT TEACHER MEETINGS (PTM)  (TENANT-SCOPED) ==============
 //   List uses identity from the token; create/update take institutionId
