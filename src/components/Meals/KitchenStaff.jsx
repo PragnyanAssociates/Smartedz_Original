@@ -2,15 +2,15 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   Loader2, Search, CalendarDays, Users, CheckCircle2, XCircle, MinusCircle,
-  ChefHat, Warehouse, PackagePlus, RefreshCw, Pencil, Trash2, UtensilsCrossed, Clock
+  ChefHat, Warehouse, PackagePlus, RefreshCw, Pencil, Trash2, UtensilsCrossed,
+  Clock, Plus, X, UserPlus, ChevronDown
 } from 'lucide-react';
 
 // =====================================================================
-//  KITCHEN STAFF — who worked in the Food module on a given day and what
-//  they did. Staff = app users whose role has the Meals module. Their
-//  actions (log usage, add/restock provisions, add/edit inventory) are
-//  pulled from the activity log. "Present" comes from the Attendance
-//  module (wired once that table is shared — shows "—" until then).
+//  KITCHEN STAFF — a hand-picked roster. The Super Admin adds specific
+//  app users as kitchen staff; only those people show here, with what
+//  they did in the Kitchen and Inventory tabs on the chosen day.
+//  "Present" comes from the Attendance module (shows "—" until wired).
 // =====================================================================
 
 const istToday = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
@@ -24,7 +24,6 @@ const fmtTimeIST = (val) => {
   return d.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true });
 };
 
-// Visual language for every tracked action.
 const ACTION_META = {
   usage_logged:        { icon: UtensilsCrossed, label: 'Logged usage',      tone: 'text-emerald-600 bg-emerald-50 ring-emerald-100' },
   provision_added:     { icon: PackagePlus,     label: 'Added provision',   tone: 'text-blue-600 bg-blue-50 ring-blue-100' },
@@ -40,17 +39,147 @@ const metaFor = (a) => ACTION_META[a] || { icon: Clock, label: a, tone: 'text-zi
 const initials = (name) =>
   (name || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase() || '').join('') || '?';
 
+function Avatar({ src, name, size = 'size-9' }) {
+  return src
+    ? <img src={src} alt="" className={`${size} rounded-full object-cover ring-1 ring-black/5`} />
+    : <div className={`${size} rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-bold ring-1 ring-primary/20`}>{initials(name)}</div>;
+}
+
 function PresenceBadge({ present }) {
   if (present === true)  return <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100"><CheckCircle2 className="size-3" /> Present</span>;
   if (present === false) return <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-50 text-red-700 ring-1 ring-red-100"><XCircle className="size-3" /> Absent</span>;
   return <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-zinc-50 text-zinc-400 ring-1 ring-zinc-100" title="From the Attendance module"><MinusCircle className="size-3" /> —</span>;
 }
 
-export default function KitchenStaff({ user }) {
+// ---------------------------------------------------------------------
+//  Add-staff picker modal
+// ---------------------------------------------------------------------
+function AddStaffModal({ user, onClose, onAdded }) {
+  const [list, setList]       = useState([]);   // addable users (not yet staff)
+  const [allRoles, setAllRoles] = useState([]); // every role defined in the system
+  const [loading, setLoading] = useState(true);
+  const [role, setRole]       = useState('');     // '' = no role picked yet
+  const [query, setQuery]     = useState('');
+  const [busyId, setBusyId]   = useState(null);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [cRes, rRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/admin/kitchen/${user.institutionId}/staff-candidates`),
+        fetch(`${API_BASE_URL}/admin/kitchen/${user.institutionId}/roles`),
+      ]);
+      const cands = await cRes.json();
+      const roleNames = await rRes.json();
+      setList(Array.isArray(cands) ? cands : []);
+      setAllRoles(Array.isArray(roleNames) ? roleNames : []);
+    } catch (e) { console.error('add-staff fetch error:', e); setList([]); setAllRoles([]); }
+    setLoading(false);
+  }, [user]);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Every role from the system, each with a count of still-addable users.
+  const roles = useMemo(() => {
+    const counts = new Map();
+    list.forEach(u => { const r = u.role || 'No role'; counts.set(r, (counts.get(r) || 0) + 1); });
+    return allRoles.map(name => ({ name, count: counts.get(name) || 0 }));
+  }, [allRoles, list]);
+
+  // Users of the chosen role, narrowed by search.
+  const usersInRole = useMemo(() => {
+    if (!role) return [];
+    const q = query.trim().toLowerCase();
+    return list.filter(u => (u.role || 'No role') === role)
+               .filter(u => !q || (u.name || '').toLowerCase().includes(q));
+  }, [list, role, query]);
+
+  const add = async (u) => {
+    setBusyId(u.id);
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/kitchen/staff`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: u.id })
+      });
+      if (!res.ok) throw new Error('Could not add');
+      setList(p => p.filter(x => x.id !== u.id));   // drop from picker
+      onAdded();                                     // refresh the roster behind
+    } catch (e) { alert(e.message); }
+    setBusyId(null);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={onClose}>
+      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-md max-h-[85vh] flex flex-col shadow-xl" onClick={e => e.stopPropagation()}>
+        <div className="bg-primary text-white px-5 py-3 flex items-center justify-between shrink-0">
+          <span className="text-sm font-bold flex items-center gap-2"><UserPlus className="size-4" /> Add Kitchen Staff</span>
+          <button onClick={onClose} className="text-white/80 hover:text-white"><X className="size-5" /></button>
+        </div>
+
+        {/* Step 1 — pick a role */}
+        <div className="p-4 border-b border-zinc-100 shrink-0 space-y-3">
+          <div>
+            <label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wide">Step 1 · Role</label>
+            <div className="relative mt-1">
+              <select value={role} onChange={e => { setRole(e.target.value); setQuery(''); }}
+                className="h-10 w-full pl-3 pr-9 bg-zinc-50 border border-zinc-200 rounded-md text-sm text-zinc-900 appearance-none outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 cursor-pointer">
+                <option value="">Select a role…</option>
+                {roles.map(r => <option key={r.name} value={r.name}>{r.name} ({r.count})</option>)}
+              </select>
+              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 size-4 text-zinc-400 pointer-events-none" />
+            </div>
+          </div>
+          {/* Step 2 — search within the role */}
+          {role && (
+            <div>
+              <label className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wide">Step 2 · Pick users</label>
+              <div className="relative mt-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-zinc-400 pointer-events-none" />
+                <input autoFocus placeholder={`Search ${role}…`} value={query} onChange={e => setQuery(e.target.value)}
+                  className="h-10 w-full pl-9 pr-3 bg-zinc-50 border border-zinc-200 rounded-md text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40" />
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="overflow-y-auto custom-scrollbar p-2 flex-1">
+          {loading ? (
+            <div className="h-40 flex items-center justify-center"><Loader2 className="size-6 text-primary animate-spin" /></div>
+          ) : roles.length === 0 ? (
+            <p className="text-center text-sm text-zinc-400 py-10">No roles are defined in the system yet.</p>
+          ) : !role ? (
+            <p className="text-center text-sm text-zinc-400 py-10">Choose a role above to see its users.</p>
+          ) : usersInRole.length === 0 ? (
+            <p className="text-center text-sm text-zinc-400 py-10">{query ? 'No matching users in this role.' : 'Everyone in this role is already added.'}</p>
+          ) : usersInRole.map(u => (
+            <div key={u.id} className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-zinc-50">
+              <Avatar src={u.profile_pic} name={u.name} size="size-8" />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-zinc-900 truncate">{u.name}</p>
+                <p className="text-[11px] text-zinc-500 truncate">{u.role}</p>
+              </div>
+              <button onClick={() => add(u)} disabled={busyId === u.id}
+                className="shrink-0 inline-flex items-center gap-1 h-8 px-3 rounded-md bg-primary hover:bg-primary/90 disabled:bg-zinc-300 text-white text-xs font-semibold transition-colors">
+                {busyId === u.id ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />} Add
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+//  Main
+// ---------------------------------------------------------------------
+export default function KitchenStaff({ user, canEdit = false, canDelete = false }) {
   const [date, setDate]       = useState(istToday());
   const [staff, setStaff]     = useState([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery]     = useState('');
+  const [showAdd, setShowAdd] = useState(false);
+  const canManage = canEdit || canDelete;
 
   const fetchActivity = useCallback(async () => {
     if (!user?.institutionId) return;
@@ -65,11 +194,19 @@ export default function KitchenStaff({ user }) {
 
   useEffect(() => { fetchActivity(); }, [fetchActivity]);
 
+  const removeStaff = async (s) => {
+    if (!window.confirm(`Remove ${s.name} from kitchen staff? Their past activity stays recorded.`)) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/kitchen/staff/${s.user_id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Could not remove');
+      setStaff(p => p.filter(x => x.user_id !== s.user_id));
+    } catch (e) { alert(e.message); }
+  };
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return staff;
-    return staff.filter(s =>
-      (s.name || '').toLowerCase().includes(q) || (s.role || '').toLowerCase().includes(q));
+    return staff.filter(s => (s.name || '').toLowerCase().includes(q) || (s.role || '').toLowerCase().includes(q));
   }, [staff, query]);
 
   const activeCount = useMemo(() => staff.filter(s => s.activities.length > 0).length, [staff]);
@@ -90,47 +227,65 @@ export default function KitchenStaff({ user }) {
           <input placeholder="Search staff by name or role" value={query} onChange={e => setQuery(e.target.value)}
             className="h-10 w-full pl-9 pr-3 bg-white border border-zinc-200 rounded-md text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm" />
         </div>
-        <div className="sm:ml-auto flex items-center gap-2 text-[11px] font-semibold text-zinc-500">
-          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white ring-1 ring-zinc-200 rounded-md shadow-sm">
-            <Users className="size-3.5 text-primary" /> {activeCount} active
+        <div className="sm:ml-auto flex items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white ring-1 ring-zinc-200 rounded-md shadow-sm text-[11px] font-semibold text-zinc-500">
+            <Users className="size-3.5 text-primary" /> {staff.length} staff · {activeCount} active
           </span>
-          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white ring-1 ring-zinc-200 rounded-md shadow-sm">
-            {totalActions} action{totalActions === 1 ? '' : 's'}
-          </span>
+          {canManage && (
+            <button onClick={() => setShowAdd(true)}
+              className="inline-flex items-center gap-1.5 h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold shadow-sm transition-colors shrink-0">
+              <UserPlus className="size-3.5" /> Add Kitchen Staff
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Attendance note */}
       <p className="text-[11px] text-zinc-400 px-0.5">
-        Presence is read from the Attendance module{isToday ? ' for today' : ''}. Activity below is tracked automatically as staff work in the Kitchen and Inventory tabs.
+        Only the users you add here are kitchen staff. Presence is read from the Attendance module{isToday ? ' for today' : ''}; activity is tracked automatically as they work in the Kitchen and Inventory tabs.
       </p>
 
       {loading ? (
         <div className="h-64 flex items-center justify-center"><Loader2 className="size-8 text-primary animate-spin" /></div>
-      ) : filtered.length === 0 ? (
+      ) : staff.length === 0 ? (
         <div className="bg-white p-12 rounded-lg ring-1 ring-black/5 border-dashed text-center max-w-xl mx-auto flex flex-col items-center">
           <Users className="text-zinc-300 mb-3 size-10" />
-          <h3 className="text-base font-semibold text-zinc-900">No kitchen staff found</h3>
-          <p className="text-zinc-500 mt-1 text-sm">
-            {query ? 'No staff match your search.' : 'No app users have the Food module assigned to their role yet.'}
+          <h3 className="text-base font-semibold text-zinc-900">No kitchen staff added yet</h3>
+          <p className="text-zinc-500 mt-1 text-sm max-w-sm">
+            {canManage
+              ? 'Add the app users who work in the kitchen. Only the people you add will appear here.'
+              : 'No kitchen staff have been added yet.'}
           </p>
+          {canManage && (
+            <button onClick={() => setShowAdd(true)}
+              className="mt-4 inline-flex items-center gap-1.5 h-9 px-4 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold shadow-sm transition-colors">
+              <UserPlus className="size-3.5" /> Add Kitchen Staff
+            </button>
+          )}
         </div>
+      ) : filtered.length === 0 ? (
+        <p className="text-center text-sm text-zinc-400 py-10">No staff match your search.</p>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {filtered.map(s => (
-            <div key={s.user_id} className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden">
+            <div key={s.user_id} className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden group">
               {/* Staff header */}
               <div className="flex items-center gap-3 px-4 py-3 border-b border-zinc-100 bg-zinc-50/50">
-                {s.profile_pic
-                  ? <img src={s.profile_pic} alt="" className="size-9 rounded-full object-cover ring-1 ring-black/5" />
-                  : <div className="size-9 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-bold ring-1 ring-primary/20">{initials(s.name)}</div>}
+                <Avatar src={s.profile_pic} name={s.name} />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-semibold text-zinc-900 truncate">{s.name}</p>
                   <p className="text-[11px] text-zinc-500 truncate">{s.role}</p>
                 </div>
-                <div className="flex flex-col items-end gap-1 shrink-0">
-                  <PresenceBadge present={s.present} />
-                  <span className="text-[10px] font-medium text-zinc-400">{s.activities.length} action{s.activities.length === 1 ? '' : 's'}</span>
+                <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex flex-col items-end gap-1">
+                    <PresenceBadge present={s.present} />
+                    <span className="text-[10px] font-medium text-zinc-400">{s.activities.length} action{s.activities.length === 1 ? '' : 's'}</span>
+                  </div>
+                  {canManage && (
+                    <button onClick={() => removeStaff(s)} title="Remove from kitchen staff"
+                      className="p-1.5 text-zinc-300 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors">
+                      <X className="size-4" />
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -162,6 +317,8 @@ export default function KitchenStaff({ user }) {
           ))}
         </div>
       )}
+
+      {showAdd && <AddStaffModal user={user} onClose={() => setShowAdd(false)} onAdded={fetchActivity} />}
     </div>
   );
 }
