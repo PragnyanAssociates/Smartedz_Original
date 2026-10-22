@@ -7867,7 +7867,7 @@ app.put('/api/admin/homework/grade/:submissionId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-/// =====================================================================
+// =====================================================================
 //  BACKEND — Section 20: MEALS  +  Section 21: KITCHEN / STORE
 //            + Kitchen Staff activity tracking
 //
@@ -8326,8 +8326,28 @@ app.delete('/api/admin/store/:id', async (req, res) => {
 //     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 // =====================================================================
 
+// Who may see/manage the kitchen-staff roster = whoever the permissions
+// matrix gives DELETE on the Meals (Food Management) module. Cooks with
+// only EDIT can work in Kitchen/Inventory but can't touch the roster.
+// Super Admin / Developer are all-access, so they always qualify.
+async function canManageKitchenStaff(req) {
+    if (req.auth && (req.auth.role === 'Super Admin' || req.auth.role === 'Developer')) return true;
+    try {
+        const [rows] = await db.execute(
+            `SELECT p.can_delete AS ok
+               FROM users u
+               JOIN roles r       ON r.role_name = u.role AND r.institutionId = u.institutionId
+               JOIN permissions p  ON p.role_id = r.id AND p.module_name = 'Meals'
+              WHERE u.id = ? LIMIT 1`,
+            [req.auth.userId]
+        );
+        return rows.length > 0 && !!rows[0].ok;
+    } catch (e) { return false; }
+}
+
 // --- 22.1 Assigned kitchen staff + their activity for a day ---------
 app.get('/api/admin/kitchen/:instId/staff-activity', async (req, res) => {
+    if (!(await canManageKitchenStaff(req))) return res.status(403).json({ error: 'You do not have access to kitchen staff.' });
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     const date = req.query.date || _istDate();
     try {
@@ -8378,6 +8398,7 @@ app.get('/api/admin/kitchen/:instId/staff-activity', async (req, res) => {
 
 // --- 22.2 Candidate users to add (active users not yet staff) -------
 app.get('/api/admin/kitchen/:instId/staff-candidates', async (req, res) => {
+    if (!(await canManageKitchenStaff(req))) return res.status(403).json({ error: 'You do not have access to kitchen staff.' });
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     const search = (req.query.search || '').trim();
     try {
@@ -8401,6 +8422,7 @@ app.get('/api/admin/kitchen/:instId/staff-candidates', async (req, res) => {
 
 // --- 22.2b Every role defined in this institution (for the picker) --
 app.get('/api/admin/kitchen/:instId/roles', async (req, res) => {
+    if (!(await canManageKitchenStaff(req))) return res.status(403).json({ error: 'You do not have access to kitchen staff.' });
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     try {
         const [rows] = await db.execute(
@@ -8413,6 +8435,7 @@ app.get('/api/admin/kitchen/:instId/roles', async (req, res) => {
 
 // --- 22.3 Add a user as kitchen staff -------------------------------
 app.post('/api/admin/kitchen/staff', async (req, res) => {
+    if (!(await canManageKitchenStaff(req))) return res.status(403).json({ error: 'You do not have access to add kitchen staff.' });
     const institutionId = req.auth.institutionId;
     const userId = parseInt(req.body.userId, 10);
     if (!userId) return res.status(400).json({ error: 'userId is required.' });
@@ -8433,6 +8456,7 @@ app.post('/api/admin/kitchen/staff', async (req, res) => {
 
 // --- 22.4 Remove a user from kitchen staff --------------------------
 app.delete('/api/admin/kitchen/staff/:userId', async (req, res) => {
+    if (!(await canManageKitchenStaff(req))) return res.status(403).json({ error: 'You do not have access to remove kitchen staff.' });
     const institutionId = req.auth.institutionId;
     try {
         await db.execute(

@@ -82,7 +82,11 @@ export default function Meals() {
   const { can } = usePermissions();
   const canEdit = can('Meals', 'edit');
   const canDelete = can('Meals', 'delete');
-  const manage = canEdit || canDelete;   // unlocks Kitchen + Store
+  const manage = canEdit || canDelete;   // unlocks Kitchen + Store (for cooks)
+  // The Kitchen Staff roster is admin oversight — driven by the permissions
+  // matrix: whoever has DELETE on Meals (incl. Super Admin / Developer, who
+  // are all-access) gets it. Cooks with only EDIT don't.
+  const canStaffAdmin = canDelete;
 
   const [mainTab, setMainTab] = useState('dining');
 
@@ -108,6 +112,8 @@ export default function Meals() {
     ...(manage ? [
       { id: 'kitchen', label: 'Kitchen Groceries', icon: ChefHat },
       { id: 'store',   label: 'Inventory',   icon: Warehouse },
+    ] : []),
+    ...(canStaffAdmin ? [
       { id: 'staff',   label: 'Kitchen Staff', icon: Users },
     ] : []),
   ];
@@ -148,7 +154,7 @@ export default function Meals() {
         {mainTab === 'dining' && <DiningTime data={data} fetchData={fetchData} user={user} canEdit={canEdit} loading={loading} />}
         {mainTab === 'kitchen' && manage && <Kitchen user={user} canEdit={canEdit} canDelete={canDelete} />}
         {mainTab === 'store'   && manage && <Store   user={user} canEdit={canEdit} canDelete={canDelete} />}
-        {mainTab === 'staff'   && manage && <KitchenStaff user={user} />}
+        {mainTab === 'staff'   && canStaffAdmin && <KitchenStaff user={user} canManage={true} />}
       </div>
     </div>
   );

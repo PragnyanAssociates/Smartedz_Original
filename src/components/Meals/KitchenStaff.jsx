@@ -173,13 +173,12 @@ function AddStaffModal({ user, onClose, onAdded }) {
 // ---------------------------------------------------------------------
 //  Main
 // ---------------------------------------------------------------------
-export default function KitchenStaff({ user, canEdit = false, canDelete = false }) {
+export default function KitchenStaff({ user, canManage = false }) {
   const [date, setDate]       = useState(istToday());
   const [staff, setStaff]     = useState([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery]     = useState('');
   const [showAdd, setShowAdd] = useState(false);
-  const canManage = canEdit || canDelete;
 
   const fetchActivity = useCallback(async () => {
     if (!user?.institutionId) return;
