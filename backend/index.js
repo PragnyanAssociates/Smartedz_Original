@@ -8383,9 +8383,24 @@ app.get('/api/admin/kitchen/:instId/staff-activity', async (req, res) => {
             });
         });
 
+        // Presence for the day, read from the Attendance module.
+        //   'P' -> true, 'A' -> false, no record -> null (shows "—").
+        const presence = {};
+        if (staff.length) {
+            const ids = staff.map(s => s.id);
+            const ph = ids.map(() => '?').join(',');
+            const [att] = await db.execute(
+                `SELECT user_id, status
+                   FROM attendance
+                  WHERE institutionId = ? AND attendance_date = ? AND user_id IN (${ph})`,
+                [instId, date, ...ids]
+            );
+            att.forEach(a => { presence[String(a.user_id)] = a.status === 'P'; });
+        }
+
         const rows = staff.map(u => ({
             user_id: u.id, name: u.name, role: u.role, profile_pic: u.profile_pic || null,
-            present: null,                              // TODO: fill from Attendance
+            present: (String(u.id) in presence) ? presence[String(u.id)] : null,
             activities: byUser[String(u.id)] || []
         }));
         rows.sort((a, b) =>
