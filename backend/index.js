@@ -7867,8 +7867,6 @@ app.put('/api/admin/homework/grade/:submissionId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-
-
 // =====================================================================
 //  BACKEND — Section 20: MEALS  +  Section 21: KITCHEN / STORE
 //            + Kitchen Staff activity tracking
@@ -8324,7 +8322,7 @@ app.get('/api/admin/kitchen/:instId/staff-activity', async (req, res) => {
                JOIN roles r       ON r.role_name = u.role AND r.institutionId = u.institutionId
                JOIN permissions p  ON p.role_id = r.id AND p.module_name = 'Meals'
               WHERE u.institutionId = ?
-                AND (p.can_edit = 1 OR p.can_read = 1)
+                AND (p.can_edit = 1 OR p.can_delete = 1)
                 AND LOWER(COALESCE(u.status, 'active')) = 'active'
               ORDER BY u.name ASC`,
             [instId]
@@ -8375,8 +8373,6 @@ app.get('/api/admin/kitchen/:instId/staff-activity', async (req, res) => {
         res.json({ date, staff: rows });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-
-
 
 // =====================================================================
 // === 21. PARENT TEACHER MEETINGS (PTM)  (TENANT-SCOPED) ==============
