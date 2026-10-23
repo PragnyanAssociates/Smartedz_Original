@@ -8420,8 +8420,12 @@ app.get('/api/admin/kitchen/:instId/staff-candidates', async (req, res) => {
         const params = [instId, instId];
         let extra = '';
         if (search) { extra = 'AND (u.name LIKE ? OR u.role LIKE ?)'; const t = `%${search}%`; params.push(t, t); }
+        // NOTE: deliberately NOT selecting profile_pic here. Photos are stored
+        // inline as base64, so pulling them for up to 200 users makes this
+        // response huge and the picker slow to load. The picker shows initials
+        // instead, which needs only the name.
         const [rows] = await db.execute(
-            `SELECT u.id, u.name, u.role, u.profile_pic
+            `SELECT u.id, u.name, u.role
                FROM users u
               WHERE u.institutionId = ?
                 AND LOWER(COALESCE(u.status, 'active')) = 'active'
