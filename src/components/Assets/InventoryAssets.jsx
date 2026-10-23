@@ -657,9 +657,9 @@ function AssetsHelp({ canEdit = false, className = '' }) {
   return (
     <>
       <button onClick={() => setOpen(true)}
-        className={`h-9 px-4 bg-white ring-1 ring-zinc-200 shadow-sm hover:bg-zinc-50 text-zinc-700 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shrink-0 self-start ${className}`}>
-        <HelpCircle className="size-3.5" /> User Guide
-      </button>
+         className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors shrink-0 self-start">
+          <HelpCircle className="size-3.5" /> User Guide
+        </button>
 
       {open && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4 animate-in fade-in duration-200" onClick={() => setOpen(false)}>

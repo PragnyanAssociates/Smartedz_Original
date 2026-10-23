@@ -88,9 +88,9 @@ export default function DailyExpenses() {
           {!canEdit && <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 ring-1 ring-inset ring-amber-600/20 px-2.5 py-1 rounded-full uppercase tracking-wider">View only</span>}
           {fullAccess && (
             <button onClick={() => setHelp(true)}
-              className="inline-flex items-center justify-center gap-1.5 h-9 px-4 shrink-0 text-xs font-medium text-zinc-600 bg-white border border-zinc-200 rounded-md hover:bg-zinc-50 hover:text-primary transition-colors shadow-sm">
-              <HelpCircle className="size-3.5" /> User Guide
-            </button>
+               className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors shrink-0 self-start">
+          <HelpCircle className="size-3.5" /> User Guide
+        </button>
           )}
         </div>
       </header>

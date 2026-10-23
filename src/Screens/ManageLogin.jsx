@@ -143,11 +143,17 @@ const GUIDES = {
   users: {
     title: 'Managing users',
     steps: [
-      ['1 \u00b7 Add a person', 'Users \u2192 Add. Name, login details and Role. The Role is the only thing that decides what they see \u2014 set it right and the sidebar follows automatically.'],
-      ['2 \u00b7 Students need a class', 'Pick the class and give a roll number. Roll numbers are unique per class per academic year, so the same number can exist in Class 8 and Class 9, and again next year.'],
-      ['3 \u00b7 Edit', 'Edit updates anything on the person, including moving them to another class or role. Every change records who made it and when, in IST.'],
-      ['4 \u00b7 Deactivate vs delete', 'Deactivating parks the account under the Inactive tab and takes it out of live counts \u2014 you can bring it back. Delete is permanent and cannot be undone.'],
-      ['5 \u00b7 Bulk work', 'Use the Downloads tab to pull the current user list out to Excel.'],
+      ['1 \u00b7 Delete is permanent',
+        <>
+          <strong className="font-semibold text-zinc-800">Users deleted from this tab are permanently removed and cannot be restored.</strong>{' '}
+          If you want to retain a user's records without allowing them to access the system, change their status from Active to Inactive instead of deleting them. The user will be moved to the Inactive list, and all of their academic and administrative records will remain available throughout the system. However, their login credentials will be disabled, preventing them from signing in. For students, an <strong>Inactive/Alumni</strong> student continues to retain their assigned roll number for that academic year. Therefore, the same roll number cannot be assigned to a new student until either: the existing student record is permanently deleted, or a new academic year begins.
+        </>
+      ],
+      ['2 \u00b7 Add a person', 'Users \u2192 Add. Name, login details and Role. The Role is the only thing that decides what they see \u2014 set it right and the sidebar follows automatically.'],
+      ['3 \u00b7 Students need a class', 'Pick the class and give a roll number. Roll numbers are unique per class per academic year, so the same number can exist in Class 8 and Class 9, and again next year.'],
+      ['4 \u00b7 Edit', 'Edit updates anything on the person, including moving them to another class or role. Every change records who made it and when, in IST.'],
+      ['5 \u00b7 Deactivate vs delete', 'Deactivating parks the account under the Inactive tab and takes it out of live counts \u2014 you can bring it back. Delete is permanent and cannot be undone.'],
+      ['6 \u00b7 Bulk work', 'Use the Downloads tab to pull the current user list out to Excel.'],
     ],
     note: 'A new user can only work once their role has permissions. If someone logs in to an empty sidebar, the fix is in the Permissions tab, not here.'
   },

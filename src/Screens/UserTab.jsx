@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, Edit, Trash2, X, Search, UserCircle2, BookOpen, Camera, AtSign, GraduationCap, ChevronDown, Info, Eye } from 'lucide-react';
+import { Plus, Edit, Trash2, X, Search, UserCircle2, BookOpen, Camera, AtSign, GraduationCap, ChevronDown, Eye } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
 
 export default function UserTab({ data, fetchData, user }) {
@@ -333,16 +333,6 @@ export default function UserTab({ data, fetchData, user }) {
 
   return (
     <div className="space-y-6">
-      {/* Note - how delete / inactive / alumni behave */}
-      <div className="bg-blue-50/60 border border-blue-100 rounded-md p-4 flex gap-3 text-[11px] text-blue-800 leading-relaxed">
-        <Info className="size-4 shrink-0 text-blue-500 mt-0.5" />
-        <p>
-          <strong className="font-semibold text-blue-900">Users deleted from this tab are permanently removed and cannot be restored.</strong>{' '}
-          If you want to retain a user's records without allowing them to access the system, change their status from Active to Inactive instead of deleting them. The user will be moved to the Inactive list, and all of their academic and administrative records will remain available throughout the system. However, their login credentials will be disabled, preventing them from signing in.
-          For students, an <strong>Inactive/Alumni</strong> student continues to retain their assigned roll number for that academic year. Therefore, the same roll number cannot be assigned to a new student until either: the existing student record is permanently deleted, or a new academic year begins.
-        </p>
-      </div>
-
       {/* Top action bar - responsive: stacks on mobile, row on >= sm */}
       <div className="flex flex-col sm:flex-row justify-between gap-4 sm:items-center mb-6">
         <div className="relative w-full sm:w-auto flex-1 max-w-sm">
