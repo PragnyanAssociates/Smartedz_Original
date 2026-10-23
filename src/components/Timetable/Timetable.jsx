@@ -286,7 +286,7 @@ function AdminTimetable({ user, canEdit, canDelete, isManager, fullAccess }) {
           {fullAccess && (
             <button onClick={() => setHelp(true)}
               className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors">
-              <HelpCircle className="size-3.5" /> How to use
+              <HelpCircle className="size-3.5" /> User Guide
             </button>
           )}
           <YearBadge name={activeYearName} known={yearKnown} />
@@ -1321,7 +1321,7 @@ function PersonalTimetable({ user, mode }) {
         <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
           <button onClick={() => setHelp(true)}
             className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors">
-            <HelpCircle className="size-3.5" /> How to use
+            <HelpCircle className="size-3.5" /> User Guide
           </button>
           <YearBadge name={activeYearName} known={yearKnown} />
         </div>

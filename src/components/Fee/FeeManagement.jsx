@@ -104,7 +104,7 @@ export default function FeeManagement() {
           {fullAccess && (
             <button onClick={() => setHelp(true)}
               className="inline-flex items-center gap-1.5 h-9 px-4 shrink-0 text-xs font-medium text-zinc-600 hover:text-primary border border-zinc-200 rounded-md hover:bg-zinc-50 transition-colors">
-              <HelpCircle className="size-4" /> How to use
+              <HelpCircle className="size-4" /> User Guide
             </button>
           )}
         </div>

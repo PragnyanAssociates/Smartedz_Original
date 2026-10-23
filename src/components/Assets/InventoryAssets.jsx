@@ -658,7 +658,7 @@ function AssetsHelp({ canEdit = false, className = '' }) {
     <>
       <button onClick={() => setOpen(true)}
         className={`h-9 px-4 bg-white ring-1 ring-zinc-200 shadow-sm hover:bg-zinc-50 text-zinc-700 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shrink-0 self-start ${className}`}>
-        <HelpCircle className="size-3.5" /> How to use
+        <HelpCircle className="size-3.5" /> User Guide
       </button>
 
       {open && (

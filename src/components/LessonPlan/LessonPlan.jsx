@@ -116,7 +116,7 @@ export default function LessonPlan() {
                   ? 'text-zinc-400 ring-zinc-700 hover:text-white hover:bg-zinc-800'
                   : 'text-zinc-500 ring-zinc-200 hover:text-primary hover:bg-zinc-50'
               }`}>
-              <HelpCircle className="size-3.5" /> How to use
+              <HelpCircle className="size-3.5" /> User Guide
             </button>
 
             {/* View Controls */}

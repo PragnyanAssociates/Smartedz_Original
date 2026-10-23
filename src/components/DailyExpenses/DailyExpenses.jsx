@@ -89,7 +89,7 @@ export default function DailyExpenses() {
           {fullAccess && (
             <button onClick={() => setHelp(true)}
               className="inline-flex items-center justify-center gap-1.5 h-9 px-4 shrink-0 text-xs font-medium text-zinc-600 bg-white border border-zinc-200 rounded-md hover:bg-zinc-50 hover:text-primary transition-colors shadow-sm">
-              <HelpCircle className="size-3.5" /> How to use
+              <HelpCircle className="size-3.5" /> User Guide
             </button>
           )}
         </div>

@@ -257,11 +257,11 @@ export default function Overview() {
             </span>
             <button onClick={() => setHelpOpen(true)}
               className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors">
-              <HelpCircle className="size-3.5" /> How to use
+              <HelpCircle className="size-3.5" /> User Guide
             </button>
             <button onClick={() => setSettingsOpen(true)}
               className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-white border border-zinc-200 text-zinc-700 text-xs font-semibold hover:bg-zinc-50 transition-colors">
-              <Settings className="size-3.5" /> Overview Settings
+              <Settings className="size-3.5" /> Settings
             </button>
           </div>
         )}

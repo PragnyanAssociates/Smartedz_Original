@@ -113,7 +113,7 @@ export default function Attendance() {
   const HelpButton = () => (
     <button onClick={() => setHelp(true)}
       className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors shrink-0">
-      <HelpCircle className="size-3.5" /> How to use
+      <HelpCircle className="size-3.5" /> User Guide
     </button>
   );
 
