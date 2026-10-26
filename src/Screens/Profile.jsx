@@ -124,7 +124,13 @@ export default function Profile() {
   const handlePicChange = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 3 * 1024 * 1024) return alert('Picture must be under 3 MB.');
+    // Profile pictures are stored inline in the database, so they must stay
+    // small to keep the app fast. Hard cap: 80 KB.
+    if (file.size > 80 * 1024) {
+      alert(`Profile picture must be 80 KB or smaller. This image is ${Math.ceil(file.size / 1024)} KB — please choose or compress a smaller one.`);
+      e.target.value = '';   // let them re-pick the same file after compressing
+      return;
+    }
     const reader = new FileReader();
     reader.onloadend = () => setForm(f => ({ ...f, profile_pic: reader.result }));
     reader.readAsDataURL(file);
@@ -320,6 +326,9 @@ function EditView({ form, setForm, onSave, onCancel, onPicChange, onPicRemove, s
                 <ImageOff className="size-3" /> Remove Picture
               </button>
             )}
+
+            <p className="text-[10px] text-zinc-400 mt-1">JPG/PNG — max 80 KB</p>
+            <p className="text-[10px] text-amber-600 font-medium text-center max-w-[12rem]">Note: keep the photo under 80 KB. Larger images won't upload — compress or resize first.</p>
           </div>
 
           <div className="mt-8 w-full bg-zinc-50/50 ring-1 ring-black/5 rounded-md p-4 text-left">

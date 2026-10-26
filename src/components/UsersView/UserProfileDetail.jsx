@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   ChevronLeft, Mail, Phone, MapPin, Calendar,
   BookOpen, Award, ShieldCheck, User, Loader2, Info, BarChart3, TrendingUp,
-  Users, Briefcase, Hash, Wallet, GraduationCap, Fingerprint
+  Users, Briefcase, Hash, Wallet, GraduationCap, Fingerprint, X
 } from 'lucide-react';
 import { roundPct, band, buildStudentTotals, studentExamBreakdown } from '../Performance/PerfUtils';
 
@@ -121,13 +122,7 @@ export default function UserProfileDetail({ userId, seedProfile = null, classes 
           <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm p-6 sm:p-8 text-center flex flex-col items-center">
 
             <div className="relative mb-5">
-              {profile.profile_pic ? (
-                <img src={profile.profile_pic} className="size-32 sm:size-40 rounded-full object-cover ring-1 ring-black/5 shadow-sm" alt={profile.name} />
-              ) : (
-                <div className="size-32 sm:size-40 rounded-full bg-zinc-100 flex items-center justify-center text-zinc-300 ring-1 ring-black/5 shadow-sm">
-                  <User className="size-16" />
-                </div>
-              )}
+              <ProfileAvatar src={profile.profile_pic} name={profile.name} />
             </div>
 
             <h2 className="text-xl font-semibold text-zinc-900 tracking-tight leading-tight">{profile.name}</h2>
@@ -196,6 +191,9 @@ const SHOWN_KEYS = new Set([
   'id', 'userid', 'institutionid', 'institution_id', 'password', 'password_hash',
   'profile_pic', 'created_at', 'updated_at', 'role', 'name', 'username',
   'token', 'otp', 'academic_year_id', 'subject_ids',
+  // developer / platform-internal flags that must never show on a profile
+  'is_super_developer', 'modules', 'schoolkey', 'parent_id', 'created_by',
+  'class_sort_dir', 'type', 'logo',
   // personal & contact
   'email', 'phone', 'phone_no', 'mobile', 'dob', 'date_of_birth',
   'gender', 'address',
@@ -528,6 +526,45 @@ function EmptyOverview({ icon: Icon, text }) {
       <Icon className="size-12 text-zinc-200 mb-4" />
       <p className="font-medium text-zinc-500 text-sm">{text}</p>
     </div>
+  );
+}
+
+// Profile avatar that enlarges on click (WhatsApp-style full-screen viewer).
+// The viewer renders through a portal to document.body so an ancestor's
+// CSS transform (the page's slide-in animation) can't break position:fixed.
+// The initials/placeholder fallback is not clickable — nothing to enlarge.
+function ProfileAvatar({ src, name }) {
+  const [open, setOpen] = useState(false);
+
+  if (!src) {
+    return (
+      <div className="size-32 sm:size-40 rounded-full bg-zinc-100 flex items-center justify-center text-zinc-300 ring-1 ring-black/5 shadow-sm">
+        <User className="size-16" />
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)} title="View photo" className="block rounded-full">
+        <img src={src} alt={name}
+          className="size-32 sm:size-40 rounded-full object-cover ring-1 ring-black/5 shadow-sm cursor-pointer hover:opacity-95 transition-opacity" />
+      </button>
+
+      {open && createPortal(
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/90 backdrop-blur-sm animate-in fade-in duration-200"
+          onClick={() => setOpen(false)}>
+          <button onClick={(e) => { e.stopPropagation(); setOpen(false); }}
+            className="absolute top-6 right-6 p-2 text-white/70 hover:text-white transition-colors bg-white/10 rounded-full">
+            <X className="size-6" />
+          </button>
+          <img src={src} alt={name}
+            className="max-w-full max-h-full object-contain p-4 rounded-lg"
+            onClick={(e) => e.stopPropagation()} />
+        </div>,
+        document.body
+      )}
+    </>
   );
 }
 
