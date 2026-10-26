@@ -1192,6 +1192,17 @@ function validateUserData(body) {
     }
     return null;
 }
+// Profile pictures are stored inline as base64, so they must stay small.
+// Returns an error string if the image decodes to more than 80 KB, else null.
+function checkProfilePicSize(pic) {
+    if (!pic || typeof pic !== 'string') return null;
+    const b64 = pic.includes(',') ? pic.split(',')[1] : pic;   // strip "data:...;base64,"
+    const approxBytes = Math.floor((b64.length * 3) / 4);
+    if (approxBytes > 80 * 1024) {
+        return 'Profile picture must be 80 KB or smaller. Please upload a smaller image.';
+    }
+    return null;
+}
 // Small helper: does any OTHER row match this query?
 async function _exists(conn, sql, params) {
     const [rows] = await conn.execute(sql, params);
@@ -1265,6 +1276,9 @@ app.post('/api/admin/users', async (req, res) => {
     const vErr = validateUserData(body);
     if (vErr) return res.status(400).json({ error: vErr });
 
+    const picErr = checkProfilePicSize(profile_pic);
+    if (picErr) return res.status(400).json({ error: picErr });
+
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
@@ -1334,7 +1348,7 @@ app.put('/api/admin/users/:id', async (req, res) => {
         await conn.beginTransaction();
 
         const [owner] = await conn.execute(
-            'SELECT institutionId, roll_no, class_id, pen_no, tc_number, academic_year_id FROM users WHERE id = ?',
+            'SELECT institutionId, roll_no, class_id, pen_no, tc_number, academic_year_id, profile_pic FROM users WHERE id = ?',
             [id]
         );
         if (owner.length === 0) { await conn.rollback(); return res.status(404).json({ error: 'User not found.' }); }
@@ -1343,6 +1357,13 @@ app.put('/api/admin/users/:id', async (req, res) => {
 
         // TENANT: refuse if this user belongs to another institution.
         if (!sameTenant(req, instId)) { await conn.rollback(); return res.status(403).json({ error: 'This user belongs to another institution.' }); }
+
+        // Enforce the 80 KB cap only on a NEW/changed photo, so editing a user
+        // who still has an older large picture isn't blocked by it.
+        if (profile_pic && profile_pic !== current.profile_pic) {
+            const picErr = checkProfilePicSize(profile_pic);
+            if (picErr) { await conn.rollback(); return res.status(400).json({ error: picErr }); }
+        }
 
         // The user's year is preserved on edit, so the roll check is scoped
         // to the row's existing academic_year_id.

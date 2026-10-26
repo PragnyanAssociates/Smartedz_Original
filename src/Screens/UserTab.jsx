@@ -204,7 +204,13 @@ export default function UserTab({ data, fetchData, user }) {
   const handlePicChange = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 3 * 1024 * 1024) return alert('Picture must be under 3 MB.');
+    // Profile pictures are stored inline in the database, so they must stay
+    // small to keep the app fast. Hard cap: 80 KB.
+    if (file.size > 80 * 1024) {
+      alert(`Profile picture must be 80 KB or smaller. This image is ${Math.ceil(file.size / 1024)} KB — please choose or compress a smaller one.`);
+      e.target.value = '';   // let them re-pick the same file after compressing
+      return;
+    }
     const reader = new FileReader();
     reader.onloadend = () => setForm(f => ({ ...f, profile_pic: reader.result }));
     reader.readAsDataURL(file);
@@ -633,7 +639,8 @@ export default function UserTab({ data, fetchData, user }) {
                       </button>
                     )}
                   </div>
-                  <p className="text-[10px] text-zinc-400">JPG/PNG - max 3 MB</p>
+                  <p className="text-[10px] text-zinc-400">JPG/PNG — max 80 KB</p>
+                  <p className="text-[10px] text-amber-600 font-medium">Note: keep the photo under 80 KB. Larger images won't upload — compress or resize first.</p>
                 </div>
               </div>
               <Section title="Account Credentials">
