@@ -627,10 +627,16 @@ app.post('/api/developer/onboard', async (req, res) => {
 });
 
 // ---- 4) EDIT an institution — group / branch / standalone -----------
+//  IMPORTANT: a school can have MORE THAN ONE 'Super Admin' (extra ones are
+//  added in its own Users tab). This edit touches ONLY the single platform
+//  admin it is editing — identified by adminId from the form, or the earliest
+//  admin as a fallback — never every Super Admin in the school. (The old
+//  role-wide UPDATE set them all to one email and crashed on the unique
+//  users.email index: "Duplicate entry '…' for key 'users.email'".)
 app.put('/api/developer/institution/:id', async (req, res) => {
     const { id } = req.params;
     const { name, type, parent_id, logo, school_email, phone, usage_plan, plan_start_date,
-            superAdminName, superAdminEmail, superAdminPassword } = req.body;
+            superAdminName, superAdminEmail, superAdminPassword, adminId } = req.body;
 
     const isGroup = type === 'Group';
     const parentId = isGroup ? null : (parent_id || null);
@@ -640,15 +646,50 @@ app.put('/api/developer/institution/:id', async (req, res) => {
     const conn = await db.getConnection();
     try {
         await conn.beginTransaction();
+
+        // Resolve exactly which admin row to update.
+        let targetAdminId = adminId ? Number(adminId) : null;
+        if (targetAdminId) {
+            const [chk] = await conn.execute(
+                `SELECT id FROM users WHERE id=? AND institutionId=? AND role IN ('Super Admin','Group Admin')`,
+                [targetAdminId, id]
+            );
+            if (chk.length === 0) targetAdminId = null;   // stale/invalid -> fall back
+        }
+        if (!targetAdminId) {
+            const [firstAdmin] = await conn.execute(
+                `SELECT id FROM users WHERE institutionId=? AND role IN ('Super Admin','Group Admin') ORDER BY id ASC LIMIT 1`,
+                [id]
+            );
+            targetAdminId = firstAdmin.length ? firstAdmin[0].id : null;
+        }
+
+        // Block only if the email already belongs to a DIFFERENT user — gives a
+        // clear message instead of a raw duplicate-key error.
+        if (superAdminEmail && targetAdminId) {
+            const [dupe] = await conn.execute(
+                'SELECT id FROM users WHERE email=? AND id<>? LIMIT 1',
+                [superAdminEmail, targetAdminId]
+            );
+            if (dupe.length) {
+                await conn.rollback();
+                return res.status(400).json({ error: 'That login email is already in use by another account.' });
+            }
+        }
+
         await conn.execute(
             'UPDATE institutions SET name=?, type=?, parent_id=?, logo=?, school_email=?, phone=?, usage_plan=?, plan_start_date=? WHERE id=?',
             [name, type, parentId, logo, school_email, phone, plan, startDate, id]
         );
-        // Update whichever platform admin this institution has (group OR branch).
-        await conn.execute(
-            'UPDATE users SET name=?, email=?, password=? WHERE institutionId=? AND role IN ("Super Admin","Group Admin")',
-            [superAdminName, superAdminEmail, superAdminPassword, id]
-        );
+
+        // Update ONLY the one admin we're editing (not the whole role group).
+        if (targetAdminId) {
+            await conn.execute(
+                'UPDATE users SET name=?, email=?, password=? WHERE id=?',
+                [superAdminName, superAdminEmail, superAdminPassword, targetAdminId]
+            );
+        }
+
         if (!isGroup) {
             for (const roleName of SYSTEM_ROLES) {
                 await conn.execute('INSERT IGNORE INTO roles (role_name, institutionId) VALUES (?, ?)', [roleName, id]);
@@ -658,6 +699,9 @@ app.put('/api/developer/institution/:id', async (req, res) => {
         res.json({ success: true });
     } catch (err) {
         await conn.rollback();
+        if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
+            return res.status(400).json({ error: 'That login email is already in use.' });
+        }
         res.status(500).json({ error: err.message });
     } finally { conn.release(); }
 });

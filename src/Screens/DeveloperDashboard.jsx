@@ -102,7 +102,8 @@ export default function DeveloperDashboard() {
   const blank = {
     name: '', type: 'School', parent_id: '', logo: '', school_email: '', phone: '',
     usage_plan: 'Full Time', plan_start_date: todayISO(),
-    superAdminName: '', superAdminEmail: '', superAdminPassword: ''
+    superAdminName: '', superAdminEmail: '', superAdminPassword: '',
+    adminId: null   // which admin row the edit targets (set in openEditModal)
   };
   const [formData, setFormData] = useState(blank);
 
@@ -210,9 +211,12 @@ export default function DeveloperDashboard() {
   };
 
   const openEditModal = (inst) => {
-    const admin = (usersList || []).find(
-      u => u.institutionId === inst.id && (u.role === 'Super Admin' || u.role === 'Group Admin')
-    );
+    // A school can have several Super Admins; the developer "Master Admin"
+    // edit represents the PRIMARY one (earliest created = lowest id), and we
+    // carry its id so the save updates only that row — never all of them.
+    const admin = (usersList || [])
+      .filter(u => u.institutionId === inst.id && (u.role === 'Super Admin' || u.role === 'Group Admin'))
+      .sort((a, b) => a.id - b.id)[0] || null;
     setIsEditMode(true);
     setBranchParent(null);
     setSelectedId(inst.id);
@@ -227,7 +231,8 @@ export default function DeveloperDashboard() {
       plan_start_date: inst.plan_start_date ? new Date(inst.plan_start_date).toISOString().slice(0, 10) : todayISO(),
       superAdminName: admin?.name || '',
       superAdminEmail: admin?.email || '',
-      superAdminPassword: admin?.password || ''
+      superAdminPassword: admin?.password || '',
+      adminId: admin?.id || null
     });
     setShowPassword(false);
     setIsModalOpen(true);
