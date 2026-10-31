@@ -15,10 +15,11 @@ import {
   GraduationCap, 
   Building2, 
   Link,
-  CalendarDays, 
-  User, 
+  CalendarDays,
+  User,
   FileText,
-  Camera
+  Camera,
+  TrendingUp
 } from 'lucide-react';
 import { fmtDate, initials, statusStyle } from './AlumniUtils';
 
@@ -40,6 +41,8 @@ export default function AlumniDetail({ alumniId, canEdit, onBack }) {
   const [saving, setSaving]   = useState(false);
   const [savingPic, setSavingPic] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
+  const [history, setHistory] = useState(null);
+  const [histLoading, setHistLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -52,6 +55,19 @@ export default function AlumniDetail({ alumniId, canEdit, onBack }) {
   }, [alumniId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Year-by-year academic percentage (computed from the marks this person
+  // earned as a student). Read-only summary; failure just hides the panel.
+  useEffect(() => {
+    let cancelled = false;
+    setHistLoading(true);
+    fetch(`${API_BASE_URL}/admin/alumni/academic-history/${alumniId}`)
+      .then(r => r.json())
+      .then(d => { if (!cancelled) setHistory(d); })
+      .catch(() => { if (!cancelled) setHistory(null); })
+      .finally(() => { if (!cancelled) setHistLoading(false); });
+    return () => { cancelled = true; };
+  }, [alumniId]);
 
   const openEdit = () => {
     setForm({
@@ -262,6 +278,65 @@ export default function AlumniDetail({ alumniId, canEdit, onBack }) {
         </Panel>
       </div>
 
+      {/* Academic record — year-by-year % earned while a student here */}
+      <Panel title="Academic Record">
+        {histLoading ? (
+          <div className="h-20 flex items-center justify-center">
+            <Loader2 className="animate-spin size-6 text-primary" />
+          </div>
+        ) : !history || !history.years || history.years.length === 0 ? (
+          <p className="text-sm text-zinc-400 italic">No marks were recorded for this student.</p>
+        ) : (
+          <div className="space-y-4">
+            {/* Overall (all years) headline */}
+            <div className="bg-gradient-to-r from-zinc-50 to-white border border-zinc-200 rounded-lg p-4 flex items-center gap-4 shadow-sm">
+              <div className={`size-11 rounded-md flex items-center justify-center shrink-0 ring-1 ring-inset ${pctStyle(history.overall?.percentage).ring}`}>
+                <TrendingUp className={`size-5 ${pctStyle(history.overall?.percentage).text}`} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Overall · all years</div>
+                <div className="text-sm font-medium text-zinc-500 mt-0.5 tabular-nums">
+                  {Math.round(history.overall?.obtained || 0)} / {Math.round(history.overall?.possible || 0)}
+                </div>
+              </div>
+              <div className={`text-2xl font-bold tabular-nums ${pctStyle(history.overall?.percentage).text}`}>
+                {history.overall?.percentage != null ? `${history.overall.percentage}%` : '—'}
+              </div>
+            </div>
+
+            {/* Per-year rows */}
+            <div className="overflow-x-auto custom-scrollbar">
+              <table className="w-full text-sm border-collapse min-w-[360px]">
+                <thead>
+                  <tr>
+                    <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Year</th>
+                    <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">Class</th>
+                    <th className="px-3 py-2 text-right text-[10px] font-semibold uppercase text-zinc-500 tracking-wider border-b border-zinc-100">%</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100">
+                  {history.years.map((y, i) => {
+                    const st = pctStyle(y.percentage);
+                    return (
+                      <tr key={i} className="hover:bg-zinc-50/50">
+                        <td className="px-3 py-2.5 font-semibold text-zinc-800 whitespace-nowrap">{y.year_name}</td>
+                        <td className="px-3 py-2.5 text-zinc-600 whitespace-nowrap">{y.class_label || '—'}</td>
+                        <td className={`px-3 py-2.5 text-right font-semibold tabular-nums ${st.text}`}>
+                          {y.percentage != null ? `${y.percentage}%` : '—'}
+                          <span className="block text-[10px] font-medium text-zinc-400 tabular-nums">
+                            {Math.round(y.obtained)}/{Math.round(y.possible)}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </Panel>
+
       {/* Notes */}
       {data.notes && (
         <Panel title="Additional Information">
@@ -331,6 +406,14 @@ export default function AlumniDetail({ alumniId, canEdit, onBack }) {
       )}
     </div>
   );
+}
+
+// Percentage → colour band (matches the exports: >=80 green, >=50 blue, else red).
+function pctStyle(p) {
+  if (p == null) return { text: 'text-zinc-400', ring: 'ring-zinc-200 bg-zinc-50' };
+  if (p >= 80) return { text: 'text-emerald-700', ring: 'ring-emerald-600/20 bg-emerald-50' };
+  if (p >= 50) return { text: 'text-blue-700', ring: 'ring-blue-600/20 bg-blue-50' };
+  return { text: 'text-red-700', ring: 'ring-red-600/20 bg-red-50' };
 }
 
 function Panel({ title, children }) {

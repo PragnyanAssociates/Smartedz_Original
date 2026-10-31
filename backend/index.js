@@ -11931,6 +11931,8 @@ io.on('connection', (socket) => {
 //           grouped under year-wise headings. Streamed as .xlsx; the
 //           frontend fetches it as a blob (token via the interceptor) and
 //           saves it, since a raw download link wouldn't carry the token.
+//   23.11 : academic history (year-by-year %) for one alumni, computed from
+//           the marks they earned as a student (student_marks by user_id).
 //
 //   Reuses nowSQL() (Section 16).
 // =====================================================================
@@ -12336,6 +12338,127 @@ app.put('/api/admin/alumni/:id/pic', async (req, res) => {
         await db.execute('UPDATE alumni SET profile_pic = ? WHERE id = ?', [profile_pic, req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 23.11 Academic history (year-by-year %) for one alumni ----------
+//   Year-by-year academic percentage from the marks this person earned as
+//   a student (student_marks keyed by their user_id), plus a pooled overall.
+//
+//   Rules (consistent with the rest of Reports):
+//     • ENTERED exams only — derived exams excluded, so a derived exam and
+//       its source exams never double-count.
+//     • Conducted-only — a subject/exam counts toward the total only where a
+//       mark exists AND a max is configured for that class/exam/subject.
+//     • Each year is labelled with the class the marks were recorded under
+//       (promotion-safe — the class comes from the marks themselves).
+//     • Overall = pooled: total obtained ÷ total possible across all years.
+//
+//   Two-segment path, so it never collides with the one-segment
+//   '/admin/alumni/:instId' list route (same as 'detail/:id', 'pic/:id').
+app.get('/api/admin/alumni/academic-history/:id', async (req, res) => {
+    try {
+        const [al] = await db.execute(
+            'SELECT id, user_id, institutionId FROM alumni WHERE id = ?', [req.params.id]);
+        if (al.length === 0) return res.status(404).json({ error: 'Alumni not found' });
+        if (!sameTenant(req, al[0].institutionId)) return res.status(403).json({ error: 'This record belongs to another institution.' });
+
+        const instId = al[0].institutionId;
+        const studentId = al[0].user_id;
+        const empty = { years: [], overall: { obtained: 0, possible: 0, percentage: null } };
+        // Manually-added alumni with no linked user have no marks history.
+        if (!studentId) return res.json(empty);
+
+        // The student's marks across every year (only rows with a value).
+        const [marks] = await db.execute(
+            `SELECT academic_year_id, class_id, subject_id, exam_type_id, marks_obtained
+               FROM student_marks
+              WHERE student_id = ? AND marks_obtained IS NOT NULL`,
+            [studentId]
+        );
+        if (marks.length === 0) return res.json(empty);
+
+        // Entered exam types only (exclude derived).
+        const [etypes] = await db.execute(
+            "SELECT id FROM exam_types WHERE institutionId = ? AND kind <> 'derived'", [instId]);
+        const enteredOk = new Set(etypes.map(r => r.id));
+
+        // Max marks, nested [class_id][exam_type_id] = { default, bySubject }.
+        const [maxRows] = await db.execute(
+            `SELECT m.class_id, m.exam_type_id, m.subject_id, m.max_marks
+               FROM exam_max_marks m JOIN exam_types t ON t.id = m.exam_type_id
+              WHERE t.institutionId = ?`, [instId]);
+        const maxByClass = {};
+        maxRows.forEach(r => {
+            const cm = (maxByClass[r.class_id] = maxByClass[r.class_id] || {});
+            const em = (cm[r.exam_type_id] = cm[r.exam_type_id] || { default: null, bySubject: {} });
+            if (Number(r.subject_id) === 0) em.default = r.max_marks;
+            else em.bySubject[r.subject_id] = r.max_marks;
+        });
+        const maxFor = (cid, etId, subId) => {
+            const em = maxByClass[cid]?.[etId];
+            if (!em) return undefined;
+            const sp = em.bySubject ? em.bySubject[subId] : undefined;
+            if (sp !== undefined && sp !== null) return Number(sp);
+            if (em.default !== undefined && em.default !== null) return Number(em.default);
+            return undefined;
+        };
+
+        // Year names + ordering, and class labels.
+        const [years] = await db.execute(
+            'SELECT id, name, startDate FROM academic_years WHERE institutionId = ?', [instId]);
+        const yearMeta = {}; years.forEach(y => { yearMeta[y.id] = { name: y.name, start: y.startDate || '' }; });
+        const [classes] = await db.execute(
+            'SELECT id, className, section FROM classes WHERE institutionId = ?', [instId]);
+        const classLabel = {}; classes.forEach(c => { classLabel[c.id] = `${c.className}${c.section ? ' - ' + c.section : ''}`; });
+
+        // Accumulate obtained / possible per year, tracking the class most of
+        // the year's marks were under (for the label).
+        const acc = {};   // yearId -> { obtained, possible, classCounts }
+        for (const m of marks) {
+            if (!enteredOk.has(m.exam_type_id)) continue;
+            const mx = maxFor(m.class_id, m.exam_type_id, m.subject_id);
+            if (mx === undefined || mx === null || mx <= 0) continue;
+            const val = parseFloat(m.marks_obtained);
+            if (isNaN(val)) continue;
+            const yk = m.academic_year_id == null ? 'null' : String(m.academic_year_id);
+            const a = (acc[yk] = acc[yk] || { obtained: 0, possible: 0, classCounts: {} });
+            a.obtained += val; a.possible += mx;
+            a.classCounts[m.class_id] = (a.classCounts[m.class_id] || 0) + 1;
+        }
+
+        const r1 = (n) => Math.round(n * 10) / 10;
+        const yearsOut = Object.keys(acc).map(yk => {
+            const a = acc[yk];
+            let cid = null, best = -1;
+            Object.keys(a.classCounts).forEach(c => { if (a.classCounts[c] > best) { best = a.classCounts[c]; cid = c; } });
+            return {
+                academic_year_id: yk === 'null' ? null : Number(yk),
+                year_name: yearMeta[yk]?.name || (yk === 'null' ? 'Unassigned' : String(yk)),
+                class_label: classLabel[cid] || '',
+                obtained: r1(a.obtained),
+                possible: r1(a.possible),
+                percentage: a.possible > 0 ? r1((a.obtained / a.possible) * 100) : null,
+                _start: yearMeta[yk]?.start || ''
+            };
+        })
+        .sort((x, y) => String(y._start).localeCompare(String(x._start)))   // newest first
+        .map(({ _start, ...y }) => y);
+
+        const totObt = yearsOut.reduce((s, y) => s + y.obtained, 0);
+        const totPos = yearsOut.reduce((s, y) => s + y.possible, 0);
+
+        res.json({
+            years: yearsOut,
+            overall: {
+                obtained: r1(totObt),
+                possible: r1(totPos),
+                percentage: totPos > 0 ? r1((totObt / totPos) * 100) : null
+            }
+        });
+    } catch (err) {
+        console.error('[alumni academic-history]', err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 
