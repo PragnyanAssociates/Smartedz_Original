@@ -855,21 +855,6 @@ app.delete('/api/group/:groupId/branch/:id', async (req, res) => {
 //       degrades to a count-only signature instead of throwing.
 //     • archive-status wraps each module independently — one module
 //       erroring no longer 500s the entire response.
-//
-//   MIGRATION (run once — safe to re-run):
-//     CREATE TABLE IF NOT EXISTS archive_downloads (
-//       id INT AUTO_INCREMENT PRIMARY KEY,
-//       institutionId INT NOT NULL,
-//       academic_year_id INT NOT NULL,
-//       module VARCHAR(32) NOT NULL,
-//       fingerprint VARCHAR(255) NOT NULL,
-//       downloaded_by INT NULL,
-//       downloaded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-//       UNIQUE KEY uq_archive (institutionId, academic_year_id, module)
-//     );
-//     -- optional, lets user edits invalidate the users archive:
-//     -- ALTER TABLE users ADD COLUMN updated_at TIMESTAMP NULL
-//     --   DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;
 // =====================================================================
 
 const ARCHIVE_MODULES = ['users', 'attendance', 'marks', 'performance'];
@@ -5904,7 +5889,8 @@ app.get('/api/admin/reports/class-summaries/:instId', async (req, res) => {
 // === 17.F REPORT CARDS ===============================================
 // =====================================================================
 
-async function buildReportCard(studentId) {
+// after
+async function buildReportCard(studentId, yearId = null) {
     const [sRows] = await db.execute(
         `SELECT u.id, u.name, u.roll_no, u.admission_no, u.class_id, u.section,
                 u.institutionId, c.className
@@ -5915,20 +5901,49 @@ async function buildReportCard(studentId) {
     );
     if (sRows.length === 0) return null;
     const student = sRows[0];
-
+ 
     const [instRows] = await db.execute(
         'SELECT id, name, logo, school_email, phone, type FROM institutions WHERE id = ?',
         [student.institutionId]
     );
     const institution = instRows[0] || null;
-
-    const [yearRows] = await db.execute(
-        `SELECT * FROM academic_years
-          WHERE institutionId = ? AND isActive = 1 LIMIT 1`,
-        [student.institutionId]
-    );
-    const academicYear = yearRows[0] || null;
-
+ 
+    // Resolve the academic year: honour the requested one (if it's this
+    // institution's), otherwise fall back to the active year.
+    let academicYear = null;
+    if (yearId) {
+        const [yr] = await db.execute(
+            'SELECT * FROM academic_years WHERE id = ? AND institutionId = ? LIMIT 1',
+            [yearId, student.institutionId]
+        );
+        academicYear = yr[0] || null;
+    }
+    if (!academicYear) {
+        const [yr] = await db.execute(
+            `SELECT * FROM academic_years WHERE institutionId = ? AND isActive = 1 LIMIT 1`,
+            [student.institutionId]
+        );
+        academicYear = yr[0] || null;
+    }
+ 
+    // The student may have been in a different class that year (promotion).
+    // Exam types / subjects / max-marks / grade bands are per-class, and marks
+    // carry the class they were entered under — so build the card around the
+    // class the student actually had that year. Fall back to the current class.
+    let classIdForYear = student.class_id;
+    if (academicYear) {
+        const [hc] = await db.execute(
+            'SELECT class_id FROM student_marks WHERE student_id = ? AND academic_year_id = ? AND class_id IS NOT NULL LIMIT 1',
+            [studentId, academicYear.id]
+        );
+        if (hc.length && hc[0].class_id != null) classIdForYear = hc[0].class_id;
+    }
+    // Show the historical class name/section on the card, not the current one.
+    if (classIdForYear !== student.class_id) {
+        const [cn] = await db.execute('SELECT className, section FROM classes WHERE id = ?', [classIdForYear]);
+        if (cn.length) { student.className = cn[0].className; student.section = cn[0].section; }
+    }
+ 
     const [allSubjectsRC] = await db.execute(
         'SELECT id, name FROM subjects WHERE institutionId = ? ORDER BY name',
         [student.institutionId]
@@ -5947,30 +5962,30 @@ async function buildReportCard(studentId) {
     const subjectsFiltered = allSubjectsRC.filter(s => {
         const all = anyLinkRC[s.id];
         if (!all || all.size === 0) return true;
-        return (reportLinkRC[s.id] || new Set()).has(student.class_id);
+        return (reportLinkRC[s.id] || new Set()).has(classIdForYear);
     });
-
+ 
     // Apply the admin-set display order for this student's class (A-Z fallback).
     const [ordRowsRC] = await db.execute(
         'SELECT subject_id, sort_order FROM class_subject_order WHERE class_id = ?',
-        [student.class_id]
+        [classIdForYear]
     );
     const subjects = orderedSubjects(subjectsFiltered, ordRowsRC);
-
+ 
     const eng = await loadExamEngine(student.institutionId);
     const examTypes = eng.examTypes;
     // Per class + exam grade bands for this student's class.
     const [gbRows] = await db.execute(
         'SELECT exam_type_id, min_pct, max_pct, label FROM exam_grade_bands WHERE institutionId = ? AND class_id = ? ORDER BY exam_type_id, min_pct DESC',
-        [student.institutionId, student.class_id]);
+        [student.institutionId, classIdForYear]);
     const bandsByExam = {};
     gbRows.forEach(b => { (bandsByExam[b.exam_type_id] = bandsByExam[b.exam_type_id] || []).push({ min_pct: Number(b.min_pct), max_pct: (b.max_pct == null ? null : Number(b.max_pct)), label: b.label }); });
     const [maxRows] = await db.execute(
         'SELECT exam_type_id, subject_id, max_marks FROM exam_max_marks WHERE class_id = ?',
-        [student.class_id]
+        [classIdForYear]
     );
     const maxMarks = buildMaxMarksMap(maxRows);
-
+ 
     let marks = [];
     if (academicYear) {
         const [mRows] = await db.execute(
@@ -5980,7 +5995,7 @@ async function buildReportCard(studentId) {
         );
         marks = mRows;
     }
-
+ 
     // ---- Resolve derived exams for this student, per subject ------------
     const enteredMaxForRC = (examId, subjectId) => {
         const m = maxMarks[examId];
@@ -5995,7 +6010,7 @@ async function buildReportCard(studentId) {
         if (r.marks_obtained !== null && r.marks_obtained !== undefined)
             obtMapRC[`${r.subject_id}:${r.exam_type_id}`] = Number(r.marks_obtained);
     });
-
+ 
     const derivedMaxBySubRC = {};
     if (examTypes.some(t => t.kind === 'derived')) {
         subjects.forEach(sub => {
@@ -6014,12 +6029,12 @@ async function buildReportCard(studentId) {
             Object.keys(derivedMaxBySubRC[eid]).forEach(sid => { maxMarks[eid].bySubject[sid] = derivedMaxBySubRC[eid][sid]; });
         });
     }
-
+ 
     // Display set: honour show_on_report; drop exams the class doesn't use.
     // Attach is_result (leaf of the graph) + the exam's grade bands.
     const examTypesForClass = examTypes
         .filter(t => {
-            if (Number(t.class_id) !== Number(student.class_id)) return false;
+            if (Number(t.class_id) !== Number(classIdForYear)) return false;
             if (!t.show_on_report) return false;
             if (t.kind === 'derived') return subjects.some(s => (derivedMaxBySubRC[t.id]?.[s.id] || 0) > 0);
             return maxMarks[t.id] !== undefined;
@@ -6030,7 +6045,7 @@ async function buildReportCard(studentId) {
             is_result: !eng.graph.usedAsSource.has(t.id),
             grade_bands: bandsByExam[t.id] || null
         }));
-
+ 
     let attendance = [];
     if (academicYear) {
         try {
@@ -6041,7 +6056,7 @@ async function buildReportCard(studentId) {
                    JOIN users u ON u.id = a.user_id
                   WHERE u.class_id = ? AND a.academic_year_id = ?
                   GROUP BY ym`,
-                [student.class_id, academicYear.id]
+                [classIdForYear, academicYear.id]
             );
             const [pRows] = await db.execute(
                 `SELECT DATE_FORMAT(attendance_date, '%Y-%m') AS ym,
@@ -6051,12 +6066,12 @@ async function buildReportCard(studentId) {
                   GROUP BY ym`,
                 [studentId, academicYear.id]
             );
-
+ 
             const monthNames = ['January','February','March','April','May','June',
                                 'July','August','September','October','November','December'];
             const wMap = {}; wRows.forEach(r => { wMap[r.ym] = Number(r.working) || 0; });
             const pMap = {}; pRows.forEach(r => { pMap[r.ym] = Number(r.present) || 0; });
-
+ 
             const months = Array.from(new Set([...Object.keys(wMap), ...Object.keys(pMap)])).sort();
             attendance = months.map(ym => {
                 const m = parseInt(ym.slice(5, 7), 10);
@@ -6070,7 +6085,7 @@ async function buildReportCard(studentId) {
             attendance = [];
         }
     }
-
+ 
     return {
         student,
         institution,
@@ -6085,7 +6100,7 @@ async function buildReportCard(studentId) {
 
 app.get('/api/admin/reports/student/:studentId', async (req, res) => {
     try {
-        const card = await buildReportCard(req.params.studentId);
+        const card = await buildReportCard(req.params.studentId, req.query.academic_year_id);
         if (!card) return res.status(404).json({ error: 'Student not found' });
         if (!sameTenant(req, card.student.institutionId)) return res.status(403).json({ error: 'This student belongs to another institution.' });
         res.json(card);
@@ -6746,7 +6761,18 @@ app.get('/api/admin/performance/student/:studentId', async (req, res) => {
         if (!u[0].class_id) {
             return res.json({ me: u[0], class: null, students: [], subjects: [], examTypes: [], maxMarks: {}, assignments: [], marks: [] });
         }
-        const data = await loadClassPerformance(u[0].class_id, req.query.academic_year_id);
+ 
+        // Use the class the student was actually in for the selected year
+        // (promotion-safe); fall back to their current class.
+        const yearId = await resolveYearId(u[0].institutionId, req.query.academic_year_id);
+        let classId = u[0].class_id;
+        const [hc] = await db.execute(
+            'SELECT class_id FROM student_marks WHERE student_id = ? AND academic_year_id = ? AND class_id IS NOT NULL LIMIT 1',
+            [u[0].id, yearId]
+        );
+        if (hc.length && hc[0].class_id != null) classId = hc[0].class_id;
+ 
+        const data = await loadClassPerformance(classId, yearId);
         if (!data) return res.status(404).json({ error: 'Class not found' });
         res.json({ me: u[0], ...data });
     } catch (err) { res.status(500).json({ error: err.message }); }

@@ -63,6 +63,33 @@ export default function Directory() {
     return () => { alive = false; };
   }, [user]);
 
+  // Academic years — powers the history filter in the profile detail.
+  // First preference: whatever the main /admin/data payload already carries
+  // (so no extra round-trip when it's bundled). Otherwise fetch the list.
+  const [academicYears, setAcademicYears] = useState([]);
+  useEffect(() => {
+    if (Array.isArray(data.academicYears) && data.academicYears.length) {
+      setAcademicYears(data.academicYears);
+      return;
+    }
+    if (!user?.institutionId) return;
+    let alive = true;
+    (async () => {
+      try {
+        // ⚠️ CONFIRM THIS ENDPOINT. It should return this institution's
+        // academic years (the same list the Academics tab shows). If your
+        // route differs, change this one line. On any failure the list
+        // stays empty and the filter simply doesn't render — nothing breaks.
+        const res = await fetch(`${API_BASE_URL}/admin/academics/${user.institutionId}`);
+        const rows = await res.json();
+        if (alive && Array.isArray(rows)) setAcademicYears(rows);
+      } catch (e) {
+        if (alive) setAcademicYears([]);
+      }
+    })();
+    return () => { alive = false; };
+  }, [data.academicYears, user]);
+
   // Active (non-alumni) members only — passed-out students are excluded.
   const activeUsers = useMemo(
     () => (data.users || []).filter(u => (u.status || '').toLowerCase() !== 'alumni'),
@@ -102,6 +129,7 @@ export default function Directory() {
         seedProfile={selected}
         classes={data.classes || []}
         attendanceRoles={attendanceRoles}
+        academicYears={academicYears}
         onBack={() => setSelected(null)}
       />
     );
@@ -235,13 +263,14 @@ export default function Directory() {
 const DIRECTORY_GUIDE = {
   title: 'Institution Directory',
   steps: [
-    ['1 \u00b7 Who you see', 'Every active member of the school \u2014 students, teachers and staff. Passed-out (alumni) students are left out, so this is always the current roll.'],
-    ['2 \u00b7 Filter by role', 'The tabs across the top switch between All and each role (Student, Teacher, and any custom roles your school has set up).'],
-    ['3 \u00b7 Narrow students by class', 'Pick the Student tab and a class filter appears \u2014 handy for finding one class quickly. Students are listed roll-number-wise; everyone else alphabetically.'],
-    ['4 \u00b7 Search', 'Type a name, username or email to jump straight to someone across every role at once.'],
-    ['5 \u00b7 Open a profile', 'Click any card for the full profile: Basic Info for everyone, plus Performance and Attendance for students and teachers.'],
+    ['1 · Who you see', 'Every active member of the school — students, teachers and staff. Passed-out (alumni) students are left out, so this is always the current roll.'],
+    ['2 · Filter by role', 'The tabs across the top switch between All and each role (Student, Teacher, and any custom roles your school has set up).'],
+    ['3 · Narrow students by class', 'Pick the Student tab and a class filter appears — handy for finding one class quickly. Students are listed roll-number-wise; everyone else alphabetically.'],
+    ['4 · Search', 'Type a name, username or email to jump straight to someone across every role at once.'],
+    ['5 · Open a profile', 'Click any card for the full profile: Basic Info for everyone, plus Performance and Attendance for students and teachers.'],
+    ['6 · View past years', 'Inside a profile, the Academic Year dropdown (top-right) defaults to the current year. Switch it to see that person’s Attendance, Performance and Report Card for a previous year.'],
   ],
-  note: 'Inside a profile, the Performance and Attendance tabs are read-only views of the same live data as those modules (current academic year). The Attendance tab appears for Students, Teachers and any role turned on in Attendance Settings. To change a mark or a day, use the Reports or Attendance module \u2014 the profile updates on its own.'
+  note: 'Inside a profile, the Performance and Attendance tabs are read-only views of the same live data as those modules. The Academic Year filter defaults to the current year; pick an earlier year to view history. The Attendance tab appears for Students, Teachers and any role turned on in Attendance Settings. To change a mark or a day, use the Reports or Attendance module — the profile updates on its own.'
 };
 
 function DirectoryHelp({ className = '' }) {
