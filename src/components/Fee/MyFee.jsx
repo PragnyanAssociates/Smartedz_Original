@@ -188,7 +188,7 @@ export default function MyFee({ user }) {
 
         {tab === 'history' && <PaymentHistory payments={payments} titleFor={titleFor} onView={viewProof} />}
 
-        {tab === 'alerts' && <StudentAlerts user={user} annualFee={annualFee} otherFees={otherFees} payments={payments} />}
+        {tab === 'alerts' && <StudentAlerts user={user} student={student} annualFee={annualFee} otherFees={otherFees} payments={payments} />}
       </div>
 
       {/* Proof modal */}
@@ -690,9 +690,19 @@ function PaymentHistory({ payments, titleFor, onView }) {
   );
 }
 
-function StudentAlerts({ user, annualFee, otherFees, payments }) {
+function StudentAlerts({ user, student, annualFee, otherFees, payments }) {
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  // Fill the message tokens for a clean, personal read. The server fills them
+  // for the notification bell; here we fill the copy shown in this tab (which
+  // comes from the alert log as the raw template) using this student's own
+  // class and name, so a parent never sees a raw "{class}".
+  const fillTokens = (msg) => (msg || '')
+    .replace(/\{class\}/gi, student?.className || 'your class')
+    .replace(/\{due_date\}/gi, 'the due date')
+    .replace(/\{amount\}/gi, 'the fee amount')
+    .replace(/\{student\}/gi, student?.name || 'your ward');
 
   useEffect(() => {
     let alive = true;
@@ -772,24 +782,37 @@ function StudentAlerts({ user, annualFee, otherFees, payments }) {
 
       <div className="ring-1 ring-black/5 shadow-sm rounded-lg bg-white overflow-hidden">
         <div className="p-4 border-b border-zinc-100 flex items-center gap-2">
-          <Send className="size-4 text-primary" />
+          <BellRing className="size-4 text-primary" />
           <h3 className="text-sm font-semibold text-zinc-900">Messages from School</h3>
+          {messages.length > 0 && (
+            <span className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-600/20">
+              {messages.length} alert{messages.length === 1 ? '' : 's'}
+            </span>
+          )}
         </div>
         {loading ? (
           <div className="h-24 flex items-center justify-center"><div className="size-6 border-4 border-zinc-200 border-t-primary rounded-full animate-spin" /></div>
         ) : messages.length === 0 ? (
           <p className="px-5 py-8 text-center text-xs text-zinc-500 italic">No messages yet.</p>
         ) : (
-          <div className="divide-y divide-zinc-100">
+          <div className="p-4 space-y-3">
             {messages.map(m => (
-              <div key={m.id} className="px-5 py-3">
-                <div className="flex items-center justify-between gap-2">
-                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${m.alert_type === 'auto' ? 'bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-600/20' : 'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-600/20'}`}>
-                    {m.alert_type === 'auto' ? <Zap className="size-3" /> : <Send className="size-3" />} {m.alert_type}
-                  </span>
-                  <span className="text-[11px] font-medium text-zinc-400">{fmtIST(m.created_at, true)}</span>
+              <div key={m.id}
+                className="rounded-md border-l-4 border-amber-400 bg-amber-50/70 ring-1 ring-inset ring-amber-600/15 p-3 flex items-start gap-3 animate-in fade-in slide-in-from-bottom-1 duration-300">
+                <div className="size-8 rounded-md bg-amber-100 text-amber-600 ring-1 ring-inset ring-amber-600/20 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="size-4" />
                 </div>
-                {m.message && <p className="text-sm font-medium text-zinc-700 mt-2">{m.message}</p>}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${m.alert_type === 'auto' ? 'bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-600/20' : 'bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-600/20'}`}>
+                      {m.alert_type === 'auto' ? <Zap className="size-3" /> : <Send className="size-3" />} {m.alert_type === 'auto' ? 'Auto reminder' : 'Reminder'}
+                    </span>
+                    <span className="text-[11px] font-medium text-amber-700/80 flex items-center gap-1 shrink-0">
+                      <Clock className="size-3" /> {fmtIST(m.created_at, true)}
+                    </span>
+                  </div>
+                  {m.message && <p className="text-sm font-medium text-amber-900 mt-1.5 leading-relaxed break-words">{fillTokens(m.message)}</p>}
+                </div>
               </div>
             ))}
           </div>

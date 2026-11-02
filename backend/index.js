@@ -13983,14 +13983,36 @@ app.get('/api/fees/dashboard/:institutionId', async (req, res) => {
 // Rules and the log are per academic year: each year has its own fees,
 // its own due dates and therefore its own reminders.
 //
-// NOTE: actual delivery is wired to the Notifications module (Section 25)
-// later — each "send" currently records a log row + recipient count. The
-// hook points are marked `// TODO: Notifications fan-out`.
+// Each "send" records a log row (for the admin Alerts tab + the student's
+// My Fee -> Alerts list) AND fans out real notifications to every recipient
+// student via createNotifications (Section 25), so the alert also lands in
+// the notification bell. Message tokens ({class}, {due_date}, ...) are filled
+// before the notification goes out so parents never see a raw "{token}".
 // ============================================================
 
 function _fa_ymd(d) {
   const x = new Date(d);
   return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+}
+
+// Fill the message tokens we can resolve at send time, so a parent never sees
+// a raw "{token}" in their notification. Per-student tokens ({amount},
+// {student}) fall back to friendly generics; {class} and {due_date} are filled
+// with the real values where known.
+function _fa_fillTokens(msg, { classLabel, dueDate, amount, student } = {}) {
+  if (!msg) return msg || '';
+  return String(msg)
+    .replace(/\{class\}/gi, classLabel || 'your class')
+    .replace(/\{due_date\}/gi, dueDate || 'the due date')
+    .replace(/\{amount\}/gi, amount || 'the fee amount')
+    .replace(/\{student\}/gi, student || 'your ward');
+}
+
+// DD/MM/YYYY for a YYYY-MM-DD string (used in auto reminder bodies).
+function _fa_fmtDue(ymd) {
+  if (!ymd) return '';
+  const [y, m, d] = String(ymd).split('-');
+  return (d && m && y) ? `${d}/${m}/${y}` : String(ymd);
 }
 
 // ---- Config: auto rules + recent send log -----------------------
@@ -14091,23 +14113,46 @@ app.post('/api/fees/alerts/manual/send', async (req, res) => {
       return res.status(400).json({ error: 'You can only send reminders for the active academic year.' });
     }
 
-    let sql = `SELECT COUNT(*) AS c FROM users
-                WHERE institutionId = ?
-                  AND LOWER(role) LIKE '%student%'
-                  AND LOWER(COALESCE(status, 'active')) = 'active'`;
-    const params = [institutionId];
-    if (class_id) { sql += ' AND class_id = ?'; params.push(class_id); }
-    const [[cnt]] = await db.execute(sql, params);
+    // Recipients in scope (one class, or the whole school) — the ids, so we
+    // can both count them for the log AND fan out real notifications.
+    let usql = `SELECT id FROM users
+                 WHERE institutionId = ?
+                   AND LOWER(role) LIKE '%student%'
+                   AND LOWER(COALESCE(status, 'active')) = 'active'`;
+    const uparams = [institutionId];
+    if (class_id) { usql += ' AND class_id = ?'; uparams.push(class_id); }
+    const [stuRows] = await db.execute(usql, uparams);
+    const recipientIds = stuRows.map(r => r.id);
+
+    // A readable class label for the {class} token.
+    let classLabel = 'all classes';
+    if (class_id) {
+      const [cr] = await db.execute('SELECT className, section FROM classes WHERE id = ? LIMIT 1', [class_id]);
+      if (cr.length) classLabel = `${cr[0].className}${cr[0].section ? ' - ' + cr[0].section : ''}`;
+    }
 
     await db.execute(
       `INSERT INTO fee_alert_log
          (institutionId, academic_year_id, alert_type, class_id, audience, message, recipient_count, sent_by, sent_by_name)
        VALUES (?, ?, 'manual', ?, ?, ?, ?, ?, ?)`,
-      [institutionId, academic_year_id ?? null, class_id ?? null, class_id ? 'class' : 'all', message || null, cnt.c, userId ?? null, userName ?? null]
+      [institutionId, academic_year_id ?? null, class_id ?? null, class_id ? 'class' : 'all', message || null, recipientIds.length, userId ?? null, userName ?? null]
     );
 
-    // TODO: Notifications fan-out (Section 25) — one row per student in scope.
-    res.json({ success: true, recipient_count: cnt.c });
+    // 🔔 Real notifications so the alert lands in each student's bell too — the
+    //    same fan-out Attendance / Marks use. Wrapped so a notify hiccup can
+    //    never fail the send; the log row above is already written.
+    try {
+      if (recipientIds.length) {
+        await createNotifications({
+          institutionId, recipientIds, type: 'fee',
+          title: 'Fee Reminder',
+          body: _fa_fillTokens(message, { classLabel }),
+          link: 'fees', entity_id: null, actor_id: userId ?? null
+        });
+      }
+    } catch (e) { console.warn('[fee alert manual notify]', e.message); }
+
+    res.json({ success: true, recipient_count: recipientIds.length });
   } catch (err) {
     console.error('alerts/manual send error:', err);
     res.status(500).json({ error: err.message });
@@ -14160,14 +14205,23 @@ app.post('/api/fees/alerts/run', async (req, res) => {
       if (classIds.length === 0) continue;
 
       const ph = classIds.map(() => '?').join(',');
-      const [[cnt]] = await db.execute(
-        `SELECT COUNT(*) AS c FROM users
+      const [stuRows] = await db.execute(
+        `SELECT id FROM users
           WHERE institutionId = ? AND class_id IN (${ph})
             AND LOWER(role) LIKE '%student%'
             AND LOWER(COALESCE(status, 'active')) = 'active'`,
         [rule.institutionId, ...classIds]
       );
-      if (!cnt.c) continue;
+      const recipientIds = stuRows.map(r => r.id);
+      if (!recipientIds.length) continue;
+
+      // Resolve the {class} + {due_date} tokens for a clean notification body.
+      let classLabel = 'all classes';
+      if (rule.class_id) {
+        const [cr] = await db.execute('SELECT className, section FROM classes WHERE id = ? LIMIT 1', [rule.class_id]);
+        if (cr.length) classLabel = `${cr[0].className}${cr[0].section ? ' - ' + cr[0].section : ''}`;
+      }
+      const filledMsg = _fa_fillTokens(rule.message, { classLabel, dueDate: _fa_fmtDue(t) });
 
       const dedupe = `auto_${rule.id}_${t}`;
       try {
@@ -14175,10 +14229,21 @@ app.post('/api/fees/alerts/run', async (req, res) => {
           `INSERT INTO fee_alert_log
              (institutionId, academic_year_id, alert_type, rule_id, class_id, audience, message, recipient_count, dedupe_key)
            VALUES (?, ?, 'auto', ?, ?, ?, ?, ?, ?)`,
-          [rule.institutionId, rule.academic_year_id ?? null, rule.id, rule.class_id ?? null, rule.class_id ? 'class' : 'all', rule.message || null, cnt.c, dedupe]
+          [rule.institutionId, rule.academic_year_id ?? null, rule.id, rule.class_id ?? null, rule.class_id ? 'class' : 'all', rule.message || null, recipientIds.length, dedupe]
         );
         logged++;
-        // TODO: Notifications fan-out (Section 25) for the matched students.
+        // 🔔 Fan out to the matched students' notification bells. This only
+        //    runs on a FRESH insert — a duplicate dedupe_key throws above and
+        //    skips straight to the catch, so a rule never double-notifies in a
+        //    day. The notify itself is wrapped so it can't abort the batch.
+        try {
+          await createNotifications({
+            institutionId: rule.institutionId, recipientIds, type: 'fee',
+            title: 'Fee Reminder',
+            body: filledMsg,
+            link: 'fees', entity_id: rule.id, actor_id: null
+          });
+        } catch (e) { console.warn('[fee alert auto notify]', e.message); }
       } catch (e) {
         // Duplicate dedupe_key -> already fired for this rule today; skip.
       }
