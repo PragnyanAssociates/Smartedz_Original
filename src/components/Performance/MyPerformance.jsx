@@ -14,36 +14,37 @@ import { PerfBar, BarRow, ChartModal } from './PerfBar';
 //  Bands: 100-80 green, 80-50 blue, 50-0 red. Active academic year only.
 // =====================================================================
 
-export default function MyPerformance() {
+export default function MyPerformance({ academicYearId = null }) {
   const { user } = useAuth();
   const role = (user?.role || '').toLowerCase();
   const isStudent = role.includes('student');
 
   // Teachers (and any non-student) see their teaching performance.
-  if (!isStudent) return <TeacherMyPerformance user={user} />;
-  return <StudentMyPerformance user={user} />;
+  if (!isStudent) return <TeacherMyPerformance user={user} academicYearId={academicYearId} />;
+  return <StudentMyPerformance user={user} academicYearId={academicYearId} />;
 }
 
 // =====================================================================
 //  TEACHER's own performance uses /performance/teacher/:id
 // =====================================================================
-function TeacherMyPerformance({ user }) {
+function TeacherMyPerformance({ user, academicYearId = null }) {
   const [data, setData]       = useState(null);
   const [loading, setLoading] = useState(true);
   const [examTypeId, setExam] = useState('all');
   const [showAnalysis, setShowAnalysis] = useState(false);
+  const yq = academicYearId ? `?academic_year_id=${academicYearId}` : '';
 
   const load = useCallback(async () => {
     if (!user?.id) return;
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/performance/teacher/${user.id}`);
+      const res = await fetch(`${API_BASE_URL}/admin/performance/teacher/${user.id}${yq}`);
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || 'Failed to load');
       setData(d);
     } catch (e) { alert(e.message); setData(null); }
     setLoading(false);
-  }, [user]);
+  }, [user, yq]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -204,24 +205,25 @@ function TeacherMyPerformance({ user }) {
 // =====================================================================
 //  STUDENT's own performance Topper vs You
 // =====================================================================
-function StudentMyPerformance({ user }) {
+function StudentMyPerformance({ user, academicYearId = null }) {
   const [data, setData]         = useState(null);
   const [loading, setLoading]   = useState(true);
   const [examTypeId, setExam]   = useState('overall');
   const [subjectId, setSubject] = useState('all');
   const [showAnalysis, setShowAnalysis] = useState(false);
+  const yq = academicYearId ? `?academic_year_id=${academicYearId}` : '';
 
   const load = useCallback(async () => {
     if (!user?.id) return;
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/performance/student/${user.id}`);
+      const res = await fetch(`${API_BASE_URL}/admin/performance/student/${user.id}${yq}`);
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || 'Failed to load');
       setData(d);
     } catch (e) { alert(e.message); setData(null); }
     setLoading(false);
-  }, [user]);
+  }, [user, yq]);
 
   useEffect(() => { load(); }, [load]);
 

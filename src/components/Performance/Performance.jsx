@@ -1,10 +1,10 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { usePermissions } from '../../Screens/PermissionsContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
   TrendingUp, Users, GraduationCap, User, CalendarRange, AlertTriangle,
-  HelpCircle, X, ShieldCheck
+  HelpCircle, X, ShieldCheck, ChevronDown
 } from 'lucide-react';
 
 import StudentPerformance from './StudentPerformance';
@@ -20,8 +20,8 @@ import MyPerformance      from './MyPerformance';
 //   * Student                               -> My Performance only
 //
 //  All data comes from the Reports module's student_marks table and is
-//  scoped to the ACTIVE academic year (the backend resolves it; the
-//  YearBadge here surfaces which year that is). Percentages count ONLY
+//  scoped to the academic year chosen in the header's YearFilter (default
+//  = the active year; the backend resolves it). Percentages count ONLY
 //  exams that have actually been marked - the same rule the report cards
 //  use - so a student measured on 2 of 10 planned exams is scored on
 //  those 2, not dragged down by exams that never happened.
@@ -64,6 +64,36 @@ export default function Performance() {
     ? (isStudent ? 'mineStudent' : 'mineTeacher')
     : activeTab;
 
+  // Academic years for the history filter. The whole module is read-only
+  // analytics, so the chosen year flows into every tab. The list comes from
+  // /admin/data (every role can read it), so a year a Super Admin deletes
+  // drops out of the dropdown on the next load. Default = the active year.
+  const [academicYears, setAcademicYears]   = useState([]);
+  const [activeYearId, setActiveYearId]     = useState(null);
+  const [selectedYearId, setSelectedYearId] = useState(null);
+  const [yearKnown, setYearKnown]           = useState(false);
+
+  useEffect(() => {
+    if (!user?.institutionId) return;
+    let cancelled = false;
+    fetch(`${API_BASE_URL}/admin/data/${user.institutionId}`)
+      .then(r => r.json())
+      .then(d => {
+        if (cancelled) return;
+        const list = Array.isArray(d.academicYears) ? d.academicYears : [];
+        const sorted = [...list].sort((a, b) =>
+          String(b.startDate || '').localeCompare(String(a.startDate || '')) || (b.id - a.id));
+        setAcademicYears(sorted);
+        const active = list.find(y => y.isActive) || null;
+        setActiveYearId(active ? active.id : null);
+        setSelectedYearId(prev =>
+          (prev != null && sorted.some(y => String(y.id) === String(prev))) ? prev : (active ? active.id : null));
+        setYearKnown(true);
+      })
+      .catch(() => { if (!cancelled) setYearKnown(true); });
+    return () => { cancelled = true; };
+  }, [user]);
+
   return (
     <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
 
@@ -79,7 +109,8 @@ export default function Performance() {
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <PerformanceHelp topic={helpTopic} />
-          <YearBadge institutionId={user?.institutionId} />
+          <YearFilter years={academicYears} value={selectedYearId} activeId={activeYearId}
+            onChange={setSelectedYearId} yearKnown={yearKnown} />
         </div>
       </header>
 
@@ -97,55 +128,71 @@ export default function Performance() {
       )}
 
       <div className="flex-1 flex flex-col">
-        {activeTab === 'students' && <StudentPerformance />}
-        {activeTab === 'teachers' && <TeacherPerformance />}
-        {activeTab === 'mine'     && <MyPerformance />}
+        {activeTab === 'students' && <StudentPerformance academicYearId={selectedYearId} />}
+        {activeTab === 'teachers' && <TeacherPerformance academicYearId={selectedYearId} />}
+        {activeTab === 'mine'     && <MyPerformance academicYearId={selectedYearId} />}
       </div>
     </div>
   );
 }
 
 // =====================================================================
-//  YearBadge - the active academic year this screen is reporting on.
-//  Same source/behaviour as the Reports screen.
+//  YearFilter - academic-year dropdown. Defaults to the active year
+//  (tagged "Current") and lists every year the institution has. All
+//  performance analytics are read-only, so the chosen year scopes every
+//  tab. Shown to every role, so anyone can view a past year's figures.
+//  A year a Super Admin deletes is simply absent from the list.
 // =====================================================================
-function YearBadge({ institutionId }) {
-  const [yearName, setYearName] = useState('');
-  const [yearKnown, setYearKnown] = useState(false);
+function YearFilter({ years = [], value, activeId, onChange, yearKnown = true }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
 
   useEffect(() => {
-    if (!institutionId) return;
-    let cancelled = false;
-    fetch(`${API_BASE_URL}/admin/data/${institutionId}`)
-      .then(r => r.json())
-      .then(d => {
-        if (cancelled) return;
-        const years = d.academicYears || [];
-        const active = years.find(y => y.isActive);
-        setYearName(active ? active.name : '');
-        setYearKnown(true);
-      })
-      .catch(() => { if (!cancelled) setYearKnown(true); });
-    return () => { cancelled = true; };
-  }, [institutionId]);
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, []);
 
   if (!yearKnown) return null;
-
-  if (!yearName) {
+  if (years.length === 0) {
     return (
       <div className="inline-flex items-center gap-2 bg-red-50 text-red-700 ring-1 ring-red-500/20 rounded-md px-3 h-9 text-xs font-semibold shrink-0"
-        title="Set a year active under Manage Logins -> Academics Year">
+        title="Create an academic year under Manage Logins -> Academics Year">
         <AlertTriangle className="size-4" />
-        <span>No active academic year</span>
+        <span>No academic years</span>
       </div>
     );
   }
 
+  const selected = years.find(y => String(y.id) === String(value))
+    || years.find(y => String(y.id) === String(activeId))
+    || years[0];
+
   return (
-    <div className="inline-flex items-center gap-2 bg-primary/5 text-primary ring-1 ring-primary/20 rounded-md px-3 h-9 text-xs font-semibold shrink-0"
-      title="All performance is scoped to this year (set under Manage Logins -> Academics Year)">
-      <CalendarRange className="size-4" />
-      <span>Academic Year: {yearName}</span>
+    <div className="relative shrink-0" ref={ref}>
+      <button onClick={() => setOpen(o => !o)}
+        className="inline-flex items-center gap-1.5 h-9 pl-3 pr-2.5 rounded-md bg-primary/5 ring-1 ring-primary/20 text-primary text-xs font-semibold hover:bg-primary/10 transition-colors whitespace-nowrap">
+        <CalendarRange className="size-4 shrink-0" />
+        Academic Year: {selected ? selected.name : '—'}
+        <ChevronDown className={`size-3.5 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 mt-1.5 z-30 w-56 max-h-72 overflow-y-auto custom-scrollbar bg-white rounded-md ring-1 ring-black/5 shadow-lg py-1 animate-in fade-in slide-in-from-top-1 duration-150">
+          {years.map(y => {
+            const isSel = String(y.id) === String(selected?.id);
+            return (
+              <button key={y.id} onClick={() => { onChange(y.id); setOpen(false); }}
+                className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between gap-2 hover:bg-zinc-50 transition-colors ${isSel ? 'text-primary font-semibold' : 'text-zinc-700'}`}>
+                <span className="truncate">{y.name}</span>
+                {String(y.id) === String(activeId) && (
+                  <span className="text-[9px] font-semibold uppercase tracking-wider bg-emerald-50 text-emerald-600 ring-1 ring-emerald-600/20 px-1.5 py-0.5 rounded shrink-0">Current</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

@@ -49,8 +49,11 @@ function teacherTotals(teacher, { classId = 'all', subjectId = 'all', examTypeId
   return { obtained, possible, pct: possible > 0 ? roundPct((obtained / possible) * 100) : null, breakdown };
 }
 
-export default function TeacherPerformance() {
+export default function TeacherPerformance({ academicYearId = null }) {
   const { user } = useAuth();
+
+  // Scopes the teacher-performance fetch to the year chosen in the header.
+  const yq = academicYearId ? `?academic_year_id=${academicYearId}` : '';
 
   const [data, setData]         = useState({ examTypes: [], teachers: [] });
   const [loading, setLoading]   = useState(true);
@@ -89,13 +92,13 @@ export default function TeacherPerformance() {
     setLoading(true);
     setExpanded(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/performance/teachers/${user.institutionId}`);
+      const res = await fetch(`${API_BASE_URL}/admin/performance/teachers/${user.institutionId}${yq}`);
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || 'Failed to load');
       setData({ examTypes: d.examTypes || [], teachers: d.teachers || [] });
     } catch (e) { alert(e.message); setData({ examTypes: [], teachers: [] }); }
     setLoading(false);
-  }, [user]);
+  }, [user, yq]);
 
   useEffect(() => { load(); }, [load]);
 

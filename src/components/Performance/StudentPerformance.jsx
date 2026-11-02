@@ -20,9 +20,13 @@ import { PerfBar, BarRow, ChartModal } from './PerfBar';
 //  Bands: 100-80 green, 80-50 blue, 50-0 red. Active academic year only.
 // =====================================================================
 
-export default function StudentPerformance() {
+export default function StudentPerformance({ academicYearId = null }) {
   const { user } = useAuth();
   const { isAllAccess } = usePermissions();
+
+  // Appended to the class-performance fetches so the whole view reflects the
+  // year chosen in the Performance header. Null → backend uses the active year.
+  const yq = academicYearId ? `?academic_year_id=${academicYearId}` : '';
 
   // A non-admin teacher only sees the classes they're assigned to.
   const restrictToTeacher = !isAllAccess && (user?.role || '').toLowerCase().includes('teacher');
@@ -67,7 +71,7 @@ export default function StudentPerformance() {
     setLoading(true);
     setExpanded(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/performance/class/${classId}`);
+      const res = await fetch(`${API_BASE_URL}/admin/performance/class/${classId}${yq}`);
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || 'Failed to load');
       setDataset(d);
@@ -75,7 +79,7 @@ export default function StudentPerformance() {
       setSubjectId('all');
     } catch (e) { alert(e.message); setDataset(null); }
     setLoading(false);
-  }, [classId]);
+  }, [classId, yq]);
 
   useEffect(() => { loadClass(); }, [loadClass]);
 
@@ -331,6 +335,7 @@ export default function StudentPerformance() {
           initialClassId={classId}
           initialExam={examTypeId}
           initialSubject={subjectId}
+          academicYearId={academicYearId}
           onClose={() => setShowAnalysis(false)} />
       )}
 
@@ -359,20 +364,21 @@ export default function StudentPerformance() {
 //  Analysis modal — its own Class / Criterion / Subject / Sort filters,
 //  with a teacher-details banner when a single subject is selected.
 // =====================================================================
-function StudentAnalysisModal({ classes, initialClassId, initialExam, initialSubject, onClose }) {
+function StudentAnalysisModal({ classes, initialClassId, initialExam, initialSubject, academicYearId = null, onClose }) {
   const [classId, setClassId]   = useState(String(initialClassId || (classes[0]?.id ?? '')));
   const [criterion, setCriterion] = useState(initialExam || 'overall');
   const [subjectId, setSubjectId] = useState(initialSubject || 'all');
   const [sortOrder, setSortOrder] = useState('high');   // 'high' | 'low'
   const [dataset, setDataset]   = useState(null);
   const [loading, setLoading]   = useState(true);
+  const yq = academicYearId ? `?academic_year_id=${academicYearId}` : '';
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     (async () => {
       try {
-        const res = await fetch(`${API_BASE_URL}/admin/performance/class/${classId}`);
+        const res = await fetch(`${API_BASE_URL}/admin/performance/class/${classId}${yq}`);
         const d = await res.json();
         if (cancelled) return;
         if (!res.ok) throw new Error(d.error || 'Failed to load');
@@ -385,7 +391,7 @@ function StudentAnalysisModal({ classes, initialClassId, initialExam, initialSub
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [classId]);
+  }, [classId, yq]);
 
   const ranked = useMemo(
     () => sortRows(buildStudentTotals(dataset, { examTypeId: criterion, subjectId }), sortOrder),
