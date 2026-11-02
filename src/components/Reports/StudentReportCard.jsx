@@ -9,9 +9,13 @@ import ReportCardView, { LastPrintedStamp } from './ReportCardView';
 //  Read-only. Reuses the shared ReportCardView, which carries the
 //  one-page print stylesheet. The last-printed stamp sits beside the
 //  Print button here.
+//
+//  academicYearId (from the Reports header's year dropdown) lets the
+//  student view a PAST year's card. When omitted/null the backend falls
+//  back to the active year, so default behaviour is unchanged.
 // =====================================================================
 
-export default function StudentReportCard() {
+export default function StudentReportCard({ academicYearId = null }) {
   const { user } = useAuth();
   const [card, setCard]       = useState(null);
   const [loading, setLoading] = useState(true);
@@ -21,7 +25,8 @@ export default function StudentReportCard() {
     if (!user?.id) return;
     setLoading(true);
     setError(null);
-    fetch(`${API_BASE_URL}/reports/my-report-card/${user.id}`)
+    const q = academicYearId ? `?academic_year_id=${academicYearId}` : '';
+    fetch(`${API_BASE_URL}/reports/my-report-card/${user.id}${q}`)
       .then(async r => {
         const d = await r.json();
         if (!r.ok) throw new Error(d.error || 'Could not load report card');
@@ -30,7 +35,7 @@ export default function StudentReportCard() {
       .then(d => setCard(d))
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
-  }, [user]);
+  }, [user, academicYearId]);
 
   const handlePrint = () => window.print();
 

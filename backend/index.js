@@ -6109,7 +6109,7 @@ app.get('/api/admin/reports/student/:studentId', async (req, res) => {
 
 app.get('/api/reports/my-report-card/:studentId', async (req, res) => {
     try {
-        const card = await buildReportCard(req.params.studentId);
+        const card = await buildReportCard(req.params.studentId, req.query.academic_year_id);
         if (!card) return res.status(404).json({ error: 'Student not found' });
         if (!sameTenant(req, card.student.institutionId)) return res.status(403).json({ error: 'This student belongs to another institution.' });
         res.json(card);

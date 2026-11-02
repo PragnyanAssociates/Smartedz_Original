@@ -8,8 +8,12 @@ import ReportCards from './ReportCards';
 // =====================================================================
 //  ClassList - overview table of classes with performance summaries.
 //  Clicking a class drills into MarksEntry or ReportCards depending
-//  on `mode`. Summaries are scoped to the active academic year and
-//  exclude alumni students (handled by the backend).
+//  on `mode`. Summaries exclude alumni students (handled by the backend).
+//
+//  `academicYearId` (passed only for the Report Cards tab) scopes the
+//  class summaries AND the drilled-in report cards to the chosen year, so
+//  the whole cards view can show a past year. Marks Entry passes no year,
+//  so it stays on the active year (where marks are written).
 // =====================================================================
 
 // Format a numeric mark without trailing decimals: 20.00 -> 20, 19.50 -> 19.5
@@ -20,22 +24,26 @@ const fmtNum = (v) => {
   return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(2)));
 };
 
-export default function ClassList({ mode, canManage }) {
+export default function ClassList({ mode, canManage, academicYearId = null }) {
   const { user } = useAuth();
   const [summaries, setSummaries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [picked, setPicked] = useState(null);   // {class_id, class_group}
 
+  // Scope the class summaries to the selected year (cards tab). Null → the
+  // backend falls back to the active year, so Marks Entry is unchanged.
+  const yq = academicYearId ? `?academic_year_id=${academicYearId}` : '';
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/reports/class-summaries/${user.institutionId}`);
+      const res = await fetch(`${API_BASE_URL}/admin/reports/class-summaries/${user.institutionId}${yq}`);
       const data = await res.json();
       setSummaries(Array.isArray(data) ? data : []);
     } catch (e) { console.error(e); }
     setLoading(false);
-  }, [user]);
+  }, [user, yq]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -44,7 +52,7 @@ export default function ClassList({ mode, canManage }) {
     return <MarksEntry classInfo={picked} canManage={canManage} onBack={() => setPicked(null)} />;
   }
   if (picked && mode === 'cards') {
-    return <ReportCards classInfo={picked} onBack={() => setPicked(null)} />;
+    return <ReportCards classInfo={picked} academicYearId={academicYearId} onBack={() => setPicked(null)} />;
   }
 
   const filtered = summaries.filter(s =>

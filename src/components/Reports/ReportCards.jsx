@@ -40,7 +40,10 @@ const fmtDateTime = (iso) => {
   } catch { return null; }
 };
 
-export default function ReportCards({ classInfo, onBack }) {
+export default function ReportCards({ classInfo, onBack, academicYearId = null }) {
+  // Appended to every report-card fetch so the whole class view reflects the
+  // year chosen in the Reports header. Null → backend uses the active year.
+  const yq = academicYearId ? `?academic_year_id=${academicYearId}` : '';
   const { user } = useAuth();
   const [students, setStudents] = useState([]);   // [{id, name, roll_no}]
   const [loading, setLoading]   = useState(true);
@@ -85,13 +88,13 @@ export default function ReportCards({ classInfo, onBack }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/reports/class-data/${classInfo.class_id}`);
+      const res = await fetch(`${API_BASE_URL}/admin/reports/class-data/${classInfo.class_id}${yq}`);
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || 'Failed to load');
       setStudents(d.students || []);
     } catch (e) { alert(e.message); }
     setLoading(false);
-  }, [classInfo]);
+  }, [classInfo, yq]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -99,7 +102,7 @@ export default function ReportCards({ classInfo, onBack }) {
   const openCard = async (studentId) => {
     setCardLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/reports/student/${studentId}`);
+      const res = await fetch(`${API_BASE_URL}/admin/reports/student/${studentId}${yq}`);
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || 'Failed to load report card');
       setCard(d);
@@ -137,7 +140,7 @@ export default function ReportCards({ classInfo, onBack }) {
     const cards = [];
     for (let i = 0; i < roster.length; i++) {
       try {
-        const res = await fetch(`${API_BASE_URL}/admin/reports/student/${roster[i].id}`);
+        const res = await fetch(`${API_BASE_URL}/admin/reports/student/${roster[i].id}${yq}`);
         const d = await res.json();
         if (res.ok) cards.push(d);
       } catch { /* skip a failed one */ }
