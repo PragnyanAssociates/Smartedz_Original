@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   GraduationCap, Users as UsersIcon, UserCog, ClipboardCheck, History,
   Search, ChevronLeft, ChevronDown, BarChart3, CalendarCheck, CalendarX,
@@ -31,11 +31,19 @@ export default function Attendance() {
 
   const canMark = isSuper || isTeacher || can('Attendance', 'edit');
 
-  // ---- Active academic year (for the badge only) ---------------------
+  // ---- Academic years (badge + history filter) -----------------------
+  //  The filter defaults to the ACTIVE (running) year. Every role can read
+  //  the list from /admin/data, so students and teachers get the dropdown
+  //  too and can view their own history for any past year. When a Super
+  //  Admin deletes a year it simply drops out of this list on next load.
   const [activeYearName, setActiveYearName] = useState('');
   const [yearKnown, setYearKnown] = useState(false);
   const [help, setHelp] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const [academicYears, setAcademicYears]   = useState([]);
+  const [activeYearId, setActiveYearId]     = useState(null);
+  const [selectedYearId, setSelectedYearId] = useState(null);
 
   useEffect(() => {
     if (!user?.institutionId) return;
@@ -43,13 +51,30 @@ export default function Attendance() {
       try {
         const res = await fetch(`${API_BASE_URL}/admin/data/${user.institutionId}`);
         const data = await res.json();
-        const list = data.academicYears || [];
-        const active = list.find(y => y.isActive);
+        const list = Array.isArray(data.academicYears) ? data.academicYears : [];
+        // Newest first; the active one is tagged "Current" in the dropdown.
+        const sorted = [...list].sort((a, b) =>
+          String(b.startDate || '').localeCompare(String(a.startDate || '')) || (b.id - a.id));
+        setAcademicYears(sorted);
+        const active = list.find(y => y.isActive) || null;
         setActiveYearName(active ? (active.name || '') : '');
+        setActiveYearId(active ? active.id : null);
+        // Default the filter to the active year the first time we learn it;
+        // keep the user's choice if they've already picked one. If the chosen
+        // year was deleted, fall back to the active year.
+        setSelectedYearId(prev => {
+          if (prev != null && sorted.some(y => String(y.id) === String(prev))) return prev;
+          return active ? active.id : null;
+        });
       } catch (e) { console.error('academic year load:', e); }
       setYearKnown(true);
     })();
   }, [user]);
+
+  const selectedYearName = useMemo(() => {
+    const y = academicYears.find(x => String(x.id) === String(selectedYearId));
+    return y ? (y.name || '') : activeYearName;
+  }, [academicYears, selectedYearId, activeYearName]);
 
   // ---- Attendance role settings (which roles get a tab, + order) -----
   const [roleSettings, setRoleSettings] = useState([]);
@@ -93,7 +118,7 @@ export default function Attendance() {
   const cat = isRoleTab ? 'role' : active.key;
   const roleName = isRoleTab ? active.label : null;
 
-  const YearBadge = () => {
+  const ActiveYearBadge = () => {
     if (!yearKnown) return null;
     if (!activeYearName) {
       return (
@@ -132,10 +157,12 @@ export default function Attendance() {
           <Header subtitle="Your attendance history" />
           <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
             <HelpButton />
-            <YearBadge />
+            <YearFilter years={academicYears} value={selectedYearId} activeId={activeYearId}
+              onChange={setSelectedYearId} yearKnown={yearKnown} />
           </div>
         </div>
-        <AttendanceHistory userId={user.id} userName={user.name} selfOnly yearName={activeYearName} />
+        <AttendanceHistory userId={user.id} userName={user.name} selfOnly
+          academicYearId={selectedYearId} yearName={selectedYearName} />
         {help && <HelpModal topic="self" onClose={() => setHelp(false)} />}
       </div>
     );
@@ -148,7 +175,13 @@ export default function Attendance() {
         <div className="flex items-center gap-2 self-start sm:self-auto shrink-0 flex-wrap">
           {isSuper && <SettingsButton />}
           <HelpButton />
-          <YearBadge />
+          {/* Marking always targets the ACTIVE year, so the picker is only a
+              filter in History mode; in Mark mode we show the active-year
+              badge instead to avoid marking into a past year by mistake. */}
+          {mode === 'mark'
+            ? <ActiveYearBadge />
+            : <YearFilter years={academicYears} value={selectedYearId} activeId={activeYearId}
+                onChange={setSelectedYearId} yearKnown={yearKnown} />}
         </div>
       </div>
 
@@ -194,7 +227,8 @@ export default function Attendance() {
       {mode === 'mark' ? (
         <RosterMarker key={active.key} category={cat} role={roleName} label={active.label} />
       ) : (
-        <HistoryPicker key={active.key} category={cat} role={roleName} label={active.label} yearName={activeYearName} />
+        <HistoryPicker key={active.key} category={cat} role={roleName} label={active.label}
+          academicYearId={selectedYearId} yearName={selectedYearName} />
       )}
 
       {help && <HelpModal topic={mode === 'mark' ? 'mark' : 'history'} onClose={() => setHelp(false)} />}
@@ -211,6 +245,65 @@ function Header({ subtitle }) {
       <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Attendance</h1>
       <p className="text-sm text-zinc-500 mt-0.5 max-w-[56ch]">{subtitle}</p>
     </header>
+  );
+}
+
+// =====================================================================
+//  YearFilter — the academic-year dropdown used in History views.
+//  Defaults to the active year (tagged "Current"); lists every year the
+//  institution has. Shown to every role, so anyone can view their own
+//  history for a past year. A deleted year is simply absent from `years`.
+// =====================================================================
+function YearFilter({ years = [], value, activeId, onChange, yearKnown = true }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, []);
+
+  if (!yearKnown) return null;
+  if (years.length === 0) {
+    return (
+      <div className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-red-50 ring-1 ring-red-500/20 text-red-700 text-xs font-semibold whitespace-nowrap"
+        title="Create an academic year under Manage Logins → Academics Year">
+        <AlertTriangle className="size-3.5" /> No academic years
+      </div>
+    );
+  }
+
+  const selected = years.find(y => String(y.id) === String(value))
+    || years.find(y => String(y.id) === String(activeId))
+    || years[0];
+
+  return (
+    <div className="relative shrink-0" ref={ref}>
+      <button onClick={() => setOpen(o => !o)}
+        className="inline-flex items-center gap-1.5 h-9 pl-3 pr-2.5 rounded-md bg-primary/5 ring-1 ring-primary/15 text-primary text-xs font-semibold hover:bg-primary/10 transition-colors whitespace-nowrap">
+        <CalendarRange className="size-3.5 shrink-0" />
+        Academic Year: {selected ? selected.name : '—'}
+        <ChevronDown className={`size-3.5 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 mt-1.5 z-30 w-56 max-h-72 overflow-y-auto custom-scrollbar bg-white rounded-md ring-1 ring-black/5 shadow-lg py-1 animate-in fade-in slide-in-from-top-1 duration-150">
+          {years.map(y => {
+            const isSel = String(y.id) === String(selected?.id);
+            return (
+              <button key={y.id} onClick={() => { onChange(y.id); setOpen(false); }}
+                className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between gap-2 hover:bg-zinc-50 transition-colors ${isSel ? 'text-primary font-semibold' : 'text-zinc-700'}`}>
+                <span className="truncate">{y.name}</span>
+                {String(y.id) === String(activeId) && (
+                  <span className="text-[9px] font-semibold uppercase tracking-wider bg-emerald-50 text-emerald-600 ring-1 ring-emerald-600/20 px-1.5 py-0.5 rounded shrink-0">Current</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -280,7 +373,7 @@ function HelpModal({ topic, onClose }) {
 // =====================================================================
 //  HistoryPicker
 // =====================================================================
-function HistoryPicker({ category, role = null, label, yearName }) {
+function HistoryPicker({ category, role = null, label, academicYearId, yearName }) {
   const { user } = useAuth();
   const { isAllAccess } = usePermissions();
   const roleLc = (user?.role || '').toLowerCase();
@@ -358,12 +451,13 @@ function HistoryPicker({ category, role = null, label, yearName }) {
       let url = `${API_BASE_URL}/admin/attendance/roster/${user.institutionId}?category=${category}&date=${today}`;
       if (category === 'students' && classId) url += `&class_id=${classId}`;
       if (category === 'role' && role) url += `&role=${encodeURIComponent(role)}`;
+      if (academicYearId) url += `&academic_year_id=${academicYearId}`;
       const res = await fetch(url);
       const data = await res.json();
       setUsers(data.users || []);
     } catch (e) { console.error(e); }
     setLoading(false);
-  }, [user, category, role, classId, awaitingClass]);
+  }, [user, category, role, classId, awaitingClass, academicYearId]);
 
   useEffect(() => {
     if (!teacherViewingTeachers) loadRoster();
@@ -380,12 +474,13 @@ function HistoryPicker({ category, role = null, label, yearName }) {
       if (r.from && r.to) url += `&from=${r.from}&to=${r.to}`;
       if (category === 'students' && classId) url += `&class_id=${classId}`;
       if (category === 'role' && role) url += `&role=${encodeURIComponent(role)}`;
+      if (academicYearId) url += `&academic_year_id=${academicYearId}`;
       const res = await fetch(url);
       const data = await res.json();
       setOverview(data);
     } catch (e) { console.error(e); setOverview(null); }
     setOvLoading(false);
-  }, [user, category, role, classId, resolveRange, teacherViewingTeachers, awaitingClass]);
+  }, [user, category, role, classId, resolveRange, teacherViewingTeachers, awaitingClass, academicYearId]);
 
   useEffect(() => { loadOverview(); }, [loadOverview]);
 
@@ -454,7 +549,8 @@ function HistoryPicker({ category, role = null, label, yearName }) {
   }, [sortedAll, statsById, serialMap, workingDays, analysisSort]);
 
   if (teacherViewingTeachers) {
-    return <AttendanceHistory userId={user.id} userName={user.name} selfOnly yearName={yearName} />;
+    return <AttendanceHistory userId={user.id} userName={user.name} selfOnly
+      academicYearId={academicYearId} yearName={yearName} />;
   }
 
   if (picked) {
@@ -464,7 +560,8 @@ function HistoryPicker({ category, role = null, label, yearName }) {
           className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
           <ChevronLeft className="size-4" /> Back to {catName} list
         </button>
-        <AttendanceHistory userId={picked.id} userName={picked.name} yearName={yearName} />
+        <AttendanceHistory userId={picked.id} userName={picked.name}
+          academicYearId={academicYearId} yearName={yearName} />
       </div>
     );
   }

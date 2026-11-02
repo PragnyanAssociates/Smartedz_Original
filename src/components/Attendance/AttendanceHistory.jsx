@@ -41,7 +41,7 @@ const STATUS_META = {
   A: { label: 'Absent',  text: 'text-red-600',     bg: 'bg-red-50',     ring: 'ring-red-600/20',     icon: XCircle }
 };
 
-export default function AttendanceHistory({ userId, userName, selfOnly = false, yearName = '' }) {
+export default function AttendanceHistory({ userId, userName, selfOnly = false, academicYearId = null, yearName = '' }) {
   const { user: me } = useAuth();
   const [mode, setMode] = useState('monthly');
   const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
@@ -80,8 +80,10 @@ export default function AttendanceHistory({ userId, userName, selfOnly = false, 
     setLoading(true);
     try {
       const r = resolveRange();
-      let url = `${API_BASE_URL}/admin/attendance/history/${userId}?`;
-      if (r.from && r.to) url += `from=${r.from}&to=${r.to}`;
+      const qp = [];
+      if (r.from && r.to) qp.push(`from=${r.from}`, `to=${r.to}`);
+      if (academicYearId) qp.push(`academic_year_id=${academicYearId}`);
+      const url = `${API_BASE_URL}/admin/attendance/history/${userId}?${qp.join('&')}`;
       const res = await fetch(url);
       const data = await res.json();
       setRows(data.rows || []);
@@ -89,7 +91,7 @@ export default function AttendanceHistory({ userId, userName, selfOnly = false, 
     } catch (e) { console.error(e); }
     setLoading(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId, mode, day, month, from, to]);
+  }, [userId, mode, day, month, from, to, academicYearId]);
 
   useEffect(() => { load(); }, [load]);
 
