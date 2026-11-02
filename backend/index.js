@@ -14147,7 +14147,9 @@ app.post('/api/fees/alerts/manual/send', async (req, res) => {
           institutionId, recipientIds, type: 'fee',
           title: 'Fee Reminder',
           body: _fa_fillTokens(message, { classLabel }),
-          link: 'fees', entity_id: null, actor_id: userId ?? null
+          // 'FeeManagement' is the module id from Modules.js — clicking the
+          // notification opens it (My Fee for a student).
+          link: 'FeeManagement', entity_id: null, actor_id: userId ?? null
         });
       }
     } catch (e) { console.warn('[fee alert manual notify]', e.message); }
@@ -14241,7 +14243,8 @@ app.post('/api/fees/alerts/run', async (req, res) => {
             institutionId: rule.institutionId, recipientIds, type: 'fee',
             title: 'Fee Reminder',
             body: filledMsg,
-            link: 'fees', entity_id: rule.id, actor_id: null
+            // 'FeeManagement' is the Modules.js id — opens My Fee on click.
+            link: 'FeeManagement', entity_id: rule.id, actor_id: null
           });
         } catch (e) { console.warn('[fee alert auto notify]', e.message); }
       } catch (e) {

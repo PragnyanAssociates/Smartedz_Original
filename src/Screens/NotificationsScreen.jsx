@@ -57,7 +57,11 @@ const LINK_ALIASES = {
   'manage logins':      'manage-login',
   'academic calendar':  'academic-calendar',
   profile:              'profile',
-  notifications:        'notifications'
+  notifications:        'notifications',
+  // Fee reminders: new ones already send 'FeeManagement'; this also catches
+  // any earlier ones that were stored with 'fees' so they navigate too.
+  fees:                 'FeeManagement',
+  fee:                  'FeeManagement'
 };
 const resolveLink = (link) => {
   if (!link) return link;
