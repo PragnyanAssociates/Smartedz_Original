@@ -17404,6 +17404,75 @@ app.delete('/api/admin/library/issues/:id', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ---------------------------------------------------------------------
+//  DUE-DATE REMINDERS — notify a borrower as their book's due date nears.
+//
+//  Call this daily from the scheduler (the same way the fee reminders are
+//
+//  >> Want a SINGLE reminder exactly 3 days before (instead of daily across
+//     the last 3 days)? Change `BETWEEN 0 AND 3` below to `= 3`.
+// ---------------------------------------------------------------------
+
+// DD/MM/YYYY from a DATE value (mysql2 may hand back a Date or a string).
+function _lib_fmtDue(v) {
+    if (!v) return '';
+    const s = (v instanceof Date) ? v.toISOString().slice(0, 10) : String(v).slice(0, 10);
+    const [y, m, d] = s.split('-');
+    return (d && m && y) ? `${d}/${m}/${y}` : s;
+}
+
+app.post('/api/admin/library/due-reminders/run', async (req, res) => {
+    const { institutionId } = req.body || {};
+    try {
+        let sql = `
+            SELECT i.id, i.book_id, i.member_user_id, i.institutionId, i.due_date,
+                   DATEDIFF(i.due_date, CURDATE()) AS days_left,
+                   b.title AS book_title
+              FROM library_issues i
+              JOIN library_books b ON b.id = i.book_id
+             WHERE i.status = 'issued'
+               AND i.member_user_id IS NOT NULL
+               AND i.due_date IS NOT NULL
+               AND DATEDIFF(i.due_date, CURDATE()) BETWEEN 0 AND 3
+               AND (i.last_due_reminder IS NULL OR i.last_due_reminder < CURDATE())`;
+        const params = [];
+        if (institutionId) { sql += ' AND i.institutionId = ?'; params.push(institutionId); }
+        const [rows] = await db.execute(sql, params);
+
+        let sent = 0;
+        for (const r of rows) {
+            const days = Number(r.days_left);
+            const dueStr = _lib_fmtDue(r.due_date);
+            const title = 'Library book due soon';
+            const body = days <= 0
+                ? `"${r.book_title}" is due today (${dueStr}). Please return it on time.`
+                : `"${r.book_title}" is due in ${days} day${days === 1 ? '' : 's'} (on ${dueStr}). Please return it on time.`;
+            try {
+                await createNotifications({
+                    institutionId: r.institutionId,
+                    recipientIds: [r.member_user_id],
+                    type: 'library',
+                    title,
+                    body,
+                    // 'Library' is the module id from Modules.js — opens the
+                    // Library screen when the notification is clicked.
+                    link: 'Library',
+                    entity_id: r.book_id,
+                    actor_id: null
+                });
+                // Mark reminded today so the next run in the same day skips it.
+                await db.execute('UPDATE library_issues SET last_due_reminder = CURDATE() WHERE id = ?', [r.id]);
+                sent++;
+            } catch (e) { console.warn('[library due reminder]', e.message); }
+        }
+
+        res.json({ success: true, candidates: rows.length, reminders_sent: sent });
+    } catch (err) {
+        console.error('library/due-reminders error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 
 
 

@@ -5,7 +5,7 @@ import {
   Bell, BookOpen, CalendarDays, Award, CheckCheck, Trash2, Loader2, Inbox,
   FlaskConical, BookMarked, Video, MessagesSquare, BookText, FileText,
   Users, Images, Utensils, ClipboardList, CalendarClock, ClipboardCheck,
-  IndianRupee
+  IndianRupee, Library
 } from 'lucide-react';
 
 // =====================================================================
@@ -39,7 +39,8 @@ const TYPE_META = {
   ptm:            { icon: Users,         bg: 'bg-fuchsia-50', text: 'text-fuchsia-600', ring: 'ring-inset ring-fuchsia-600/20', label: 'PTM' },
   gallery:        { icon: Images,        bg: 'bg-pink-50',    text: 'text-pink-600',    ring: 'ring-inset ring-pink-600/20',    label: 'Gallery' },
   meals:          { icon: Utensils,      bg: 'bg-orange-50',  text: 'text-orange-600',  ring: 'ring-inset ring-orange-600/20',  label: 'Food Menu' },
-  fee:            { icon: IndianRupee,   bg: 'bg-amber-50',   text: 'text-amber-600',   ring: 'ring-inset ring-amber-600/20',   label: 'Fee Reminder' }
+  fee:            { icon: IndianRupee,   bg: 'bg-amber-50',   text: 'text-amber-600',   ring: 'ring-inset ring-amber-600/20',   label: 'Fee Reminder' },
+  library:        { icon: Library,       bg: 'bg-rose-50',    text: 'text-rose-600',    ring: 'ring-inset ring-rose-600/20',    label: 'Library' }
 };
 const FALLBACK_META = { icon: Bell, bg: 'bg-zinc-100', text: 'text-zinc-600', ring: 'ring-inset ring-zinc-200', label: 'Notification' };
 
