@@ -499,7 +499,7 @@ export default function SyllabusManagement({
                           <div className="flex items-center justify-end gap-2">
                             <button onClick={() => onOpenSyllabus(row)} title="Manage Syllabus"
                               className="h-8 px-3 rounded-md font-semibold text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 hover:text-emerald-800 transition-colors flex items-center justify-center gap-1.5 shadow-sm">
-                              <BarChart3 className="size-3.5" /> Manage
+                              <BarChart3 className="size-3.5" /> view
                             </button>
                             {canEdit && (
                               <div className="flex items-center gap-1 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity ml-1">
