@@ -25,7 +25,12 @@ const natCmp = (a, b) =>
 
 // Compute a teacher's obtained/possible (+ per class/subject breakdown)
 // under the given class/subject/exam filters.
-function teacherTotals(teacher, { classId = 'all', subjectId = 'all', examTypeId = 'all' } = {}) {
+//
+// Exam types are stored PER CLASS, so the same assessment (UT-1, AT-1 …)
+// exists once per class with its own id. A teacher spans many classes, so we
+// match the exam filter by NAME, not id: picking "UT-1" counts every class's
+// UT-1. `nameById` maps each exam_type_id -> its name for that lookup.
+function teacherTotals(teacher, { classId = 'all', subjectId = 'all', examName = 'all', nameById = null } = {}) {
   let obtained = 0, possible = 0;
   const breakdown = [];
   (teacher.detail || []).forEach(d => {
@@ -33,7 +38,10 @@ function teacherTotals(teacher, { classId = 'all', subjectId = 'all', examTypeId
     if (subjectId !== 'all' && String(d.subject_id) !== String(subjectId)) return;
     let o = 0, p = 0;
     (d.exams || []).forEach(e => {
-      if (examTypeId !== 'all' && String(e.exam_type_id) !== String(examTypeId)) return;
+      if (examName !== 'all') {
+        const nm = nameById ? (nameById.get(String(e.exam_type_id)) || '') : '';
+        if (nm !== examName) return;
+      }
       o += e.obtained; p += e.possible;
     });
     if (p > 0) {
@@ -64,7 +72,7 @@ export default function TeacherPerformance({ academicYearId = null }) {
   // Filters
   const [classId, setClassId]       = useState('all');
   const [subjectId, setSubjectId]   = useState('all');
-  const [examTypeId, setExamTypeId] = useState('all');
+  const [examName, setExamName]     = useState('all');    // exam NAME, not id (see note below)
   const [sortOrder, setSortOrder]   = useState('high');   // 'high' | 'low'
 
   // Class order (Ascending / Descending) set school-wide on the Classes tab,
@@ -119,17 +127,45 @@ export default function TeacherPerformance({ academicYearId = null }) {
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [data]);
 
+  // Exam types repeat once per class (each class has its own UT-1, AT-1 …).
+  // nameById resolves an exam_type_id -> its name; examOptions is the list
+  // collapsed to ONE entry per distinct name, so the dropdown is clean and a
+  // single "UT-1" filters every class's UT-1 together.
+  const examNameById = useMemo(() => {
+    const m = new Map();
+    (data.examTypes || []).forEach(t => m.set(String(t.id), t.name));
+    return m;
+  }, [data]);
+
+  const examOptions = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    (data.examTypes || []).forEach(t => {
+      const nm = (t.name || '').trim();
+      const key = nm.toLowerCase();
+      if (!nm || seen.has(key)) return;
+      seen.add(key);
+      out.push({ value: nm, label: nm });
+    });
+    return out;
+  }, [data]);
+
+  // If the chosen exam name no longer exists after a reload, fall back to All.
+  useEffect(() => {
+    if (examName !== 'all' && !examOptions.some(o => o.value === examName)) setExamName('all');
+  }, [examOptions, examName]);
+
   // Rank teachers by filtered totals
   const ranked = useMemo(() => {
     const rows = data.teachers
       .map(t => {
-        const tot = teacherTotals(t, { classId, subjectId, examTypeId });
+        const tot = teacherTotals(t, { classId, subjectId, examName, nameById: examNameById });
         return { ...t, ...tot };
       })
       .filter(t => t.possible > 0);
     rows.sort((a, b) => sortOrder === 'low' ? a.pct - b.pct : b.pct - a.pct);
     return rows.map((t, i) => ({ ...t, rank: i + 1 }));
-  }, [data, classId, subjectId, examTypeId, sortOrder]);
+  }, [data, classId, subjectId, examName, examNameById, sortOrder]);
 
   const counts = useMemo(() => {
     const c = { all: ranked.length, top: 0, avg: 0, low: 0 };
@@ -182,8 +218,8 @@ export default function TeacherPerformance({ academicYearId = null }) {
           options={[{ value: 'all', label: 'All Classes' }, ...classOptions]} />
         <Selector label="Subject" value={subjectId} onChange={setSubjectId}
           options={[{ value: 'all', label: 'All Subjects' }, ...subjectOptions]} />
-        <Selector label="Exam Type" value={examTypeId} onChange={setExamTypeId}
-          options={[{ value: 'all', label: 'All Exams' }, ...data.examTypes.map(t => ({ value: String(t.id), label: t.name }))]} />
+        <Selector label="Exam Type" value={examName} onChange={setExamName}
+          options={[{ value: 'all', label: 'All Exams' }, ...examOptions]} />
 
         <div className="flex-1 min-w-[120px]" />
 
@@ -341,7 +377,7 @@ export default function TeacherPerformance({ academicYearId = null }) {
       {showTable && (
         <TeacherTableModal
           rows={visible}
-          examLabel={examTypeId === 'all' ? 'All Exams' : (data.examTypes.find(t => String(t.id) === examTypeId)?.name || '')}
+          examLabel={examName === 'all' ? 'All Exams' : examName}
           onClose={() => setShowTable(false)} />
       )}
 
@@ -349,9 +385,10 @@ export default function TeacherPerformance({ academicYearId = null }) {
       {showAnalysis && (
         <TeacherAnalysisModal
           teachers={data.teachers}
-          examTypes={data.examTypes}
+          examOptions={examOptions}
+          examNameById={examNameById}
           classOptions={classOptions}
-          initialExam={examTypeId !== 'all' ? examTypeId : (data.examTypes[0]?.id ? String(data.examTypes[0].id) : 'all')}
+          initialExam={examName}
           initialClass={classId}
           onClose={() => setShowAnalysis(false)} />
       )}
@@ -436,29 +473,29 @@ function TeacherTableModal({ rows, examLabel, onClose }) {
 //  Analysis modal image 9: EXAM WISE + CLASS FILTER + sort, one bar
 //  per teacher for the chosen exam.
 // =====================================================================
-function TeacherAnalysisModal({ teachers, examTypes, classOptions, initialExam, initialClass, onClose }) {
-  const [examTypeId, setExamTypeId] = useState(initialExam || (examTypes[0]?.id ? String(examTypes[0].id) : 'all'));
+function TeacherAnalysisModal({ teachers, examOptions = [], examNameById = null, classOptions, initialExam, initialClass, onClose }) {
+  const [examName, setExamName]     = useState(initialExam || 'all');
   const [classId, setClassId]       = useState(initialClass || 'all');
   const [sortOrder, setSortOrder]   = useState('high');
 
   const bars = useMemo(() => {
     const rows = teachers.map(t => {
-      const tot = teacherTotals(t, { classId, subjectId: 'all', examTypeId });
+      const tot = teacherTotals(t, { classId, subjectId: 'all', examName, nameById: examNameById });
       const subjects = [...new Set(tot.breakdown.map(d => d.subject_name))].join(', ');
       return { teacher_id: t.teacher_id, teacher_name: t.teacher_name, subjects, ...tot };
     }).filter(t => t.possible > 0);
     rows.sort((a, b) => sortOrder === 'low' ? a.pct - b.pct : b.pct - a.pct);
     return rows;
-  }, [teachers, classId, examTypeId, sortOrder]);
+  }, [teachers, classId, examName, examNameById, sortOrder]);
 
-  const examLabel = examTypeId === 'all' ? 'All Exams' : (examTypes.find(t => String(t.id) === examTypeId)?.name || '');
+  const examLabel = examName === 'all' ? 'All Exams' : examName;
 
   const filters = (
     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pb-4">
-      <Selector label="Exam Wise" value={examTypeId} onChange={setExamTypeId}
+      <Selector label="Exam Wise" value={examName} onChange={setExamName}
         options={[
           { value: 'all', label: 'All Exams' },
-          ...examTypes.map(t => ({ value: String(t.id), label: t.name }))
+          ...examOptions
         ]} />
       <Selector label="Class Filter" value={classId} onChange={setClassId}
         options={[{ value: 'all', label: 'All Classes' }, ...classOptions]} />

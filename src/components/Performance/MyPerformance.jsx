@@ -30,7 +30,7 @@ export default function MyPerformance({ academicYearId = null }) {
 function TeacherMyPerformance({ user, academicYearId = null }) {
   const [data, setData]       = useState(null);
   const [loading, setLoading] = useState(true);
-  const [examTypeId, setExam] = useState('all');
+  const [examName, setExam]   = useState('all');   // exam NAME, not id (see note)
   const [showAnalysis, setShowAnalysis] = useState(false);
   const yq = academicYearId ? `?academic_year_id=${academicYearId}` : '';
 
@@ -48,18 +48,45 @@ function TeacherMyPerformance({ user, academicYearId = null }) {
 
   useEffect(() => { load(); }, [load]);
 
-  // Per class+subject totals under the selected exam filter
+  // A teacher's exam types repeat once per class they teach (each class has
+  // its own UT-1, AT-1 …). nameById resolves id -> name; examOptions is the
+  // list collapsed to one entry per distinct name, so the dropdown is clean
+  // and picking "UT-1" covers every class's UT-1.
+  const examNameById = useMemo(() => {
+    const m = new Map();
+    (data?.examTypes || []).forEach(t => m.set(String(t.id), t.name));
+    return m;
+  }, [data]);
+
+  const examOptions = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    (data?.examTypes || []).forEach(t => {
+      const nm = (t.name || '').trim();
+      const key = nm.toLowerCase();
+      if (!nm || seen.has(key)) return;
+      seen.add(key);
+      out.push({ value: nm, label: nm });
+    });
+    return out;
+  }, [data]);
+
+  useEffect(() => {
+    if (examName !== 'all' && !examOptions.some(o => o.value === examName)) setExam('all');
+  }, [examOptions, examName]);
+
+  // Per class+subject totals under the selected exam filter (matched by name)
   const rows = useMemo(() => {
     if (!data) return [];
     return (data.detail || []).map(d => {
       let o = 0, p = 0;
       (d.exams || []).forEach(e => {
-        if (examTypeId !== 'all' && String(e.exam_type_id) !== String(examTypeId)) return;
+        if (examName !== 'all' && (examNameById.get(String(e.exam_type_id)) || '') !== examName) return;
         o += e.obtained; p += e.possible;
       });
       return { ...d, obtained: o, possible: p, pct: p > 0 ? roundPct((o / p) * 100) : null };
     }).filter(r => r.possible > 0).sort((a, b) => b.pct - a.pct);
-  }, [data, examTypeId]);
+  }, [data, examName, examNameById]);
 
   const overall = useMemo(() => {
     const o = rows.reduce((s, r) => s + r.obtained, 0);
@@ -67,9 +94,7 @@ function TeacherMyPerformance({ user, academicYearId = null }) {
     return { obtained: o, possible: p, pct: p > 0 ? roundPct((o / p) * 100) : 0 };
   }, [rows]);
 
-  const examLabel = examTypeId === 'all'
-    ? 'All Exams'
-    : (data?.examTypes || []).find(t => String(t.id) === examTypeId)?.name || 'All Exams';
+  const examLabel = examName === 'all' ? 'All Exams' : examName;
 
   if (loading) {
     return (
@@ -87,10 +112,10 @@ function TeacherMyPerformance({ user, academicYearId = null }) {
 
       {/* Filter bar */}
       <div className="flex flex-wrap items-end gap-3 sm:gap-4">
-        <Selector label="Exam" value={examTypeId} onChange={setExam}
+        <Selector label="Exam" value={examName} onChange={setExam}
           options={[
             { value: 'all', label: 'All Exams' },
-            ...((data?.examTypes || []).map(t => ({ value: String(t.id), label: t.name })))
+            ...examOptions
           ]} />
 
         <div className="flex-1 min-w-[100px]" />

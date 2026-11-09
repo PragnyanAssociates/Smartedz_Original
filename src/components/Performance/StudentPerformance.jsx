@@ -13,7 +13,7 @@ import { PerfBar, BarRow, ChartModal } from './PerfBar';
 
 // =====================================================================
 //  StudentPerformance - ranked class list + graphical Analysis.
-//   - Class / Exam / Subject filters + roll/high/low sort.
+//   - Class / Exam / Subject filters + roll/high/low sort./
 //   - Selecting a subject shows that subject's teacher (name + email).
 //   - Analysis modal: Select Class / Criterion / Subject / Sort Order,
 //     with a teacher-details banner when a single subject is chosen.
