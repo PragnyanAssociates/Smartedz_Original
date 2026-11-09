@@ -14,7 +14,7 @@ import { PerfBar, BarRow, ChartModal } from './PerfBar';
 //   - "Table" button: detailed per class+subject breakdown (image 8).
 //   - "Analysis" button: exam-wise + class-filter bar chart (image 9).
 //
-//  A teacher's % = sum(marks obtained by their students in the/
+//  A teacher's % = sum(marks obtained by their students in the
 //  classes+subjects they're assigned) / sum(possible), filtered live.
 //  Bands: 100-80 green, 80-50 blue, 50-0 red. Active academic year only.
 // =====================================================================
