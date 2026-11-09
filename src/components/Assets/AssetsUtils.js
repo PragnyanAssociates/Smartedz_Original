@@ -2,7 +2,7 @@
 //  Inventory & Assets - shared helpers
 //  No academic-year logic: an asset belongs to the institution and
 //  carries across years (like Syllabus). Filters are calendar-based.
-// =====================================================================
+
 import { useState, useEffect } from 'react';
 
 // Condition/usage states an asset can be in.
