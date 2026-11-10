@@ -252,7 +252,8 @@ const DEFAULT_MODULES = [
     'InventoryAssets',
     'LessonPlan',
     'Support',
-    'Library'
+    'Library',
+    'SmartyAdmin'
     
 ];
 

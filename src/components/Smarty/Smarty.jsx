@@ -4,31 +4,50 @@ import { usePermissions } from '../../Screens/PermissionsContext';
 import { API_BASE_URL } from '../../apiConfig';
 import { MODULES } from '../../Screens/Modules';
 import { BUILTINS, LIVE_IDS, STARTERS_BY_ROLE } from './Smartyknowledge';
+import smartyGif from './smarty.gif';   // animated waving character (GIF/WebP). Must exist in this folder.
 
 // =====================================================================
-//  Smarty — the in-app assistant. Mount ONCE inside the dashboard shell:
+//  Smarty — in-app assistant. Mount ONCE in the dashboard shell:
 //      <Smarty onNavigate={setActiveTab} />
-//  so her "Open …" buttons switch modules just like Notifications do.
 //
-//  • Free-standing animated character (glasses, wavy hair, green top +
-//    purple cardigan) with moods: wave / think / talk / happy.
-//  • Built-in answers (smartyKnowledge.js) work with zero admin setup;
-//    the Super Admin's extra Q&A + "What's new" come from the backend.
-//  • Live answers (next class / homework / attendance) come from
+//  • Free-standing animated lady (glasses, wavy hair, green top + purple
+//    cardigan). Waves non-stop, thinks / types / smiles with the chat.
+//  • Idle: every minute she waves and says “Hey <name>, need any help?”.
+//  • Header shows the real user — name always; class + roll only for
+//    students, name + role for everyone else.
+//  • Role-aware questions: staff/admins never see class/homework cards.
+//  • Chat history is kept across tabs and reopens (per-user, this session).
+//  • Colourful replies tinted per topic. Live answers come from
 //    GET /api/smarty/bootstrap/:userId — never made up.
 // =====================================================================
 
-const idToModule = {};
-const idToLabel = {};
+const idToModule = {}, idToLabel = {};
 MODULES.forEach(m => { idToModule[m.id] = m.module_name; idToLabel[m.id] = m.label || m.title || m.id; });
-
 const toneVar = { sky: '--sky', amber: '--amber', emerald: '--emerald', rose: '--rose', violet: '--violet', brand: '--brand' };
+
+// contextual follow-up chips shown after an answer (ids are filtered by role/visibility)
+const FOLLOW = {
+  'next-class': ['hw-today', 'attendance', 'how-timetable'],
+  'hw-today': ['how-hw', 'attendance', 'next-class'],
+  'attendance': ['next-class', 'hw-today', 'how-report'],
+  'news': ['next-class', 'admin-reports', 'admin-directory'],
+  'admin-reports': ['admin-fees', 'admin-directory', 'admin-smarty'],
+  'admin-fees': ['admin-reports', 'admin-directory', 'admin-smarty'],
+  'admin-directory': ['admin-reports', 'admin-fees', 'admin-smarty'],
+};
+const CONFETTI = Array.from({ length: 26 }).map((_, i) => ({
+  e: ['🎉', '✨', '⭐', '🎊', '💫', '🌟'][i % 6],
+  left: Math.round(Math.random() * 94) + 3,
+  d: +(Math.random() * 0.5).toFixed(2),
+  s: 14 + Math.round(Math.random() * 12),
+}));
 
 function roleBucket(role) {
   const r = (role || '').toLowerCase();
   if (r.includes('student')) return 'student';
   if (r.includes('teacher')) return 'teacher';
   if (r.includes('parent') || r.includes('guardian')) return 'parent';
+  if (r.includes('admin') || r.includes('principal') || r.includes('account') || r.includes('developer') || r.includes('office') || r.includes('staff') || r.includes('clerk')) return 'admin';
   return 'default';
 }
 function roleMatch(roles, role) {
@@ -50,16 +69,74 @@ export default function Smarty({ onNavigate }) {
   const [boot, setBoot] = useState(null);
   const [unread, setUnread] = useState(0);
   const [toast, setToast] = useState('');
+  const [nudge, setNudge] = useState(false);
 
   const scrollRef = useRef(null);
   const moodTimer = useRef(null);
   const keyRef = useRef(0);
+  const greeted = useRef(false);
   const nextKey = () => ++keyRef.current;
 
+  // ---- draggable launcher (remembers its spot) ----
+  const [fabPos, setFabPos] = useState(null);     // {left, top} in px, or null = default corner
+  const [dragging, setDragging] = useState(false);
+  const dragRef = useRef({ moved: false });
+  const posRef = useRef(null);
+  const moveFn = useRef(null);
+  const upFn = useRef(null);
+
+  useEffect(() => {
+    try {
+      const s = localStorage.getItem('smy_fab_pos');
+      if (s) {
+        const p = JSON.parse(s);
+        if (p && typeof p.left === 'number') {
+          const left = Math.max(4, Math.min(window.innerWidth - 110, p.left));
+          const top = Math.max(4, Math.min(window.innerHeight - 130, p.top));
+          setFabPos({ left, top }); posRef.current = { left, top };
+        }
+      }
+    } catch (_) {}
+  }, []);
+
+  const onFabDown = (e) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const offX = e.clientX - r.left, offY = e.clientY - r.top;
+    const startX = e.clientX, startY = e.clientY;
+    const W = r.width, H = r.height;
+    dragRef.current.moved = false;
+    setDragging(true);
+    moveFn.current = (ev) => {
+      const left = Math.max(4, Math.min(window.innerWidth - W - 4, ev.clientX - offX));
+      const top = Math.max(4, Math.min(window.innerHeight - H - 4, ev.clientY - offY));
+      if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > 4) dragRef.current.moved = true;
+      posRef.current = { left, top };
+      setFabPos({ left, top });
+    };
+    upFn.current = () => {
+      window.removeEventListener('pointermove', moveFn.current);
+      window.removeEventListener('pointerup', upFn.current);
+      setDragging(false);
+      if (posRef.current) { try { localStorage.setItem('smy_fab_pos', JSON.stringify(posRef.current)); } catch (_) {} }
+    };
+    window.addEventListener('pointermove', moveFn.current);
+    window.addEventListener('pointerup', upFn.current);
+  };
+  const onFabClick = () => { if (dragRef.current.moved) { dragRef.current.moved = false; return; } openPanel(); };
+
   const role = user?.role;
+  const firstName = ((boot?.user?.name || user?.name || 'there').split(' ')[0]);
   const canSeeLink = useCallback((linkId) => !linkId || isVisible(idToModule[linkId] || linkId), [isVisible]);
 
-  // ----- the answer pool for THIS user (role + module-visibility) -----
+  // ---- persist chat per user for this browser session ----
+  const storeKey = user?.id ? `smy_msgs_${user.id}` : null;
+  useEffect(() => {
+    if (!storeKey) return;
+    try { const s = sessionStorage.getItem(storeKey); if (s) { const a = JSON.parse(s); if (Array.isArray(a) && a.length) { setMsgs(a); greeted.current = true; } } } catch (_) {}
+  }, [storeKey]);
+  useEffect(() => { if (storeKey) { try { sessionStorage.setItem(storeKey, JSON.stringify(msgs)); } catch (_) {} } }, [msgs, storeKey]);
+
+  // ---- answer pool for THIS user (role + module visibility) ----
   const buildPool = useCallback((b) => {
     const pool = [];
     BUILTINS.forEach(e => {
@@ -71,7 +148,7 @@ export default function Smarty({ onNavigate }) {
     (b?.questions || []).forEach(q => {
       if (q.link && !canSeeLink(q.link)) return;
       pool.push({
-        id: 'c' + q.id, q: q.question, roles: q.roles, tone: 'brand', icon: '💬', custom: true,
+        id: 'c' + q.id, q: q.question, roles: q.roles, tone: 'brand', icon: '💬',
         keywords: [String(q.question || '').toLowerCase(), ...String(q.keywords || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean)],
         answer: { text: q.answer, link: q.link || null, linkLabel: q.link ? ('Open ' + (idToLabel[q.link] || q.link)) : null, tone: 'brand' }
       });
@@ -79,18 +156,15 @@ export default function Smarty({ onNavigate }) {
     return pool;
   }, [role, canSeeLink]);
 
-  // ----- live answers built from bootstrap data (never hard-coded) ----
+  // ---- live answers from bootstrap (never hard-coded) ----
   const liveAnswer = useCallback((id, b) => {
     if (id === 'next-class') {
       const n = b?.nextClass;
       if (!n) return { tone: 'sky', text: 'No more classes scheduled for today 🎉' };
-      const s = [n.teacher ? `Teacher: ${n.teacher}` : null, n.class_label, n.room ? `Room ${n.room}` : null].filter(Boolean).join(' · ');
-      return {
-        tone: 'sky', text: n.ongoing ? 'Your class right now 📖' : 'Your next class is coming up 📖',
+      const s = [n.teacher ? `👩‍🏫 ${n.teacher}` : null, n.class_label, n.room ? `Room ${n.room}` : null].filter(Boolean).join(' · ');
+      return { tone: 'sky', text: n.ongoing ? 'Your class right now 📖' : 'Your next class is coming up 📖',
         card: { em: '🔔', t: `${n.subject} · ${n.start}${n.end ? '–' + n.end : ''}`, s: s || 'Scheduled' },
-        link: 'timetable', linkLabel: 'Open Timetable',
-        extra: n.next_after ? `After that: ${n.next_after}.` : null
-      };
+        link: 'timetable', linkLabel: 'Open Timetable', extra: n.next_after ? `After that: ${n.next_after}.` : null };
     }
     if (id === 'hw-today') {
       const h = b?.homework;
@@ -99,22 +173,20 @@ export default function Smarty({ onNavigate }) {
         card: h.next ? { em: '📘', t: h.next.title, s: [h.next.subject, h.pending > 1 ? `${h.pending} pending in all` : null].filter(Boolean).join(' · ') } : null,
         link: 'Homework', linkLabel: 'Open Homework' };
       if (h.pending > 0) return { tone: 'amber', text: `Nothing due today 🎈 — but you have ${h.pending} pending this week.`,
-        card: h.next ? { em: '📘', t: h.next.title, s: `${h.next.subject || ''} · due ${h.next.due}` } : null,
-        link: 'Homework', linkLabel: 'Open Homework' };
-      return { tone: 'emerald', text: "You're all caught up — no pending homework! 🎉", link: 'Homework', linkLabel: 'Open Homework' };
+        card: h.next ? { em: '📘', t: h.next.title, s: `${h.next.subject || ''} · due ${h.next.due}` } : null, link: 'Homework', linkLabel: 'Open Homework' };
+      return { tone: 'emerald', text: "You're all caught up — no pending homework! 🎉", link: 'Homework', linkLabel: 'Open Homework', celebrate: true };
     }
     if (id === 'attendance') {
       const a = b?.attendance;
       if (!a || a.percentage == null) return { tone: 'emerald', text: 'No attendance recorded yet for this year.', link: 'attendance', linkLabel: 'Open Attendance' };
       return { tone: 'emerald', text: `You're at ${a.percentage}% attendance 📊`,
-        card: { em: '✅', t: `${a.present} of ${a.total} days present`, s: 'This academic year' },
-        link: 'attendance', linkLabel: 'Open Attendance' };
+        card: { em: '✅', t: `${a.present} of ${a.total} days present`, s: 'This academic year' }, link: 'attendance', linkLabel: 'Open Attendance',
+        celebrate: Number(a.percentage) >= 100 };
     }
     if (id === 'news') {
       const items = (b?.updates || []);
-      if (!items.length) return { tone: 'violet', text: "No new updates right now — I'll let you know when there are! 📣" };
-      return { tone: 'violet', text: "Here's what's new 📣",
-        items: items.map(u => ({ ttl: u.title, bd: u.body, isNew: !!u.is_new, link: u.link })) };
+      if (!items.length) return { tone: 'violet', text: "No new updates right now — I'll tell you the moment there are! 📣" };
+      return { tone: 'violet', text: "Here's what's new 📣", items: items.map(u => ({ ttl: u.title, bd: u.body, isNew: !!u.is_new, link: u.link })) };
     }
     return null;
   }, []);
@@ -132,27 +204,32 @@ export default function Smarty({ onNavigate }) {
     return out;
   }, [role]);
 
-  // ----- open: load bootstrap, greet, show the day -----
+  // ---- data load ----
   const load = useCallback(async () => {
-    if (!user?.id) return;
+    if (!user?.id) return {};
     try {
       const res = await fetch(`${API_BASE_URL}/smarty/bootstrap/${user.id}`);
       const b = res.ok ? await res.json() : {};
-      setBoot(b);
-      setUnread(b.unread || 0);
-      return b;
+      setBoot(b); setUnread(b.unread || 0); return b;
     } catch (e) { setBoot({}); return {}; }
   }, [user]);
-
-  useEffect(() => { load(); /* preload the badge */ }, [load]);
+  useEffect(() => { load(); }, [load]);
 
   const toBottom = () => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; };
-  useEffect(() => { toBottom(); }, [msgs]);
+  useEffect(() => { toBottom(); }, [msgs, open]);
 
-  const flash = (m) => { if (m !== 'idle') { setMood(m); clearTimeout(moodTimer.current); moodTimer.current = setTimeout(() => setMood('idle'), m === 'happy' ? 1600 : 4000); } };
+  // ---- idle nudge: wave + "need help?" every minute while closed ----
+  useEffect(() => {
+    if (open) { setNudge(false); return; }
+    const show = () => { setNudge(true); window.clearTimeout(show._t); show._t = window.setTimeout(() => setNudge(false), 5500); };
+    const first = window.setTimeout(show, 8000);
+    const iv = window.setInterval(show, 30000);
+    return () => { window.clearTimeout(first); window.clearInterval(iv); window.clearTimeout(show._t); };
+  }, [open]);
 
+  const flash = (m) => { if (m !== 'idle') { setMood(m); clearTimeout(moodTimer.current); moodTimer.current = setTimeout(() => setMood('idle'), m === 'happy' ? 1700 : 4000); } };
   const pushMe = (text) => setMsgs(m => [...m, { k: nextKey(), who: 'me', text }]);
-  const pushBot = (answer) => setMsgs(m => [...m, { k: nextKey(), who: 'bot', answer }]);
+  const pushBot = (answer) => { setMsgs(m => [...m, { k: nextKey(), who: 'bot', answer }]); if (answer && answer.text) speak(answer.text); };
   const pushTyping = () => { const k = nextKey(); setMsgs(m => [...m, { k, who: 'typing' }]); return k; };
   const dropTyping = (k) => setMsgs(m => m.filter(x => x.k !== k));
 
@@ -161,27 +238,94 @@ export default function Smarty({ onNavigate }) {
     const e = (b?._pool || buildPool(b)).find(x => x.id === id);
     return e?.answer || null;
   };
+  const deliver = (a) => { flash('thinking'); setTimeout(() => { const tk = pushTyping(); setTimeout(() => { dropTyping(tk); pushBot(a); flash(a.happy ? 'happy' : 'talking'); if (a.celebrate) celebrate(); }, 650 + Math.random() * 300); }, 650); };
 
   const respond = (id) => {
     const b = boot || {};
-    const a = answerFor(id, b);
     if (id === 'news') markRead();
+    const a = answerFor(id, b);
     if (!a) return suggest();
-    flash('thinking');
-    setTimeout(() => {
-      const tk = pushTyping();
-      setTimeout(() => { dropTyping(tk); pushBot(a); flash('talking'); }, 650 + Math.random() * 300);
-    }, 650);
+    deliver(a);
+    const fol = FOLLOW[id];
+    if (fol) setChips(followChips(fol, b));
   };
+  const respondWith = (id, b) => { const a = answerFor(id, b); if (a) deliver(a); };
 
   const COMPLIMENTS = ['thank', 'thanks', 'thx', 'great', 'nice', 'awesome', 'love you', 'love u', 'well done', 'super', 'excellent', 'best', 'cool', 'amazing', 'good job'];
-  const compliment = () => {
-    flash('thinking');
-    setTimeout(() => { const tk = pushTyping(); setTimeout(() => { dropTyping(tk); pushBot({ tone: 'rose', text: "Aww, thank you! 💖 I'm always here whenever you need me. 😊" }); flash('happy'); }, 600); }, 450);
+  const compliment = () => deliver({ tone: 'rose', text: "Aww, thank you! 💖 I'm always here whenever you need me. 😊", happy: true, celebrate: true });
+  const suggest = () => deliver({ text: "Hmm, I'm still learning that one 🤔 Try a button below, or ask about " + (roleBucket(role) === 'student' ? 'homework, attendance, fees or your timetable.' : 'reports, fees or the directory.') });
+
+  // ---- voice: read answers aloud + speak your question ----
+  const canSpeak = typeof window !== 'undefined' && 'speechSynthesis' in window;
+  const SR = typeof window !== 'undefined' ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null;
+  const [voiceOn, setVoiceOn] = useState(() => { try { return localStorage.getItem('smy_voice') === '1'; } catch { return false; } });
+  const [listening, setListening] = useState(false);
+  const [burst, setBurst] = useState(false);
+  const recRef = useRef(null);
+  useEffect(() => { try { localStorage.setItem('smy_voice', voiceOn ? '1' : '0'); } catch (_) {} }, [voiceOn]);
+
+  const speak = (text) => {
+    if (!voiceOn || !canSpeak) return;
+    try {
+      const clean = String(text).replace(/\*\*(.+?)\*\*/g, '$1').replace(/[*_#>`~]/g, '')
+        .replace(/[\u{1F000}-\u{1FAFF}☀-➿️‍]/gu, '').trim();
+      if (!clean) return;
+      const utt = new window.SpeechSynthesisUtterance(clean);
+      utt.lang = 'en-IN'; utt.rate = 1; utt.pitch = 1.08;
+      window.speechSynthesis.cancel(); window.speechSynthesis.speak(utt);
+    } catch (_) {}
   };
-  const suggest = () => {
-    flash('thinking');
-    setTimeout(() => { const tk = pushTyping(); setTimeout(() => { dropTyping(tk); pushBot({ text: "Hmm, I'm still learning that one 🤔 Try one of the buttons below, or ask about homework, attendance, fees or your timetable." }); flash('talking'); }, 550); }, 500);
+  const stopListen = () => { try { recRef.current && recRef.current.stop(); } catch (_) {} setListening(false); };
+  const startListen = () => {
+    if (!SR) { setToast('Voice input isn’t supported on this browser.'); setTimeout(() => setToast(''), 2200); return; }
+    try {
+      const rec = new SR(); rec.lang = 'en-IN'; rec.interimResults = false; rec.maxAlternatives = 1;
+      rec.onresult = (e) => { const t = e.results[0][0].transcript; setInput(t); setTimeout(() => submitText(t), 120); };
+      rec.onend = () => setListening(false); rec.onerror = () => setListening(false);
+      recRef.current = rec; setListening(true); rec.start();
+    } catch (_) { setListening(false); }
+  };
+  const celebrate = () => { setBurst(false); requestAnimationFrame(() => { setBurst(true); setTimeout(() => setBurst(false), 1700); }); };
+
+  // contextual chips after an answer
+  const chipFromId = (id, b) => {
+    if (id === 'news') return { id: 'news', label: "What's new?", icon: '📣', tone: 'violet' };
+    const pool = (b && b._pool) || buildPool(b || boot);
+    const e = pool.find(x => x.id === id);
+    return e ? { id: e.id, label: e.q, icon: e.icon || '💬', tone: e.tone || 'brand' } : null;
+  };
+  const followChips = (ids, b) => {
+    const out = [];
+    ids.forEach(id => { const c = chipFromId(id, b); if (c && !out.find(x => x.id === c.id)) out.push(c); });
+    if (!out.find(x => x.id === 'news')) out.push({ id: 'news', label: "What's new?", icon: '📣', tone: 'violet' });
+    return out;
+  };
+
+  const submitText = (v) => {
+    v = (v || '').trim(); if (!v) return;
+    pushMe(v); setInput('');
+    if (COMPLIMENTS.some(c => v.toLowerCase().includes(c))) return compliment();
+    const id = match(v); id ? respond(id) : suggest();
+  };
+
+  // greeting digest shown on every open
+  const buildDigest = (b) => {
+    const hr = new Date().getHours();
+    const part = hr < 12 ? 'Good morning' : hr < 17 ? 'Good afternoon' : 'Good evening';
+    const nm = b?.user?.name || user?.name || 'there';
+    const pills = [];
+    if (b?.nextClass) pills.push({ icon: '🔔', label: `${b.nextClass.subject} at ${b.nextClass.start}`, tone: 'sky' });
+    if (b?.homework?.due_today) pills.push({ icon: '📚', label: `${b.homework.due_today} homework due today`, tone: 'amber' });
+    else if (b?.homework?.pending) pills.push({ icon: '📚', label: `${b.homework.pending} homework pending`, tone: 'amber' });
+    if (b?.attendance && b.attendance.percentage != null) pills.push({ icon: '📊', label: `${b.attendance.percentage}% attendance`, tone: 'emerald' });
+    if (b?.unread) pills.push({ icon: '📣', label: `${b.unread} new update${b.unread > 1 ? 's' : ''}`, tone: 'violet' });
+    const greet = {
+      text: `${part}, ${nm}! 👋 ${pills.length ? "Here's your quick look 👇" : "I'm **Smarty** — tap a button or just ask me anything 👇"}`,
+      digest: pills.length ? pills : null
+    };
+    const bk = roleBucket(role);
+    const firstId = (bk === 'student' || bk === 'teacher' || bk === 'parent') ? 'next-class' : 'news';
+    return { greet, firstId };
   };
 
   const match = (text) => {
@@ -190,18 +334,11 @@ export default function Smarty({ onNavigate }) {
     let best = null, score = 0;
     const scan = (id, kws) => (kws || []).forEach(k => { if (k && t.includes(k) && k.length > score) { score = k.length; best = id; } });
     pool.forEach(e => scan(e.id, e.keywords));
-    // live + news keyword nets
     scan('news', ['whats new', 'what is new', 'updates', 'news', 'latest', 'announcement']);
     return best;
   };
 
-  const onSend = (e) => {
-    e.preventDefault();
-    const v = input.trim(); if (!v) return;
-    pushMe(v); setInput('');
-    if (COMPLIMENTS.some(c => v.toLowerCase().includes(c))) return compliment();
-    const id = match(v); id ? respond(id) : suggest();
-  };
+  const onSend = (e) => { e.preventDefault(); submitText(input); };
 
   const markRead = useCallback(async () => {
     if (!unread) return;
@@ -210,22 +347,16 @@ export default function Smarty({ onNavigate }) {
   }, [unread]);
 
   const openPanel = async () => {
-    setOpen(true);
+    setOpen(true); setNudge(false);
     const b = await load();
-    const pool = buildPool(b);
-    if (b) b._pool = pool;
+    const pool = buildPool(b); if (b) b._pool = pool;
     setChips(starters(b, pool));
-    setMsgs([]);
-    const name = b?.user?.name || user?.name || 'there';
-    pushBot({ text: `Hi ${name}! 👋 I'm **Smarty**. Here's a quick look at your day 👇` });
-    // proactively show the next class
-    setTimeout(() => respondWith('next-class', b), 500);
-  };
-  const respondWith = (id, b) => {
-    const a = answerFor(id, b);
-    if (!a) return;
-    flash('thinking');
-    setTimeout(() => { const tk = pushTyping(); setTimeout(() => { dropTyping(tk); pushBot(a); flash('talking'); }, 650); }, 650);
+    if (!greeted.current) {
+      greeted.current = true;
+      const dg = buildDigest(b);
+      pushBot(dg.greet);
+      setTimeout(() => { if ((b?.unread || 0) > 0) respondWith('news', b); else respondWith(dg.firstId, b); }, 700);
+    }
   };
 
   const navTo = (linkId) => {
@@ -235,10 +366,12 @@ export default function Smarty({ onNavigate }) {
     else { setToast(`Opening “${idToLabel[linkId] || linkId}”…`); setTimeout(() => setToast(''), 2000); }
   };
 
-  const nameMeta = () => {
-    const u = boot?.user || {};
-    return [u.role || role, u.class_label, u.roll_no ? `Roll ${u.roll_no}` : null].filter(Boolean);
-  };
+  // header identity: name line + role/class/roll pills
+  const u = boot?.user || {};
+  const uName = u.name || user?.name || '';
+  const uRole = u.role || role || '';
+  const isStudent = uRole.toLowerCase().includes('student');
+  const pills = isStudent ? [uRole, u.class_label, u.roll_no ? `Roll ${u.roll_no}` : null].filter(Boolean) : [uRole].filter(Boolean);
 
   if (!user) return null;
 
@@ -248,21 +381,29 @@ export default function Smarty({ onNavigate }) {
       <Defs />
 
       {!open && (
-        <button className="smy-launcher" onClick={openPanel} aria-label="Open Smarty">
+        <button className={`smy-launcher ${nudge ? 'smy-call' : ''} ${dragging ? 'smy-dragging' : ''}`}
+          onPointerDown={onFabDown} onClick={onFabClick}
+          style={fabPos ? { left: fabPos.left, top: fabPos.top, right: 'auto', bottom: 'auto' } : undefined}
+          aria-label="Open Smarty">
           {unread > 0 && <span className="smy-ping">{unread > 9 ? '9+' : unread}</span>}
-          <svg className="smy-headpop" viewBox="12 4 76 86" aria-hidden="true"><use href="#smy-head" /></svg>
+          {nudge && <span className="smy-nudge">Hey {firstName}! 👋 Need any help?</span>}
+          <img src={smartyGif} className="smy-fab-img" alt="" aria-hidden="true" draggable="false" />
+          <span className="smy-fab-label">Smarty✨</span>
         </button>
       )}
 
       {open && (
         <section className="smy-panel smy-pop" aria-label="Smarty assistant">
           <div className="smy-head-bar">
-            <div className={`smy-hero ${mood !== 'idle' ? 'smy-' + mood : ''}`}>
-              <svg viewBox="0 0 150 170" aria-hidden="true"><use href="#smy-full" /></svg>
+            <div className="smy-idbox">
+              <div className={`smy-hero ${mood !== 'idle' ? 'smy-' + mood : ''}`}>
+                <img src={smartyGif} className="smy-hero-img" alt="" aria-hidden="true" />
+              </div>
+              <div className="smy-brand">Smarty <span style={{ fontSize: 12 }}>✨</span></div>
             </div>
             <div className="smy-who">
-              <h2>Smarty <span style={{ fontSize: 15 }}>✨</span></h2>
-              <div className="smy-meta">{nameMeta().map((m, i) => <span key={i}>{m}</span>)}</div>
+              <div className="smy-user">{uName}</div>
+              <div className="smy-meta">{pills.map((m, i) => <span key={i}>{m}</span>)}</div>
               <div className="smy-status"><i />{MOODTEXT[mood] || MOODTEXT.idle}</div>
             </div>
             <button className="smy-x" onClick={() => setOpen(false)} aria-label="Close">✕</button>
@@ -274,19 +415,22 @@ export default function Smarty({ onNavigate }) {
 
           <div className="smy-chips">
             {chips.map(c => (
-              <button key={c.id} className="smy-chip" onClick={() => { pushMe(c.label); respond(c.id); }}>
+              <button key={c.id} className="smy-chip" style={{ '--ct': `var(${toneVar[c.tone] || '--brand'})` }} onClick={() => { pushMe(c.label); respond(c.id); }}>
                 <span className="smy-ic" style={{ background: `var(${toneVar[c.tone] || '--brand'})` }}>{c.icon}</span>{c.label}
               </button>
             ))}
           </div>
 
           <form className="smy-composer" onSubmit={onSend}>
+            {canSpeak && <button type="button" className={`smy-iconbtn ${voiceOn ? 'on' : ''}`} onClick={() => setVoiceOn(v => !v)} title={voiceOn ? 'Reading answers aloud' : 'Read answers aloud'} aria-label="Toggle sound">{voiceOn ? '🔊' : '🔈'}</button>}
             <input value={input} onChange={e => setInput(e.target.value)} placeholder="Ask Smarty anything…" aria-label="Ask Smarty" />
+            {SR && <button type="button" className={`smy-iconbtn ${listening ? 'live' : ''}`} onClick={() => (listening ? stopListen() : startListen())} title="Speak your question" aria-label="Voice input">🎤</button>}
             <button className="smy-send" type="submit" aria-label="Send">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z" /></svg>
             </button>
           </form>
           <div className="smy-foot">Built-in answers for every screen · your school can add more</div>
+          {burst && <div className="smy-confetti" aria-hidden="true">{CONFETTI.map((c, i) => <span key={i} style={{ left: c.left + '%', animationDelay: c.d + 's', fontSize: c.s + 'px' }}>{c.e}</span>)}</div>}
         </section>
       )}
 
@@ -299,9 +443,7 @@ const MOODTEXT = { idle: 'Online · here to help', thinking: 'Thinking…', talk
 
 function Message({ m, onNav }) {
   if (m.who === 'me') return <div className="smy-msg smy-me"><div className="smy-bubble">{m.text}</div></div>;
-  if (m.who === 'typing') return (
-    <div className="smy-msg smy-bot"><Mini /><div className="smy-bubble smy-typing"><span /><span /><span /></div></div>
-  );
+  if (m.who === 'typing') return <div className="smy-msg smy-bot"><Mini /><div className="smy-bubble smy-plain smy-typing"><span /><span /><span /></div></div>;
   const a = m.answer || {};
   const tone = toneVar[a.tone] || '--brand';
   return (
@@ -309,37 +451,30 @@ function Message({ m, onNav }) {
       <Mini />
       <div className="smy-bubble" style={{ '--tone': `var(${tone})` }}>
         <span dangerouslySetInnerHTML={{ __html: fmt(a.text) }} />
+        {a.digest && <div className="smy-digest">{a.digest.map((d, i) => <span key={i} className="smy-dpill" style={{ '--ct': `var(${toneVar[d.tone] || '--brand'})` }}>{d.icon} {d.label}</span>)}</div>}
         {a.steps && <ul className="smy-steps">{a.steps.map((s, i) => <li key={i}><span className="smy-n">✓</span><span dangerouslySetInnerHTML={{ __html: fmt(s) }} /></li>)}</ul>}
         {a.card && <div className="smy-card"><span className="smy-em">{a.card.em}</span><div><div className="smy-t">{a.card.t}</div><div className="smy-s">{a.card.s}</div></div></div>}
         {a.extra && <div className="smy-extra">{a.extra}</div>}
         {a.items && <div className="smy-feed">{a.items.map((it, i) => (
           <div key={i} className={`smy-item ${it.isNew ? 'smy-new' : ''}`} onClick={() => it.link && onNav(it.link)} style={{ cursor: it.link ? 'pointer' : 'default' }}>
-            <div className="smy-ttl">{it.ttl}{it.isNew && <span className="smy-tag">New</span>}</div>
-            <div className="smy-bd">{it.bd}</div>
-          </div>))}
-        </div>}
+            <div className="smy-ttl">{it.ttl}{it.isNew && <span className="smy-tag">New</span>}</div><div className="smy-bd">{it.bd}</div>
+          </div>))}</div>}
         {a.link && <><br /><button className="smy-act" onClick={() => onNav(a.link)}>{a.linkLabel || 'Open'} <span className="smy-arw">▸</span></button></>}
       </div>
     </div>
   );
 }
 const Mini = () => <span className="smy-mini"><svg viewBox="14 4 74 84"><use href="#smy-head" /></svg></span>;
+function fmt(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>'); }
 
-// very small formatter: **bold** only (answers are trusted admin/built-in text)
-function fmt(s) {
-  return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
-}
-
-// ---- Smarty character (reused defs) ----
 function Defs() {
   return (
     <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden="true"><defs>
       <g id="smy-head">
         <path d="M50 7C27 7 15 26 15 48c0 16 4 28 8 36l6-13c-4-12-2-30 4-39 6-10 17-13 17-13s11 3 17 13c6 9 8 27 4 39l6 13c4-8 8-20 8-36C85 26 73 7 50 7Z" fill="#5a3722" />
-        <path d="M42 70h16v12H42z" fill="#eab38c" />
-        <ellipse cx="50" cy="47" rx="22" ry="25" fill="#f3c6a0" />
-        <circle cx="28" cy="49" r="4" fill="#f0bd93" /><circle cx="72" cy="49" r="4" fill="#f0bd93" />
+        <path d="M41 69h18v16H41z" fill="#f6c49a" />
+        <ellipse cx="50" cy="47" rx="22" ry="25" fill="#ffd2ac" />
+        <circle cx="28" cy="49" r="4" fill="#fcc79a" /><circle cx="72" cy="49" r="4" fill="#fcc79a" />
         <ellipse cx="34" cy="55" rx="4" ry="2.6" fill="#f6a088" opacity=".55" /><ellipse cx="66" cy="55" rx="4" ry="2.6" fill="#f6a088" opacity=".55" />
         <path d="M50 15c-13 0-24 9-26 24 3-10 10-16 19-18-5 4-8 9-9 16 3-9 9-14 16-15 7 1 13 6 16 15-1-7-4-12-9-16 9 2 16 8 19 18C74 24 63 15 50 15Z" fill="#6d4330" />
         <path d="M24 40c-3 14-1 29 4 40l5-13c-3-9-4-20-3-27Z" fill="#6d4330" /><path d="M76 40c3 14 1 29-4 40l-5-13c3-9 4-20 3-27Z" fill="#6d4330" />
@@ -354,75 +489,104 @@ function Defs() {
         <path className="smy-mouth smy-grin" d="M43 59q7 8 14 0q-7 3.5-14 0z" fill="#b23a57" />
       </g>
       <g id="smy-full" className="smy-rig">
-        <path d="M75 12C40 12 23 40 23 74c0 30-1 60 3 86l17-12c-7-28-5-66 3-90 8-24 29-30 29-30s21 6 29 30c8 24 10 62 3 90l17 12c4-26 3-56 3-86 0-34-17-62-52-62Z" fill="#5a3722" />
-        <path d="M28 170C28 134 48 116 75 116s47 18 47 54Z" fill="#6f6bb0" />
-        <path d="M57 118 75 150 72 117Z" fill="#595491" /><path d="M93 118 75 150 78 117Z" fill="#595491" />
-        <path d="M62 118 75 150 88 118c-8-3-18-3-26 0Z" fill="#8fb36a" /><path d="M70 118 75 134 80 118Z" fill="#f3ead2" />
+        {/* hair back */}
+        <path d="M75 10C44 10 27 36 27 70c0 19 3 35 7 49l10-7c-4-13-4-29 0-43 5-18 19-27 31-27s26 9 31 27c4 14 4 30 0 43l10 7c4-14 7-30 7-49 0-34-17-60-48-60Z" fill="#5f3d2a" />
+        {/* blue sweater / shoulders — raised to meet the neck (no gap) */}
+        <path d="M43 150C43 106 57 86 75 86s32 20 32 64Z" fill="#3390e0" />
+        {/* collar hugging the neck */}
+        <path d="M63 88q12 12 24 0l-2 7q-10 9 -20 0Z" fill="#2275c4" />
         <g transform="translate(25,2)"><use href="#smy-head" /></g>
-        <g className="smy-wave">
-          <path d="M104 126c10-2 20-12 24-26l-11-4c-4 12-12 20-22 24Z" fill="#6f6bb0" />
-          <rect x="116" y="58" width="13" height="40" rx="6.5" fill="#f3c6a0" />
-          <path d="M116 64c0-5 13-5 13 0" fill="none" stroke="#595491" strokeWidth="3" />
-          <circle cx="122.5" cy="52" r="8" fill="#f3c6a0" />
-          <rect x="114" y="38" width="3.4" height="13" rx="1.7" fill="#f3c6a0" /><rect x="119" y="35" width="3.4" height="16" rx="1.7" fill="#f3c6a0" />
-          <rect x="124" y="36" width="3.4" height="15" rx="1.7" fill="#f3c6a0" /><rect x="128.5" y="39" width="3.4" height="12" rx="1.7" fill="#f3c6a0" />
-          <rect x="130" y="50" width="3.2" height="9" rx="1.6" fill="#f3c6a0" transform="rotate(42 131 52)" />
+        {/* HER RIGHT arm (viewer's left): upper arm + forearm stay raised; only the hand waves at the wrist */}
+        <g className="smy-armwrap">
+          <path d="M50 120C46 108 36 100 27 94L19 102C28 108 36 118 40 131Z" fill="#3390e0" />
+          <path d="M31 101C32 85 31 72 29 60L18 62C17 73 18 88 19 101Z" fill="#ffd2ac" />
+          <path d="M33 100q-8.5 6 -16 1l1 -9q7.5 4 14 0Z" fill="#2275c4" />
+          <g className="smy-hand">
+            {/* palm */}
+            <path d="M15 56C15 46 19 42 24 42C29 42 33 46 33 56C33 61 29 63 24 63C19 63 15 61 15 56Z" fill="#ffd2ac" />
+            {/* four fingers (middle tallest) */}
+            <rect x="16.3" y="31" width="3.6" height="16" rx="1.8" fill="#ffd2ac" />
+            <rect x="20.4" y="27" width="3.6" height="20" rx="1.8" fill="#ffd2ac" />
+            <rect x="24.5" y="28" width="3.6" height="19" rx="1.8" fill="#ffd2ac" />
+            <rect x="28.5" y="31" width="3.4" height="16" rx="1.7" fill="#ffd2ac" />
+            {/* thumb on the left */}
+            <path d="M15 54C10 52 9 47 11 44C13 41 16 43 17 47L18 53Z" fill="#ffd2ac" />
+            {/* palm creases */}
+            <path d="M18 49q4 3 5 9" fill="none" stroke="#e8a487" strokeWidth="1.2" strokeLinecap="round" />
+          </g>
         </g>
         <g className="smy-think">
-          <path d="M104 150c6-10 14-20 20-26l6 6c-7 7-13 17-17 26Z" fill="#6f6bb0" /><circle cx="96" cy="96" r="7" fill="#f3c6a0" />
+          <path d="M46 150c-6-10-14-20-20-26l-6 6c7 7 13 17 17 26Z" fill="#3390e0" /><circle cx="54" cy="96" r="7" fill="#ffd2ac" />
         </g>
-        <g className="smy-thought"><circle cx="120" cy="22" r="11" fill="#fff" /><circle cx="108" cy="34" r="4" fill="#fff" /><circle cx="101" cy="42" r="2.4" fill="#fff" />
-          <circle className="smy-td" cx="115" cy="22" r="2" fill="#8b5cf6" /><circle className="smy-td" cx="120" cy="22" r="2" fill="#8b5cf6" /><circle className="smy-td" cx="125" cy="22" r="2" fill="#8b5cf6" /></g>
+        <g className="smy-thought"><circle cx="30" cy="22" r="11" fill="#fff" /><circle cx="42" cy="34" r="4" fill="#fff" /><circle cx="49" cy="42" r="2.4" fill="#fff" />
+          <circle className="smy-td" cx="25" cy="22" r="2" fill="#8b5cf6" /><circle className="smy-td" cx="30" cy="22" r="2" fill="#8b5cf6" /><circle className="smy-td" cx="35" cy="22" r="2" fill="#8b5cf6" /></g>
       </g>
     </defs></svg>
   );
 }
 
 const CSS = `
-.smy{--brand:#18469a;--brand-2:#3f6fd6;--amber:#f59e0b;--emerald:#10b981;--rose:#fb6f92;--violet:#8b5cf6;--sky:#2bb3e8;
-  --panel:#fff;--app:#f4f7fe;--ink:#1e2535;--muted:#6a7488;--line:#e6eaf3;--bot:#f1f4fd;--me:#18469a;
-  --ga:#2f6df6;--gb:#8b5cf6;--sh:0 18px 50px -12px rgba(24,70,154,.35);
-  --fh:'Fredoka',system-ui,sans-serif;--fb:'Nunito','Segoe UI',system-ui,sans-serif;font-family:var(--fb)}
-@media (prefers-color-scheme:dark){.smy{--panel:#171e2d;--app:#121826;--ink:#e9edf7;--muted:#97a2b8;--line:#273146;--bot:#1f2838;--me:#3f6fd6;--brand-2:#6f93e6}}
+.smy{--brand:#5b57e6;--brand-2:#7a76ff;--amber:#f59e0b;--emerald:#10b981;--rose:#fb6f92;--violet:#8b5cf6;--sky:#2bb3e8;
+  --panel:#ffffff;--app:#f4f6fb;--ink:#262636;--muted:#8186a0;--line:#eceef6;--me:#5b57e6;
+  --ga:#6d5cf6;--gb:#c558e0;--sh:0 18px 50px -12px rgba(91,87,230,.4);
+  --fh:'Fredoka',system-ui,sans-serif;--fb:'Nunito','Segoe UI',system-ui,sans-serif;font-family:var(--fb);color-scheme:light}
 .smy *{box-sizing:border-box}
 .smy button{font-family:inherit}
-.smy-launcher{position:fixed;z-index:9998;right:20px;bottom:20px;width:68px;height:68px;border:none;border-radius:50%;cursor:pointer;padding:0;overflow:visible;background:linear-gradient(145deg,var(--ga),var(--gb));box-shadow:var(--sh);display:grid;place-items:center;animation:smyFloat 3.2s ease-in-out infinite}
-.smy-headpop{position:absolute;bottom:4px;width:62px;height:72px;filter:drop-shadow(0 4px 5px rgba(0,0,0,.25))}
-.smy-ping{position:absolute;top:-2px;right:-2px;min-width:22px;height:22px;padding:0 5px;border-radius:999px;background:var(--rose);color:#fff;font-family:var(--fh);font-weight:700;font-size:12px;display:grid;place-items:center;border:2px solid var(--panel);z-index:2}
+.smy-launcher{position:fixed;z-index:9998;right:16px;bottom:14px;width:101px;height:122px;border:none;cursor:grab;touch-action:none;padding:0;overflow:visible;background:transparent;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:0;animation:smyFloat 3s ease-in-out infinite}
+.smy-launcher.smy-dragging{animation:none;cursor:grabbing}
+.smy-fab-label{font-family:var(--fh);font-weight:700;font-size:11px;color:var(--brand);background:#fff;padding:2px 10px;border-radius:999px;box-shadow:0 4px 10px -4px rgba(0,0,0,.4);line-height:1.2;margin-top:-12px}
+.smy-launcher.smy-call{animation:smyBounce .6s ease}
+@keyframes smyBounce{0%,100%{transform:translateY(0)}30%{transform:translateY(-10px)}60%{transform:translateY(-3px)}}
+.smy-fab{width:56px;height:68px;overflow:visible;filter:drop-shadow(0 5px 5px rgba(0,0,0,.3))}
+.smy-fab-img{width:99px;height:99px;object-fit:contain;pointer-events:none;filter:drop-shadow(1.3px 0 0 #1f2430) drop-shadow(-1.3px 0 0 #1f2430) drop-shadow(0 1.3px 0 #1f2430) drop-shadow(0 -1.3px 0 #1f2430) drop-shadow(0 4px 5px rgba(0,0,0,.35))}
+.smy-ping{position:absolute;top:-2px;right:-2px;min-width:22px;height:22px;padding:0 5px;border-radius:999px;background:var(--rose);color:#fff;font-family:var(--fh);font-weight:700;font-size:12px;display:grid;place-items:center;border:2px solid var(--panel);z-index:3}
+.smy-nudge{position:absolute;bottom:78px;right:0;z-index:3;background:var(--panel);color:var(--ink);font-weight:800;font-size:12.5px;padding:10px 13px;border-radius:14px;box-shadow:var(--sh);width:max-content;max-width:182px;text-align:left;border:1.5px solid var(--line);animation:smyNudge .35s ease both}
+.smy-nudge:after{content:"";position:absolute;bottom:-7px;right:24px;width:14px;height:14px;background:var(--panel);border-right:1.5px solid var(--line);border-bottom:1.5px solid var(--line);transform:rotate(45deg)}
+@keyframes smyNudge{from{opacity:0;transform:translateY(8px) scale(.9)}to{opacity:1;transform:none}}
 @keyframes smyFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
-.smy-panel{position:fixed;z-index:9999;display:flex;flex-direction:column;overflow:hidden;right:20px;bottom:20px;width:392px;max-width:calc(100vw - 32px);height:min(650px,calc(100vh - 40px));background:var(--panel);border-radius:26px;box-shadow:var(--sh);border:1px solid var(--line)}
+.smy-panel{position:fixed;z-index:9999;display:flex;flex-direction:column;overflow:hidden;right:20px;bottom:20px;width:394px;max-width:calc(100vw - 32px);height:min(656px,calc(100vh - 40px));background:var(--panel);border-radius:26px;box-shadow:var(--sh);border:1px solid var(--line)}
 .smy-pop{animation:smyPop .34s cubic-bezier(.22,1.2,.36,1)}
 @keyframes smyPop{from{transform:scale(.6) translateY(30px);opacity:0}to{transform:none;opacity:1}}
-.smy-head-bar{background:linear-gradient(130deg,var(--ga),var(--gb));color:#fff;padding:12px 14px;position:relative;flex:0 0 auto;min-height:118px;display:flex;align-items:center}
-.smy-hero{position:relative;width:104px;height:118px;flex:0 0 auto;margin-top:6px}
-.smy-hero svg{width:104px;height:132px;position:absolute;left:0;bottom:-6px;overflow:visible;filter:drop-shadow(0 6px 7px rgba(0,0,0,.28))}
-.smy-who{flex:1;min-width:0;padding-left:6px;align-self:flex-start;padding-top:6px}
-.smy-who h2{font-family:var(--fh);font-weight:600;font-size:21px;margin:0;display:flex;align-items:center;gap:6px}
+.smy-head-bar{background:linear-gradient(130deg,var(--ga),var(--gb));color:#fff;padding:12px 14px;position:relative;flex:0 0 auto;min-height:98px;display:flex;align-items:center;gap:10px;overflow:hidden}
+.smy-idbox{display:flex;flex-direction:column;align-items:center;gap:1px;flex:0 0 auto;z-index:1}
+.smy-brand{font-family:var(--fh);font-weight:600;font-size:15px;line-height:1;display:flex;align-items:center;gap:3px;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.25)}
+.smy-head-bar:before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 80% -10%,rgba(255,255,255,.25),transparent 55%)}
+.smy-hero{position:relative;width:76px;height:68px;flex:0 0 auto;z-index:1}
+.smy-hero-img{width:76px;height:68px;object-fit:contain;filter:drop-shadow(1.3px 0 0 #1f2430) drop-shadow(-1.3px 0 0 #1f2430) drop-shadow(0 1.3px 0 #1f2430) drop-shadow(0 -1.3px 0 #1f2430) drop-shadow(0 3px 4px rgba(0,0,0,.3))}
+.smy-who{flex:1;min-width:0;padding-left:4px;z-index:1}
+.smy-who h2{font-family:var(--fh);font-weight:600;font-size:20px;margin:0;display:flex;align-items:center;gap:6px;line-height:1}
+.smy-user{font-family:var(--fh);font-weight:600;font-size:17px;opacity:.98;text-transform:capitalize;line-height:1.1}
 .smy-meta{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
-.smy-meta span{font-size:10.5px;font-weight:800;background:rgba(255,255,255,.2);padding:3px 8px;border-radius:999px;font-family:var(--fh)}
-.smy-status{font-size:11.5px;font-weight:800;opacity:.92;display:flex;align-items:center;gap:6px;margin-top:8px}
+.smy-meta span{font-size:10px;font-weight:800;background:rgba(255,255,255,.22);padding:3px 8px;border-radius:999px;font-family:var(--fh)}
+.smy-status{font-size:11px;font-weight:800;opacity:.92;display:flex;align-items:center;gap:6px;margin-top:8px}
 .smy-status i{width:8px;height:8px;border-radius:50%;background:#7CFFB2;animation:smyLive 2s infinite}
 @keyframes smyLive{0%{box-shadow:0 0 0 0 rgba(124,255,178,.7)}70%{box-shadow:0 0 0 7px rgba(124,255,178,0)}100%{box-shadow:0 0 0 0 rgba(124,255,178,0)}}
-.smy-x{appearance:none;border:none;background:rgba(255,255,255,.2);color:#fff;width:32px;height:32px;border-radius:50%;cursor:pointer;font-size:17px;display:grid;place-items:center;position:absolute;top:10px;right:12px}
-.smy-x:hover{background:rgba(255,255,255,.32)}
-.smy-scroll{flex:1;overflow-y:auto;padding:16px 14px 6px;display:flex;flex-direction:column;gap:12px;background:var(--app)}
+.smy-x{appearance:none;border:none;background:rgba(255,255,255,.2);color:#fff;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:16px;display:grid;place-items:center;position:absolute;top:10px;right:12px;z-index:2}
+.smy-x:hover{background:rgba(255,255,255,.34)}
+.smy-scroll{flex:1;overflow-y:auto;padding:16px 14px 6px;display:flex;flex-direction:column;gap:13px;background:var(--app);scrollbar-width:thin;scrollbar-color:rgba(140,140,170,.3) transparent}
+.smy-scroll::-webkit-scrollbar{width:5px}
+.smy-scroll::-webkit-scrollbar-track{background:transparent}
+.smy-scroll::-webkit-scrollbar-thumb{background:rgba(140,140,170,.28);border-radius:999px}
+.smy-scroll::-webkit-scrollbar-thumb:hover{background:rgba(140,140,170,.45)}
 .smy-msg{display:flex;gap:8px;align-items:flex-end;max-width:100%;animation:smyRise .34s ease both}
 @keyframes smyRise{from{transform:translateY(10px);opacity:0}to{transform:none;opacity:1}}
 .smy-mini{width:30px;height:34px;flex:0 0 auto;overflow:visible}
 .smy-mini svg{width:30px;height:34px;overflow:visible;filter:drop-shadow(0 2px 2px rgba(0,0,0,.18))}
-.smy-bubble{padding:11px 14px;border-radius:18px;font-size:14px;font-weight:600;max-width:80%;box-shadow:0 3px 12px -7px rgba(24,70,154,.4);color:var(--ink)}
-.smy-bot .smy-bubble{background:var(--bot);border-bottom-left-radius:6px}
-.smy-me{flex-direction:row-reverse}.smy-me .smy-bubble{background:var(--me);color:#fff;border-bottom-right-radius:6px}
+.smy-bubble{padding:11px 14px;border-radius:18px;font-size:14px;font-weight:600;max-width:82%;color:var(--ink)}
+.smy-bot .smy-bubble{background:color-mix(in srgb,var(--tone,var(--brand)) 10%,var(--panel));border:1.5px solid color-mix(in srgb,var(--tone,var(--brand)) 24%,transparent);border-bottom-left-radius:6px;box-shadow:0 4px 14px -8px color-mix(in srgb,var(--tone,var(--brand)) 60%,transparent)}
+.smy-bot .smy-plain{background:var(--panel);border-color:var(--line)}
+.smy-me{flex-direction:row-reverse}.smy-me .smy-bubble{background:linear-gradient(135deg,var(--ga),var(--me));color:#fff;border-bottom-right-radius:6px;box-shadow:0 5px 14px -7px rgba(91,87,230,.7)}
 .smy-bubble b{font-weight:800}
 .smy-steps{margin:9px 0 0;padding:0;list-style:none;display:grid;gap:7px}
 .smy-steps li{display:flex;gap:9px;align-items:flex-start;font-weight:700;font-size:13.5px}
 .smy-n{width:20px;height:20px;border-radius:50%;background:var(--tone,var(--brand));color:#fff;font-family:var(--fh);font-size:11px;display:grid;place-items:center;flex:0 0 auto;margin-top:1px}
-.smy-card{margin-top:10px;border-radius:15px;padding:11px 13px;display:flex;align-items:center;gap:11px;background:color-mix(in srgb,var(--tone,var(--brand)) 12%,var(--panel));border:1.5px solid color-mix(in srgb,var(--tone,var(--brand)) 45%,transparent)}
+.smy-card{margin-top:10px;border-radius:15px;padding:11px 13px;display:flex;align-items:center;gap:11px;background:color-mix(in srgb,var(--tone,var(--brand)) 16%,var(--panel));border:1.5px solid color-mix(in srgb,var(--tone,var(--brand)) 40%,transparent)}
 .smy-em{font-size:24px}.smy-t{font-weight:800;font-size:14px}.smy-s{font-size:12px;color:var(--muted);font-weight:700;margin-top:1px}
 .smy-extra{margin-top:8px;font-size:12.5px;color:var(--muted);font-weight:700}
-.smy-act{margin-top:11px;display:inline-flex;align-items:center;gap:7px;border:none;cursor:pointer;color:#fff;font-family:var(--fh);font-weight:600;font-size:13px;padding:9px 14px;border-radius:11px;background:linear-gradient(135deg,var(--tone,var(--brand)),color-mix(in srgb,var(--tone,var(--brand)) 55%,var(--violet)));box-shadow:0 7px 16px -8px color-mix(in srgb,var(--tone,var(--brand)) 80%,transparent)}
+.smy-act{margin-top:11px;display:inline-flex;align-items:center;gap:7px;border:none;cursor:pointer;color:#fff;font-family:var(--fh);font-weight:600;font-size:13px;padding:9px 15px;border-radius:11px;background:linear-gradient(135deg,var(--tone,var(--brand)),color-mix(in srgb,var(--tone,var(--brand)) 50%,var(--gb)));box-shadow:0 7px 16px -8px color-mix(in srgb,var(--tone,var(--brand)) 85%,transparent)}
+.smy-act:hover{filter:brightness(1.07)}.smy-arw{font-size:15px}
 .smy-feed{display:grid;gap:8px;margin-top:9px}
-.smy-item{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--amber);border-radius:12px;padding:9px 12px}
+.smy-item{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--violet);border-radius:12px;padding:9px 12px}
 .smy-item.smy-new{border-left-color:var(--rose)}
 .smy-ttl{font-weight:800;font-size:13px;display:flex;gap:7px;align-items:center}
 .smy-bd{font-size:12.5px;color:var(--muted);font-weight:700;margin-top:2px}
@@ -431,27 +595,36 @@ const CSS = `
 .smy-typing span{width:7px;height:7px;border-radius:50%;background:var(--muted);opacity:.6;animation:smyTb 1.1s infinite}
 .smy-typing span:nth-child(2){animation-delay:.18s}.smy-typing span:nth-child(3){animation-delay:.36s}
 @keyframes smyTb{0%,60%,100%{transform:translateY(0);opacity:.4}30%{transform:translateY(-4px);opacity:1}}
-.smy-chips{display:flex;flex-wrap:wrap;gap:8px;padding:5px 14px 2px;background:var(--panel)}
-.smy-chip{border:1.5px solid var(--line);background:var(--panel);cursor:pointer;font-weight:800;font-size:12.5px;color:var(--ink);padding:9px 13px;border-radius:999px;display:inline-flex;align-items:center;gap:7px;transition:transform .12s,border-color .12s}
-.smy-chip:hover{transform:translateY(-2px);border-color:var(--brand-2)}
+.smy-chips{display:flex;flex-wrap:wrap;gap:8px;padding:8px 14px 4px;background:var(--panel)}
+.smy-chip{border:1.5px solid color-mix(in srgb,var(--ct,var(--brand)) 32%,var(--line));background:color-mix(in srgb,var(--ct,var(--brand)) 9%,var(--panel));cursor:pointer;font-weight:800;font-size:12.5px;color:var(--ink);padding:8px 13px;border-radius:999px;display:inline-flex;align-items:center;gap:7px;transition:transform .12s}
+.smy-chip:hover{transform:translateY(-2px)}
 .smy-ic{width:19px;height:19px;border-radius:7px;display:grid;place-items:center;font-size:11px;color:#fff}
 .smy-composer{flex:0 0 auto;padding:10px 12px;background:var(--panel);border-top:1px solid var(--line);display:flex;gap:9px;align-items:center}
 .smy-composer input{flex:1;min-width:0;border:1.5px solid var(--line);background:var(--app);color:var(--ink);border-radius:999px;padding:11px 15px;font-weight:700;font-size:14px;outline:none}
-.smy-composer input:focus{border-color:var(--brand-2)}
+.smy-composer input:focus{border-color:var(--brand)}
 .smy-send{border:none;cursor:pointer;width:44px;height:44px;border-radius:50%;flex:0 0 auto;background:linear-gradient(135deg,var(--ga),var(--gb));color:#fff;display:grid;place-items:center}
 .smy-send svg{width:20px;height:20px}
 .smy-foot{font-size:10.5px;color:var(--muted);text-align:center;font-weight:700;padding:0 14px 10px;background:var(--panel)}
+.smy-iconbtn{border:1.5px solid var(--line);background:var(--panel);cursor:pointer;width:40px;height:40px;border-radius:50%;flex:0 0 auto;display:grid;place-items:center;font-size:16px;line-height:1}
+.smy-iconbtn.on{background:color-mix(in srgb,var(--brand) 12%,var(--panel));border-color:var(--brand)}
+.smy-iconbtn.live{background:#ffe4e4;border-color:#ff6b6b;animation:smyPulse 1s infinite}
+@keyframes smyPulse{0%,100%{box-shadow:0 0 0 0 rgba(255,107,107,.5)}60%{box-shadow:0 0 0 7px rgba(255,107,107,0)}}
+.smy-digest{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+.smy-dpill{font-size:11.5px;font-weight:800;color:var(--ink);background:color-mix(in srgb,var(--ct,var(--brand)) 14%,var(--panel));border:1px solid color-mix(in srgb,var(--ct,var(--brand)) 36%,transparent);padding:4px 9px;border-radius:999px;display:inline-flex;align-items:center;gap:5px}
+.smy-confetti{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:60}
+.smy-confetti span{position:absolute;top:-24px;animation:smyFall 1.6s ease-in forwards}
+@keyframes smyFall{0%{transform:translateY(0) rotate(0);opacity:1}100%{transform:translateY(680px) rotate(360deg);opacity:0}}
 .smy-toast{position:fixed;z-index:10000;left:50%;transform:translateX(-50%);bottom:26px;background:var(--ink);color:var(--app);font-family:var(--fh);font-weight:600;font-size:13.5px;padding:11px 18px;border-radius:999px;box-shadow:var(--sh)}
 .smy-rig{animation:smyBob 3.6s ease-in-out infinite;transform-origin:50% 95%}
 @keyframes smyBob{0%,100%{transform:translateY(0) rotate(0)}50%{transform:translateY(-2px) rotate(-1.2deg)}}
 .smy-eye{animation:smyWink 4.8s infinite;transform-origin:center;transform-box:fill-box}
 @keyframes smyWink{0%,93%,100%{transform:scaleY(1)}96%{transform:scaleY(.12)}}
-.smy-wave{animation:smyWave 1.9s ease-in-out infinite;transform-origin:120px 98px;transform-box:view-box}
-@keyframes smyWave{0%,100%{transform:rotate(7deg)}50%{transform:rotate(-16deg)}}
+.smy-hand{transform-origin:24px 60px;transform-box:view-box;animation:smyHand 1s ease-in-out infinite}
+@keyframes smyHand{0%{transform:rotate(-5deg)}12%{transform:rotate(22deg)}25%{transform:rotate(-17deg)}38%{transform:rotate(22deg)}50%{transform:rotate(-17deg)}62%{transform:rotate(18deg)}75%{transform:rotate(-9deg)}100%{transform:rotate(-5deg)}}
 .smy-think,.smy-thought,.smy-grin{opacity:0}
 .smy-thinking .smy-rig{animation:smyTilt 2s ease-in-out infinite}
 @keyframes smyTilt{0%,100%{transform:rotate(-4deg)}50%{transform:rotate(-7deg)}}
-.smy-thinking .smy-wave{opacity:0}.smy-thinking .smy-think{opacity:1}.smy-thinking .smy-thought{opacity:1}
+.smy-thinking .smy-armwrap{opacity:0}.smy-thinking .smy-think{opacity:1}.smy-thinking .smy-thought{opacity:1}
 .smy-td{animation:smyTd 1.4s infinite}.smy-td:nth-child(2){animation-delay:.2s}.smy-td:nth-child(3){animation-delay:.4s}
 @keyframes smyTd{0%,100%{opacity:.3}50%{opacity:1}}
 .smy-talking .smy-mouth{animation:smyTalk .26s steps(2) 6;transform-origin:center;transform-box:fill-box}
