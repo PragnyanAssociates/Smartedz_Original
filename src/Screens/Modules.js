@@ -250,7 +250,15 @@ export const MODULES = [
     title: 'Library',
     imageSource: 'https://cdn-icons-png.flaticon.com/128/5833/5833290.png',
     navigateTo: '/Library'
-  }
+  },
+  {
+  id: 'SmartyAdmin',
+  module_name: 'SmartyAdmin',
+  label: 'Smarty Assistant',
+  title: 'Smarty Assistant',
+  imageSource: 'https://cdn-icons-png.flaticon.com/128/4712/4712027.png',
+  navigateTo: '/SmartyAdmin'
+}
 
 ];
 

@@ -17532,6 +17532,343 @@ app.get('/api/admin/online-count/:instId', async (req, res) => {
 
 
 // =====================================================================
+// === SMARTY ASSISTANT =================================================
+//   Paste this whole block into index.js, anywhere AFTER these are
+//   already defined (they are, near the top / notifications section):
+//     db, sameTenant(), resolveYearId(), createNotifications()
+//   A good spot is right after the Notifications section.
+//
+//   Endpoints
+//     GET  /api/smarty/bootstrap/:userId     one call the panel makes on open
+//     GET  /api/smarty/questions/:instId     admin: list custom questions
+//     POST /api/smarty/questions             admin: create / update
+//     DELETE /api/smarty/questions/:id       admin: delete
+//     GET  /api/smarty/updates-admin/:instId admin: list all updates
+//     POST /api/smarty/updates               admin: post update (+ notify)
+//     DELETE /api/smarty/updates/:id         admin: delete update
+//     POST /api/smarty/updates/read          mark all updates read for a user
+//
+//   Live answers (next class / homework / attendance) are computed here
+//   from the SAME tables the Timetable / Homework / Attendance modules
+//   use, so Smarty never shows a made-up figure. Each live block is
+//   wrapped in its own try/catch — if one query fails the panel still
+//   opens, just without that one card.
+// =====================================================================
+
+// Does a stored roles string ('all' | 'student,parent') include this role?
+function _smartyRoleMatch(rolesStr, role) {
+  const r = (role || '').toLowerCase().trim();
+  const s = (rolesStr || 'all').toLowerCase().trim();
+  if (!s || s === 'all') return true;
+  return s.split(',').map(x => x.trim()).filter(Boolean).includes(r);
+}
+
+// 'HH:MM:SS' -> '10:40 AM'
+function _smartyFmtTime(t) {
+  if (!t) return '';
+  const [hRaw, m] = String(t).split(':');
+  let h = parseInt(hRaw, 10);
+  if (isNaN(h)) return '';
+  const ap = h >= 12 ? 'PM' : 'AM';
+  h = h % 12; if (h === 0) h = 12;
+  return `${h}:${m} ${ap}`;
+}
+
+// "Now" in the school's timezone (IST), as { dayName, minutes }.
+function _smartyNowIST() {
+  const now = new Date();
+  const dayName = now.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'Asia/Kolkata' });
+  const hm = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' });
+  const [h, m] = hm.split(':').map(Number);
+  return { dayName, minutes: h * 60 + m };
+}
+const _smartyToMin = (t) => {
+  if (!t) return null;
+  const [h, m] = String(t).split(':').map(Number);
+  return (isNaN(h) ? 0 : h) * 60 + (isNaN(m) ? 0 : m);
+};
+
+// Next class for a student OR teacher, today, after the current time.
+async function _smartyNextClass(me, yearId) {
+  if (!yearId) return null;
+  const { dayName, minutes } = _smartyNowIST();
+  const [days] = await db.execute(
+    'SELECT id, day_name, is_working FROM timetable_days WHERE institutionId = ? AND academic_year_id = ?',
+    [me.institutionId, yearId]);
+  const today = days.find(d => (d.day_name || '').toLowerCase() === dayName.toLowerCase() && (d.is_working === 1 || d.is_working === null));
+  if (!today) return null;
+  const [periods] = await db.execute(
+    'SELECT id, name, start_time, end_time, is_break FROM timetable_periods WHERE institutionId = ? AND academic_year_id = ? ORDER BY period_index',
+    [me.institutionId, yearId]);
+
+  const role = (me.role || '').toLowerCase();
+  let entries;
+  if (role.includes('teacher')) {
+    [entries] = await db.execute(
+      `SELECT e.period_id, e.room_no, c.className, c.section, s.name AS subject_name
+         FROM timetable_entries e
+         LEFT JOIN classes c ON c.id = e.class_id
+         LEFT JOIN subjects s ON s.id = e.subject_id
+        WHERE e.institutionId = ? AND e.academic_year_id = ? AND e.day_id = ? AND e.teacher_id = ?`,
+      [me.institutionId, yearId, today.id, me.id]);
+  } else {
+    if (!me.class_id) return null;
+    [entries] = await db.execute(
+      `SELECT e.period_id, e.room_no, s.name AS subject_name, t.name AS teacher_name
+         FROM timetable_entries e
+         LEFT JOIN subjects s ON s.id = e.subject_id
+         LEFT JOIN users t ON t.id = e.teacher_id
+        WHERE e.institutionId = ? AND e.academic_year_id = ? AND e.day_id = ? AND e.class_id = ?`,
+      [me.institutionId, yearId, today.id, me.class_id]);
+  }
+  const byPeriod = {};
+  entries.forEach(e => { byPeriod[e.period_id] = e; });
+
+  // periods are already ordered; find the first teaching period that
+  // (a) has an entry and (b) hasn't ended yet.
+  const upcoming = periods
+    .filter(p => !p.is_break && byPeriod[p.id])
+    .map(p => ({ ...p, startMin: _smartyToMin(p.start_time), endMin: _smartyToMin(p.end_time), ent: byPeriod[p.id] }))
+    .filter(p => p.endMin == null || p.endMin >= minutes)
+    .sort((a, b) => (a.startMin ?? 0) - (b.startMin ?? 0));
+
+  if (upcoming.length === 0) return null;
+  const n = upcoming[0];
+  const after = upcoming[1] || null;
+  const ongoing = n.startMin != null && n.startMin <= minutes && (n.endMin == null || n.endMin >= minutes);
+  return {
+    ongoing,
+    subject: n.ent.subject_name || n.name || 'Class',
+    teacher: n.ent.teacher_name || null,
+    class_label: n.ent.className ? `${n.ent.className}${n.ent.section ? ' - ' + n.ent.section : ''}` : null,
+    room: n.ent.room_no || null,
+    start: _smartyFmtTime(n.start_time),
+    end: _smartyFmtTime(n.end_time),
+    next_after: after ? `${after.ent.subject_name || after.name} (${_smartyFmtTime(after.start_time)})` : null
+  };
+}
+
+// --- BOOTSTRAP: one call the panel makes when it opens ----------------
+app.get('/api/smarty/bootstrap/:userId', async (req, res) => {
+  try {
+    const [uRows] = await db.execute(
+      'SELECT id, name, role, class_id, section, roll_no, institutionId FROM users WHERE id = ? LIMIT 1',
+      [req.params.userId]);
+    if (!uRows.length) return res.status(404).json({ error: 'User not found.' });
+    const me = uRows[0];
+    if (!sameTenant(req, me.institutionId)) return res.status(403).json({ error: 'This user belongs to another institution.' });
+
+    const role = (me.role || '').toLowerCase();
+    const isStudent = role.includes('student');
+    const isTeacher = role.includes('teacher');
+    const yearId = await resolveYearId(me.institutionId);
+
+    let class_label = null;
+    if (me.class_id) {
+      try {
+        const [c] = await db.execute('SELECT className, section FROM classes WHERE id = ? LIMIT 1', [me.class_id]);
+        if (c.length) class_label = `${c[0].className}${c[0].section ? ' - ' + c[0].section : ''}`;
+      } catch (_) {}
+    }
+
+    // live: next class
+    let nextClass = null;
+    try { nextClass = await _smartyNextClass(me, yearId); } catch (e) { console.warn('[smarty nextClass]', e.message); }
+
+    // live: homework (students)
+    let homework = null;
+    if (isStudent && me.class_id) {
+      try {
+        const [rows] = await db.execute(
+          `SELECT h.title, h.due_date, s.name AS subject_name,
+                  CASE WHEN sub.id IS NULL THEN 0 ELSE 1 END AS submitted
+             FROM homework h
+             LEFT JOIN subjects s ON s.id = h.subject_id
+             LEFT JOIN homework_submissions sub ON sub.homework_id = h.id AND sub.student_id = ?
+            WHERE h.class_id = ? AND h.institutionId = ?`,
+          [me.id, me.class_id, me.institutionId]);
+        const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }); // YYYY-MM-DD
+        const pending = rows.filter(r => !r.submitted);
+        const dueToday = pending.filter(r => String(r.due_date || '').slice(0, 10) === today);
+        const upcoming = pending
+          .filter(r => String(r.due_date || '').slice(0, 10) >= today)
+          .sort((a, b) => String(a.due_date).localeCompare(String(b.due_date)));
+        homework = {
+          pending: pending.length,
+          due_today: dueToday.length,
+          next: upcoming[0] ? { title: upcoming[0].title, subject: upcoming[0].subject_name, due: String(upcoming[0].due_date || '').slice(0, 10) } : null
+        };
+      } catch (e) { console.warn('[smarty homework]', e.message); }
+    }
+
+    // live: attendance (students)
+    let attendance = null;
+    if (isStudent && yearId) {
+      try {
+        const [rows] = await db.execute(
+          "SELECT status FROM attendance WHERE user_id = ? AND academic_year_id = ?",
+          [me.id, yearId]);
+        const total = rows.length;
+        const present = rows.filter(r => r.status === 'P').length;
+        attendance = { total, present, percentage: total ? ((present / total) * 100).toFixed(0) : null };
+      } catch (e) { console.warn('[smarty attendance]', e.message); }
+    }
+
+    // custom questions for this role
+    let questions = [];
+    try {
+      const [qRows] = await db.execute(
+        'SELECT id, category, question, answer, roles, link, keywords FROM smarty_questions WHERE institutionId = ? AND is_active = 1 ORDER BY sort_order, id',
+        [me.institutionId]);
+      questions = qRows.filter(q => _smartyRoleMatch(q.roles, me.role));
+    } catch (_) {}
+
+    // updates feed + unread
+    let updates = [], unread = 0;
+    try {
+      const [uRows2] = await db.execute(
+        `SELECT u.id, u.title, u.body, u.link, u.roles, u.created_at,
+                CASE WHEN r.user_id IS NULL THEN 1 ELSE 0 END AS is_new
+           FROM smarty_updates u
+           LEFT JOIN smarty_update_reads r ON r.update_id = u.id AND r.user_id = ?
+          WHERE u.institutionId = ? AND u.is_active = 1
+          ORDER BY u.created_at DESC
+          LIMIT 20`,
+        [me.id, me.institutionId]);
+      updates = uRows2.filter(u => _smartyRoleMatch(u.roles, me.role));
+      unread = updates.filter(u => u.is_new).length;
+    } catch (_) {}
+
+    res.json({
+      user: { id: me.id, name: me.name, role: me.role, class_label, roll_no: me.roll_no },
+      nextClass, homework, attendance, questions, updates, unread
+    });
+  } catch (err) {
+    console.error('smarty/bootstrap error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- ADMIN: list custom questions -------------------------------------
+app.get('/api/smarty/questions/:instId', async (req, res) => {
+  const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+  try {
+    const [rows] = await db.execute(
+      'SELECT * FROM smarty_questions WHERE institutionId = ? ORDER BY sort_order, id', [instId]);
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- ADMIN: create / update a question --------------------------------
+app.post('/api/smarty/questions', async (req, res) => {
+  const institutionId = req.auth.institutionId;
+  const { id, category, question, answer, roles, link, keywords, sort_order, is_active } = req.body || {};
+  if (!question || !answer) return res.status(400).json({ error: 'question and answer are required.' });
+  try {
+    if (id) {
+      const [own] = await db.execute('SELECT institutionId FROM smarty_questions WHERE id = ?', [id]);
+      if (!own.length || !sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'Not your question.' });
+      await db.execute(
+        `UPDATE smarty_questions SET category = ?, question = ?, answer = ?, roles = ?, link = ?, keywords = ?, sort_order = ?, is_active = ? WHERE id = ?`,
+        [category || null, question, answer, roles || 'all', link || null, keywords || null, sort_order || 0, is_active == null ? 1 : (is_active ? 1 : 0), id]);
+      return res.json({ success: true, id });
+    }
+    const [r] = await db.execute(
+      `INSERT INTO smarty_questions (institutionId, category, question, answer, roles, link, keywords, sort_order, is_active, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [institutionId, category || null, question, answer, roles || 'all', link || null, keywords || null, sort_order || 0, is_active == null ? 1 : (is_active ? 1 : 0), req.auth.id || null]);
+    res.json({ success: true, id: r.insertId });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- ADMIN: delete a question -----------------------------------------
+app.delete('/api/smarty/questions/:id', async (req, res) => {
+  try {
+    const [own] = await db.execute('SELECT institutionId FROM smarty_questions WHERE id = ?', [req.params.id]);
+    if (!own.length || !sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'Not your question.' });
+    await db.execute('DELETE FROM smarty_questions WHERE id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- ADMIN: list all updates ------------------------------------------
+app.get('/api/smarty/updates-admin/:instId', async (req, res) => {
+  const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+  try {
+    const [rows] = await db.execute(
+      'SELECT * FROM smarty_updates WHERE institutionId = ? ORDER BY created_at DESC', [instId]);
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- ADMIN: post an update (and notify matching users) ----------------
+app.post('/api/smarty/updates', async (req, res) => {
+  const institutionId = req.auth.institutionId;
+  const { id, title, body, link, roles, is_active } = req.body || {};
+  if (!title || !body) return res.status(400).json({ error: 'title and body are required.' });
+  try {
+    if (id) {
+      const [own] = await db.execute('SELECT institutionId FROM smarty_updates WHERE id = ?', [id]);
+      if (!own.length || !sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'Not your update.' });
+      await db.execute(
+        'UPDATE smarty_updates SET title = ?, body = ?, link = ?, roles = ?, is_active = ? WHERE id = ?',
+        [title, body, link || null, roles || 'all', is_active == null ? 1 : (is_active ? 1 : 0), id]);
+      return res.json({ success: true, id });
+    }
+    const [r] = await db.execute(
+      `INSERT INTO smarty_updates (institutionId, title, body, link, roles, is_active, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [institutionId, title, body, link || null, roles || 'all', is_active == null ? 1 : (is_active ? 1 : 0), req.auth.id || null]);
+
+    // Fan out to Notifications for everyone this update targets.
+    try {
+      const [users] = await db.execute(
+        "SELECT id, role FROM users WHERE institutionId = ? AND LOWER(COALESCE(status,'active')) = 'active'",
+        [institutionId]);
+      const recipientIds = users.filter(u => _smartyRoleMatch(roles, u.role)).map(u => u.id);
+      if (recipientIds.length) {
+        await createNotifications({
+          institutionId, recipientIds, type: 'smarty',
+          title: title, body: body, link: link || 'notifications',
+          entity_id: r.insertId, actor_id: req.auth.id || null
+        });
+      }
+    } catch (e) { console.warn('[smarty update notify]', e.message); }
+
+    res.json({ success: true, id: r.insertId });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- ADMIN: delete an update ------------------------------------------
+app.delete('/api/smarty/updates/:id', async (req, res) => {
+  try {
+    const [own] = await db.execute('SELECT institutionId FROM smarty_updates WHERE id = ?', [req.params.id]);
+    if (!own.length || !sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'Not your update.' });
+    await db.execute('DELETE FROM smarty_updates WHERE id = ?', [req.params.id]);
+    await db.execute('DELETE FROM smarty_update_reads WHERE update_id = ?', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- mark all updates read for a user (clears Smarty's "new" badge) ----
+app.post('/api/smarty/updates/read', async (req, res) => {
+  const userId = req.auth.id;
+  const institutionId = req.auth.institutionId;
+  try {
+    const [rows] = await db.execute(
+      'SELECT id FROM smarty_updates WHERE institutionId = ? AND is_active = 1', [institutionId]);
+    for (const r of rows) {
+      await db.execute(
+        'INSERT IGNORE INTO smarty_update_reads (update_id, user_id) VALUES (?, ?)',
+        [r.id, userId]);
+    }
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+
+// =====================================================================
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
     console.log(`🚀 SmartEdz Backend Active on Port ${PORT}`);

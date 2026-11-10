@@ -31,6 +31,8 @@ import OnlineClasses from '../components/OnlineClasses/OnlineClasses';
 import InventoryAssets from '../components/Assets/InventoryAssets';
 import Library from '../components/Library/Library';
 import Support from './Support';
+import Smarty from '../components/Smarty/Smarty';
+import SmartyAdmin from '../components/Smarty/SmartyAdmin';
 
 import { PermissionsProvider, usePermissions } from './PermissionsContext';
 import { useAuth } from '../context/AuthContext';
@@ -182,6 +184,7 @@ function DashboardShell() {
       case 'InventoryAssets':   return <InventoryAssets/>;
       case 'Support':           return <Support/>;
       case 'Library':           return <Library/>;
+      case 'SmartyAdmin':       return <SmartyAdmin />;
       case 'notifications':     return <NotificationsScreen onNavigate={setActiveTab} />;
 
       default:
@@ -214,6 +217,8 @@ function DashboardShell() {
           </main>
         </div>
       </div>
+      {/* Smarty floats over every module; its buttons switch tabs via setActiveTab */}
+      <Smarty onNavigate={setActiveTab} />
     </div>
   );
 }
