@@ -17867,6 +17867,78 @@ app.post('/api/smarty/updates/read', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// =====================================================================
+// === SMARTY AI — per-school Gemini key storage =======================
+//   Paste this block into index.js AFTER the main Smarty block (it reuses)
+
+// mask a key for display: keep only the last 4 chars
+function _smartyMaskKey(key) {
+  if (!key) return null;
+  const s = String(key);
+  return '••••••••' + s.slice(-4);
+}
+
+// Only the Super Admin (or Developer) manages the AI key.
+function _smartyIsAdmin(req) {
+  const role = (req.auth && req.auth.role) || '';
+  return role === 'Super Admin' || role === 'Developer';
+}
+
+// --- GET current config (never returns the raw key) -------------------
+app.get('/api/smarty/ai-config/:instId', async (req, res) => {
+  const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
+  if (!sameTenant(req, instId)) return res.status(403).json({ error: 'Another institution.' });
+  try {
+    const [rows] = await db.execute(
+      'SELECT provider, api_key, model, enabled FROM smarty_ai_config WHERE institutionId = ? LIMIT 1',
+      [instId]);
+    if (!rows.length) {
+      return res.json({ configured: false, masked: null, model: 'gemini-1.5-flash', enabled: false, provider: 'gemini' });
+    }
+    const r = rows[0];
+    res.json({
+      configured: !!r.api_key,
+      masked: _smartyMaskKey(r.api_key),
+      model: r.model || 'gemini-1.5-flash',
+      enabled: !!r.enabled,
+      provider: r.provider || 'gemini'
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- POST save config -------------------------------------------------
+//   api_key is optional: if omitted/blank the existing key is KEPT, so the
+//   admin can flip "enabled" or change the model without re-entering it.
+app.post('/api/smarty/ai-config', async (req, res) => {
+  if (!_smartyIsAdmin(req)) return res.status(403).json({ error: 'Only the Super Admin can manage the AI key.' });
+  const institutionId = req.auth.institutionId;
+  const { api_key, model, enabled, provider } = req.body || {};
+  try {
+    const [rows] = await db.execute('SELECT institutionId FROM smarty_ai_config WHERE institutionId = ? LIMIT 1', [institutionId]);
+    const mdl = model || 'gemini-1.5-flash';
+    const en  = enabled ? 1 : 0;
+    const prov = provider || 'gemini';
+
+    if (rows.length) {
+      if (api_key && String(api_key).trim()) {
+        await db.execute(
+          'UPDATE smarty_ai_config SET api_key = ?, model = ?, enabled = ?, provider = ?, updated_by = ? WHERE institutionId = ?',
+          [String(api_key).trim(), mdl, en, prov, req.auth.id || null, institutionId]);
+      } else {
+        // keep existing key, just update the toggles
+        await db.execute(
+          'UPDATE smarty_ai_config SET model = ?, enabled = ?, provider = ?, updated_by = ? WHERE institutionId = ?',
+          [mdl, en, prov, req.auth.id || null, institutionId]);
+      }
+    } else {
+      await db.execute(
+        'INSERT INTO smarty_ai_config (institutionId, provider, api_key, model, enabled, updated_by) VALUES (?, ?, ?, ?, ?, ?)',
+        [institutionId, prov, api_key ? String(api_key).trim() : null, mdl, en, req.auth.id || null]);
+    }
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 
 
 // =====================================================================

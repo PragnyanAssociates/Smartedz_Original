@@ -23,14 +23,18 @@ import smartyGif from './smarty.gif';   // animated waving character (GIF/WebP).
 
 const idToModule = {}, idToLabel = {};
 MODULES.forEach(m => { idToModule[m.id] = m.module_name; idToLabel[m.id] = m.label || m.title || m.id; });
+// Modules everyone can open regardless of the permission matrix (home, profile,
+// notifications are always reachable) — so Smarty never hides their shortcuts.
+const ALWAYS_VISIBLE = new Set(['overview', ...MODULES.filter(m => m.alwaysVisible).map(m => m.id)]);
 const toneVar = { sky: '--sky', amber: '--amber', emerald: '--emerald', rose: '--rose', violet: '--violet', brand: '--brand' };
 
 // contextual follow-up chips shown after an answer (ids are filtered by role/visibility)
 const FOLLOW = {
-  'next-class': ['hw-today', 'attendance', 'how-timetable'],
+  'next-class': ['cal-today', 'hw-today', 'attendance', 'how-timetable'],
   'hw-today': ['how-hw', 'attendance', 'next-class'],
   'attendance': ['next-class', 'hw-today', 'how-report'],
-  'news': ['next-class', 'admin-reports', 'admin-directory'],
+  'cal-today': ['next-class', 'hw-today', 'news'],
+  'news': ['cal-today', 'next-class', 'admin-reports', 'admin-directory'],
   'admin-reports': ['admin-fees', 'admin-directory', 'admin-smarty'],
   'admin-fees': ['admin-reports', 'admin-directory', 'admin-smarty'],
   'admin-directory': ['admin-reports', 'admin-fees', 'admin-smarty'],
@@ -41,6 +45,53 @@ const CONFETTI = Array.from({ length: 26 }).map((_, i) => ({
   d: +(Math.random() * 0.5).toFixed(2),
   s: 14 + Math.round(Math.random() * 12),
 }));
+
+// ---- Academic Calendar: event type → Smarty tone + emoji ----
+const CAL_TONE = { Holiday: 'emerald', Festival: 'rose', Exam: 'violet', Meeting: 'sky', Event: 'amber', Other: 'brand' };
+const CAL_EMOJI = { Holiday: '🏖️', Festival: '🎉', Exam: '📝', Meeting: '👥', Event: '🎪', Other: '📌' };
+const CAL_CELEBRATE = { Holiday: true, Festival: true };   // these pop confetti on login
+// live question id -> the module it should open (for visibility + the Open button)
+const LIVE_LINK = {
+  'next-class': 'timetable', 'hw-today': 'Homework', 'attendance': 'attendance',
+  'cal-today': 'academic-calendar', 'cal-next-holiday': 'academic-calendar', 'cal-month': 'academic-calendar',
+  'my-notifications': 'notifications',
+};
+const calKey = (s) => String(s || '').slice(0, 10);        // '2026-11-11T..' -> '2026-11-11'
+const todayKey = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+function calWhen(key) {
+  const tk = todayKey();
+  if (key === tk) return 'Today';
+  const a = new Date(tk + 'T00:00:00'), b = new Date(key + 'T00:00:00');
+  const diff = Math.round((b - a) / 86400000);
+  if (diff === 1) return 'Tomorrow';
+  if (diff > 1 && diff <= 7) return `in ${diff} days`;
+  return b.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
+}
+// Split the calendar feed into today / upcoming / this-month / next holiday.
+function computeCalendar(events) {
+  const tk = todayKey();
+  const ym = tk.slice(0, 7);
+  const norm = (Array.isArray(events) ? events : []).map(e => ({
+    id: e.id, name: e.name, type: e.type || 'Other',
+    time: e.time || '', description: e.description || '', key: calKey(e.event_date),
+  })).filter(e => e.key);
+  const today = norm.filter(e => e.key === tk).sort((a, b) => String(a.time).localeCompare(String(b.time)));
+  const future = norm.filter(e => e.key > tk).sort((a, b) => a.key.localeCompare(b.key));
+  const upcoming = future.slice(0, 4);
+  const month = norm.filter(e => e.key.slice(0, 7) === ym).sort((a, b) => a.key.localeCompare(b.key));
+  const nextHoliday = future.find(e => e.type === 'Holiday' || e.type === 'Festival') || null;
+  const nextExam = future.find(e => e.type === 'Exam') || null;
+  return { today, upcoming, month, nextHoliday, nextExam };
+}
+
+// ---- on-device "learning": remember which questions this user asks most ----
+function freqLoad(uid) { try { return JSON.parse(localStorage.getItem('smy_freq_' + uid) || '{}') || {}; } catch { return {}; } }
+function freqBump(uid, id) { if (!uid || !id) return; try { const f = freqLoad(uid); f[id] = (f[id] || 0) + 1; localStorage.setItem('smy_freq_' + uid, JSON.stringify(f)); } catch (_) {} }
+function freqTop(uid, n) { const f = freqLoad(uid); return Object.keys(f).sort((a, b) => f[b] - f[a]).slice(0, n || 3); }
+
+// tiny stopword set so free-text matching scores on meaningful words only
+const STOP = new Set(['the', 'a', 'an', 'is', 'are', 'do', 'i', 'my', 'me', 'to', 'of', 'for', 'in', 'on', 'any', 'have', 'has', 'can', 'you', 'what', 'when', 'where', 'how', 'and', 'please', 'show', 'tell', 'get', 'there', 'this', 'that']);
+const tokenize = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w && w.length > 2 && !STOP.has(w));
 
 function roleBucket(role) {
   const r = (role || '').toLowerCase();
@@ -70,6 +121,8 @@ export default function Smarty({ onNavigate }) {
   const [unread, setUnread] = useState(0);
   const [toast, setToast] = useState('');
   const [nudge, setNudge] = useState(false);
+  const [nudgeMsg, setNudgeMsg] = useState('');
+  const lastNotif = useRef(null);
 
   const scrollRef = useRef(null);
   const moodTimer = useRef(null);
@@ -126,22 +179,25 @@ export default function Smarty({ onNavigate }) {
 
   const role = user?.role;
   const firstName = ((boot?.user?.name || user?.name || 'there').split(' ')[0]);
-  const canSeeLink = useCallback((linkId) => !linkId || isVisible(idToModule[linkId] || linkId), [isVisible]);
+  const canSeeLink = useCallback((linkId) => !linkId || ALWAYS_VISIBLE.has(linkId) || isVisible(idToModule[linkId] || linkId), [isVisible]);
 
-  // ---- persist chat per user for this browser session ----
+  // ---- memory: chat history persists ACROSS logins (localStorage), but the
+  //      daily greeting/digest still fires once per browser session. ----
   const storeKey = user?.id ? `smy_msgs_${user.id}` : null;
+  const greetKey = user?.id ? `smy_greeted_${user.id}` : null;
   useEffect(() => {
     if (!storeKey) return;
-    try { const s = sessionStorage.getItem(storeKey); if (s) { const a = JSON.parse(s); if (Array.isArray(a) && a.length) { setMsgs(a); greeted.current = true; } } } catch (_) {}
-  }, [storeKey]);
-  useEffect(() => { if (storeKey) { try { sessionStorage.setItem(storeKey, JSON.stringify(msgs)); } catch (_) {} } }, [msgs, storeKey]);
+    try { const s = localStorage.getItem(storeKey); if (s) { const a = JSON.parse(s); if (Array.isArray(a) && a.length) setMsgs(a.slice(-40)); } } catch (_) {}
+    try { if (greetKey && sessionStorage.getItem(greetKey) === '1') greeted.current = true; } catch (_) {}
+  }, [storeKey, greetKey]);
+  useEffect(() => { if (storeKey) { try { localStorage.setItem(storeKey, JSON.stringify(msgs.slice(-40))); } catch (_) {} } }, [msgs, storeKey]);
 
   // ---- answer pool for THIS user (role + module visibility) ----
   const buildPool = useCallback((b) => {
     const pool = [];
     BUILTINS.forEach(e => {
       if (!roleMatch(e.roles, role)) return;
-      const linkId = e.answer?.link || (e.id === 'next-class' ? 'timetable' : null);
+      const linkId = e.answer?.link || LIVE_LINK[e.id] || null;
       if (linkId && !canSeeLink(linkId)) return;
       pool.push(e);
     });
@@ -183,6 +239,53 @@ export default function Smarty({ onNavigate }) {
         card: { em: '✅', t: `${a.present} of ${a.total} days present`, s: 'This academic year' }, link: 'attendance', linkLabel: 'Open Attendance',
         celebrate: Number(a.percentage) >= 100 };
     }
+    if (id === 'cal-today') {
+      const c = b?.calendar || { today: [], upcoming: [] };
+      const fmtType = (e) => `${CAL_EMOJI[e.type] || '📌'} ${e.type}`;
+      if (!c.today.length && !c.upcoming.length)
+        return { tone: 'sky', text: 'Nothing on the calendar today, and the days ahead look clear 🗓️', link: 'academic-calendar', linkLabel: 'Open Calendar' };
+      if (c.today.length) {
+        const lead = c.today[0];
+        return {
+          tone: CAL_TONE[lead.type] || 'sky',
+          text: c.today.length === 1 ? `📅 Today: ${lead.name} (${lead.type})` : `📅 You have ${c.today.length} things on today`,
+          items: c.today.concat(c.upcoming).map((e, i) => ({
+            ttl: `${e.name}${e.time ? ' · ' + e.time : ''}`,
+            bd: `${i < c.today.length ? 'Today' : calWhen(e.key)} · ${fmtType(e)}${e.description ? ' — ' + e.description : ''}`,
+            isNew: i < c.today.length, link: 'academic-calendar',
+          })),
+          link: 'academic-calendar', linkLabel: 'Open Calendar',
+          celebrate: !!CAL_CELEBRATE[lead.type],
+        };
+      }
+      return {
+        tone: 'sky', text: "Nothing today — here's what's coming up 🗓️",
+        items: c.upcoming.map(e => ({ ttl: `${e.name}${e.time ? ' · ' + e.time : ''}`, bd: `${calWhen(e.key)} · ${CAL_EMOJI[e.type] || '📌'} ${e.type}`, link: 'academic-calendar' })),
+        link: 'academic-calendar', linkLabel: 'Open Calendar',
+      };
+    }
+    if (id === 'cal-next-holiday') {
+      const h = b?.calendar?.nextHoliday;
+      if (!h) return { tone: 'emerald', text: 'No holidays or festivals coming up on the calendar yet 🗓️', link: 'academic-calendar', linkLabel: 'Open Calendar' };
+      return { tone: CAL_TONE[h.type] || 'emerald', text: `${CAL_EMOJI[h.type] || '🎉'} Next ${h.type.toLowerCase()}: ${h.name}`,
+        card: { em: CAL_EMOJI[h.type] || '🎉', t: h.name, s: `${calWhen(h.key)}${h.description ? ' · ' + h.description : ''}` },
+        link: 'academic-calendar', linkLabel: 'Open Calendar' };
+    }
+    if (id === 'cal-month') {
+      const m = b?.calendar?.month || [];
+      if (!m.length) return { tone: 'sky', text: 'Nothing scheduled on the calendar this month 🗓️', link: 'academic-calendar', linkLabel: 'Open Calendar' };
+      return { tone: 'sky', text: `🗓️ ${m.length} thing${m.length > 1 ? 's' : ''} on the calendar this month`,
+        items: m.map(e => ({ ttl: `${e.name}${e.time ? ' · ' + e.time : ''}`, bd: `${calWhen(e.key)} · ${CAL_EMOJI[e.type] || '📌'} ${e.type}`, link: 'academic-calendar' })),
+        link: 'academic-calendar', linkLabel: 'Open Calendar' };
+    }
+    if (id === 'my-notifications') {
+      const nf = b?.notif || { unread: 0, items: [] };
+      if (!nf.items.length) return { tone: 'violet', text: "You have no notifications right now — all caught up! 🎉", link: 'notifications', linkLabel: 'Open Notifications' };
+      return { tone: 'violet',
+        text: nf.unread > 0 ? `🔔 You have ${nf.unread} unread notification${nf.unread > 1 ? 's' : ''}` : "Here are your latest notifications 🔔",
+        items: nf.items.slice(0, 5).map(n => ({ ttl: n.title, bd: n.body || '', isNew: !n.is_read, link: n.link || 'notifications' })),
+        link: 'notifications', linkLabel: 'Open Notifications' };
+    }
     if (id === 'news') {
       const items = (b?.updates || []);
       if (!items.length) return { tone: 'violet', text: "No new updates right now — I'll tell you the moment there are! 📣" };
@@ -192,24 +295,39 @@ export default function Smarty({ onNavigate }) {
   }, []);
 
   const starters = useCallback((b, pool) => {
-    const ids = STARTERS_BY_ROLE[roleBucket(role)] || STARTERS_BY_ROLE.default;
-    const out = [];
-    ids.forEach(id => {
+    const roleIds = STARTERS_BY_ROLE[roleBucket(role)] || STARTERS_BY_ROLE.default;
+    // personalised: the user's most-asked questions come first, then role defaults
+    const ordered = [...freqTop(user?.id, 3), ...roleIds];
+    const seen = new Set(); const out = [];
+    ordered.forEach(id => {
+      if (seen.has(id) || id === 'news') return;
       if (id === 'hw-today' && !b?.homework) return;
       if (id === 'attendance' && !b?.attendance) return;
       const e = pool.find(x => x.id === id);
-      if (e) out.push({ id: e.id, label: e.q, icon: e.icon || '💬', tone: e.tone || 'brand' });
+      if (e) { seen.add(id); out.push({ id: e.id, label: e.q, icon: e.icon || '💬', tone: e.tone || 'brand' }); }
     });
     out.push({ id: 'news', label: "What's new?", icon: '📣', tone: 'violet' });
-    return out;
-  }, [role]);
+    return out.slice(0, 7);
+  }, [role, user]);
 
   // ---- data load ----
   const load = useCallback(async () => {
     if (!user?.id) return {};
     try {
-      const res = await fetch(`${API_BASE_URL}/smarty/bootstrap/${user.id}`);
-      const b = res.ok ? await res.json() : {};
+      // bootstrap + academic calendar + notifications in parallel (each reuses its own module's endpoint)
+      const [bRes, cRes, nRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/smarty/bootstrap/${user.id}`),
+        user?.institutionId ? fetch(`${API_BASE_URL}/admin/calendar/${user.institutionId}`).catch(() => null) : Promise.resolve(null),
+        fetch(`${API_BASE_URL}/notifications/${user.id}?limit=20`).catch(() => null),
+      ]);
+      const b = bRes.ok ? await bRes.json() : {};
+      try { b.calendar = computeCalendar(cRes && cRes.ok ? await cRes.json() : []); }
+      catch (_) { b.calendar = { today: [], upcoming: [], month: [], nextHoliday: null, nextExam: null }; }
+      try {
+        const nItems = nRes && nRes.ok ? await nRes.json() : [];
+        const items = Array.isArray(nItems) ? nItems : [];
+        b.notif = { items, unread: items.filter(n => !n.is_read).length };
+      } catch (_) { b.notif = { items: [], unread: 0 }; }
       setBoot(b); setUnread(b.unread || 0); return b;
     } catch (e) { setBoot({}); return {}; }
   }, [user]);
@@ -221,11 +339,33 @@ export default function Smarty({ onNavigate }) {
   // ---- idle nudge: wave + "need help?" every minute while closed ----
   useEffect(() => {
     if (open) { setNudge(false); return; }
-    const show = () => { setNudge(true); window.clearTimeout(show._t); show._t = window.setTimeout(() => setNudge(false), 5500); };
+    const show = () => { setNudgeMsg(''); setNudge(true); window.clearTimeout(show._t); show._t = window.setTimeout(() => setNudge(false), 5500); };
     const first = window.setTimeout(show, 8000);
     const iv = window.setInterval(show, 30000);
     return () => { window.clearTimeout(first); window.clearInterval(iv); window.clearTimeout(show._t); };
   }, [open]);
+
+  // proactive: quietly poll notifications while closed; nudge when a new one lands
+  useEffect(() => {
+    if (open || !user?.id) return;
+    if (lastNotif.current == null && boot?.notif) lastNotif.current = boot.notif.unread || 0;
+    let alive = true;
+    const check = async () => {
+      try {
+        const r = await fetch(`${API_BASE_URL}/notifications/${user.id}?limit=20`);
+        if (!r.ok || !alive) return;
+        const items = await r.json();
+        const now = Array.isArray(items) ? items.filter(n => !n.is_read).length : 0;
+        if (lastNotif.current != null && now > lastNotif.current) {
+          setUnread((u) => u); setNudgeMsg('🔔 You have a new notification — tap me!');
+          setNudge(true); window.setTimeout(() => setNudge(false), 6500);
+        }
+        lastNotif.current = now;
+      } catch (_) {}
+    };
+    const iv = window.setInterval(check, 120000);
+    return () => { alive = false; window.clearInterval(iv); };
+  }, [open, user, boot]);
 
   const flash = (m) => { if (m !== 'idle') { setMood(m); clearTimeout(moodTimer.current); moodTimer.current = setTimeout(() => setMood('idle'), m === 'happy' ? 1700 : 4000); } };
   const pushMe = (text) => setMsgs(m => [...m, { k: nextKey(), who: 'me', text }]);
@@ -245,6 +385,7 @@ export default function Smarty({ onNavigate }) {
     if (id === 'news') markRead();
     const a = answerFor(id, b);
     if (!a) return suggest();
+    freqBump(user?.id, id);                 // learn what this user asks most
     deliver(a);
     const fol = FOLLOW[id];
     if (fol) setChips(followChips(fol, b));
@@ -314,28 +455,44 @@ export default function Smarty({ onNavigate }) {
     const part = hr < 12 ? 'Good morning' : hr < 17 ? 'Good afternoon' : 'Good evening';
     const nm = b?.user?.name || user?.name || 'there';
     const pills = [];
+    const cday = (b?.calendar?.today) || [];
+    if (cday.length) {
+      const lead = cday[0];
+      pills.push({ icon: CAL_EMOJI[lead.type] || '📅', label: cday.length === 1 ? `${lead.name} (${lead.type})` : `${cday.length} events today`, tone: CAL_TONE[lead.type] || 'sky' });
+    }
     if (b?.nextClass) pills.push({ icon: '🔔', label: `${b.nextClass.subject} at ${b.nextClass.start}`, tone: 'sky' });
     if (b?.homework?.due_today) pills.push({ icon: '📚', label: `${b.homework.due_today} homework due today`, tone: 'amber' });
     else if (b?.homework?.pending) pills.push({ icon: '📚', label: `${b.homework.pending} homework pending`, tone: 'amber' });
     if (b?.attendance && b.attendance.percentage != null) pills.push({ icon: '📊', label: `${b.attendance.percentage}% attendance`, tone: 'emerald' });
     if (b?.unread) pills.push({ icon: '📣', label: `${b.unread} new update${b.unread > 1 ? 's' : ''}`, tone: 'violet' });
+    if (b?.notif?.unread) pills.push({ icon: '🔔', label: `${b.notif.unread} notification${b.notif.unread > 1 ? 's' : ''}`, tone: 'violet' });
     const greet = {
       text: `${part}, ${nm}! 👋 ${pills.length ? "Here's your quick look 👇" : "I'm **Smarty** — tap a button or just ask me anything 👇"}`,
       digest: pills.length ? pills : null
     };
     const bk = roleBucket(role);
-    const firstId = (bk === 'student' || bk === 'teacher' || bk === 'parent') ? 'next-class' : 'news';
+    const firstId = cday.length ? 'cal-today'
+      : (bk === 'student' || bk === 'teacher' || bk === 'parent') ? 'next-class' : 'news';
     return { greet, firstId };
   };
 
   const match = (text) => {
     const t = text.toLowerCase();
     const pool = buildPool(boot);
+    const newsKw = ['whats new', 'what is new', 'updates', 'news', 'latest', 'announcement'];
+    // 1) strongest exact phrase match (longest matching keyword wins)
     let best = null, score = 0;
     const scan = (id, kws) => (kws || []).forEach(k => { if (k && t.includes(k) && k.length > score) { score = k.length; best = id; } });
     pool.forEach(e => scan(e.id, e.keywords));
-    scan('news', ['whats new', 'what is new', 'updates', 'news', 'latest', 'announcement']);
-    return best;
+    scan('news', newsKw);
+    if (best) return best;
+    // 2) fuzzy fallback: overlap of meaningful words, so free-text still lands
+    const toks = tokenize(t); if (!toks.length) return null;
+    let fid = null, fscore = 0;
+    const consider = (id, words) => { const set = new Set(words); let s = 0; toks.forEach(w => { if (set.has(w)) s += 1; }); if (s > fscore) { fscore = s; fid = id; } };
+    pool.forEach(e => consider(e.id, tokenize([e.q || '', ...(e.keywords || [])].join(' '))));
+    consider('news', tokenize(newsKw.join(' ')));
+    return fscore >= 1 ? fid : null;
   };
 
   const onSend = (e) => { e.preventDefault(); submitText(input); };
@@ -347,15 +504,20 @@ export default function Smarty({ onNavigate }) {
   }, [unread]);
 
   const openPanel = async () => {
-    setOpen(true); setNudge(false);
+    setOpen(true); setNudge(false); setNudgeMsg('');
     const b = await load();
     const pool = buildPool(b); if (b) b._pool = pool;
     setChips(starters(b, pool));
     if (!greeted.current) {
       greeted.current = true;
+      try { if (greetKey) sessionStorage.setItem(greetKey, '1'); } catch (_) {}
       const dg = buildDigest(b);
       pushBot(dg.greet);
-      setTimeout(() => { if ((b?.unread || 0) > 0) respondWith('news', b); else respondWith(dg.firstId, b); }, 700);
+      setTimeout(() => {
+        if ((b?.calendar?.today || []).length) respondWith('cal-today', b);   // holiday/event today wins
+        else if ((b?.unread || 0) > 0) respondWith('news', b);
+        else respondWith(dg.firstId, b);
+      }, 700);
     }
   };
 
@@ -386,7 +548,7 @@ export default function Smarty({ onNavigate }) {
           style={fabPos ? { left: fabPos.left, top: fabPos.top, right: 'auto', bottom: 'auto' } : undefined}
           aria-label="Open Smarty">
           {unread > 0 && <span className="smy-ping">{unread > 9 ? '9+' : unread}</span>}
-          {nudge && <span className="smy-nudge">Hey {firstName}! 👋 Need any help?</span>}
+          {nudge && <span className="smy-nudge">{nudgeMsg || `Hey ${firstName}! 👋 Need any help?`}</span>}
           <img src={smartyGif} className="smy-fab-img" alt="" aria-hidden="true" draggable="false" />
           <span className="smy-fab-label">Smarty✨</span>
         </button>

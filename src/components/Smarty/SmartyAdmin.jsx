@@ -3,7 +3,8 @@ import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import { MODULES } from '../../Screens/Modules';
 import {
-  Bot, Plus, Trash2, Save, X, Megaphone, MessageSquareText, Loader2, Eye, EyeOff, Send
+  Bot, Plus, Trash2, Save, X, Megaphone, MessageSquareText, Loader2, Eye, EyeOff, Send,
+  Sparkles, KeyRound, CheckCircle2, ShieldCheck, ExternalLink
 } from 'lucide-react';
 
 // =====================================================================
@@ -34,7 +35,7 @@ export default function SmartyAdmin() {
       </header>
 
       <div className="flex bg-zinc-100/80 p-1 rounded-md w-full sm:w-fit">
-        {[['questions', 'Questions', MessageSquareText], ['updates', "What's New", Megaphone]].map(([id, label, Icon]) => (
+        {[['questions', 'Questions', MessageSquareText], ['updates', "What's New", Megaphone], ['ai', 'Smarty AI', Sparkles]].map(([id, label, Icon]) => (
           <button key={id} onClick={() => setTab(id)}
             className={`flex items-center gap-1.5 px-4 py-1.5 rounded-md text-[11px] font-semibold transition-colors ${tab === id ? 'bg-primary text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}>
             <Icon className="size-3.5" /> {label}
@@ -42,7 +43,9 @@ export default function SmartyAdmin() {
         ))}
       </div>
 
-      {tab === 'questions' ? <QuestionsTab instId={instId} /> : <UpdatesTab instId={instId} />}
+      {tab === 'questions' ? <QuestionsTab instId={instId} />
+        : tab === 'updates' ? <UpdatesTab instId={instId} />
+        : <AiSettingsTab instId={instId} />}
     </div>
   );
 }
@@ -235,6 +238,133 @@ function UpdatesTab({ instId }) {
                 </li>
               ))}
             </ul>}
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ Smarty AI (BYO Gemini key)
+//  Each school pastes its OWN Google Gemini API key here. It is stored per
+//  institution in the database (never in the app code) and never sent back
+//  to the browser — only a masked •••• preview is shown. While no key is
+//  saved, open-ended "ask me anything" answers stay OFF for this school;
+//  the built-in guided answers keep working regardless.
+function AiSettingsTab({ instId }) {
+  const [cfg, setCfg]         = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [apiKey, setApiKey]   = useState('');
+  const [model, setModel]     = useState('gemini-1.5-flash');
+  const [enabled, setEnabled] = useState(false);
+  const [saving, setSaving]   = useState(false);
+  const [saved, setSaved]     = useState(false);
+
+  const load = useCallback(async () => {
+    if (!instId) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/smarty/ai-config/${instId}`);
+      const d = res.ok ? await res.json() : {};
+      setCfg(d);
+      setModel(d.model || 'gemini-1.5-flash');
+      setEnabled(!!d.enabled);
+    } catch { setCfg({}); }
+    setLoading(false);
+  }, [instId]);
+  useEffect(() => { load(); }, [load]);
+
+  const save = async () => {
+    setSaving(true); setSaved(false);
+    try {
+      const body = { model, enabled };
+      if (apiKey.trim()) body.api_key = apiKey.trim();   // only overwrite when a new key is typed
+      const res = await fetch(`${API_BASE_URL}/smarty/ai-config`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      });
+      if (!res.ok) throw new Error((await res.json()).error || 'Save failed');
+      setApiKey(''); setSaved(true); await load();
+      setTimeout(() => setSaved(false), 2500);
+    } catch (e) { alert(e.message); }
+    setSaving(false);
+  };
+
+  if (loading) return <div className="h-40 grid place-items-center"><Loader2 className="animate-spin size-6 text-primary" /></div>;
+
+  const configured = !!cfg?.configured;
+
+  return (
+    <div className="grid lg:grid-cols-2 gap-6">
+      {/* left: the key form */}
+      <div className="bg-white ring-1 ring-black/5 rounded-lg p-5 shadow-sm space-y-5 h-fit">
+        <div className="flex items-start gap-3">
+          <div className="size-10 rounded-xl bg-violet-50 text-violet-600 grid place-items-center ring-1 ring-violet-200 shrink-0"><Sparkles className="size-5" /></div>
+          <div>
+            <h3 className="text-sm font-semibold text-zinc-900">Open-ended AI answers</h3>
+            <p className="text-[11px] text-zinc-500 mt-0.5">Paste your school's Google Gemini API key to let Smarty answer general questions (e.g. “what is photosynthesis?”) beyond the built-in help.</p>
+          </div>
+        </div>
+
+        {/* current status */}
+        <div className={`rounded-md px-4 py-3 ring-1 flex items-center gap-2.5 text-xs font-semibold ${
+          configured && enabled ? 'bg-emerald-50 ring-emerald-200 text-emerald-700'
+          : configured ? 'bg-amber-50 ring-amber-200 text-amber-700'
+          : 'bg-zinc-50 ring-zinc-200 text-zinc-500'}`}>
+          {configured && enabled ? <><CheckCircle2 className="size-4" /> AI is active — key saved ({cfg.masked})</>
+            : configured ? <><KeyRound className="size-4" /> Key saved ({cfg.masked}) — turn it on below</>
+            : <><KeyRound className="size-4" /> No key yet — AI answers are off</>}
+        </div>
+
+        <Field label={configured ? 'Replace API key (leave blank to keep current)' : 'Google Gemini API key'}>
+          <input type="password" autoComplete="off" value={apiKey} onChange={e => setApiKey(e.target.value)}
+            placeholder={configured ? '•••• keep current ••••' : 'Paste your Gemini API key'} className={inp} />
+        </Field>
+
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Model">
+            <select value={model} onChange={e => setModel(e.target.value)} className={inp}>
+              <option value="gemini-1.5-flash">Gemini 1.5 Flash (cheapest)</option>
+              <option value="gemini-1.5-pro">Gemini 1.5 Pro (smarter)</option>
+            </select>
+          </Field>
+          <Field label="Status">
+            <button type="button" onClick={() => setEnabled(v => !v)}
+              className={`h-9 w-full rounded-md text-xs font-semibold ring-1 inline-flex items-center justify-center gap-1.5 transition-colors ${
+                enabled ? 'bg-emerald-600 text-white ring-emerald-600' : 'bg-white text-zinc-600 ring-zinc-200 hover:bg-zinc-50'}`}>
+              {enabled ? <><Eye className="size-3.5" /> On</> : <><EyeOff className="size-3.5" /> Off</>}
+            </button>
+          </Field>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button onClick={save} disabled={saving} className="h-9 px-4 rounded-md bg-primary text-white text-xs font-semibold inline-flex items-center gap-1.5 disabled:bg-zinc-300">
+            {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />} Save
+          </button>
+          {saved && <span className="text-[11px] font-semibold text-emerald-600 inline-flex items-center gap-1"><CheckCircle2 className="size-3.5" /> Saved</span>}
+        </div>
+      </div>
+
+      {/* right: how it works + privacy */}
+      <div className="space-y-4">
+        <div className="bg-white ring-1 ring-black/5 rounded-lg p-5 shadow-sm">
+          <h4 className="text-xs font-semibold text-zinc-800 mb-3 flex items-center gap-1.5"><KeyRound className="size-3.5 text-primary" /> Getting a key</h4>
+          <ol className="text-[11px] text-zinc-600 leading-relaxed space-y-1.5 list-decimal pl-4">
+            <li>Open Google AI Studio and sign in with the school's Google account.</li>
+            <li>Create an API key and copy it.</li>
+            <li>Paste it above, pick a model, turn Status <strong>On</strong>, and Save.</li>
+          </ol>
+          <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer"
+            className="mt-3 inline-flex items-center gap-1.5 text-[11px] font-semibold text-primary hover:underline">
+            Get a Gemini key <ExternalLink className="size-3" />
+          </a>
+        </div>
+
+        <div className="bg-white ring-1 ring-black/5 rounded-lg p-5 shadow-sm">
+          <h4 className="text-xs font-semibold text-zinc-800 mb-3 flex items-center gap-1.5"><ShieldCheck className="size-3.5 text-emerald-600" /> How we keep it safe</h4>
+          <ul className="text-[11px] text-zinc-600 leading-relaxed space-y-1.5 list-disc pl-4">
+            <li>The key is stored only on your school's server record — never in the app code, never shown in full again.</li>
+            <li>Smarty answers common questions from its built-in help first (free, instant); the key is used only when a question needs it.</li>
+            <li>General answers are cached so the same question doesn't call the API twice. Answers about a student's own data are never cached or shared.</li>
+          </ul>
+        </div>
       </div>
     </div>
   );
