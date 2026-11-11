@@ -17908,6 +17908,17 @@ function _smartyIsAdmin(req) {
   return role === 'Super Admin' || role === 'Developer';
 }
 
+// Figure out the provider from the key's prefix — so the admin only pastes
+// a key and never has to choose. Anthropic must be checked before OpenAI
+// because Claude keys also begin with "sk-".
+function _smartyDetectProvider(key) {
+  const k = String(key || '').trim();
+  if (/^sk-ant-/i.test(k)) return 'anthropic';   // Claude
+  if (/^AIza/.test(k))      return 'gemini';      // Google Gemini
+  if (/^sk-/i.test(k))      return 'openai';      // ChatGPT
+  return null;                                    // unrecognised
+}
+
 // GET current config — never returns the raw key, only a masked preview.
 app.get('/api/smarty/ai-config/:instId', async (req, res) => {
   const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
@@ -17926,31 +17937,40 @@ app.get('/api/smarty/ai-config/:instId', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST save config — provider + enabled (+ api_key only when a new one is typed).
-// The model is set server-side from SMARTY_DEFAULT_MODEL.
+// POST save config — the admin pastes ONE key (any provider) + On/Off.
+// The provider is auto-detected from the key prefix; the model is chosen
+// server-side. Sending no api_key just flips On/Off on the existing key.
 app.post('/api/smarty/ai-config', async (req, res) => {
   if (!_smartyIsAdmin(req)) return res.status(403).json({ error: 'Only the Super Admin can manage the AI key.' });
   const institutionId = req.auth.institutionId;
   const { api_key, enabled } = req.body || {};
-  const provider = SMARTY_DEFAULT_MODEL[(req.body && req.body.provider)] ? req.body.provider : 'gemini';
-  const model = SMARTY_DEFAULT_MODEL[provider];
   const en = enabled ? 1 : 0;
   try {
-    const [rows] = await db.execute('SELECT institutionId FROM smarty_ai_config WHERE institutionId = ? LIMIT 1', [institutionId]);
-    if (rows.length) {
-      if (api_key && String(api_key).trim()) {
+    const [rows] = await db.execute('SELECT provider, api_key FROM smarty_ai_config WHERE institutionId = ? LIMIT 1', [institutionId]);
+    const existing = rows[0];
+
+    if (api_key && String(api_key).trim()) {
+      const key = String(api_key).trim();
+      const provider = _smartyDetectProvider(key);
+      if (!provider) return res.status(400).json({ error: 'Key not recognised. Paste a Google Gemini (AIza…), OpenAI / ChatGPT (sk-…) or Anthropic / Claude (sk-ant-…) key.' });
+      const model = SMARTY_DEFAULT_MODEL[provider];
+      if (existing) {
         await db.execute(
-          'UPDATE smarty_ai_config SET api_key = ?, model = ?, enabled = ?, provider = ?, updated_by = ? WHERE institutionId = ?',
-          [String(api_key).trim(), model, en, provider, req.auth.id || null, institutionId]);
+          'UPDATE smarty_ai_config SET api_key = ?, provider = ?, model = ?, enabled = ?, updated_by = ? WHERE institutionId = ?',
+          [key, provider, model, en, req.auth.id || null, institutionId]);
       } else {
         await db.execute(
-          'UPDATE smarty_ai_config SET model = ?, enabled = ?, provider = ?, updated_by = ? WHERE institutionId = ?',
-          [model, en, provider, req.auth.id || null, institutionId]);
+          'INSERT INTO smarty_ai_config (institutionId, provider, api_key, model, enabled, updated_by) VALUES (?, ?, ?, ?, ?, ?)',
+          [institutionId, provider, key, model, en, req.auth.id || null]);
       }
     } else {
+      // only toggling On/Off — keep the existing key + provider
+      if (!existing || !existing.api_key) return res.status(400).json({ error: 'Paste an API key first.' });
+      const provider = existing.provider || 'gemini';
+      const model = SMARTY_DEFAULT_MODEL[provider] || SMARTY_DEFAULT_MODEL.gemini;
       await db.execute(
-        'INSERT INTO smarty_ai_config (institutionId, provider, api_key, model, enabled, updated_by) VALUES (?, ?, ?, ?, ?, ?)',
-        [institutionId, provider, api_key ? String(api_key).trim() : null, model, en, req.auth.id || null]);
+        'UPDATE smarty_ai_config SET provider = ?, model = ?, enabled = ?, updated_by = ? WHERE institutionId = ?',
+        [provider, model, en, req.auth.id || null, institutionId]);
     }
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }

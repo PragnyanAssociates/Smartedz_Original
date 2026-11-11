@@ -243,26 +243,21 @@ function UpdatesTab({ instId }) {
   );
 }
 
-// ------------------------------------------------------------------ Smarty AI (BYO key: Gemini / ChatGPT / Claude)
-//  Each school pastes its OWN key from ANY of the three providers. It is
-//  stored per institution in the database (never in the app code) and never
-//  sent back to the browser — only a masked •••• preview. While no key is
-//  saved + turned on, open-ended "ask me anything" answers stay OFF; the
-//  built-in guided answers keep working regardless.
-const AI_PROVIDERS = {
-  gemini:    { label: 'Google Gemini',      short: 'Gemini',  keyName: 'Google AI Studio',  keyUrl: 'https://aistudio.google.com/app/apikey' },
-  openai:    { label: 'ChatGPT (OpenAI)',   short: 'ChatGPT', keyName: 'OpenAI Platform',   keyUrl: 'https://platform.openai.com/api-keys' },
-  anthropic: { label: 'Claude (Anthropic)', short: 'Claude',  keyName: 'Anthropic Console', keyUrl: 'https://console.anthropic.com/settings/keys' }
-};
+// ------------------------------------------------------------------ Smarty AI (ONE key, any provider)
+//  The admin pastes a SINGLE API key from whichever AI they have — Gemini,
+//  ChatGPT or Claude. Smarty detects which one from the key's prefix, so
+//  there's nothing to choose. It's stored per institution in the database
+//  (never in the app code) and never shown in full again. While no key is
+//  saved + turned on, open-ended answers stay OFF; the built-in help works.
+const AI_PROVIDER_NAME = { gemini: 'Google Gemini', openai: 'ChatGPT (OpenAI)', anthropic: 'Claude (Anthropic)' };
 
 function AiSettingsTab({ instId }) {
-  const [cfg, setCfg]           = useState(null);
-  const [loading, setLoading]   = useState(true);
-  const [provider, setProvider] = useState('gemini');
-  const [apiKey, setApiKey]     = useState('');
-  const [enabled, setEnabled]   = useState(false);
-  const [saving, setSaving]     = useState(false);
-  const [saved, setSaved]       = useState(false);
+  const [cfg, setCfg]         = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [apiKey, setApiKey]   = useState('');
+  const [enabled, setEnabled] = useState(false);
+  const [saving, setSaving]   = useState(false);
+  const [saved, setSaved]     = useState(false);
 
   const load = useCallback(async () => {
     if (!instId) return;
@@ -271,20 +266,17 @@ function AiSettingsTab({ instId }) {
       const res = await fetch(`${API_BASE_URL}/smarty/ai-config/${instId}`);
       const d = res.ok ? await res.json() : {};
       setCfg(d);
-      setProvider(AI_PROVIDERS[d.provider] ? d.provider : 'gemini');
       setEnabled(!!d.enabled);
     } catch { setCfg({}); }
     setLoading(false);
   }, [instId]);
   useEffect(() => { load(); }, [load]);
 
-  const changeProvider = (p) => setProvider(p);
-
   const save = async () => {
     setSaving(true); setSaved(false);
     try {
-      const body = { provider, enabled };   // model is chosen on the server
-      if (apiKey.trim()) body.api_key = apiKey.trim();   // only overwrite when a new key is typed
+      const body = { enabled };                        // provider auto-detected server-side
+      if (apiKey.trim()) body.api_key = apiKey.trim(); // only overwrite when a new key is typed
       const res = await fetch(`${API_BASE_URL}/smarty/ai-config`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
       });
@@ -298,46 +290,31 @@ function AiSettingsTab({ instId }) {
   if (loading) return <div className="h-40 grid place-items-center"><Loader2 className="animate-spin size-6 text-primary" /></div>;
 
   const configured = !!cfg?.configured;
-  // The saved key belongs to the stored provider; show that name in the status.
-  const savedProv = AI_PROVIDERS[cfg?.provider] ? cfg.provider : provider;
-  const P = AI_PROVIDERS[provider];
+  const provName = AI_PROVIDER_NAME[cfg?.provider] || 'AI';
 
   return (
     <div className="grid lg:grid-cols-2 gap-6">
-      {/* left: the key form */}
+      {/* left: the single key form */}
       <div className="bg-white ring-1 ring-black/5 rounded-lg p-5 shadow-sm space-y-5 h-fit">
         <div className="flex items-start gap-3">
           <div className="size-10 rounded-xl bg-violet-50 text-violet-600 grid place-items-center ring-1 ring-violet-200 shrink-0"><Sparkles className="size-5" /></div>
           <div>
             <h3 className="text-sm font-semibold text-zinc-900">Open-ended AI answers</h3>
-            <p className="text-[11px] text-zinc-500 mt-0.5">Bring your own key from any one provider to let Smarty answer general questions (e.g. “what is photosynthesis?”) beyond the built-in help.</p>
+            <p className="text-[11px] text-zinc-500 mt-0.5">Paste one API key from <strong>Gemini</strong>, <strong>ChatGPT</strong> or <strong>Claude</strong> — Smarty detects which one automatically and uses it for general questions (e.g. “what is photosynthesis?”).</p>
           </div>
         </div>
 
-        {/* current status */}
+        {/* current status (shows WHICH AI is answering) */}
         <div className={`rounded-md px-4 py-3 ring-1 flex items-center gap-2.5 text-xs font-semibold ${
           configured && enabled ? 'bg-emerald-50 ring-emerald-200 text-emerald-700'
           : configured ? 'bg-amber-50 ring-amber-200 text-amber-700'
           : 'bg-zinc-50 ring-zinc-200 text-zinc-500'}`}>
-          {configured && enabled ? <><CheckCircle2 className="size-4" /> AI is active — {AI_PROVIDERS[savedProv].short} key saved ({cfg.masked})</>
-            : configured ? <><KeyRound className="size-4" /> {AI_PROVIDERS[savedProv].short} key saved ({cfg.masked}) — turn it on below</>
+          {configured && enabled ? <><CheckCircle2 className="size-4" /> AI is active — answering with {provName} ({cfg.masked})</>
+            : configured ? <><KeyRound className="size-4" /> {provName} key saved ({cfg.masked}) — turn it on below</>
             : <><KeyRound className="size-4" /> No key yet — AI answers are off</>}
         </div>
 
-        {/* provider picker */}
-        <Field label="AI provider">
-          <div className="grid grid-cols-3 gap-2">
-            {Object.entries(AI_PROVIDERS).map(([id, p]) => (
-              <button key={id} type="button" onClick={() => changeProvider(id)}
-                className={`h-9 rounded-md text-[11px] font-semibold ring-1 transition-colors ${
-                  provider === id ? 'bg-primary text-white ring-primary' : 'bg-white text-zinc-600 ring-zinc-200 hover:bg-zinc-50'}`}>
-                {p.short}
-              </button>
-            ))}
-          </div>
-        </Field>
-
-        <Field label={configured ? `Replace ${P.short} API key (blank = keep current)` : `${P.label} API key`}>
+        <Field label={configured ? 'Replace API key (blank = keep current)' : 'API key (Gemini, ChatGPT or Claude)'}>
           {/* NOT type="password": a real password field makes the browser's
               password manager autofill the saved username into the sidebar's
               search box (emptying the menu). This is a normal field the
@@ -349,7 +326,7 @@ function AiSettingsTab({ instId }) {
             name="smarty-ai-key"
             autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
             data-lpignore="true" data-1p-ignore="true" data-form-type="other"
-            placeholder={configured ? '•••• keep current ••••' : `Paste your ${P.short} key`}
+            placeholder={configured ? '•••• keep current ••••' : 'Paste any one AI key (AIza… / sk-… / sk-ant-…)'}
             style={apiKey ? { WebkitTextSecurity: 'disc' } : undefined}
             className={inp} />
         </Field>
@@ -370,25 +347,31 @@ function AiSettingsTab({ instId }) {
         </div>
       </div>
 
-      {/* right: how it works + privacy */}
+      {/* right: where to get a key + privacy */}
       <div className="space-y-4">
         <div className="bg-white ring-1 ring-black/5 rounded-lg p-5 shadow-sm">
-          <h4 className="text-xs font-semibold text-zinc-800 mb-3 flex items-center gap-1.5"><KeyRound className="size-3.5 text-primary" /> Getting a {P.short} key</h4>
-          <ol className="text-[11px] text-zinc-600 leading-relaxed space-y-1.5 list-decimal pl-4">
-            <li>Open <strong>{P.keyName}</strong> and sign in with the school's account.</li>
-            <li>Create an API key and copy it.</li>
-            <li>Pick <strong>{P.short}</strong> above, paste the key, turn Status <strong>On</strong>, and Save.</li>
-          </ol>
-          <a href={P.keyUrl} target="_blank" rel="noopener noreferrer"
-            className="mt-3 inline-flex items-center gap-1.5 text-[11px] font-semibold text-primary hover:underline">
-            Get a {P.short} key <ExternalLink className="size-3" />
-          </a>
+          <h4 className="text-xs font-semibold text-zinc-800 mb-3 flex items-center gap-1.5"><KeyRound className="size-3.5 text-primary" /> Where to get a key</h4>
+          <p className="text-[11px] text-zinc-600 leading-relaxed mb-3">Create a key with any <strong>one</strong> of these, copy it, paste it above, turn Status <strong>On</strong>, and Save:</p>
+          <ul className="space-y-2">
+            {[
+              ['Google Gemini', 'https://aistudio.google.com/app/apikey', 'starts with AIza…'],
+              ['ChatGPT (OpenAI)', 'https://platform.openai.com/api-keys', 'starts with sk-…'],
+              ['Claude (Anthropic)', 'https://console.anthropic.com/settings/keys', 'starts with sk-ant-…']
+            ].map(([name, url, hint]) => (
+              <li key={name} className="flex items-center justify-between gap-2">
+                <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-primary hover:underline">
+                  {name} <ExternalLink className="size-3" />
+                </a>
+                <span className="text-[10px] text-zinc-400 font-medium">{hint}</span>
+              </li>
+            ))}
+          </ul>
         </div>
 
         <div className="bg-white ring-1 ring-black/5 rounded-lg p-5 shadow-sm">
           <h4 className="text-xs font-semibold text-zinc-800 mb-3 flex items-center gap-1.5"><ShieldCheck className="size-3.5 text-emerald-600" /> How we keep it safe</h4>
           <ul className="text-[11px] text-zinc-600 leading-relaxed space-y-1.5 list-disc pl-4">
-            <li>Only one provider is active at a time — the key you save is the one Smarty uses.</li>
+            <li>One key, one AI — Smarty detects the provider from the key and uses only that one.</li>
             <li>The key is stored only on your school's server record — never in the app code, never shown in full again.</li>
             <li>Smarty answers common questions from its built-in help first (free, instant); the key is used only when a question needs it.</li>
             <li>General answers are cached so the same question doesn't call the API twice. Answers about a student's own data are never cached or shared.</li>
