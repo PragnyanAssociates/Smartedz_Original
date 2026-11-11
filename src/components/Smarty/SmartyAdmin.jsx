@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import { MODULES } from '../../Screens/Modules';
@@ -256,8 +256,12 @@ function AiSettingsTab({ instId }) {
   const [loading, setLoading] = useState(true);
   const [apiKey, setApiKey]   = useState('');
   const [enabled, setEnabled] = useState(false);
+  const [show, setShow]       = useState(false);           // eye toggle
   const [saving, setSaving]   = useState(false);
   const [saved, setSaved]     = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testMsg, setTestMsg] = useState(null);            // { ok, text }
+  const initial = useRef({ key: '', enabled: false });     // to detect changes
 
   const load = useCallback(async () => {
     if (!instId) return;
@@ -266,25 +270,46 @@ function AiSettingsTab({ instId }) {
       const res = await fetch(`${API_BASE_URL}/smarty/ai-config/${instId}`);
       const d = res.ok ? await res.json() : {};
       setCfg(d);
-      setEnabled(!!d.enabled);
+      const k = d.api_key || '';
+      setApiKey(k); setEnabled(!!d.enabled);
+      initial.current = { key: k, enabled: !!d.enabled };
     } catch { setCfg({}); }
     setLoading(false);
   }, [instId]);
   useEffect(() => { load(); }, [load]);
 
+  // Save only lights up when the key or the On/Off has actually changed.
+  const dirty = apiKey.trim() !== (initial.current.key || '').trim() || enabled !== initial.current.enabled;
+
   const save = async () => {
-    setSaving(true); setSaved(false);
+    if (!apiKey.trim()) { alert('Paste an API key first.'); return; }
+    setSaving(true); setSaved(false); setTestMsg(null);
     try {
-      const body = { enabled };                        // provider auto-detected server-side
-      if (apiKey.trim()) body.api_key = apiKey.trim(); // only overwrite when a new key is typed
       const res = await fetch(`${API_BASE_URL}/smarty/ai-config`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ api_key: apiKey.trim(), enabled })   // provider auto-detected server-side
       });
       if (!res.ok) throw new Error((await res.json()).error || 'Save failed');
-      setApiKey(''); setSaved(true); await load();
+      setSaved(true); await load();
       setTimeout(() => setSaved(false), 2500);
     } catch (e) { alert(e.message); }
     setSaving(false);
+  };
+
+  // Test asks the AI a trivial question and shows the exact result/error.
+  const test = async () => {
+    setTesting(true); setTestMsg(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/smarty/ask`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: 'In one short sentence, say hello as a connection test.' })
+      });
+      const d = await res.json().catch(() => ({}));
+      if (d && d.ok) setTestMsg({ ok: true, text: d.answer });
+      else if (d && d.reason === 'disabled') setTestMsg({ ok: false, text: 'AI is off or no key saved. Turn Status On and Save first.' });
+      else setTestMsg({ ok: false, text: (d && d.error) ? d.error : 'The AI service did not respond — check the key.' });
+    } catch (e) { setTestMsg({ ok: false, text: e.message }); }
+    setTesting(false);
   };
 
   if (loading) return <div className="h-40 grid place-items-center"><Loader2 className="animate-spin size-6 text-primary" /></div>;
@@ -314,21 +339,26 @@ function AiSettingsTab({ instId }) {
             : <><KeyRound className="size-4" /> No key yet — AI answers are off</>}
         </div>
 
-        <Field label={configured ? 'Replace API key (blank = keep current)' : 'API key (Gemini, ChatGPT or Claude)'}>
-          {/* NOT type="password": a real password field makes the browser's
-              password manager autofill the saved username into the sidebar's
-              search box (emptying the menu). This is a normal field the
-              manager ignores, masked via -webkit-text-security while typing. */}
-          <input
-            value={apiKey}
-            onChange={e => setApiKey(e.target.value)}
-            type="text"
-            name="smarty-ai-key"
-            autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
-            data-lpignore="true" data-1p-ignore="true" data-form-type="other"
-            placeholder={configured ? '•••• keep current ••••' : 'Paste any one AI key (AIza… / sk-… / sk-ant-…)'}
-            style={apiKey ? { WebkitTextSecurity: 'disc' } : undefined}
-            className={inp} />
+        <Field label="API key (Gemini, ChatGPT or Claude)">
+          <div className="relative">
+            {/* text + -webkit-text-security masking (not a password field, so the
+                browser never autofills it into the sidebar search). Eye reveals it. */}
+            <input
+              value={apiKey}
+              onChange={e => setApiKey(e.target.value)}
+              type="text"
+              name="smarty-ai-key"
+              autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
+              data-lpignore="true" data-1p-ignore="true" data-form-type="other"
+              placeholder="Paste any one AI key (AIza… / sk-… / sk-ant-…)"
+              style={!show && apiKey ? { WebkitTextSecurity: 'disc' } : undefined}
+              className={`${inp} pr-10`} />
+            <button type="button" onClick={() => setShow(v => !v)} tabIndex={-1}
+              title={show ? 'Hide key' : 'Show key'}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-700 p-1">
+              {show ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+            </button>
+          </div>
         </Field>
 
         <Field label="Status">
@@ -340,11 +370,24 @@ function AiSettingsTab({ instId }) {
         </Field>
 
         <div className="flex items-center gap-3">
-          <button onClick={save} disabled={saving} className="h-9 px-4 rounded-md bg-primary text-white text-xs font-semibold inline-flex items-center gap-1.5 disabled:bg-zinc-300">
+          <button onClick={save} disabled={saving || !dirty}
+            className="h-9 px-4 rounded-md bg-primary text-white text-xs font-semibold inline-flex items-center gap-1.5 disabled:bg-zinc-200 disabled:text-zinc-400">
             {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />} Save
           </button>
+          <button onClick={test} disabled={testing || !configured}
+            className="h-9 px-4 rounded-md ring-1 ring-zinc-200 text-zinc-700 text-xs font-semibold inline-flex items-center gap-1.5 hover:bg-zinc-50 disabled:text-zinc-300 disabled:ring-zinc-100">
+            {testing ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />} Test
+          </button>
           {saved && <span className="text-[11px] font-semibold text-emerald-600 inline-flex items-center gap-1"><CheckCircle2 className="size-3.5" /> Saved</span>}
+          {!dirty && !saved && configured && <span className="text-[11px] text-zinc-400 font-medium">No changes</span>}
         </div>
+
+        {testMsg && (
+          <div className={`rounded-md px-3 py-2.5 ring-1 text-[11px] leading-relaxed ${
+            testMsg.ok ? 'bg-emerald-50 ring-emerald-200 text-emerald-800' : 'bg-red-50 ring-red-200 text-red-700'}`}>
+            <span className="font-semibold">{testMsg.ok ? '✓ Working — ' : '✕ Failed — '}</span>{testMsg.text}
+          </div>
+        )}
       </div>
 
       {/* right: where to get a key + privacy */}
@@ -372,7 +415,7 @@ function AiSettingsTab({ instId }) {
           <h4 className="text-xs font-semibold text-zinc-800 mb-3 flex items-center gap-1.5"><ShieldCheck className="size-3.5 text-emerald-600" /> How we keep it safe</h4>
           <ul className="text-[11px] text-zinc-600 leading-relaxed space-y-1.5 list-disc pl-4">
             <li>One key, one AI — Smarty detects the provider from the key and uses only that one.</li>
-            <li>The key is stored only on your school's server record — never in the app code, never shown in full again.</li>
+            <li>The key is stored on your school's server record (not in the app code). Only the Super Admin here can view it — students and teachers never can.</li>
             <li>Smarty answers common questions from its built-in help first (free, instant); the key is used only when a question needs it.</li>
             <li>General answers are cached so the same question doesn't call the API twice. Answers about a student's own data are never cached or shared.</li>
           </ul>

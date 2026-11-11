@@ -17541,8 +17541,8 @@ app.get('/api/admin/online-count/:instId', async (req, res) => {
 //  A good spot is right after the Notifications section. If you already
 //  pasted older Smarty blocks, DELETE them and use only this file.
 //
-//  Requires Node 18+ (for the built-in fetch used by the AI call). On older
-//  Node, add at the very top of this block:  const fetch = require('node-fetch');
+//  Works on ANY Node version — the AI call uses the built-in https module,
+//  so you do NOT need Node 18 or node-fetch.
 //
 //  ---------------------------------------------------------------------
 //  RUN THESE TABLES ONCE (copy into your MySQL):
@@ -17577,6 +17577,33 @@ app.get('/api/admin/online-count/:instId', async (req, res) => {
 // =====================================================================
 
 const _smartyCrypto = require('crypto');
+const _smartyHttps  = require('https');
+
+// POST JSON over Node's built-in https — works on EVERY Node version (no
+// dependency on a global fetch, which is missing on Node < 18 and was the
+// usual reason the AI call "couldn't be reached"). Returns { status, json }.
+function _smartyPostJson(urlStr, headers, bodyObj) {
+  return new Promise((resolve, reject) => {
+    let u;
+    try { u = new URL(urlStr); } catch (e) { return reject(e); }
+    const data = Buffer.from(JSON.stringify(bodyObj));
+    const r = _smartyHttps.request({
+      method: 'POST', hostname: u.hostname, path: u.pathname + u.search,
+      headers: Object.assign({ 'Content-Type': 'application/json', 'Content-Length': data.length }, headers || {})
+    }, (resp) => {
+      let buf = '';
+      resp.on('data', c => { buf += c; });
+      resp.on('end', () => {
+        let json = {};
+        try { json = buf ? JSON.parse(buf) : {}; } catch (_) { json = { _raw: buf }; }
+        resolve({ status: resp.statusCode || 0, json });
+      });
+    });
+    r.on('error', reject);
+    r.setTimeout(20000, () => r.destroy(new Error('AI request timed out')));
+    r.write(data); r.end();
+  });
+}
 
 // =====================================================================
 //  PART 1 — helpers + live answers (next class / homework / attendance)
@@ -17926,11 +17953,14 @@ app.get('/api/smarty/ai-config/:instId', async (req, res) => {
   try {
     const [rows] = await db.execute(
       'SELECT provider, api_key, enabled FROM smarty_ai_config WHERE institutionId = ? LIMIT 1', [instId]);
-    if (!rows.length) return res.json({ configured: false, masked: null, enabled: false, provider: 'gemini' });
+    if (!rows.length) return res.json({ configured: false, masked: null, api_key: '', enabled: false, provider: 'gemini' });
     const r = rows[0];
     res.json({
       configured: !!r.api_key,
       masked: _smartyMaskKey(r.api_key),
+      // The Smarty AI tab is Super-Admin-only, so the admin may view the full
+      // key (eye toggle). It is never exposed to students/teachers.
+      api_key: _smartyIsAdmin(req) ? (r.api_key || '') : undefined,
       enabled: !!r.enabled,
       provider: r.provider || 'gemini'
     });
@@ -17991,40 +18021,28 @@ const SMARTY_SYSTEM =
 
 async function _smartyCallGemini(key, model, question) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
-  const r = await fetch(url, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      system_instruction: { parts: [{ text: SMARTY_SYSTEM }] },
-      contents: [{ role: 'user', parts: [{ text: question }] }],
-      generationConfig: { maxOutputTokens: 500, temperature: 0.6 }
-    })
+  const { status, json } = await _smartyPostJson(url, {}, {
+    system_instruction: { parts: [{ text: SMARTY_SYSTEM }] },
+    contents: [{ role: 'user', parts: [{ text: question }] }],
+    generationConfig: { maxOutputTokens: 500, temperature: 0.6 }
   });
-  const d = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error((d.error && d.error.message) || `Gemini HTTP ${r.status}`);
-  return ((d.candidates && d.candidates[0] && d.candidates[0].content && d.candidates[0].content.parts) || [])
+  if (status < 200 || status >= 300) throw new Error((json.error && json.error.message) || `Gemini HTTP ${status}`);
+  return ((json.candidates && json.candidates[0] && json.candidates[0].content && json.candidates[0].content.parts) || [])
     .map(p => p.text || '').join('').trim();
 }
 async function _smartyCallOpenAI(key, model, question) {
-  const r = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-    body: JSON.stringify({
-      model, max_tokens: 500, temperature: 0.6,
-      messages: [{ role: 'system', content: SMARTY_SYSTEM }, { role: 'user', content: question }]
-    })
-  });
-  const d = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error((d.error && d.error.message) || `OpenAI HTTP ${r.status}`);
-  return ((d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content) || '').trim();
+  const { status, json } = await _smartyPostJson('https://api.openai.com/v1/chat/completions',
+    { 'Authorization': `Bearer ${key}` },
+    { model, max_tokens: 500, temperature: 0.6, messages: [{ role: 'system', content: SMARTY_SYSTEM }, { role: 'user', content: question }] });
+  if (status < 200 || status >= 300) throw new Error((json.error && json.error.message) || `OpenAI HTTP ${status}`);
+  return ((json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content) || '').trim();
 }
 async function _smartyCallAnthropic(key, model, question) {
-  const r = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify({ model, max_tokens: 500, system: SMARTY_SYSTEM, messages: [{ role: 'user', content: question }] })
-  });
-  const d = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error((d.error && d.error.message) || `Anthropic HTTP ${r.status}`);
-  return ((d.content && d.content[0] && d.content[0].text) || '').trim();
+  const { status, json } = await _smartyPostJson('https://api.anthropic.com/v1/messages',
+    { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+    { model, max_tokens: 500, system: SMARTY_SYSTEM, messages: [{ role: 'user', content: question }] });
+  if (status < 200 || status >= 300) throw new Error((json.error && json.error.message) || `Anthropic HTTP ${status}`);
+  return ((json.content && json.content[0] && json.content[0].text) || '').trim();
 }
 
 app.post('/api/smarty/ask', async (req, res) => {
