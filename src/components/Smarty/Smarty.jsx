@@ -4,7 +4,8 @@ import { usePermissions } from '../../Screens/PermissionsContext';
 import { API_BASE_URL } from '../../apiConfig';
 import { MODULES } from '../../Screens/Modules';
 import { BUILTINS, LIVE_IDS, STARTERS_BY_ROLE } from './Smartyknowledge';
-import smartyGif from './smarty.gif';   // animated waving character (GIF/WebP). Must exist in this folder.
+import smartyGif from './smarty.gif';   // animated waving character on the launcher.
+import smartyPic from './SmartyPic.png';  // static profile photo used in the header + chat avatars.
 
 // =====================================================================
 //  Smarty — in-app assistant. Mount ONCE in the dashboard shell:
@@ -93,6 +94,31 @@ function freqTop(uid, n) { const f = freqLoad(uid); return Object.keys(f).sort((
 const STOP = new Set(['the', 'a', 'an', 'is', 'are', 'do', 'i', 'my', 'me', 'to', 'of', 'for', 'in', 'on', 'any', 'have', 'has', 'can', 'you', 'what', 'when', 'where', 'how', 'and', 'please', 'show', 'tell', 'get', 'there', 'this', 'that']);
 const tokenize = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w && w.length > 2 && !STOP.has(w));
 
+// ---- intent detection: greetings / small talk, caught BEFORE keyword match
+//      so "hello smarty, how are you?" never hits the "Manage Smarty" button.
+const RE_HOWRU  = /(how\s*(are|r)\s*(you|u|ya)|how'?s it going|how is it going|how do you do|what'?s up|wassup|\bsup\b|are you (ok|there|fine)|you there)/i;
+const RE_GREET  = /^\s*(hi+|hey+|hello+|heya|hiya|yo|hola|namaste|namaskaram|greetings|good\s*(morning|afternoon|evening|night))\b/i;
+const RE_WHORU  = /(who\s*are\s*you|what('?s| is)\s*your\s*name|your\s*name|what\s*(can|do)\s*you\s*(do|help)|what are you|are you (a )?(bot|ai|robot)|introduce yourself)/i;
+const RE_BYE    = /^\s*(bye+|goodbye|see\s*you|good\s*night|cya|tata|ok bye|thank you bye)\b/i;
+
+// The two "important" quick chips shown by default per role (next to Suggest
+// questions + What's new). Role-aware so an admin never sees student cards.
+const IMPORTANT_BY_ROLE = {
+  student: ['next-class', 'hw-today'],
+  parent:  ['next-class', 'hw-today'],
+  teacher: ['next-class', 'admin-attendance'],
+  admin:   ['admin-reports', 'admin-directory'],
+  default: ['admin-reports', 'admin-directory'],
+};
+// What small talk points each role toward.
+const HELP_HINT = {
+  student: 'your next class, homework, attendance, or fees',
+  parent:  'your child’s classes, homework, attendance, or fees',
+  teacher: 'your next class, attendance, marks, or the timetable',
+  admin:   'reports, fees, the directory, or managing the app',
+  default: 'reports, the directory, or anything on screen',
+};
+
 function roleBucket(role) {
   const r = (role || '').toLowerCase();
   if (r.includes('student')) return 'student';
@@ -113,6 +139,7 @@ export default function Smarty({ onNavigate }) {
   const { isVisible } = usePermissions();
 
   const [open, setOpen] = useState(false);
+  const [big, setBig] = useState(false);     // enlarge / full-size panel
   const [mood, setMood] = useState('idle');
   const [msgs, setMsgs] = useState([]);
   const [chips, setChips] = useState([]);
@@ -294,9 +321,24 @@ export default function Smarty({ onNavigate }) {
     return null;
   }, []);
 
+  // compact default row: Suggest questions + 2 role-important + What's new (4)
   const starters = useCallback((b, pool) => {
+    const imp = IMPORTANT_BY_ROLE[roleBucket(role)] || IMPORTANT_BY_ROLE.default;
+    const out = [{ id: 'suggest-q', label: 'Suggest questions', icon: '💡', tone: 'brand' }];
+    imp.forEach(id => {
+      if (id === 'hw-today' && !b?.homework) return;
+      if (id === 'attendance' && !b?.attendance) return;
+      const e = pool.find(x => x.id === id);
+      if (e) out.push({ id: e.id, label: e.q, icon: e.icon || '💬', tone: e.tone || 'brand' });
+    });
+    out.push({ id: 'news', label: "What's new?", icon: '📣', tone: 'violet' });
+    return out.slice(0, 4);
+  }, [role]);
+
+  // expanded, personalised list shown when the user taps "Suggest questions"
+  const fullSuggestions = (b) => {
+    const pool = (b && b._pool) || buildPool(b || boot);
     const roleIds = STARTERS_BY_ROLE[roleBucket(role)] || STARTERS_BY_ROLE.default;
-    // personalised: the user's most-asked questions come first, then role defaults
     const ordered = [...freqTop(user?.id, 3), ...roleIds];
     const seen = new Set(); const out = [];
     ordered.forEach(id => {
@@ -307,8 +349,8 @@ export default function Smarty({ onNavigate }) {
       if (e) { seen.add(id); out.push({ id: e.id, label: e.q, icon: e.icon || '💬', tone: e.tone || 'brand' }); }
     });
     out.push({ id: 'news', label: "What's new?", icon: '📣', tone: 'violet' });
-    return out.slice(0, 7);
-  }, [role, user]);
+    return out.slice(0, 8);
+  };
 
   // ---- data load ----
   const load = useCallback(async () => {
@@ -369,7 +411,7 @@ export default function Smarty({ onNavigate }) {
 
   const flash = (m) => { if (m !== 'idle') { setMood(m); clearTimeout(moodTimer.current); moodTimer.current = setTimeout(() => setMood('idle'), m === 'happy' ? 1700 : 4000); } };
   const pushMe = (text) => setMsgs(m => [...m, { k: nextKey(), who: 'me', text }]);
-  const pushBot = (answer) => { setMsgs(m => [...m, { k: nextKey(), who: 'bot', answer }]); if (answer && answer.text) speak(answer.text); };
+  const pushBot = (answer) => setMsgs(m => [...m, { k: nextKey(), who: 'bot', answer }]);
   const pushTyping = () => { const k = nextKey(); setMsgs(m => [...m, { k, who: 'typing' }]); return k; };
   const dropTyping = (k) => setMsgs(m => m.filter(x => x.k !== k));
 
@@ -382,6 +424,11 @@ export default function Smarty({ onNavigate }) {
 
   const respond = (id) => {
     const b = boot || {};
+    if (id === 'suggest-q') {               // expand into the role-based question list
+      deliver({ tone: 'brand', text: `Here are some things you can ask me, ${firstName} 👇` });
+      setChips(fullSuggestions(b));
+      return;
+    }
     if (id === 'news') markRead();
     const a = answerFor(id, b);
     if (!a) return suggest();
@@ -396,35 +443,56 @@ export default function Smarty({ onNavigate }) {
   const compliment = () => deliver({ tone: 'rose', text: "Aww, thank you! 💖 I'm always here whenever you need me. 😊", happy: true, celebrate: true });
   const suggest = () => deliver({ text: "Hmm, I'm still learning that one 🤔 Try a button below, or ask about " + (roleBucket(role) === 'student' ? 'homework, attendance, fees or your timetable.' : 'reports, fees or the directory.') });
 
-  // ---- voice: read answers aloud + speak your question ----
-  const canSpeak = typeof window !== 'undefined' && 'speechSynthesis' in window;
+  // ---- voice input: off by default; tap the mic to turn it ON. It then
+  //      keeps listening and live-writes your words into the box until you
+  //      tap it again or press send. ----
   const SR = typeof window !== 'undefined' ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null;
-  const [voiceOn, setVoiceOn] = useState(() => { try { return localStorage.getItem('smy_voice') === '1'; } catch { return false; } });
   const [listening, setListening] = useState(false);
   const [burst, setBurst] = useState(false);
   const recRef = useRef(null);
-  useEffect(() => { try { localStorage.setItem('smy_voice', voiceOn ? '1' : '0'); } catch (_) {} }, [voiceOn]);
+  const wantListen = useRef(false);   // true while the mic should stay on
+  const finalRef = useRef('');        // transcript committed so far
 
-  const speak = (text) => {
-    if (!voiceOn || !canSpeak) return;
-    try {
-      const clean = String(text).replace(/\*\*(.+?)\*\*/g, '$1').replace(/[*_#>`~]/g, '')
-        .replace(/[\u{1F000}-\u{1FAFF}☀-➿️‍]/gu, '').trim();
-      if (!clean) return;
-      const utt = new window.SpeechSynthesisUtterance(clean);
-      utt.lang = 'en-IN'; utt.rate = 1; utt.pitch = 1.08;
-      window.speechSynthesis.cancel(); window.speechSynthesis.speak(utt);
-    } catch (_) {}
+  const stopListen = () => {
+    wantListen.current = false;
+    try { recRef.current && recRef.current.stop(); } catch (_) {}
+    setListening(false);
   };
-  const stopListen = () => { try { recRef.current && recRef.current.stop(); } catch (_) {} setListening(false); };
   const startListen = () => {
-    if (!SR) { setToast('Voice input isn’t supported on this browser.'); setTimeout(() => setToast(''), 2200); return; }
+    if (!SR) { setToast('Voice input isn’t supported on this browser — try Chrome.'); setTimeout(() => setToast(''), 2600); return; }
     try {
-      const rec = new SR(); rec.lang = 'en-IN'; rec.interimResults = false; rec.maxAlternatives = 1;
-      rec.onresult = (e) => { const t = e.results[0][0].transcript; setInput(t); setTimeout(() => submitText(t), 120); };
-      rec.onend = () => setListening(false); rec.onerror = () => setListening(false);
-      recRef.current = rec; setListening(true); rec.start();
-    } catch (_) { setListening(false); }
+      const rec = new SR();
+      rec.lang = 'en-IN';
+      rec.continuous = true;        // keep listening, don't stop after one phrase
+      rec.interimResults = true;    // live words as you speak
+      finalRef.current = (input ? input + ' ' : '');   // keep whatever is already typed
+      rec.onresult = (e) => {
+        let interim = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const tr = e.results[i][0].transcript;
+          if (e.results[i].isFinal) finalRef.current += tr + ' ';
+          else interim += tr;
+        }
+        setInput((finalRef.current + interim).replace(/\s+/g, ' ').trim());
+      };
+      rec.onerror = (ev) => {
+        if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
+          setToast('Please allow microphone access.'); setTimeout(() => setToast(''), 2600);
+          stopListen();
+        }
+        // 'no-speech' / 'aborted' → ignore; onend will restart if still wanted
+      };
+      rec.onend = () => {
+        // The browser stops after a pause; if the user hasn't turned it off,
+        // restart so it stays on until they send or tap the mic again.
+        if (wantListen.current) { try { rec.start(); } catch (_) {} }
+        else setListening(false);
+      };
+      recRef.current = rec;
+      wantListen.current = true;
+      setListening(true);
+      rec.start();
+    } catch (_) { stopListen(); }
   };
   const celebrate = () => { setBurst(false); requestAnimationFrame(() => { setBurst(true); setTimeout(() => setBurst(false), 1700); }); };
 
@@ -464,11 +532,27 @@ export default function Smarty({ onNavigate }) {
     suggest();   // AI off / not configured → normal built-in fallback
   };
 
+  // greetings / small talk → a warm, ROLE-AWARE canned reply (no AI needed)
+  const smalltalk = (t) => {
+    const hint = HELP_HINT[roleBucket(role)] || HELP_HINT.default;
+    if (RE_BYE.test(t))   return { tone: 'violet', text: `Bye ${firstName}! 👋 I'm always here whenever you need me.`, happy: true };
+    if (RE_HOWRU.test(t)) return { tone: 'brand', text: `I'm doing great, thanks ${firstName}! 😊 Ready to help — ask me about ${hint}, or anything else.`, happy: true };
+    if (RE_WHORU.test(t)) return { tone: 'brand', text: `I'm **Smarty** 🤖 — your in-app assistant. I can open any screen for you, show live info, share school updates, and answer general questions too. Tap **Suggest questions** below, or just ask about ${hint}.` };
+    if (RE_GREET.test(t)) return { tone: 'brand', text: `Hi ${firstName}! 👋 I'm **Smarty**, here to help. Tap **Suggest questions** below, or ask me about ${hint}.`, happy: true };
+    return null;
+  };
+
   const submitText = (v) => {
     v = (v || '').trim(); if (!v) return;
+    if (wantListen.current) stopListen();   // sending turns the mic off
     pushMe(v); setInput('');
-    if (COMPLIMENTS.some(c => v.toLowerCase().includes(c))) return compliment();
-    const id = match(v); if (id) respond(id); else askAI(v);
+    const t = v.toLowerCase();
+    if (COMPLIMENTS.some(c => t.includes(c))) return compliment();  // thanks / praise
+    const chit = smalltalk(t);                                      // greetings / small talk
+    if (chit) return deliver(chit);
+    const id = match(v);                                            // built-in rule answers
+    if (id) return respond(id);
+    askAI(v);                                                       // everything else → AI
   };
 
   // greeting digest shown on every open
@@ -577,12 +661,10 @@ export default function Smarty({ onNavigate }) {
       )}
 
       {open && (
-        <section className="smy-panel smy-pop" aria-label="Smarty assistant">
+        <section className={`smy-panel smy-pop ${big ? 'smy-big' : ''}`} aria-label="Smarty assistant">
           <div className="smy-head-bar">
             <div className="smy-idbox">
-              <div className={`smy-hero ${mood !== 'idle' ? 'smy-' + mood : ''}`}>
-                <img src={smartyGif} className="smy-hero-img" alt="" aria-hidden="true" />
-              </div>
+              <div className="smy-hero"><img src={smartyPic} className="smy-hero-img" alt="Smarty" /></div>
               <div className="smy-brand">Smarty <span style={{ fontSize: 12 }}>✨</span></div>
             </div>
             <div className="smy-who">
@@ -590,7 +672,10 @@ export default function Smarty({ onNavigate }) {
               <div className="smy-meta">{pills.map((m, i) => <span key={i}>{m}</span>)}</div>
               <div className="smy-status"><i />{MOODTEXT[mood] || MOODTEXT.idle}</div>
             </div>
-            <button className="smy-x" onClick={() => setOpen(false)} aria-label="Close">✕</button>
+            <div className="smy-headbtns">
+              <button className="smy-xbtn smy-expand" onClick={() => setBig(v => !v)} aria-label={big ? 'Shrink' : 'Enlarge'} title={big ? 'Shrink' : 'Enlarge'}>{big ? '⤡' : '⤢'}</button>
+              <button className="smy-xbtn" onClick={() => setOpen(false)} aria-label="Close">✕</button>
+            </div>
           </div>
 
           <div className="smy-scroll" ref={scrollRef}>
@@ -606,8 +691,7 @@ export default function Smarty({ onNavigate }) {
           </div>
 
           <form className="smy-composer" onSubmit={onSend}>
-            {canSpeak && <button type="button" className={`smy-iconbtn ${voiceOn ? 'on' : ''}`} onClick={() => setVoiceOn(v => !v)} title={voiceOn ? 'Reading answers aloud' : 'Read answers aloud'} aria-label="Toggle sound">{voiceOn ? '🔊' : '🔈'}</button>}
-            <input value={input} onChange={e => setInput(e.target.value)} placeholder="Ask Smarty anything…" aria-label="Ask Smarty" />
+            <input value={input} onChange={e => setInput(e.target.value)} placeholder={listening ? 'Listening… speak now' : 'Ask Smarty anything…'} aria-label="Ask Smarty" />
             {SR && <button type="button" className={`smy-iconbtn ${listening ? 'live' : ''}`} onClick={() => (listening ? stopListen() : startListen())} title="Speak your question" aria-label="Voice input">🎤</button>}
             <button className="smy-send" type="submit" aria-label="Send">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z" /></svg>
@@ -649,7 +733,7 @@ function Message({ m, onNav }) {
     </div>
   );
 }
-const Mini = () => <span className="smy-mini"><svg viewBox="14 4 74 84"><use href="#smy-head" /></svg></span>;
+const Mini = () => <span className="smy-mini"><img src={smartyPic} alt="Smarty" /></span>;
 function fmt(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>'); }
 
 function Defs() {
@@ -729,15 +813,16 @@ const CSS = `
 .smy-nudge:after{content:"";position:absolute;bottom:-7px;right:24px;width:14px;height:14px;background:var(--panel);border-right:1.5px solid var(--line);border-bottom:1.5px solid var(--line);transform:rotate(45deg)}
 @keyframes smyNudge{from{opacity:0;transform:translateY(8px) scale(.9)}to{opacity:1;transform:none}}
 @keyframes smyFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
-.smy-panel{position:fixed;z-index:9999;display:flex;flex-direction:column;overflow:hidden;right:20px;bottom:20px;width:394px;max-width:calc(100vw - 32px);height:min(656px,calc(100vh - 40px));background:var(--panel);border-radius:26px;box-shadow:var(--sh);border:1px solid var(--line)}
+.smy-panel{position:fixed;z-index:9999;display:flex;flex-direction:column;overflow:hidden;right:20px;bottom:20px;width:400px;max-width:calc(100vw - 32px);height:min(660px,calc(100vh - 40px));background:var(--panel);border-radius:26px;box-shadow:var(--sh);border:1px solid var(--line);transition:width .28s cubic-bezier(.22,1,.36,1),height .28s cubic-bezier(.22,1,.36,1)}
+.smy-big{width:min(860px,calc(100vw - 32px));height:min(900px,calc(100vh - 40px))}
 .smy-pop{animation:smyPop .34s cubic-bezier(.22,1.2,.36,1)}
 @keyframes smyPop{from{transform:scale(.6) translateY(30px);opacity:0}to{transform:none;opacity:1}}
 .smy-head-bar{background:linear-gradient(130deg,var(--ga),var(--gb));color:#fff;padding:12px 14px;position:relative;flex:0 0 auto;min-height:98px;display:flex;align-items:center;gap:10px;overflow:hidden}
 .smy-idbox{display:flex;flex-direction:column;align-items:center;gap:1px;flex:0 0 auto;z-index:1}
 .smy-brand{font-family:var(--fh);font-weight:600;font-size:15px;line-height:1;display:flex;align-items:center;gap:3px;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.25)}
 .smy-head-bar:before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 80% -10%,rgba(255,255,255,.25),transparent 55%)}
-.smy-hero{position:relative;width:76px;height:68px;flex:0 0 auto;z-index:1}
-.smy-hero-img{width:76px;height:68px;object-fit:contain;filter:drop-shadow(1.3px 0 0 #1f2430) drop-shadow(-1.3px 0 0 #1f2430) drop-shadow(0 1.3px 0 #1f2430) drop-shadow(0 -1.3px 0 #1f2430) drop-shadow(0 3px 4px rgba(0,0,0,.3))}
+.smy-hero{position:relative;width:60px;height:60px;flex:0 0 auto;z-index:1}
+.smy-hero-img{width:60px;height:60px;object-fit:cover;border-radius:50%;box-shadow:0 4px 12px -3px rgba(0,0,0,.22)}
 .smy-who{flex:1;min-width:0;padding-left:4px;z-index:1}
 .smy-who h2{font-family:var(--fh);font-weight:600;font-size:20px;margin:0;display:flex;align-items:center;gap:6px;line-height:1}
 .smy-user{font-family:var(--fh);font-weight:600;font-size:17px;opacity:.98;text-transform:capitalize;line-height:1.1}
@@ -746,8 +831,10 @@ const CSS = `
 .smy-status{font-size:11px;font-weight:800;opacity:.92;display:flex;align-items:center;gap:6px;margin-top:8px}
 .smy-status i{width:8px;height:8px;border-radius:50%;background:#7CFFB2;animation:smyLive 2s infinite}
 @keyframes smyLive{0%{box-shadow:0 0 0 0 rgba(124,255,178,.7)}70%{box-shadow:0 0 0 7px rgba(124,255,178,0)}100%{box-shadow:0 0 0 0 rgba(124,255,178,0)}}
-.smy-x{appearance:none;border:none;background:rgba(255,255,255,.2);color:#fff;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:16px;display:grid;place-items:center;position:absolute;top:10px;right:12px;z-index:2}
-.smy-x:hover{background:rgba(255,255,255,.34)}
+.smy-headbtns{position:absolute;top:10px;right:12px;z-index:2;display:flex;gap:6px}
+.smy-xbtn{appearance:none;border:none;background:rgba(255,255,255,.2);color:#fff;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:15px;display:grid;place-items:center;line-height:1}
+.smy-xbtn:hover{background:rgba(255,255,255,.34)}
+.smy-expand{font-size:16px}
 .smy-scroll{flex:1;overflow-y:auto;padding:16px 14px 6px;display:flex;flex-direction:column;gap:13px;background:var(--app);scrollbar-width:thin;scrollbar-color:rgba(140,140,170,.3) transparent}
 .smy-scroll::-webkit-scrollbar{width:5px}
 .smy-scroll::-webkit-scrollbar-track{background:transparent}
@@ -755,10 +842,10 @@ const CSS = `
 .smy-scroll::-webkit-scrollbar-thumb:hover{background:rgba(140,140,170,.45)}
 .smy-msg{display:flex;gap:8px;align-items:flex-end;max-width:100%;animation:smyRise .34s ease both}
 @keyframes smyRise{from{transform:translateY(10px);opacity:0}to{transform:none;opacity:1}}
-.smy-mini{width:30px;height:34px;flex:0 0 auto;overflow:visible}
-.smy-mini svg{width:30px;height:34px;overflow:visible;filter:drop-shadow(0 2px 2px rgba(0,0,0,.18))}
-.smy-bubble{padding:11px 14px;border-radius:18px;font-size:14px;font-weight:600;max-width:82%;color:var(--ink)}
-.smy-bot .smy-bubble{background:color-mix(in srgb,var(--tone,var(--brand)) 10%,var(--panel));border:1.5px solid color-mix(in srgb,var(--tone,var(--brand)) 24%,transparent);border-bottom-left-radius:6px;box-shadow:0 4px 14px -8px color-mix(in srgb,var(--tone,var(--brand)) 60%,transparent)}
+.smy-mini{width:34px;height:34px;flex:0 0 auto;overflow:hidden;border-radius:50%;align-self:flex-end}
+.smy-mini img{width:34px;height:34px;object-fit:cover;border-radius:50%;box-shadow:0 2px 6px -2px rgba(0,0,0,.18)}
+.smy-bubble{padding:12px 15px;border-radius:20px;font-size:14px;font-weight:600;max-width:84%;color:var(--ink);line-height:1.45}
+.smy-bot .smy-bubble{background:color-mix(in srgb,var(--tone,var(--brand)) 9%,var(--panel));border:1.5px solid color-mix(in srgb,var(--tone,var(--brand)) 22%,transparent);border-bottom-left-radius:7px;box-shadow:0 6px 18px -10px color-mix(in srgb,var(--tone,var(--brand)) 70%,transparent)}
 .smy-bot .smy-plain{background:var(--panel);border-color:var(--line)}
 .smy-me{flex-direction:row-reverse}.smy-me .smy-bubble{background:linear-gradient(135deg,var(--ga),var(--me));color:#fff;border-bottom-right-radius:6px;box-shadow:0 5px 14px -7px rgba(91,87,230,.7)}
 .smy-bubble b{font-weight:800}
