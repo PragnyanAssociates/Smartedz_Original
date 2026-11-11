@@ -17921,10 +17921,15 @@ app.post('/api/smarty/updates/read', async (req, res) => {
 
 // Default model per provider — changed in ONE place if ever needed.
 const SMARTY_DEFAULT_MODEL = {
-  gemini:    'gemini-1.5-flash',
+  gemini:    'gemini-2.0-flash',          // gemini-1.5-flash was retired by Google
   openai:    'gpt-4o-mini',
   anthropic: 'claude-3-5-haiku-latest'
 };
+
+// Current Gemini models to try in order — if one is "not found" (Google
+// renames/retires models over time) the call falls through to the next, so
+// whatever is enabled for this key still works.
+const SMARTY_GEMINI_FALLBACKS = ['gemini-2.0-flash', 'gemini-flash-latest', 'gemini-2.5-flash', 'gemini-1.5-flash-latest'];
 
 function _smartyMaskKey(key) {
   if (!key) return null;
@@ -17935,15 +17940,17 @@ function _smartyIsAdmin(req) {
   return role === 'Super Admin' || role === 'Developer';
 }
 
-// Figure out the provider from the key's prefix — so the admin only pastes
-// a key and never has to choose. Anthropic must be checked before OpenAI
-// because Claude keys also begin with "sk-".
+// Figure out the provider from the key — so the admin only pastes a key and
+// never has to choose. Only OpenAI and Anthropic use the "sk-" prefix
+// (Anthropic adds "sk-ant-"), so anything else of real length is treated as
+// a Google key. That covers BOTH Gemini key formats: the old "AIza…" and the
+// new "AQ.…" keys Google now issues.
 function _smartyDetectProvider(key) {
   const k = String(key || '').trim();
   if (/^sk-ant-/i.test(k)) return 'anthropic';   // Claude
-  if (/^AIza/.test(k))      return 'gemini';      // Google Gemini
   if (/^sk-/i.test(k))      return 'openai';      // ChatGPT
-  return null;                                    // unrecognised
+  if (k.length >= 20)       return 'gemini';      // Google Gemini (AIza… or AQ.…)
+  return null;                                    // too short / empty
 }
 
 // GET current config — never returns the raw key, only a masked preview.
@@ -18020,15 +18027,28 @@ const SMARTY_SYSTEM =
   "relevant screen in the app. Be warm and encouraging.";
 
 async function _smartyCallGemini(key, model, question) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
-  const { status, json } = await _smartyPostJson(url, {}, {
+  // Try the chosen model first, then the current fallbacks (deduped). A
+  // "model not found" (404) moves on to the next; any other error (bad key,
+  // quota) stops immediately with that message.
+  const tries = [model, ...SMARTY_GEMINI_FALLBACKS].filter((m, i, a) => m && a.indexOf(m) === i);
+  const body = {
     system_instruction: { parts: [{ text: SMARTY_SYSTEM }] },
     contents: [{ role: 'user', parts: [{ text: question }] }],
     generationConfig: { maxOutputTokens: 500, temperature: 0.6 }
-  });
-  if (status < 200 || status >= 300) throw new Error((json.error && json.error.message) || `Gemini HTTP ${status}`);
-  return ((json.candidates && json.candidates[0] && json.candidates[0].content && json.candidates[0].content.parts) || [])
-    .map(p => p.text || '').join('').trim();
+  };
+  let lastErr = 'Gemini error';
+  for (const m of tries) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${encodeURIComponent(key)}`;
+    const { status, json } = await _smartyPostJson(url, {}, body);
+    if (status >= 200 && status < 300) {
+      return ((json.candidates && json.candidates[0] && json.candidates[0].content && json.candidates[0].content.parts) || [])
+        .map(p => p.text || '').join('').trim();
+    }
+    lastErr = (json.error && json.error.message) || `Gemini HTTP ${status}`;
+    const notFound = status === 404 || /not found|not supported|unsupported/i.test(lastErr);
+    if (!notFound) break;   // bad key / quota / other — don't keep trying models
+  }
+  throw new Error(lastErr);
 }
 async function _smartyCallOpenAI(key, model, question) {
   const { status, json } = await _smartyPostJson('https://api.openai.com/v1/chat/completions',
