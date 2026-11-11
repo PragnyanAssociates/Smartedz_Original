@@ -442,11 +442,33 @@ export default function Smarty({ onNavigate }) {
     return out;
   };
 
+  // open-ended fallback → the school's own AI provider (only if a key is on).
+  // Returns to the plain "still learning" message when AI is off/unconfigured.
+  const askAI = async (q) => {
+    flash('thinking');
+    const tk = pushTyping();
+    let d = null;
+    try {
+      const res = await fetch(`${API_BASE_URL}/smarty/ask`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: q, userId: user?.id })
+      });
+      d = res.ok ? await res.json() : null;
+    } catch (_) {}
+    dropTyping(tk);
+    if (d && d.ok && d.answer) { pushBot({ tone: 'violet', text: d.answer, ai: true }); flash('talking'); return; }
+    if (d && (d.reason === 'provider_error' || d.reason === 'empty_answer')) {
+      pushBot({ tone: 'amber', text: "⚠️ I couldn't reach the AI service just now. Please ask your admin to check the AI key in **Smarty → Smarty AI**." });
+      return;
+    }
+    suggest();   // AI off / not configured → normal built-in fallback
+  };
+
   const submitText = (v) => {
     v = (v || '').trim(); if (!v) return;
     pushMe(v); setInput('');
     if (COMPLIMENTS.some(c => v.toLowerCase().includes(c))) return compliment();
-    const id = match(v); id ? respond(id) : suggest();
+    const id = match(v); if (id) respond(id); else askAI(v);
   };
 
   // greeting digest shown on every open
@@ -613,6 +635,7 @@ function Message({ m, onNav }) {
       <Mini />
       <div className="smy-bubble" style={{ '--tone': `var(${tone})` }}>
         <span dangerouslySetInnerHTML={{ __html: fmt(a.text) }} />
+        {a.ai && <span className="smy-aibadge">✨ AI</span>}
         {a.digest && <div className="smy-digest">{a.digest.map((d, i) => <span key={i} className="smy-dpill" style={{ '--ct': `var(${toneVar[d.tone] || '--brand'})` }}>{d.icon} {d.label}</span>)}</div>}
         {a.steps && <ul className="smy-steps">{a.steps.map((s, i) => <li key={i}><span className="smy-n">✓</span><span dangerouslySetInnerHTML={{ __html: fmt(s) }} /></li>)}</ul>}
         {a.card && <div className="smy-card"><span className="smy-em">{a.card.em}</span><div><div className="smy-t">{a.card.t}</div><div className="smy-s">{a.card.s}</div></div></div>}
@@ -773,6 +796,7 @@ const CSS = `
 @keyframes smyPulse{0%,100%{box-shadow:0 0 0 0 rgba(255,107,107,.5)}60%{box-shadow:0 0 0 7px rgba(255,107,107,0)}}
 .smy-digest{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
 .smy-dpill{font-size:11.5px;font-weight:800;color:var(--ink);background:color-mix(in srgb,var(--ct,var(--brand)) 14%,var(--panel));border:1px solid color-mix(in srgb,var(--ct,var(--brand)) 36%,transparent);padding:4px 9px;border-radius:999px;display:inline-flex;align-items:center;gap:5px}
+.smy-aibadge{display:inline-block;margin-left:6px;font-family:var(--fh);font-size:9px;font-weight:700;color:#fff;background:linear-gradient(135deg,var(--ga),var(--gb));padding:1px 7px;border-radius:999px;vertical-align:middle;letter-spacing:.3px}
 .smy-confetti{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:60}
 .smy-confetti span{position:absolute;top:-24px;animation:smyFall 1.6s ease-in forwards}
 @keyframes smyFall{0%{transform:translateY(0) rotate(0);opacity:1}100%{transform:translateY(680px) rotate(360deg);opacity:0}}

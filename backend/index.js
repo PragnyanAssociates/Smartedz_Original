@@ -17533,27 +17533,53 @@ app.get('/api/admin/online-count/:instId', async (req, res) => {
 
 
 // =====================================================================
-// === SMARTY ASSISTANT =================================================
-//   Paste this whole block into index.js, anywhere AFTER these are
-//   already defined (they are, near the top / notifications section):
-//     db, sameTenant(), resolveYearId(), createNotifications()
-//   A good spot is right after the Notifications section.
+// ============ SMARTY — COMPLETE BACKEND (single block) ===============
 //
-//   Endpoints
-//     GET  /api/smarty/bootstrap/:userId     one call the panel makes on open
-//     GET  /api/smarty/questions/:instId     admin: list custom questions
-//     POST /api/smarty/questions             admin: create / update
-//     DELETE /api/smarty/questions/:id       admin: delete
-//     GET  /api/smarty/updates-admin/:instId admin: list all updates
-//     POST /api/smarty/updates               admin: post update (+ notify)
-//     DELETE /api/smarty/updates/:id         admin: delete update
-//     POST /api/smarty/updates/read          mark all updates read for a user
+//  Paste this ONE block into index.js, anywhere AFTER these already exist
+//  (they do — near the top / Notifications section):
+//      db , sameTenant() , resolveYearId() , createNotifications()
+//  A good spot is right after the Notifications section. If you already
+//  pasted older Smarty blocks, DELETE them and use only this file.
 //
-//   Live answers (next class / homework / attendance) are computed here
-//   from the SAME tables the Timetable / Homework / Attendance modules
-//   use, so Smarty never shows a made-up figure. Each live block is
-//   wrapped in its own try/catch — if one query fails the panel still
-//   opens, just without that one card.
+//  Requires Node 18+ (for the built-in fetch used by the AI call). On older
+//  Node, add at the very top of this block:  const fetch = require('node-fetch');
+//
+//  ---------------------------------------------------------------------
+//  RUN THESE TABLES ONCE (copy into your MySQL):
+//  ---------------------------------------------------------------------
+//  CREATE TABLE IF NOT EXISTS smarty_questions (
+//    id INT AUTO_INCREMENT PRIMARY KEY, institutionId INT NOT NULL,
+//    category VARCHAR(80), question VARCHAR(255) NOT NULL, answer TEXT NOT NULL,
+//    roles VARCHAR(120) DEFAULT 'all', link VARCHAR(80), keywords TEXT,
+//    sort_order INT DEFAULT 0, is_active TINYINT(1) DEFAULT 1,
+//    created_by INT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP );
+//
+//  CREATE TABLE IF NOT EXISTS smarty_updates (
+//    id INT AUTO_INCREMENT PRIMARY KEY, institutionId INT NOT NULL,
+//    title VARCHAR(160) NOT NULL, body TEXT NOT NULL, link VARCHAR(80),
+//    roles VARCHAR(120) DEFAULT 'all', is_active TINYINT(1) DEFAULT 1,
+//    created_by INT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP );
+//
+//  CREATE TABLE IF NOT EXISTS smarty_update_reads (
+//    update_id INT NOT NULL, user_id INT NOT NULL,
+//    PRIMARY KEY (update_id, user_id) );
+//
+//  CREATE TABLE IF NOT EXISTS smarty_ai_config (
+//    institutionId INT PRIMARY KEY, provider VARCHAR(40) DEFAULT 'gemini',
+//    api_key TEXT, model VARCHAR(80), enabled TINYINT(1) DEFAULT 0,
+//    updated_by INT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP );
+//
+//  CREATE TABLE IF NOT EXISTS smarty_ai_cache (
+//    id INT AUTO_INCREMENT PRIMARY KEY, institutionId INT NOT NULL,
+//    q_hash CHAR(64) NOT NULL, question TEXT, answer MEDIUMTEXT,
+//    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+//    UNIQUE KEY uq_inst_q (institutionId, q_hash) );
+// =====================================================================
+
+const _smartyCrypto = require('crypto');
+
+// =====================================================================
+//  PART 1 — helpers + live answers (next class / homework / attendance)
 // =====================================================================
 
 // Does a stored roles string ('all' | 'student,parent') include this role?
@@ -17625,8 +17651,6 @@ async function _smartyNextClass(me, yearId) {
   const byPeriod = {};
   entries.forEach(e => { byPeriod[e.period_id] = e; });
 
-  // periods are already ordered; find the first teaching period that
-  // (a) has an entry and (b) hasn't ended yet.
   const upcoming = periods
     .filter(p => !p.is_break && byPeriod[p.id])
     .map(p => ({ ...p, startMin: _smartyToMin(p.start_time), endMin: _smartyToMin(p.end_time), ent: byPeriod[p.id] }))
@@ -17661,7 +17685,6 @@ app.get('/api/smarty/bootstrap/:userId', async (req, res) => {
 
     const role = (me.role || '').toLowerCase();
     const isStudent = role.includes('student');
-    const isTeacher = role.includes('teacher');
     const yearId = await resolveYearId(me.institutionId);
 
     let class_label = null;
@@ -17688,7 +17711,7 @@ app.get('/api/smarty/bootstrap/:userId', async (req, res) => {
              LEFT JOIN homework_submissions sub ON sub.homework_id = h.id AND sub.student_id = ?
             WHERE h.class_id = ? AND h.institutionId = ?`,
           [me.id, me.class_id, me.institutionId]);
-        const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }); // YYYY-MM-DD
+        const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
         const pending = rows.filter(r => !r.submitted);
         const dueToday = pending.filter(r => String(r.due_date || '').slice(0, 10) === today);
         const upcoming = pending
@@ -17750,7 +17773,9 @@ app.get('/api/smarty/bootstrap/:userId', async (req, res) => {
   }
 });
 
-// --- ADMIN: list custom questions -------------------------------------
+// =====================================================================
+//  PART 2 — admin: custom questions
+// =====================================================================
 app.get('/api/smarty/questions/:instId', async (req, res) => {
   const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
   try {
@@ -17760,7 +17785,6 @@ app.get('/api/smarty/questions/:instId', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- ADMIN: create / update a question --------------------------------
 app.post('/api/smarty/questions', async (req, res) => {
   const institutionId = req.auth.institutionId;
   const { id, category, question, answer, roles, link, keywords, sort_order, is_active } = req.body || {};
@@ -17782,7 +17806,6 @@ app.post('/api/smarty/questions', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- ADMIN: delete a question -----------------------------------------
 app.delete('/api/smarty/questions/:id', async (req, res) => {
   try {
     const [own] = await db.execute('SELECT institutionId FROM smarty_questions WHERE id = ?', [req.params.id]);
@@ -17792,7 +17815,9 @@ app.delete('/api/smarty/questions/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- ADMIN: list all updates ------------------------------------------
+// =====================================================================
+//  PART 3 — admin: "What's new" updates (+ notification fan-out)
+// =====================================================================
 app.get('/api/smarty/updates-admin/:instId', async (req, res) => {
   const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
   try {
@@ -17802,7 +17827,6 @@ app.get('/api/smarty/updates-admin/:instId', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- ADMIN: post an update (and notify matching users) ----------------
 app.post('/api/smarty/updates', async (req, res) => {
   const institutionId = req.auth.institutionId;
   const { id, title, body, link, roles, is_active } = req.body || {};
@@ -17821,7 +17845,6 @@ app.post('/api/smarty/updates', async (req, res) => {
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [institutionId, title, body, link || null, roles || 'all', is_active == null ? 1 : (is_active ? 1 : 0), req.auth.id || null]);
 
-    // Fan out to Notifications for everyone this update targets.
     try {
       const [users] = await db.execute(
         "SELECT id, role FROM users WHERE institutionId = ? AND LOWER(COALESCE(status,'active')) = 'active'",
@@ -17840,7 +17863,6 @@ app.post('/api/smarty/updates', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- ADMIN: delete an update ------------------------------------------
 app.delete('/api/smarty/updates/:id', async (req, res) => {
   try {
     const [own] = await db.execute('SELECT institutionId FROM smarty_updates WHERE id = ?', [req.params.id]);
@@ -17851,7 +17873,6 @@ app.delete('/api/smarty/updates/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- mark all updates read for a user (clears Smarty's "new" badge) ----
 app.post('/api/smarty/updates/read', async (req, res) => {
   const userId = req.auth.id;
   const institutionId = req.auth.institutionId;
@@ -17859,85 +17880,186 @@ app.post('/api/smarty/updates/read', async (req, res) => {
     const [rows] = await db.execute(
       'SELECT id FROM smarty_updates WHERE institutionId = ? AND is_active = 1', [institutionId]);
     for (const r of rows) {
-      await db.execute(
-        'INSERT IGNORE INTO smarty_update_reads (update_id, user_id) VALUES (?, ?)',
-        [r.id, userId]);
+      await db.execute('INSERT IGNORE INTO smarty_update_reads (update_id, user_id) VALUES (?, ?)', [r.id, userId]);
     }
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // =====================================================================
-// === SMARTY AI — per-school Gemini key storage =======================
-//   Paste this block into index.js AFTER the main Smarty block (it reuses)
+//  PART 4 — AI key storage (Gemini / OpenAI / Anthropic). No model in the
+//  UI: the server picks a good default model for whichever provider the
+//  school chose, so the admin only pastes a key and turns it on.
+// =====================================================================
 
-// mask a key for display: keep only the last 4 chars
+// Default model per provider — changed in ONE place if ever needed.
+const SMARTY_DEFAULT_MODEL = {
+  gemini:    'gemini-1.5-flash',
+  openai:    'gpt-4o-mini',
+  anthropic: 'claude-3-5-haiku-latest'
+};
+
 function _smartyMaskKey(key) {
   if (!key) return null;
-  const s = String(key);
-  return '••••••••' + s.slice(-4);
+  return '••••••••' + String(key).slice(-4);
 }
-
-// Only the Super Admin (or Developer) manages the AI key.
 function _smartyIsAdmin(req) {
   const role = (req.auth && req.auth.role) || '';
   return role === 'Super Admin' || role === 'Developer';
 }
 
-// --- GET current config (never returns the raw key) -------------------
+// GET current config — never returns the raw key, only a masked preview.
 app.get('/api/smarty/ai-config/:instId', async (req, res) => {
   const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
   if (!sameTenant(req, instId)) return res.status(403).json({ error: 'Another institution.' });
   try {
     const [rows] = await db.execute(
-      'SELECT provider, api_key, model, enabled FROM smarty_ai_config WHERE institutionId = ? LIMIT 1',
-      [instId]);
-    if (!rows.length) {
-      return res.json({ configured: false, masked: null, model: 'gemini-1.5-flash', enabled: false, provider: 'gemini' });
-    }
+      'SELECT provider, api_key, enabled FROM smarty_ai_config WHERE institutionId = ? LIMIT 1', [instId]);
+    if (!rows.length) return res.json({ configured: false, masked: null, enabled: false, provider: 'gemini' });
     const r = rows[0];
     res.json({
       configured: !!r.api_key,
       masked: _smartyMaskKey(r.api_key),
-      model: r.model || 'gemini-1.5-flash',
       enabled: !!r.enabled,
       provider: r.provider || 'gemini'
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- POST save config -------------------------------------------------
-//   api_key is optional: if omitted/blank the existing key is KEPT, so the
-//   admin can flip "enabled" or change the model without re-entering it.
+// POST save config — provider + enabled (+ api_key only when a new one is typed).
+// The model is set server-side from SMARTY_DEFAULT_MODEL.
 app.post('/api/smarty/ai-config', async (req, res) => {
   if (!_smartyIsAdmin(req)) return res.status(403).json({ error: 'Only the Super Admin can manage the AI key.' });
   const institutionId = req.auth.institutionId;
-  const { api_key, model, enabled, provider } = req.body || {};
+  const { api_key, enabled } = req.body || {};
+  const provider = SMARTY_DEFAULT_MODEL[(req.body && req.body.provider)] ? req.body.provider : 'gemini';
+  const model = SMARTY_DEFAULT_MODEL[provider];
+  const en = enabled ? 1 : 0;
   try {
     const [rows] = await db.execute('SELECT institutionId FROM smarty_ai_config WHERE institutionId = ? LIMIT 1', [institutionId]);
-    const mdl = model || 'gemini-1.5-flash';
-    const en  = enabled ? 1 : 0;
-    const prov = provider || 'gemini';
-
     if (rows.length) {
       if (api_key && String(api_key).trim()) {
         await db.execute(
           'UPDATE smarty_ai_config SET api_key = ?, model = ?, enabled = ?, provider = ?, updated_by = ? WHERE institutionId = ?',
-          [String(api_key).trim(), mdl, en, prov, req.auth.id || null, institutionId]);
+          [String(api_key).trim(), model, en, provider, req.auth.id || null, institutionId]);
       } else {
-        // keep existing key, just update the toggles
         await db.execute(
           'UPDATE smarty_ai_config SET model = ?, enabled = ?, provider = ?, updated_by = ? WHERE institutionId = ?',
-          [mdl, en, prov, req.auth.id || null, institutionId]);
+          [model, en, provider, req.auth.id || null, institutionId]);
       }
     } else {
       await db.execute(
         'INSERT INTO smarty_ai_config (institutionId, provider, api_key, model, enabled, updated_by) VALUES (?, ?, ?, ?, ?, ?)',
-        [institutionId, prov, api_key ? String(api_key).trim() : null, mdl, en, req.auth.id || null]);
+        [institutionId, provider, api_key ? String(api_key).trim() : null, model, en, req.auth.id || null]);
     }
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+// =====================================================================
+//  PART 5 — the AI answer route (POST /api/smarty/ask)
+//  Reads the school's key + provider, checks the cache, else calls the
+//  provider and caches the answer. Only general questions reach here.
+// =====================================================================
+const SMARTY_SYSTEM =
+  "You are Smarty, a friendly, concise assistant inside the SmartEdz school app " +
+  "used by students, parents, teachers and staff in India. Answer general-knowledge " +
+  "and educational questions clearly and briefly (2-5 short sentences), in simple " +
+  "language suitable for school. Do NOT invent school-specific data such as a " +
+  "person's marks, attendance or fees; if asked for those, tell them to open the " +
+  "relevant screen in the app. Be warm and encouraging.";
+
+async function _smartyCallGemini(key, model, question) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
+  const r = await fetch(url, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      system_instruction: { parts: [{ text: SMARTY_SYSTEM }] },
+      contents: [{ role: 'user', parts: [{ text: question }] }],
+      generationConfig: { maxOutputTokens: 500, temperature: 0.6 }
+    })
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error((d.error && d.error.message) || `Gemini HTTP ${r.status}`);
+  return ((d.candidates && d.candidates[0] && d.candidates[0].content && d.candidates[0].content.parts) || [])
+    .map(p => p.text || '').join('').trim();
+}
+async function _smartyCallOpenAI(key, model, question) {
+  const r = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+    body: JSON.stringify({
+      model, max_tokens: 500, temperature: 0.6,
+      messages: [{ role: 'system', content: SMARTY_SYSTEM }, { role: 'user', content: question }]
+    })
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error((d.error && d.error.message) || `OpenAI HTTP ${r.status}`);
+  return ((d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content) || '').trim();
+}
+async function _smartyCallAnthropic(key, model, question) {
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+    body: JSON.stringify({ model, max_tokens: 500, system: SMARTY_SYSTEM, messages: [{ role: 'user', content: question }] })
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error((d.error && d.error.message) || `Anthropic HTTP ${r.status}`);
+  return ((d.content && d.content[0] && d.content[0].text) || '').trim();
+}
+
+app.post('/api/smarty/ask', async (req, res) => {
+  try {
+    const institutionId = req.auth.institutionId;
+    const question = String((req.body && req.body.question) || '').trim();
+    if (!question) return res.json({ ok: false, reason: 'empty' });
+    if (question.length > 1000) return res.json({ ok: false, reason: 'too_long' });
+
+    const [rows] = await db.execute(
+      'SELECT provider, api_key, enabled FROM smarty_ai_config WHERE institutionId = ? LIMIT 1', [institutionId]);
+    const cfg = rows[0];
+    if (!cfg || !cfg.enabled || !cfg.api_key) return res.json({ ok: false, reason: 'disabled' });
+
+    // cache lookup (normalised question -> sha256)
+    const qNorm = question.toLowerCase().replace(/\s+/g, ' ').trim();
+    const qHash = _smartyCrypto.createHash('sha256').update(qNorm).digest('hex');
+    try {
+      const [c] = await db.execute(
+        'SELECT answer FROM smarty_ai_cache WHERE institutionId = ? AND q_hash = ? LIMIT 1', [institutionId, qHash]);
+      if (c.length) return res.json({ ok: true, answer: c[0].answer, cached: true });
+    } catch (_) {}
+
+    const provider = SMARTY_DEFAULT_MODEL[cfg.provider] ? cfg.provider : 'gemini';
+    const model = SMARTY_DEFAULT_MODEL[provider];
+
+    let answer = '';
+    try {
+      if (provider === 'openai') answer = await _smartyCallOpenAI(cfg.api_key, model, question);
+      else if (provider === 'anthropic') answer = await _smartyCallAnthropic(cfg.api_key, model, question);
+      else answer = await _smartyCallGemini(cfg.api_key, model, question);
+    } catch (e) {
+      console.warn('[smarty ask]', provider, model, e.message);
+      return res.json({ ok: false, reason: 'provider_error', error: e.message });
+    }
+
+    answer = (answer || '').trim();
+    if (!answer) return res.json({ ok: false, reason: 'empty_answer' });
+
+    try {
+      await db.execute(
+        'INSERT INTO smarty_ai_cache (institutionId, q_hash, question, answer) VALUES (?, ?, ?, ?) ' +
+        'ON DUPLICATE KEY UPDATE answer = VALUES(answer), created_at = CURRENT_TIMESTAMP',
+        [institutionId, qHash, question, answer]);
+    } catch (_) {}
+
+    res.json({ ok: true, answer });
+  } catch (err) {
+    console.error('smarty/ask error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+// =====================================================================
+// ===================== END SMARTY BACKEND ============================
+// =====================================================================
 
 
 

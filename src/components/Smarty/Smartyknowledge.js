@@ -142,6 +142,26 @@ export const BUILTINS = [
     keywords: ['subscription', 'plan', 'renew', 'expiry', 'license', 'validity', 'plan expiry', 'renew plan'],
     answer: { text: "Your plan status is in System Configuration 💳", link: 'manage-login', linkLabel: 'Open System Configuration',
       steps: ['Open **System Configuration → Subscription**.', 'The banner shows your plan and days remaining.', 'Green = fine, amber = under a month, red = a week or less.', 'Plans are set by SmartEdz — contact your rep to renew.'] } },
+
+  // ---- ADMISSIONS PIPELINE + DIRECTORY (gated by module visibility) ----
+  { id: 'how-preadmissions', q: 'How do pre-admissions work?', roles: 'all', tone: 'sky', icon: '🆔',
+    keywords: ['pre admission', 'preadmission', 'pre-admission', 'new application', 'admission enquiry', 'apply student', 'pending application', 'add application', 'approve application', 'reject application', 'new admission enquiry'],
+    answer: { text: "Pre-Admissions is your pending applicant list 🆔", link: 'PreAdmissions', linkLabel: 'Open Pre-Admissions',
+      steps: ['Open **Pre-Admissions**.', 'Tap **+** to add an applicant — Admission No, Name and Joining Grade are required.', 'Review an application, then **Approve** or **Reject**.', 'That decision moves the record into the **Admissions** module.'] } },
+  { id: 'open-preadmissions', q: 'Open Pre-Admissions', roles: 'all', tone: 'sky', icon: '🆔',
+    keywords: ['open pre admission', 'open preadmission', 'go to pre admissions', 'pre admissions tab'],
+    answer: { text: 'Opening Pre-Admissions 👇', link: 'PreAdmissions', linkLabel: 'Open Pre-Admissions' } },
+  { id: 'how-admissions', q: 'Where are approved admissions?', roles: 'all', tone: 'emerald', icon: '🎓',
+    keywords: ['admission', 'admissions', 'approved admission', 'admitted students', 'rejected admission', 'admission list', 'admission by year', 'who got admitted'],
+    answer: { text: "Decided applications live in Admissions 🎓", link: 'Admissions', linkLabel: 'Open Admissions',
+      steps: ['Open **Admissions**.', 'Switch between **Approved / Rejected** and pick a year.', 'Open a record to edit it or flip the decision.', 'Export the list to Excel anytime.'] } },
+  { id: 'open-admissions', q: 'Open Admissions', roles: 'all', tone: 'emerald', icon: '🎓',
+    keywords: ['open admissions', 'go to admissions', 'admissions tab'],
+    answer: { text: 'Opening Admissions 👇', link: 'Admissions', linkLabel: 'Open Admissions' } },
+  { id: 'how-directory', q: 'How do I find a profile?', roles: 'all', tone: 'brand', icon: '👥',
+    keywords: ['student profile', 'staff profile', 'view profile', 'look up student', 'member profile', 'someone details', 'find a person', 'whose profile', 'teacher details', 'student details'],
+    answer: { text: "The Directory holds every member's profile 👥", link: 'Directory', linkLabel: 'Open Directory',
+      steps: ['Open the **Directory**.', 'Filter by role, or pick the **Student** tab and a class.', 'Search by name, username or email.', 'Open a card for full details — plus Performance, Attendance and Report Card, with a year filter for past years.'] } },
 ];
 
 // Starter chips per role bucket. Smarty.jsx then drops any whose module
