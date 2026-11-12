@@ -496,6 +496,9 @@ export default function Smarty({ onNavigate }) {
   };
   const celebrate = () => { setBurst(false); requestAnimationFrame(() => { setBurst(true); setTimeout(() => setBurst(false), 1700); }); };
 
+  // stop the mic whenever the panel is closed, so it never keeps listening in the background
+  useEffect(() => { if (!open) stopListen(); }, [open]);   // eslint-disable-line react-hooks/exhaustive-deps
+
   // contextual chips after an answer
   const chipFromId = (id, b) => {
     if (id === 'news') return { id: 'news', label: "What's new?", icon: '📣', tone: 'violet' };
@@ -526,7 +529,11 @@ export default function Smarty({ onNavigate }) {
     dropTyping(tk);
     if (d && d.ok && d.answer) { pushBot({ tone: 'violet', text: d.answer, ai: true }); flash('talking'); return; }
     if (d && (d.reason === 'provider_error' || d.reason === 'empty_answer')) {
-      pushBot({ tone: 'amber', text: "⚠️ I couldn't reach the AI service just now. Please ask your admin to check the AI key in **Smarty → Smarty AI**." });
+      const admin = /admin|developer|principal/i.test(role || '');
+      // Admins see the real reason (e.g. "quota exceeded"); everyone else sees a simple note.
+      pushBot({ tone: 'amber', text: admin
+        ? `⚠️ The AI couldn't answer right now.${d.error ? ` **Reason:** ${d.error}` : ''}\n\nIf this is a free key it's usually the quota limit — enable billing on the key, or paste a different provider's key in **Smarty AI**, then **Test**.`
+        : "⚠️ I couldn't reach the AI service just now. Please ask your admin to check the AI key." });
       return;
     }
     suggest();   // AI off / not configured → normal built-in fallback

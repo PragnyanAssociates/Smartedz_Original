@@ -17588,7 +17588,12 @@ function _smartyPostJson(urlStr, headers, bodyObj) {
     try { u = new URL(urlStr); } catch (e) { return reject(e); }
     const data = Buffer.from(JSON.stringify(bodyObj));
     const r = _smartyHttps.request({
-      method: 'POST', hostname: u.hostname, path: u.pathname + u.search,
+      method: 'POST',
+      hostname: u.hostname,
+      port: u.port || 443,
+      path: u.pathname + u.search,
+      family: 4,              // force IPv4: on hosts with broken IPv6 egress Node
+      autoSelectFamily: true, // tries the AAAA address first and HANGS until timeout
       headers: Object.assign({ 'Content-Type': 'application/json', 'Content-Length': data.length }, headers || {})
     }, (resp) => {
       let buf = '';
@@ -17599,9 +17604,29 @@ function _smartyPostJson(urlStr, headers, bodyObj) {
         resolve({ status: resp.statusCode || 0, json });
       });
     });
-    r.on('error', reject);
-    r.setTimeout(20000, () => r.destroy(new Error('AI request timed out')));
+    // A socket-level failure (DNS / firewall / no route) is a SERVER network
+    // problem, not a bad key or quota — say so clearly so nobody keeps swapping keys.
+    r.on('error', (e) => {
+      e.message = `Can't reach the AI server (${e.code || e.message}) — this is a network/firewall issue on the server, not the key.`;
+      reject(e);
+    });
+    r.setTimeout(30000, () => r.destroy(new Error("Can't reach the AI server (connection timed out) — this is a network/firewall issue on the server, not the key.")));
     r.write(data); r.end();
+  });
+}
+
+// Quick reachability probe (no key needed) so the admin can see whether the
+// SERVER can even reach each AI provider. Hitting GET / returns 404/400 — that
+// still means "reachable" (ok:true); a timeout or ENETUNREACH means blocked.
+function _smartyPing(hostname) {
+  return new Promise((resolve) => {
+    const req = _smartyHttps.request({ method: 'GET', hostname, port: 443, path: '/', family: 4, autoSelectFamily: true }, (resp) => {
+      resp.resume();
+      resolve({ ok: true, status: resp.statusCode });
+    });
+    req.on('error', (e) => resolve({ ok: false, error: e.code || e.message }));
+    req.setTimeout(12000, () => { req.destroy(); resolve({ ok: false, error: 'TIMEOUT' }); });
+    req.end();
   });
 }
 
@@ -18011,6 +18036,22 @@ app.post('/api/smarty/ai-config', async (req, res) => {
     }
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET self-test — tells the admin whether THE SERVER can reach each AI
+// provider at all. Use this when answers time out: if a host shows ok:false
+// with TIMEOUT / ENETUNREACH / EAI_AGAIN, the server's internet/firewall is
+// blocking it — no key will work until that's fixed.
+app.get('/api/smarty/ai-selftest', async (req, res) => {
+  if (!_smartyIsAdmin(req)) return res.status(403).json({ error: 'Only the Super Admin can run the self-test.' });
+  const hosts = ['generativelanguage.googleapis.com', 'api.openai.com', 'api.anthropic.com'];
+  const reachability = {};
+  for (const h of hosts) reachability[h] = await _smartyPing(h);
+  res.json({
+    nodeVersion: process.version,
+    proxyEnv: process.env.HTTPS_PROXY || process.env.https_proxy || null,
+    reachability
+  });
 });
 
 // =====================================================================
