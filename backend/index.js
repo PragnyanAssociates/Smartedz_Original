@@ -17582,39 +17582,67 @@ const _smartyHttps  = require('https');
 // POST JSON over Node's built-in https — works on EVERY Node version (no
 // dependency on a global fetch, which is missing on Node < 18 and was the
 // usual reason the AI call "couldn't be reached"). Returns { status, json }.
-function _smartyPostJson(urlStr, headers, bodyObj) {
+// POST JSON to a provider and return { status, json }.
+// Prefers the platform's native fetch (Node 18+, which you have on v22):
+// undici handles these POSTs reliably on container hosts where a raw
+// https.request POST can stall forever. Falls back to the https module only
+// on very old Node (<18) with no global fetch. Retries ONCE on a genuine
+// network/timeout failure (a fresh connection), and NEVER on an HTTP error —
+// so a bad key or quota (400/401/429) is reported at once, not retried.
+async function _smartyPostJson(urlStr, headers, bodyObj) {
+  const payload = JSON.stringify(bodyObj);
+  let lastErr;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      if (typeof fetch === 'function') {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 30000);
+        try {
+          const resp = await fetch(urlStr, {
+            method: 'POST',
+            headers: Object.assign({ 'Content-Type': 'application/json' }, headers || {}),
+            body: payload,
+            signal: ctrl.signal
+          });
+          const text = await resp.text();
+          let json = {};
+          try { json = text ? JSON.parse(text) : {}; } catch (_) { json = { _raw: text }; }
+          return { status: resp.status, json };
+        } finally { clearTimeout(timer); }
+      }
+      return await _smartyPostJsonHttps(urlStr, headers, payload);
+    } catch (e) {
+      lastErr = e;
+      const code = (e.cause && e.cause.code) || e.code || '';
+      const netlike = e.name === 'AbortError' ||
+        /ETIMEDOUT|ENETUNREACH|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|aborted|timed out/i.test(code + ' ' + (e.message || ''));
+      if (attempt === 0 && netlike) { await new Promise(r => setTimeout(r, 800)); continue; }  // one fresh retry
+      break;
+    }
+  }
+  const code = (lastErr && lastErr.cause && lastErr.cause.code) || (lastErr && lastErr.code) ||
+    (lastErr && lastErr.name === 'AbortError' ? 'ETIMEDOUT' : (lastErr && lastErr.message)) || 'network error';
+  const err = new Error(`Can't reach the AI server (${code}) — network/firewall issue on the server, not the key.`);
+  err.network = true;
+  throw err;
+}
+
+// Low-level https POST — only used as a fallback on Node < 18 (no global fetch).
+function _smartyPostJsonHttps(urlStr, headers, payload) {
   return new Promise((resolve, reject) => {
     let u;
     try { u = new URL(urlStr); } catch (e) { return reject(e); }
-    const data = Buffer.from(JSON.stringify(bodyObj));
+    const data = Buffer.from(payload);
     const r = _smartyHttps.request({
-      method: 'POST',
-      hostname: u.hostname,
-      port: u.port || 443,
-      path: u.pathname + u.search,
-      family: 4,              // force IPv4: on hosts with broken IPv6 egress Node
-      autoSelectFamily: true, // tries the AAAA address first and HANGS until timeout
-      agent: false,           // NEVER reuse a pooled keep-alive socket — on container
-                              // hosts the egress NAT silently drops idle sockets, so a
-                              // reused one hangs until timeout. A fresh socket each call fixes it.
+      method: 'POST', hostname: u.hostname, port: u.port || 443, path: u.pathname + u.search,
+      family: 4, agent: false,
       headers: Object.assign({ 'Content-Type': 'application/json', 'Content-Length': data.length, 'Connection': 'close' }, headers || {})
     }, (resp) => {
       let buf = '';
       resp.on('data', c => { buf += c; });
-      resp.on('end', () => {
-        let json = {};
-        try { json = buf ? JSON.parse(buf) : {}; } catch (_) { json = { _raw: buf }; }
-        resolve({ status: resp.statusCode || 0, json });
-      });
+      resp.on('end', () => { let json = {}; try { json = buf ? JSON.parse(buf) : {}; } catch (_) { json = { _raw: buf }; } resolve({ status: resp.statusCode || 0, json }); });
     });
-    // A socket-level failure (DNS / firewall / no route) is a SERVER network
-    // problem, not a bad key or quota — say so clearly so nobody keeps swapping keys.
-    r.on('error', (e) => {
-      const code = e.code || e.message || 'network error';
-      const err = new Error(`Can't reach the AI server (${code}) — network/firewall issue on the server, not the key.`);
-      err.network = true;
-      reject(err);
-    });
+    r.on('error', reject);
     r.setTimeout(30000, () => r.destroy(Object.assign(new Error('connection timed out'), { code: 'ETIMEDOUT' })));
     r.write(data); r.end();
   });
@@ -17950,16 +17978,20 @@ app.post('/api/smarty/updates/read', async (req, res) => {
 // =====================================================================
 
 // Default model per provider — changed in ONE place if ever needed.
+// NOTE: Google retires named Gemini models over time (gemini-1.5-flash, then
+// gemini-2.0-flash were both retired). 'gemini-flash-latest' is Google's
+// self-updating alias that always points at the current flash model, so it
+// keeps working without a code change when they roll a new version.
 const SMARTY_DEFAULT_MODEL = {
-  gemini:    'gemini-2.0-flash',          // gemini-1.5-flash was retired by Google
+  gemini:    'gemini-flash-latest',
   openai:    'gpt-4o-mini',
   anthropic: 'claude-3-5-haiku-latest'
 };
 
-// Current Gemini models to try in order — if one is "not found" (Google
-// renames/retires models over time) the call falls through to the next, so
-// whatever is enabled for this key still works.
-const SMARTY_GEMINI_FALLBACKS = ['gemini-2.0-flash', 'gemini-flash-latest', 'gemini-2.5-flash', 'gemini-1.5-flash-latest'];
+// Gemini models to try in order — if one is "not available / not found"
+// (Google renames/retires models), the call falls through to the next, so
+// Smarty keeps working. The alias is first; explicit recent versions back it up.
+const SMARTY_GEMINI_FALLBACKS = ['gemini-flash-latest', 'gemini-3.8-flash', 'gemini-2.5-flash'];
 
 function _smartyMaskKey(key) {
   if (!key) return null;
@@ -18073,9 +18105,6 @@ const SMARTY_SYSTEM =
   "relevant screen in the app. Be warm and encouraging.";
 
 async function _smartyCallGemini(key, model, question) {
-  // Try the chosen model first, then the current fallbacks (deduped). A
-  // "model not found" (404) moves on to the next; any other error (bad key,
-  // quota) stops immediately with that message.
   const tries = [model, ...SMARTY_GEMINI_FALLBACKS].filter((m, i, a) => m && a.indexOf(m) === i);
   const body = {
     system_instruction: { parts: [{ text: SMARTY_SYSTEM }] },
@@ -18083,16 +18112,25 @@ async function _smartyCallGemini(key, model, question) {
     generationConfig: { maxOutputTokens: 500, temperature: 0.6 }
   };
   let lastErr = 'Gemini error';
-  for (const m of tries) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${encodeURIComponent(key)}`;
-    const { status, json } = await _smartyPostJson(url, {}, body);
-    if (status >= 200 && status < 300) {
-      return ((json.candidates && json.candidates[0] && json.candidates[0].content && json.candidates[0].content.parts) || [])
-        .map(p => p.text || '').join('').trim();
+  // Up to 3 passes over the model list. A retired model (404) or a momentarily
+  // overloaded one (503 "high demand" / 429) just moves on to the next model;
+  // if every model is busy we wait a moment and sweep the list again, so a
+  // transient spike doesn't surface as a failure. A real error (bad key = 400)
+  // stops immediately.
+  for (let pass = 0; pass < 3; pass++) {
+    for (const m of tries) {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${encodeURIComponent(key)}`;
+      const { status, json } = await _smartyPostJson(url, {}, body);
+      if (status >= 200 && status < 300) {
+        return ((json.candidates && json.candidates[0] && json.candidates[0].content && json.candidates[0].content.parts) || [])
+          .map(p => p.text || '').join('').trim();
+      }
+      lastErr = (json.error && json.error.message) || `Gemini HTTP ${status}`;
+      const retryable = status === 404 || status === 429 || status === 503 ||
+        /not found|no longer available|not available|unsupported|deprecated|overloaded|unavailable|high demand|try again/i.test(lastErr);
+      if (!retryable) throw new Error(lastErr);   // bad key / other — stop now
     }
-    lastErr = (json.error && json.error.message) || `Gemini HTTP ${status}`;
-    const notFound = status === 404 || /not found|not supported|unsupported/i.test(lastErr);
-    if (!notFound) break;   // bad key / quota / other — don't keep trying models
+    if (pass < 2) await new Promise(r => setTimeout(r, 1200 * (pass + 1)));  // all busy — wait, then sweep again
   }
   throw new Error(lastErr);
 }
@@ -18172,6 +18210,7 @@ app.post('/api/smarty/ask', async (req, res) => {
 // =====================================================================
 // ===================== END SMARTY BACKEND ============================
 // =====================================================================
+
 
 // =====================================================================
 //  smarty-nettest.js  —  does THIS server have internet to the AI providers?
