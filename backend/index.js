@@ -17579,55 +17579,35 @@ app.get('/api/admin/online-count/:instId', async (req, res) => {
 const _smartyCrypto = require('crypto');
 const _smartyHttps  = require('https');
 
-// POST JSON over Node's built-in https — works on EVERY Node version (no
-// dependency on a global fetch, which is missing on Node < 18 and was the
-// usual reason the AI call "couldn't be reached"). Returns { status, json }.
 // POST JSON to a provider and return { status, json }.
-// Prefers the platform's native fetch (Node 18+, which you have on v22):
-// undici handles these POSTs reliably on container hosts where a raw
-// https.request POST can stall forever. Falls back to the https module only
-// on very old Node (<18) with no global fetch. Retries ONCE on a genuine
-// network/timeout failure (a fresh connection), and NEVER on an HTTP error —
-// so a bad key or quota (400/401/429) is reported at once, not retried.
+// Uses Node's https module pinned to IPv4 (family: 4). This matters: on
+// container hosts like Railway the IPv6 route is broken, and the global
+// `fetch` (undici) tries the IPv6 address first and HANGS until timeout —
+// that was the "(20)" abort error. The GET self-test already proved that an
+// IPv4 https request works on this host, so the AI POST uses the same path.
+// Retries ONCE on a genuine network/timeout failure (a fresh connection), and
+// NEVER on an HTTP error — so a bad key/quota (400/401/429) surfaces at once.
 async function _smartyPostJson(urlStr, headers, bodyObj) {
   const payload = JSON.stringify(bodyObj);
   let lastErr;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      if (typeof fetch === 'function') {
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 30000);
-        try {
-          const resp = await fetch(urlStr, {
-            method: 'POST',
-            headers: Object.assign({ 'Content-Type': 'application/json' }, headers || {}),
-            body: payload,
-            signal: ctrl.signal
-          });
-          const text = await resp.text();
-          let json = {};
-          try { json = text ? JSON.parse(text) : {}; } catch (_) { json = { _raw: text }; }
-          return { status: resp.status, json };
-        } finally { clearTimeout(timer); }
-      }
       return await _smartyPostJsonHttps(urlStr, headers, payload);
     } catch (e) {
       lastErr = e;
-      const code = (e.cause && e.cause.code) || e.code || '';
-      const netlike = e.name === 'AbortError' ||
-        /ETIMEDOUT|ENETUNREACH|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|aborted|timed out/i.test(code + ' ' + (e.message || ''));
+      const code = e.code || e.message || '';
+      const netlike = /ETIMEDOUT|ENETUNREACH|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|timed out/i.test(code);
       if (attempt === 0 && netlike) { await new Promise(r => setTimeout(r, 800)); continue; }  // one fresh retry
       break;
     }
   }
-  const code = (lastErr && lastErr.cause && lastErr.cause.code) || (lastErr && lastErr.code) ||
-    (lastErr && lastErr.name === 'AbortError' ? 'ETIMEDOUT' : (lastErr && lastErr.message)) || 'network error';
+  const code = (lastErr && (lastErr.code || lastErr.message)) || 'network error';
   const err = new Error(`Can't reach the AI server (${code}) — network/firewall issue on the server, not the key.`);
   err.network = true;
   throw err;
 }
 
-// Low-level https POST — only used as a fallback on Node < 18 (no global fetch).
+// Low-level IPv4 https POST (fresh socket each call).
 function _smartyPostJsonHttps(urlStr, headers, payload) {
   return new Promise((resolve, reject) => {
     let u;
@@ -17635,7 +17615,8 @@ function _smartyPostJsonHttps(urlStr, headers, payload) {
     const data = Buffer.from(payload);
     const r = _smartyHttps.request({
       method: 'POST', hostname: u.hostname, port: u.port || 443, path: u.pathname + u.search,
-      family: 4, agent: false,
+      family: 4,       // force IPv4 — the whole fix: avoids the broken-IPv6 hang on the host
+      agent: false,    // fresh socket, never a stale pooled one
       headers: Object.assign({ 'Content-Type': 'application/json', 'Content-Length': data.length, 'Connection': 'close' }, headers || {})
     }, (resp) => {
       let buf = '';
