@@ -17579,12 +17579,27 @@ app.get('/api/admin/online-count/:instId', async (req, res) => {
 const _smartyCrypto = require('crypto');
 const _smartyHttps  = require('https');
 
+// POST JSON to any provider, with a small built-in retry when the provider
+// says it's momentarily busy (HTTP 429 rate limit / 503 "high demand"). This
+// is generic — it applies to Gemini, OpenAI and Claude the same way, with no
+// model/version logic — so a temporary spike doesn't surface to the user.
+async function _smartyPostJson(urlStr, headers, bodyObj) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const r = await _smartyPostOnce(urlStr, headers, bodyObj);
+    if ((r.status === 429 || r.status === 503) && attempt < 2) {
+      await new Promise(res => setTimeout(res, 1000 * (attempt + 1)));  // wait 1s, then 2s, and retry
+      continue;
+    }
+    return r;
+  }
+}
+
 // POST JSON over Node's built-in https — the same plain, proven transport the
 // app used originally. No `family`/`agent` tweaks (those caused the Railway
 // ETIMEDOUT); just open a normal HTTPS request. Works for all three providers
 // identically. Returns { status, json }. On a socket-level failure it throws a
 // clear "network" error so the chat can tell it apart from a bad key.
-function _smartyPostJson(urlStr, headers, bodyObj) {
+function _smartyPostOnce(urlStr, headers, bodyObj) {
   return new Promise((resolve, reject) => {
     let u;
     try { u = new URL(urlStr); } catch (e) { return reject(e); }
@@ -18066,11 +18081,23 @@ app.post('/api/smarty/ask', async (req, res) => {
     const cfg = rows[0];
     if (!cfg || !cfg.enabled || !cfg.api_key) return res.json({ ok: false, reason: 'disabled' });
 
-    // cache lookup (normalised question -> sha256). The Test button sends
-    // fresh:true so it always makes a REAL live call and never reports a
-    // cached success as if the provider were reachable.
+    // Who is asking — used to scope the textbook search and the cache by class,
+    // so a student only gets their class's books and answers never cross classes.
+    let asker = { role: '', class_id: null };
+    try {
+      const [u] = await db.execute(
+        'SELECT role, class_id FROM users WHERE id = ? AND institutionId = ? LIMIT 1',
+        [(req.body && req.body.userId) || 0, institutionId]);
+      if (u.length) asker = u[0];
+    } catch (_) {}
+    const _roleLc = (asker.role || '').toLowerCase();
+    const restrictClass = _roleLc.includes('student') || _roleLc.includes('parent');
+    const scopeTag = restrictClass && asker.class_id ? `c${asker.class_id}` : 'all';
+
+    // cache lookup (normalised question + scope -> sha256). The Test button sends
+    // fresh:true so it always makes a REAL live call.
     const fresh = !!(req.body && req.body.fresh);
-    const qNorm = question.toLowerCase().replace(/\s+/g, ' ').trim();
+    const qNorm = scopeTag + '|' + question.toLowerCase().replace(/\s+/g, ' ').trim();
     const qHash = _smartyCrypto.createHash('sha256').update(qNorm).digest('hex');
     if (!fresh) {
       try {
@@ -18083,11 +18110,30 @@ app.post('/api/smarty/ask', async (req, res) => {
     const provider = SMARTY_DEFAULT_MODEL[cfg.provider] ? cfg.provider : 'gemini';
     const model = SMARTY_DEFAULT_MODEL[provider];
 
+    // Textbook retrieval (keyword / MySQL FULLTEXT). When the uploaded books,
+    // keywords or library files have a relevant match, the answer is GROUNDED in
+    // them; otherwise Smarty answers generally. _smartyRetrieve lives in the RAG
+    // block — guarded so this still runs if that block isn't pasted in.
+    let promptQuestion = question;
+    try {
+      const ctx = (typeof _smartyRetrieve === 'function')
+        ? await _smartyRetrieve(institutionId, question, { class_id: asker.class_id, restrictClass })
+        : [];
+      if (ctx && ctx.length) {
+        const joined = ctx.map((c, i) => `[${i + 1}] ${c.title}: ${c.content}`).join('\n\n').slice(0, 6000);
+        promptQuestion =
+          "Answer the question using mainly the school's textbook excerpts below. " +
+          "If they don't cover it, say you couldn't find it in the book, then give a short general answer. " +
+          "Keep it clear and age-appropriate, and name the chapter or term you used.\n\n" +
+          "TEXTBOOK EXCERPTS:\n" + joined + "\n\nQUESTION: " + question;
+      }
+    } catch (e) { console.warn('[smarty retrieve]', e.message); }
+
     let answer = '';
     try {
-      if (provider === 'openai') answer = await _smartyCallOpenAI(cfg.api_key, model, question);
-      else if (provider === 'anthropic') answer = await _smartyCallAnthropic(cfg.api_key, model, question);
-      else answer = await _smartyCallGemini(cfg.api_key, model, question);
+      if (provider === 'openai') answer = await _smartyCallOpenAI(cfg.api_key, model, promptQuestion);
+      else if (provider === 'anthropic') answer = await _smartyCallAnthropic(cfg.api_key, model, promptQuestion);
+      else answer = await _smartyCallGemini(cfg.api_key, model, promptQuestion);
     } catch (e) {
       console.warn('[smarty ask]', provider, model, e.message);
       // Separate a server-can't-reach-the-internet failure from a real API
@@ -18113,36 +18159,270 @@ app.post('/api/smarty/ask', async (req, res) => {
   }
 });
 // =====================================================================
-//  TEMP STARTUP SELF-CHECK — logs whether THIS server can do a real AI
-//  POST with the saved key. Watch your Railway deploy log ~8s after boot
-//  for a line starting "[smarty livetest]". Delete this block once fixed.
-//    OK   -> the server can reach the AI; any remaining UI error is cache/front-end.
-//    FAIL (timed out / ECONNRESET...) -> the HOST (Railway) is blocking the
-//         POST; no code change fixes that — move/host-support is the path.
-// =====================================================================
-setTimeout(async () => {
-  try {
-    const [rows] = await db.execute(
-      "SELECT provider, api_key FROM smarty_ai_config WHERE enabled = 1 AND api_key IS NOT NULL LIMIT 1");
-    if (!rows.length) { console.log('[smarty livetest] skipped — no enabled AI key saved'); return; }
-    const provider = SMARTY_DEFAULT_MODEL[rows[0].provider] ? rows[0].provider : 'gemini';
-    const model = SMARTY_DEFAULT_MODEL[provider];
-    const t0 = Date.now();
-    try {
-      let out;
-      if (provider === 'openai') out = await _smartyCallOpenAI(rows[0].api_key, model, 'Say hi in one short sentence.');
-      else if (provider === 'anthropic') out = await _smartyCallAnthropic(rows[0].api_key, model, 'Say hi in one short sentence.');
-      else out = await _smartyCallGemini(rows[0].api_key, model, 'Say hi in one short sentence.');
-      console.log(`[smarty livetest] OK ${provider}/${model} ${Date.now() - t0}ms -> ${String(out).slice(0, 80)}`);
-    } catch (e) {
-      console.log(`[smarty livetest] FAIL ${provider}/${model} ${Date.now() - t0}ms -> ${e.message}`);
-    }
-  } catch (e) { console.log('[smarty livetest] db error:', e.message); }
-}, 8000);
-
-// =====================================================================
 // ===================== END SMARTY BACKEND ============================
 // =====================================================================
+
+// =====================================================================
+// ====== SMARTY RAG — answer from the uploaded textbooks & library =====
+//
+//  Paste this ONE block into index.js AFTER the main Smarty backend block
+//  (it reuses db, sameTenant, _smartyIsAdmin from there). It needs the
+//  Syllabus tables (syllabus, syllabus_chapters, syllabus_keywords,
+//  syllabus_library_folders, syllabus_library_files) that already exist.
+//
+//  WHAT IT DOES
+//    • Extracts text from every uploaded textbook chapter (PDF), every
+//      keyword, and every Library file (PDF / Word / Excel) and stores it
+//      in smarty_doc_chunks, tagged with syllabus type + class + subject.
+//    • /smarty/ask (in the main block) then searches those chunks with
+//      MySQL FULLTEXT, scoped to the asker's role/class, and GROUNDS the
+//      AI answer in them. Indexing uses NO AI quota — it's local text only.
+//
+//  RUN ONCE (MySQL):
+//    CREATE TABLE IF NOT EXISTS smarty_doc_chunks (
+//      id INT AUTO_INCREMENT PRIMARY KEY,
+//      institutionId INT NOT NULL,
+//      source_type VARCHAR(20) NOT NULL,      -- 'chapter' | 'keyword' | 'library'
+//      source_id INT NOT NULL,
+//      syllabus_type_id INT NULL,
+//      class_id INT NULL,
+//      subject_id INT NULL,
+//      title VARCHAR(300),
+//      content MEDIUMTEXT,
+//      page_from INT NULL, page_to INT NULL,
+//      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+//      KEY idx_scope (institutionId, class_id, subject_id, syllabus_type_id),
+//      FULLTEXT KEY ft_content (title, content)
+//    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+//
+//  OPTIONAL (for Word/Excel library files — PDFs need nothing extra):
+//    npm install mammoth xlsx --save
+//
+//  AFTER PASTING: as Super Admin, POST /api/smarty/rag/reindex once to
+//  index everything already uploaded. New uploads: either call the index
+//  helpers from your syllabus routes (see "AUTO-INDEX HOOKS" at the end),
+//  or just press Rebuild again.
+// =====================================================================
+
+const _ragPdfjs = require('pdfjs-dist/legacy/build/pdf.js');  // already installed for Syllabus
+let _ragMammoth = null; try { _ragMammoth = require('mammoth'); } catch (_) {}   // .docx (optional)
+let _ragXlsx    = null; try { _ragXlsx = require('xlsx'); }       catch (_) {}   // .xls/.xlsx (optional)
+
+// ---- text extraction ------------------------------------------------
+async function _ragPdfText(buffer, maxPages = 80) {
+  try {
+    const data = new Uint8Array(buffer);
+    const doc = await _ragPdfjs.getDocument({ data, useSystemFonts: true, isEvalSupported: false }).promise;
+    const n = Math.min(doc.numPages, maxPages);
+    const out = [];
+    for (let p = 1; p <= n; p++) {
+      try {
+        const page = await doc.getPage(p);
+        const tc = await page.getTextContent();
+        out.push((tc.items || []).map(it => it.str || '').join(' '));
+      } catch (_) {}
+    }
+    try { await doc.cleanup(); await doc.destroy(); } catch (_) {}
+    return out.join('\n');
+  } catch (e) { console.warn('[rag pdf]', e.message); return ''; }
+}
+
+async function _ragFileText(ext, buffer) {
+  try {
+    if (ext === 'pdf') return await _ragPdfText(buffer);
+    if (ext === 'docx' && _ragMammoth) return (await _ragMammoth.extractRawText({ buffer })).value || '';
+    if ((ext === 'xlsx' || ext === 'xls') && _ragXlsx) {
+      const wb = _ragXlsx.read(buffer, { type: 'buffer' });
+      return (wb.SheetNames || []).map(nm => _ragXlsx.utils.sheet_to_csv(wb.Sheets[nm])).join('\n');
+    }
+  } catch (e) { console.warn('[rag file]', ext, e.message); }
+  return '';   // .doc (old binary) and missing libs → skipped, nothing breaks
+}
+
+// Split long text into ~1200-char chunks on sentence boundaries.
+function _ragChunks(text, size = 1200) {
+  const clean = String(text || '').replace(/\s+/g, ' ').trim();
+  if (clean.length < 20) return clean ? [clean] : [];
+  const chunks = [];
+  let i = 0;
+  while (i < clean.length) {
+    let end = Math.min(clean.length, i + size);
+    if (end < clean.length) {
+      const dot = clean.lastIndexOf('. ', end);
+      if (dot > i + 300) end = dot + 1;
+    }
+    const piece = clean.slice(i, end).trim();
+    if (piece) chunks.push(piece);
+    i = end;
+  }
+  return chunks.slice(0, 40);   // cap chunks per source so one huge file can't flood the index
+}
+
+// ---- insert / delete chunks ----------------------------------------
+async function _ragDelete(institutionId, source_type, source_id) {
+  try {
+    await db.execute(
+      'DELETE FROM smarty_doc_chunks WHERE institutionId = ? AND source_type = ? AND source_id = ?',
+      [institutionId, source_type, source_id]);
+  } catch (_) {}
+}
+async function _ragInsert(meta, chunks) {
+  for (const content of chunks) {
+    if (!content) continue;
+    try {
+      await db.execute(
+        `INSERT INTO smarty_doc_chunks
+           (institutionId, source_type, source_id, syllabus_type_id, class_id, subject_id, title, content, page_from, page_to)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [meta.institutionId, meta.source_type, meta.source_id,
+         meta.syllabus_type_id || null, meta.class_id || null, meta.subject_id || null,
+         String(meta.title || '').slice(0, 300), content, meta.page_from || null, meta.page_to || null]);
+    } catch (e) { console.warn('[rag insert]', e.message); }
+  }
+}
+
+// ---- index one source ----------------------------------------------
+async function ragIndexChapter(chapterId) {
+  const [rows] = await db.execute(
+    `SELECT c.id, c.title, c.page_from, c.page_to, c.doc_data,
+            s.institutionId, s.class_id, s.subject_id, s.syllabus_type_id
+       FROM syllabus_chapters c JOIN syllabus s ON s.id = c.syllabus_id
+      WHERE c.id = ?`, [chapterId]);
+  if (!rows.length) return;
+  const r = rows[0];
+  await _ragDelete(r.institutionId, 'chapter', chapterId);
+  if (!r.doc_data) return;
+  const b64 = String(r.doc_data).replace(/^data:[^;]+;base64,/, '');
+  const text = await _ragPdfText(Buffer.from(b64, 'base64'));
+  await _ragInsert({
+    institutionId: r.institutionId, source_type: 'chapter', source_id: chapterId,
+    syllabus_type_id: r.syllabus_type_id, class_id: r.class_id, subject_id: r.subject_id,
+    title: r.title, page_from: r.page_from, page_to: r.page_to
+  }, _ragChunks(text));
+}
+async function ragIndexChapterKeywords(chapterId) {
+  const [rows] = await db.execute(
+    `SELECT k.id, k.term, k.definition, k.example, c.title AS chapter_title,
+            s.institutionId, s.class_id, s.subject_id, s.syllabus_type_id
+       FROM syllabus_keywords k
+       JOIN syllabus_chapters c ON c.id = k.chapter_id
+       JOIN syllabus s ON s.id = c.syllabus_id
+      WHERE k.chapter_id = ?`, [chapterId]);
+  for (const k of rows) {
+    await _ragDelete(k.institutionId, 'keyword', k.id);
+    const content = `${k.term}: ${k.definition || ''}${k.example ? ' Example: ' + k.example : ''}`.trim();
+    await _ragInsert({
+      institutionId: k.institutionId, source_type: 'keyword', source_id: k.id,
+      syllabus_type_id: k.syllabus_type_id, class_id: k.class_id, subject_id: k.subject_id,
+      title: `${k.term} (${k.chapter_title})`
+    }, [content]);
+  }
+}
+async function ragIndexLibraryFile(fileId) {
+  const [rows] = await db.execute(
+    `SELECT lf.id, lf.file_name, lf.file_ext, lf.file_data,
+            fo.institutionId, fo.class_id, fo.subject_id, fo.syllabus_type_id
+       FROM syllabus_library_files lf
+       JOIN syllabus_library_folders fo ON fo.id = lf.folder_id
+      WHERE lf.id = ?`, [fileId]);
+  if (!rows.length) return;
+  const r = rows[0];
+  await _ragDelete(r.institutionId, 'library', fileId);
+  const text = await _ragFileText(r.file_ext, r.file_data);   // file_data is a Buffer (LONGBLOB)
+  if (!text) return;
+  await _ragInsert({
+    institutionId: r.institutionId, source_type: 'library', source_id: fileId,
+    syllabus_type_id: r.syllabus_type_id, class_id: r.class_id, subject_id: r.subject_id,
+    title: r.file_name
+  }, _ragChunks(text));
+}
+
+// ---- full rebuild for one institution ------------------------------
+async function ragReindexInstitution(institutionId) {
+  await db.execute('DELETE FROM smarty_doc_chunks WHERE institutionId = ?', [institutionId]);
+  let chapters = 0, files = 0;
+  const [chs] = await db.execute(
+    `SELECT c.id FROM syllabus_chapters c JOIN syllabus s ON s.id = c.syllabus_id WHERE s.institutionId = ?`,
+    [institutionId]);
+  for (const c of chs) { try { await ragIndexChapter(c.id); await ragIndexChapterKeywords(c.id); chapters++; } catch (e) { console.warn('[rag ch]', c.id, e.message); } }
+  const [fs] = await db.execute(
+    `SELECT lf.id FROM syllabus_library_files lf
+       JOIN syllabus_library_folders fo ON fo.id = lf.folder_id WHERE fo.institutionId = ?`,
+    [institutionId]);
+  for (const f of fs) { try { await ragIndexLibraryFile(f.id); files++; } catch (e) { console.warn('[rag lf]', f.id, e.message); } }
+  // clear cached AI answers so old (pre-book) answers don't linger
+  try { await db.execute('DELETE FROM smarty_ai_cache WHERE institutionId = ?', [institutionId]); } catch (_) {}
+  const [[{ n }]] = await db.execute('SELECT COUNT(*) AS n FROM smarty_doc_chunks WHERE institutionId = ?', [institutionId]);
+  return { chapters, files, chunks: n, word: _ragMammoth ? 'on' : 'off', excel: _ragXlsx ? 'on' : 'off' };
+}
+
+// ---- retrieval (called by /smarty/ask in the main block) -----------
+//  Scope: students/parents -> their class (+ un-classed material); staff -> all.
+async function _smartyRetrieve(institutionId, question, scope) {
+  const q = String(question || '').trim();
+  if (q.length < 3) return [];
+  const params = [q, institutionId];
+  let classClause = '';
+  if (scope && scope.restrictClass && scope.class_id) {
+    classClause = ' AND (class_id = ? OR class_id IS NULL)';
+    params.push(scope.class_id);
+  }
+  params.push(q);
+  try {
+    const [rows] = await db.execute(
+      `SELECT title, content, source_type,
+              MATCH(title, content) AGAINST (? IN NATURAL LANGUAGE MODE) AS score
+         FROM smarty_doc_chunks
+        WHERE institutionId = ?${classClause}
+          AND MATCH(title, content) AGAINST (? IN NATURAL LANGUAGE MODE)
+        ORDER BY score DESC
+        LIMIT 6`, params);
+    return rows || [];
+  } catch (e) { console.warn('[rag retrieve]', e.message); return []; }
+}
+
+// ---- Super-Admin: rebuild the whole index --------------------------
+let _ragBusy = false;
+app.post('/api/smarty/rag/reindex', async (req, res) => {
+  if (!_smartyIsAdmin(req)) return res.status(403).json({ error: 'Only the Super Admin can rebuild the book index.' });
+  if (_ragBusy) return res.json({ ok: false, reason: 'busy' });
+  _ragBusy = true;
+  try {
+    const out = await ragReindexInstitution(req.auth.institutionId);
+    res.json({ ok: true, ...out });
+  } catch (e) {
+    console.error('rag reindex:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  } finally { _ragBusy = false; }
+});
+
+// ---- Super-Admin: quick status (how much is indexed) ---------------
+app.get('/api/smarty/rag/status', async (req, res) => {
+  if (!_smartyIsAdmin(req)) return res.status(403).json({ error: 'Only the Super Admin can view the index.' });
+  try {
+    const [[{ chunks }]] = await db.execute(
+      'SELECT COUNT(*) AS chunks FROM smarty_doc_chunks WHERE institutionId = ?', [req.auth.institutionId]);
+    res.json({ ok: true, chunks, word: _ragMammoth ? 'on' : 'off', excel: _ragXlsx ? 'on' : 'off' });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// =====================================================================
+//  AUTO-INDEX HOOKS (optional — keeps the index fresh without a rebuild)
+//  Add these ONE-LINERS inside your existing Section 22 syllabus routes,
+//  right before each `res.json({ success: true ... })`:
+//
+//    • After a textbook upload (PUT /syllabus/:id/book), once chapters are
+//      inserted, loop the new chapter ids:
+//        const [chs] = await db.execute('SELECT id FROM syllabus_chapters WHERE syllabus_id = ?', [syllabusId]);
+//        for (const c of chs) { await ragIndexChapter(c.id).catch(()=>{}); }
+//    • After create/edit chapter:         ragIndexChapter(id).catch(()=>{});
+//    • After add/delete keyword:          ragIndexChapterKeywords(chapterId).catch(()=>{});
+//    • After a library file upload:       ragIndexLibraryFile(fileId).catch(()=>{});
+//
+//  They're safe to call fire-and-forget. If you skip them, just press
+//  "Rebuild book index" in Smarty → Smarty AI after adding material.
+// =====================================================================
+
 
 
 

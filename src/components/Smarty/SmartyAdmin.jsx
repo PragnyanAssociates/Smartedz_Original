@@ -4,7 +4,7 @@ import { API_BASE_URL } from '../../apiConfig';
 import { MODULES } from '../../Screens/Modules';
 import {
   Bot, Plus, Trash2, Save, X, Megaphone, MessageSquareText, Loader2, Eye, EyeOff, Send,
-  Sparkles, KeyRound, CheckCircle2, ShieldCheck, ExternalLink
+  Sparkles, KeyRound, CheckCircle2, ShieldCheck, ExternalLink, RefreshCw, BookOpen
 } from 'lucide-react';
 
 // =====================================================================
@@ -312,6 +312,37 @@ function AiSettingsTab({ instId }) {
     setTesting(false);
   };
 
+  // ---- Textbook knowledge (RAG): rebuild the searchable book index ----
+  const [ragChunks, setRagChunks]   = useState(null);
+  const [reindexing, setReindexing] = useState(false);
+  const [ragMsg, setRagMsg]         = useState(null);
+  const loadRag = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/smarty/rag/status`);
+      const d = await res.json().catch(() => ({}));
+      if (d && d.ok) setRagChunks(d.chunks);
+    } catch (_) {}
+  }, []);
+  useEffect(() => { loadRag(); }, [loadRag]);
+  const reindex = async () => {
+    setReindexing(true); setRagMsg(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/smarty/rag/reindex`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+      });
+      const d = await res.json().catch(() => ({}));
+      if (d && d.ok) {
+        setRagChunks(d.chunks);
+        setRagMsg({ ok: true, text: `Indexed ${d.chunks} passages from ${d.chapters} chapter(s) and ${d.files} library file(s).` });
+      } else if (d && d.reason === 'busy') {
+        setRagMsg({ ok: false, text: 'A rebuild is already running — try again in a moment.' });
+      } else {
+        setRagMsg({ ok: false, text: (d && d.error) || 'Rebuild failed.' });
+      }
+    } catch (e) { setRagMsg({ ok: false, text: e.message }); }
+    setReindexing(false);
+  };
+
   if (loading) return <div className="h-40 grid place-items-center"><Loader2 className="animate-spin size-6 text-primary" /></div>;
 
   const configured = !!cfg?.configured;
@@ -409,6 +440,19 @@ function AiSettingsTab({ instId }) {
               </li>
             ))}
           </ul>
+        </div>
+
+        <div className="bg-white ring-1 ring-black/5 rounded-lg p-5 shadow-sm">
+          <h4 className="text-xs font-semibold text-zinc-800 mb-2 flex items-center gap-1.5"><BookOpen className="size-3.5 text-violet-500" /> Answer from your textbooks</h4>
+          <p className="text-[11px] text-zinc-600 leading-relaxed mb-3">
+            Smarty can answer from the books, keywords and Library files you upload in <strong>Syllabus</strong>, scoped to each student's class. After adding or changing material, rebuild the index so Smarty can read it.
+            {ragChunks != null && <> Currently <strong>{ragChunks}</strong> passage{ragChunks === 1 ? '' : 's'} indexed.</>}
+          </p>
+          <button onClick={reindex} disabled={reindexing}
+            className="h-9 px-4 rounded-md ring-1 ring-zinc-200 text-zinc-700 text-xs font-semibold inline-flex items-center gap-1.5 hover:bg-zinc-50 disabled:text-zinc-300 disabled:ring-zinc-100">
+            {reindexing ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />} {reindexing ? 'Rebuilding…' : 'Rebuild book index'}
+          </button>
+          {ragMsg && <p className={`mt-2 text-[11px] font-medium ${ragMsg.ok ? 'text-emerald-600' : 'text-red-600'}`}>{ragMsg.text}</p>}
         </div>
 
         <div className="bg-white ring-1 ring-black/5 rounded-lg p-5 shadow-sm">
