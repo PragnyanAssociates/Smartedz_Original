@@ -18113,6 +18113,34 @@ app.post('/api/smarty/ask', async (req, res) => {
   }
 });
 // =====================================================================
+//  TEMP STARTUP SELF-CHECK — logs whether THIS server can do a real AI
+//  POST with the saved key. Watch your Railway deploy log ~8s after boot
+//  for a line starting "[smarty livetest]". Delete this block once fixed.
+//    OK   -> the server can reach the AI; any remaining UI error is cache/front-end.
+//    FAIL (timed out / ECONNRESET...) -> the HOST (Railway) is blocking the
+//         POST; no code change fixes that — move/host-support is the path.
+// =====================================================================
+setTimeout(async () => {
+  try {
+    const [rows] = await db.execute(
+      "SELECT provider, api_key FROM smarty_ai_config WHERE enabled = 1 AND api_key IS NOT NULL LIMIT 1");
+    if (!rows.length) { console.log('[smarty livetest] skipped — no enabled AI key saved'); return; }
+    const provider = SMARTY_DEFAULT_MODEL[rows[0].provider] ? rows[0].provider : 'gemini';
+    const model = SMARTY_DEFAULT_MODEL[provider];
+    const t0 = Date.now();
+    try {
+      let out;
+      if (provider === 'openai') out = await _smartyCallOpenAI(rows[0].api_key, model, 'Say hi in one short sentence.');
+      else if (provider === 'anthropic') out = await _smartyCallAnthropic(rows[0].api_key, model, 'Say hi in one short sentence.');
+      else out = await _smartyCallGemini(rows[0].api_key, model, 'Say hi in one short sentence.');
+      console.log(`[smarty livetest] OK ${provider}/${model} ${Date.now() - t0}ms -> ${String(out).slice(0, 80)}`);
+    } catch (e) {
+      console.log(`[smarty livetest] FAIL ${provider}/${model} ${Date.now() - t0}ms -> ${e.message}`);
+    }
+  } catch (e) { console.log('[smarty livetest] db error:', e.message); }
+}, 8000);
+
+// =====================================================================
 // ===================== END SMARTY BACKEND ============================
 // =====================================================================
 
