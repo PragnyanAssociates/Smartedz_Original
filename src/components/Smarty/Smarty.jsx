@@ -516,7 +516,10 @@ export default function Smarty({ onNavigate }) {
   // open-ended fallback → the school's own AI provider (only if a key is on).
   // Returns to the plain "still learning" message when AI is off/unconfigured.
   const askAI = async (q) => {
-    flash('thinking');
+    // PHASE 1 — "Thinking…": held (no auto-reset) while Smarty searches the
+    // books/library and, if needed, the AI. Stays until the answer is ready,
+    // however long that takes.
+    clearTimeout(moodTimer.current); setMood('thinking');
     const tk = pushTyping();
     let d = null;
     try {
@@ -526,6 +529,10 @@ export default function Smarty({ onNavigate }) {
       });
       d = res.ok ? await res.json() : null;
     } catch (_) {}
+    // PHASE 2 — "Typing…": a short, natural beat before the answer appears
+    // (near-instant for a stored/cached answer, so repeats feel fast).
+    flash('talking');
+    await new Promise(r => setTimeout(r, d && d.cached ? 140 : 480 + Math.random() * 260));
     dropTyping(tk);
     if (d && d.ok && d.answer) {
       // Badge: a fresh AI answer shows "✨ AI"; book/library/stored answers show

@@ -18190,9 +18190,13 @@ app.post('/api/smarty/ask', async (req, res) => {
 //    • Extracts text from every uploaded textbook chapter (PDF), every
 //      keyword, and every Library file (PDF / Word / Excel) and stores it
 //      in smarty_doc_chunks, tagged with syllabus type + class + subject.
-//    • /smarty/ask (in the main block) then searches those chunks with
-//      MySQL FULLTEXT, scoped to the asker's role/class, and GROUNDS the
-//      AI answer in them. Indexing uses NO AI quota — it's local text only.
+//    • SCANNED books (image-only PDFs, e.g. SCERT) have NO text layer, so
+//      those pages are run through LOCAL OCR (Tesseract, no AI, no quota)
+//      to turn the pictures into searchable text. OCR text is cached in
+//      smarty_ocr_text so it only runs ONCE per chapter.
+//    • /smarty/ask (in the main block) then searches those chunks, scoped
+//      to the asker's role/class. WITHOUT AI it answers straight from the
+//      book; WITH AI it grounds the AI answer in them.
 //
 //  RUN ONCE (MySQL):
 //    CREATE TABLE IF NOT EXISTS smarty_doc_chunks (
@@ -18211,20 +18215,37 @@ app.post('/api/smarty/ask', async (req, res) => {
 //      FULLTEXT KEY ft_content (title, content)
 //    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 //
-//  OPTIONAL (for Word/Excel library files — PDFs need nothing extra):
-//    npm install mammoth xlsx --save
+//    CREATE TABLE IF NOT EXISTS smarty_ocr_text (
+//      source_type VARCHAR(20) NOT NULL,      -- 'chapter' | 'library'
+//      source_id INT NOT NULL,
+//      institutionId INT NOT NULL,
+//      pages INT DEFAULT 0,
+//      text LONGTEXT,
+//      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+//      PRIMARY KEY (source_type, source_id)
+//    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 //
-//  AFTER PASTING: as Super Admin, POST /api/smarty/rag/reindex once to
-//  index everything already uploaded. New uploads: either call the index
-//  helpers from your syllabus routes (see "AUTO-INDEX HOOKS" at the end),
-//  or just press Rebuild again.
+//  INSTALL (OCR for scanned books + Word/Excel library files):
+//    npm install mupdf tesseract.js mammoth xlsx --save
+//    (mupdf = turns scanned PDF pages into images, pure WASM, no native build;
+//     tesseract.js = reads text from those images, pure WASM, no AI.
+//     If these two are missing, text books still index fine — only scanned
+//     books stay blank, and the status will say "ocr: off".)
+//
+//  AFTER PASTING: as Super Admin, POST /api/smarty/rag/reindex once to index
+//  everything already uploaded. It runs in the BACKGROUND — poll
+//  /api/smarty/rag/status to watch progress (OCR of a big scanned book takes
+//  a few minutes the first time, then it's cached and instant on rebuilds).
 // =====================================================================
 
 const _ragPdfjs = require('pdfjs-dist/legacy/build/pdf.js');  // already installed for Syllabus
-let _ragMammoth = null; try { _ragMammoth = require('mammoth'); } catch (_) {}   // .docx (optional)
-let _ragXlsx    = null; try { _ragXlsx = require('xlsx'); }       catch (_) {}   // .xls/.xlsx (optional)
+let _ragMammoth = null; try { _ragMammoth = require('mammoth'); }      catch (_) {}  // .docx (optional)
+let _ragXlsx    = null; try { _ragXlsx = require('xlsx'); }            catch (_) {}  // .xls/.xlsx (optional)
+let _ragMupdf   = null; try { _ragMupdf = require('mupdf'); }          catch (_) {}  // PDF page -> image (OCR)
+let _ragTess    = null; try { _ragTess = require('tesseract.js'); }    catch (_) {}  // image -> text (OCR)
+const _ragOcrReady = !!(_ragMupdf && _ragTess);
 
-// ---- text extraction ------------------------------------------------
+// ---- plain text extraction (fast, no OCR) --------------------------
 async function _ragPdfText(buffer, maxPages = 400) {   // cover whole books, even a single 240-page chapter
   try {
     const data = new Uint8Array(buffer);
@@ -18241,6 +18262,87 @@ async function _ragPdfText(buffer, maxPages = 400) {   // cover whole books, eve
     try { await doc.cleanup(); await doc.destroy(); } catch (_) {}
     return out.join('\n');
   } catch (e) { console.warn('[rag pdf]', e.message); return ''; }
+}
+
+// ---- LOCAL OCR for scanned PDFs (mupdf rasterize -> tesseract) ------
+//  No AI, no quota. One Tesseract worker is reused for the whole job
+//  (created lazily, terminated after the rebuild) to keep memory low.
+let _ragTessWorker = null;
+async function _ragGetWorker() {
+  if (!_ragTess) return null;
+  if (_ragTessWorker) return _ragTessWorker;
+  try {
+    // tesseract.js v4/v5: createWorker('eng') loads the language itself.
+    _ragTessWorker = await _ragTess.createWorker('eng');
+    return _ragTessWorker;
+  } catch (e) { console.warn('[rag ocr worker]', e.message); _ragTessWorker = null; return null; }
+}
+async function _ragCloseWorker() {
+  if (_ragTessWorker) { try { await _ragTessWorker.terminate(); } catch (_) {} _ragTessWorker = null; }
+}
+
+// Render one PDF page to a PNG Buffer at the given DPI. Returns null on failure.
+function _ragRenderPage(mdoc, index, dpi) {
+  let page = null, pix = null;
+  try {
+    page = mdoc.loadPage(index);
+    const s = dpi / 72;
+    const matrix = (_ragMupdf.Matrix && _ragMupdf.Matrix.scale)
+      ? _ragMupdf.Matrix.scale(s, s) : [s, 0, 0, s, 0, 0];
+    pix = page.toPixmap(matrix, _ragMupdf.ColorSpace.DeviceRGB, false);
+    const png = pix.asPNG();                 // Uint8Array
+    return Buffer.from(png);
+  } catch (e) { console.warn('[rag render]', index, e.message); return null; }
+  finally {
+    try { pix && pix.destroy && pix.destroy(); } catch (_) {}
+    try { page && page.destroy && page.destroy(); } catch (_) {}
+  }
+}
+
+// OCR a whole PDF buffer. onPage(i,n) is called after each page for progress.
+async function _ragOcrPdf(buffer, maxPages, onPage) {
+  if (!_ragOcrReady) return '';
+  let mdoc = null;
+  try {
+    mdoc = _ragMupdf.Document.openDocument(new Uint8Array(buffer), 'application/pdf');
+    const total = Math.min(mdoc.countPages(), maxPages);
+    const worker = await _ragGetWorker();
+    if (!worker) return '';
+    const out = [];
+    for (let i = 0; i < total; i++) {
+      const png = _ragRenderPage(mdoc, i, 150);   // 150 DPI: good enough for print, light on memory
+      if (png) {
+        try {
+          const { data } = await worker.recognize(png);
+          if (data && data.text) out.push(data.text);
+        } catch (e) { console.warn('[rag ocr page]', i, e.message); }
+      }
+      if (onPage) { try { onPage(i + 1, total); } catch (_) {} }
+    }
+    return out.join('\n');
+  } catch (e) { console.warn('[rag ocr pdf]', e.message); return ''; }
+  finally { try { mdoc && mdoc.destroy && mdoc.destroy(); } catch (_) {} }
+}
+
+// OCR cache: run once, reuse on every later rebuild.
+async function _ragOcrCacheGet(source_type, source_id) {
+  try {
+    const [r] = await db.execute(
+      'SELECT text FROM smarty_ocr_text WHERE source_type = ? AND source_id = ?', [source_type, source_id]);
+    return r.length ? String(r[0].text || '') : null;
+  } catch (_) { return null; }
+}
+async function _ragOcrCacheSet(institutionId, source_type, source_id, text, pages) {
+  try {
+    await db.execute(
+      `INSERT INTO smarty_ocr_text (source_type, source_id, institutionId, pages, text)
+         VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE institutionId = VALUES(institutionId), pages = VALUES(pages), text = VALUES(text)`,
+      [source_type, source_id, institutionId, pages || 0, text || '']);
+  } catch (e) { console.warn('[rag ocr cache]', e.message); }
+}
+async function _ragOcrCacheClear(institutionId) {
+  try { await db.execute('DELETE FROM smarty_ocr_text WHERE institutionId = ?', [institutionId]); } catch (_) {}
 }
 
 async function _ragFileText(ext, buffer) {
@@ -18298,24 +18400,45 @@ async function _ragInsert(meta, chunks) {
 }
 
 // ---- index one source ----------------------------------------------
-async function ragIndexChapter(chapterId) {
+//  opts.ocr   : allow OCR fallback for scanned PDFs (default true)
+//  opts.force : ignore OCR cache and re-OCR (default false)
+//  opts.onPage: progress callback (pageDone, pageTotal)
+//  Returns { chars, ocr } — chars = non-space chars indexed, ocr = true if OCR used.
+async function ragIndexChapter(chapterId, opts = {}) {
+  const allowOcr = opts.ocr !== false, force = !!opts.force;
   const [rows] = await db.execute(
     `SELECT c.id, c.title, c.page_from, c.page_to, c.doc_data,
             s.institutionId, s.class_id, s.subject_id, s.syllabus_type_id
        FROM syllabus_chapters c JOIN syllabus s ON s.id = c.syllabus_id
       WHERE c.id = ?`, [chapterId]);
-  if (!rows.length) return;
+  if (!rows.length) return { chars: 0, ocr: false };
   const r = rows[0];
   await _ragDelete(r.institutionId, 'chapter', chapterId);
-  if (!r.doc_data) return;
+  if (!r.doc_data) return { chars: 0, ocr: false };
+
   const b64 = String(r.doc_data).replace(/^data:[^;]+;base64,/, '');
-  const text = await _ragPdfText(Buffer.from(b64, 'base64'));
+  const buf = Buffer.from(b64, 'base64');
+  let text = await _ragPdfText(buf);
+  let usedOcr = false;
+
+  // Scanned / image-only PDF: the text layer is empty -> OCR it (cached).
+  if ((text || '').replace(/\s/g, '').length < 100 && allowOcr) {
+    let ocrText = force ? null : await _ragOcrCacheGet('chapter', chapterId);
+    if (ocrText == null && _ragOcrReady) {
+      ocrText = await _ragOcrPdf(buf, 400, opts.onPage);
+      await _ragOcrCacheSet(r.institutionId, 'chapter', chapterId, ocrText, (ocrText.match(/\n/g) || []).length);
+    }
+    if (ocrText && ocrText.replace(/\s/g, '').length > (text || '').replace(/\s/g, '').length) {
+      text = ocrText; usedOcr = true;
+    }
+  }
+
   await _ragInsert({
     institutionId: r.institutionId, source_type: 'chapter', source_id: chapterId,
     syllabus_type_id: r.syllabus_type_id, class_id: r.class_id, subject_id: r.subject_id,
     title: r.title, page_from: r.page_from, page_to: r.page_to
   }, _ragChunks(text));
-  return (text || '').replace(/\s/g, '').length;   // non-space chars extracted (0 = scanned/no text layer)
+  return { chars: (text || '').replace(/\s/g, '').length, ocr: usedOcr };
 }
 async function ragIndexChapterKeywords(chapterId) {
   const [rows] = await db.execute(
@@ -18335,55 +18458,93 @@ async function ragIndexChapterKeywords(chapterId) {
     }, [content]);
   }
 }
-async function ragIndexLibraryFile(fileId) {
+async function ragIndexLibraryFile(fileId, opts = {}) {
+  const allowOcr = opts.ocr !== false, force = !!opts.force;
   const [rows] = await db.execute(
     `SELECT lf.id, lf.file_name, lf.file_ext, lf.file_data,
             fo.institutionId, fo.class_id, fo.subject_id, fo.syllabus_type_id
        FROM syllabus_library_files lf
        JOIN syllabus_library_folders fo ON fo.id = lf.folder_id
       WHERE lf.id = ?`, [fileId]);
-  if (!rows.length) return;
+  if (!rows.length) return { chars: 0, ocr: false };
   const r = rows[0];
   await _ragDelete(r.institutionId, 'library', fileId);
-  const text = await _ragFileText(r.file_ext, r.file_data);   // file_data is a Buffer (LONGBLOB)
-  if (!text) return 0;
+  let text = await _ragFileText(r.file_ext, r.file_data);   // file_data is a Buffer (LONGBLOB)
+  let usedOcr = false;
+
+  // Scanned PDF in the Library -> OCR it too (cached).
+  if (r.file_ext === 'pdf' && (text || '').replace(/\s/g, '').length < 100 && allowOcr) {
+    let ocrText = force ? null : await _ragOcrCacheGet('library', fileId);
+    if (ocrText == null && _ragOcrReady) {
+      ocrText = await _ragOcrPdf(r.file_data, 400, opts.onPage);
+      await _ragOcrCacheSet(r.institutionId, 'library', fileId, ocrText, (ocrText.match(/\n/g) || []).length);
+    }
+    if (ocrText && ocrText.replace(/\s/g, '').length > (text || '').replace(/\s/g, '').length) {
+      text = ocrText; usedOcr = true;
+    }
+  }
+  if (!text) return { chars: 0, ocr: false };
   await _ragInsert({
     institutionId: r.institutionId, source_type: 'library', source_id: fileId,
     syllabus_type_id: r.syllabus_type_id, class_id: r.class_id, subject_id: r.subject_id,
     title: r.file_name
   }, _ragChunks(text));
-  return (text || '').replace(/\s/g, '').length;
+  return { chars: (text || '').replace(/\s/g, '').length, ocr: usedOcr };
 }
 
-// ---- full rebuild for one institution ------------------------------
-async function ragReindexInstitution(institutionId) {
+// ---- full rebuild for one institution (updates _ragJob progress) ---
+async function ragReindexInstitution(institutionId, opts = {}) {
+  const force = !!opts.force;
   await db.execute('DELETE FROM smarty_doc_chunks WHERE institutionId = ?', [institutionId]);
-  let chapters = 0, files = 0, chars = 0, textChapters = 0;
+  if (force) await _ragOcrCacheClear(institutionId);
+
+  let chapters = 0, files = 0, chars = 0, textChapters = 0, ocrChapters = 0;
+
   const [chs] = await db.execute(
     `SELECT c.id FROM syllabus_chapters c JOIN syllabus s ON s.id = c.syllabus_id WHERE s.institutionId = ?`,
     [institutionId]);
+  _ragJob.totalChapters = chs.length;
+
   for (const c of chs) {
+    _ragJob.phase = 'chapters';
+    _ragJob.chapter = chapters + 1;
+    _ragJob.ocrPage = 0; _ragJob.ocrPages = 0;
     try {
-      const len = await ragIndexChapter(c.id) || 0;
+      const onPage = (done, total) => { _ragJob.ocrPage = done; _ragJob.ocrPages = total; };
+      const res = await ragIndexChapter(c.id, { force, onPage }) || { chars: 0, ocr: false };
       await ragIndexChapterKeywords(c.id);
       chapters++;
-      if (len > 0) { chars += len; textChapters++; }
-    } catch (e) { console.warn('[rag ch]', c.id, e.message); }
+      if (res.chars > 0) { chars += res.chars; textChapters++; }
+      if (res.ocr) ocrChapters++;
+    } catch (e) { console.warn('[rag ch]', c.id, e.message); chapters++; }
+    _ragJob.chapters = chapters;
   }
+
+  _ragJob.phase = 'library';
   const [fs] = await db.execute(
     `SELECT lf.id FROM syllabus_library_files lf
        JOIN syllabus_library_folders fo ON fo.id = lf.folder_id WHERE fo.institutionId = ?`,
     [institutionId]);
   for (const f of fs) {
-    try { const len = await ragIndexLibraryFile(f.id) || 0; files++; if (len > 0) chars += len; }
-    catch (e) { console.warn('[rag lf]', f.id, e.message); }
+    try {
+      const onPage = (done, total) => { _ragJob.ocrPage = done; _ragJob.ocrPages = total; };
+      const res = await ragIndexLibraryFile(f.id, { force, onPage }) || { chars: 0, ocr: false };
+      files++;
+      if (res.chars > 0) chars += res.chars;
+      if (res.ocr) ocrChapters++;
+    } catch (e) { console.warn('[rag lf]', f.id, e.message); files++; }
+    _ragJob.files = files;
   }
+
+  await _ragCloseWorker();   // free the OCR worker's memory
+
   // clear cached AI answers so old (pre-book) answers don't linger
   try { await db.execute('DELETE FROM smarty_ai_cache WHERE institutionId = ?', [institutionId]); } catch (_) {}
   const [[{ n }]] = await db.execute('SELECT COUNT(*) AS n FROM smarty_doc_chunks WHERE institutionId = ?', [institutionId]);
-  // scanned = chapters exist but almost no selectable text was found (image-only PDFs)
+  // scanned & still blank = image books that OCR could not read (usually OCR libs not installed)
   const scanned = chapters > 0 && textChapters === 0;
-  return { chapters, files, chunks: n, chars, textChapters, scanned,
+  return { chapters, files, chunks: n, chars, textChapters, ocrChapters, scanned,
+           ocr: _ragOcrReady ? 'on' : 'off',
            word: _ragMammoth ? 'on' : 'off', excel: _ragXlsx ? 'on' : 'off' };
 }
 
@@ -18455,36 +18616,64 @@ async function _smartyRetrieve(institutionId, question, scope) {
   return [];
 }
 
-// ---- Super-Admin: rebuild the whole index --------------------------
+// ---- Super-Admin: rebuild the whole index (BACKGROUND job) ---------
+//  OCR of a big scanned book takes minutes, far longer than an HTTP
+//  request may stay open, so we start the job and return immediately.
+//  The admin UI polls /api/smarty/rag/status to watch progress.
 let _ragBusy = false;
+let _ragJob = { running: false, phase: 'idle', chapter: 0, totalChapters: 0,
+                chapters: 0, files: 0, ocrPage: 0, ocrPages: 0,
+                startedAt: 0, finishedAt: 0, result: null, error: null };
+
 app.post('/api/smarty/rag/reindex', async (req, res) => {
   if (!_smartyIsAdmin(req)) return res.status(403).json({ error: 'Only the Super Admin can rebuild the book index.' });
-  if (_ragBusy) return res.json({ ok: false, reason: 'busy' });
+  if (_ragBusy) return res.json({ ok: false, reason: 'busy', job: _ragJob });
+  const force = String(req.query.force || req.body?.force || '') === '1' ||
+                req.query.force === 'true' || req.body?.force === true;
+  const institutionId = req.auth.institutionId;
+
   _ragBusy = true;
-  try {
-    const out = await ragReindexInstitution(req.auth.institutionId);
-    res.json({ ok: true, ...out });
-  } catch (e) {
-    console.error('rag reindex:', e);
-    res.status(500).json({ ok: false, error: e.message });
-  } finally { _ragBusy = false; }
+  _ragJob = { running: true, phase: 'starting', chapter: 0, totalChapters: 0,
+              chapters: 0, files: 0, ocrPage: 0, ocrPages: 0,
+              startedAt: Date.now(), finishedAt: 0, result: null, error: null };
+
+  // fire-and-forget: run in the background, don't hold the request open
+  (async () => {
+    try {
+      const out = await ragReindexInstitution(institutionId, { force });
+      _ragJob.result = out;
+    } catch (e) {
+      console.error('rag reindex:', e);
+      _ragJob.error = e.message;
+      await _ragCloseWorker();
+    } finally {
+      _ragJob.running = false;
+      _ragJob.phase = _ragJob.error ? 'error' : 'done';
+      _ragJob.finishedAt = Date.now();
+      _ragBusy = false;
+    }
+  })();
+
+  res.json({ ok: true, started: true, ocr: _ragOcrReady ? 'on' : 'off' });
 });
 
-// ---- Super-Admin: quick status (how much is indexed) ---------------
+// ---- Super-Admin: status / progress --------------------------------
 app.get('/api/smarty/rag/status', async (req, res) => {
   if (!_smartyIsAdmin(req)) return res.status(403).json({ error: 'Only the Super Admin can view the index.' });
   try {
     const [[{ chunks }]] = await db.execute(
       'SELECT COUNT(*) AS chunks FROM smarty_doc_chunks WHERE institutionId = ?', [req.auth.institutionId]);
-    res.json({ ok: true, chunks, word: _ragMammoth ? 'on' : 'off', excel: _ragXlsx ? 'on' : 'off' });
+    res.json({
+      ok: true, chunks,
+      ocr: _ragOcrReady ? 'on' : 'off',
+      word: _ragMammoth ? 'on' : 'off', excel: _ragXlsx ? 'on' : 'off',
+      job: _ragJob
+    });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 // ---- Super-Admin: test what the book search returns for a query ----
-//  Open in the browser (while logged in) or hit from the app:
-//    GET /api/smarty/rag/search?q=production and employment
-//  If "matches" is empty, the index is empty or the table is missing —
-//  create smarty_doc_chunks, paste this block, then Rebuild book index.
+//    GET /api/smarty/rag/search?q=digestive enzymes
 app.get('/api/smarty/rag/search', async (req, res) => {
   if (!_smartyIsAdmin(req)) return res.status(403).json({ error: 'Only the Super Admin can test the search.' });
   const q = String(req.query.q || '').trim();
@@ -18507,9 +18696,9 @@ app.get('/api/smarty/rag/search', async (req, res) => {
 //  right before each `res.json({ success: true ... })`:
 //
 //    • After a textbook upload (PUT /syllabus/:id/book), once chapters are
-//      inserted, loop the new chapter ids:
+//      inserted, loop the new chapter ids (OCR runs in the background):
 //        const [chs] = await db.execute('SELECT id FROM syllabus_chapters WHERE syllabus_id = ?', [syllabusId]);
-//        for (const c of chs) { await ragIndexChapter(c.id).catch(()=>{}); }
+//        for (const c of chs) { ragIndexChapter(c.id).catch(()=>{}); }
 //    • After create/edit chapter:         ragIndexChapter(id).catch(()=>{});
 //    • After add/delete keyword:          ragIndexChapterKeywords(chapterId).catch(()=>{});
 //    • After a library file upload:       ragIndexLibraryFile(fileId).catch(()=>{});
