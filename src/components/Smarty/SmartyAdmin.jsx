@@ -333,7 +333,11 @@ function AiSettingsTab({ instId }) {
       const d = await res.json().catch(() => ({}));
       if (d && d.ok) {
         setRagChunks(d.chunks);
-        setRagMsg({ ok: true, text: `Indexed ${d.chunks} passages from ${d.chapters} chapter(s) and ${d.files} library file(s).` });
+        if (d.scanned || (d.chapters > 0 && !d.chars)) {
+          setRagMsg({ ok: false, text: `Indexed ${d.chunks} passages, but 0 characters of text were read from ${d.chapters} chapter(s). Your textbook PDFs are scanned images (no text layer) — they need OCR, or add keywords per chapter. Library/keywords still work.` });
+        } else {
+          setRagMsg({ ok: true, text: `Indexed ${d.chunks} passages (${d.chars.toLocaleString()} chars of text) from ${d.chapters} chapter(s) and ${d.files} library file(s).` });
+        }
       } else if (d && d.reason === 'busy') {
         setRagMsg({ ok: false, text: 'A rebuild is already running — try again in a moment.' });
       } else {

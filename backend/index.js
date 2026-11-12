@@ -18302,6 +18302,7 @@ async function ragIndexChapter(chapterId) {
     syllabus_type_id: r.syllabus_type_id, class_id: r.class_id, subject_id: r.subject_id,
     title: r.title, page_from: r.page_from, page_to: r.page_to
   }, _ragChunks(text));
+  return (text || '').replace(/\s/g, '').length;   // non-space chars extracted (0 = scanned/no text layer)
 }
 async function ragIndexChapterKeywords(chapterId) {
   const [rows] = await db.execute(
@@ -18332,43 +18333,66 @@ async function ragIndexLibraryFile(fileId) {
   const r = rows[0];
   await _ragDelete(r.institutionId, 'library', fileId);
   const text = await _ragFileText(r.file_ext, r.file_data);   // file_data is a Buffer (LONGBLOB)
-  if (!text) return;
+  if (!text) return 0;
   await _ragInsert({
     institutionId: r.institutionId, source_type: 'library', source_id: fileId,
     syllabus_type_id: r.syllabus_type_id, class_id: r.class_id, subject_id: r.subject_id,
     title: r.file_name
   }, _ragChunks(text));
+  return (text || '').replace(/\s/g, '').length;
 }
 
 // ---- full rebuild for one institution ------------------------------
 async function ragReindexInstitution(institutionId) {
   await db.execute('DELETE FROM smarty_doc_chunks WHERE institutionId = ?', [institutionId]);
-  let chapters = 0, files = 0;
+  let chapters = 0, files = 0, chars = 0, textChapters = 0;
   const [chs] = await db.execute(
     `SELECT c.id FROM syllabus_chapters c JOIN syllabus s ON s.id = c.syllabus_id WHERE s.institutionId = ?`,
     [institutionId]);
-  for (const c of chs) { try { await ragIndexChapter(c.id); await ragIndexChapterKeywords(c.id); chapters++; } catch (e) { console.warn('[rag ch]', c.id, e.message); } }
+  for (const c of chs) {
+    try {
+      const len = await ragIndexChapter(c.id) || 0;
+      await ragIndexChapterKeywords(c.id);
+      chapters++;
+      if (len > 0) { chars += len; textChapters++; }
+    } catch (e) { console.warn('[rag ch]', c.id, e.message); }
+  }
   const [fs] = await db.execute(
     `SELECT lf.id FROM syllabus_library_files lf
        JOIN syllabus_library_folders fo ON fo.id = lf.folder_id WHERE fo.institutionId = ?`,
     [institutionId]);
-  for (const f of fs) { try { await ragIndexLibraryFile(f.id); files++; } catch (e) { console.warn('[rag lf]', f.id, e.message); } }
+  for (const f of fs) {
+    try { const len = await ragIndexLibraryFile(f.id) || 0; files++; if (len > 0) chars += len; }
+    catch (e) { console.warn('[rag lf]', f.id, e.message); }
+  }
   // clear cached AI answers so old (pre-book) answers don't linger
   try { await db.execute('DELETE FROM smarty_ai_cache WHERE institutionId = ?', [institutionId]); } catch (_) {}
   const [[{ n }]] = await db.execute('SELECT COUNT(*) AS n FROM smarty_doc_chunks WHERE institutionId = ?', [institutionId]);
-  return { chapters, files, chunks: n, word: _ragMammoth ? 'on' : 'off', excel: _ragXlsx ? 'on' : 'off' };
+  // scanned = chapters exist but almost no selectable text was found (image-only PDFs)
+  const scanned = chapters > 0 && textChapters === 0;
+  return { chapters, files, chunks: n, chars, textChapters, scanned,
+           word: _ragMammoth ? 'on' : 'off', excel: _ragXlsx ? 'on' : 'off' };
 }
 
 // ---- retrieval (called by /smarty/ask in the main block) -----------
 //  Scope: students/parents -> their class (+ un-classed material); staff -> all.
+const _RAG_STOP = new Set(['the','a','an','is','are','was','were','be','what','whats','who','how','why','when','where','which','of','to','in','on','at','and','or','for','with','versus','vs','about','does','do','did','me','my','you','your','this','that','give','tell','explain','define','meaning','answer']);
+function _ragWords(q) {
+  return Array.from(new Set(
+    String(q || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)
+      .filter(w => w.length >= 3 && !_RAG_STOP.has(w))
+  )).slice(0, 8);
+}
+
 async function _smartyRetrieve(institutionId, question, scope) {
   const q = String(question || '').trim();
   if (q.length < 3) return [];
   const restrict = !!(scope && scope.restrictClass && scope.class_id);
   const classClause = restrict ? ' AND (class_id = ? OR class_id IS NULL)' : '';
   const classParam  = restrict ? [scope.class_id] : [];
+  const words = _ragWords(q);
 
-  // 1) natural-language match (best relevance)
+  // 1) FULLTEXT natural-language (best relevance, when the index exists)
   try {
     const params = [q, institutionId, ...classParam, q];
     const [rows] = await db.execute(
@@ -18379,23 +18403,43 @@ async function _smartyRetrieve(institutionId, question, scope) {
           AND MATCH(title, content) AGAINST (? IN NATURAL LANGUAGE MODE)
         ORDER BY score DESC LIMIT 6`, params);
     if (rows && rows.length) return rows;
-  } catch (e) { console.warn('[rag retrieve nl]', e.message); }
+  } catch (e) { console.warn('[rag nl]', e.message); }
 
-  // 2) boolean fallback — OR the meaningful words, so a partial match still lands
-  try {
-    const words = q.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length >= 3);
-    if (!words.length) return [];
-    const expr = words.join(' ');   // space = OR in BOOLEAN MODE
-    const params = [expr, institutionId, ...classParam, expr];
-    const [rows] = await db.execute(
-      `SELECT title, content, source_type,
-              MATCH(title, content) AGAINST (? IN BOOLEAN MODE) AS score
-         FROM smarty_doc_chunks
-        WHERE institutionId = ?${classClause}
-          AND MATCH(title, content) AGAINST (? IN BOOLEAN MODE)
-        ORDER BY score DESC LIMIT 6`, params);
-    return rows || [];
-  } catch (e) { console.warn('[rag retrieve bool]', e.message); return []; }
+  // 2) FULLTEXT boolean — OR the key words, so a partial match still lands
+  if (words.length) {
+    try {
+      const expr = words.join(' ');   // space = OR in BOOLEAN MODE
+      const params = [expr, institutionId, ...classParam, expr];
+      const [rows] = await db.execute(
+        `SELECT title, content, source_type,
+                MATCH(title, content) AGAINST (? IN BOOLEAN MODE) AS score
+           FROM smarty_doc_chunks
+          WHERE institutionId = ?${classClause}
+            AND MATCH(title, content) AGAINST (? IN BOOLEAN MODE)
+          ORDER BY score DESC LIMIT 6`, params);
+      if (rows && rows.length) return rows;
+    } catch (e) { console.warn('[rag bool]', e.message); }
+  }
+
+  // 3) LIKE fallback — NEEDS NO FULLTEXT INDEX, so it works even if the index
+  //    is missing or FULLTEXT found nothing. Ranks by how many words appear.
+  if (words.length) {
+    try {
+      const cond = words.map(() => '(content LIKE ? OR title LIKE ?)');
+      const scoreVals = [], likeVals = [];
+      words.forEach(w => { const p = '%' + w + '%'; scoreVals.push(p, p); likeVals.push(p, p); });
+      const sql =
+        `SELECT title, content, source_type, (${cond.join(' + ')}) AS score
+           FROM smarty_doc_chunks
+          WHERE institutionId = ?${classClause}
+            AND (${cond.join(' OR ')})
+          ORDER BY score DESC LIMIT 6`;
+      const params = [...scoreVals, institutionId, ...classParam, ...likeVals];
+      const [rows] = await db.execute(sql, params);
+      return rows || [];
+    } catch (e) { console.warn('[rag like]', e.message); return []; }
+  }
+  return [];
 }
 
 // ---- Super-Admin: rebuild the whole index --------------------------
