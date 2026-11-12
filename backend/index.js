@@ -17579,68 +17579,34 @@ app.get('/api/admin/online-count/:instId', async (req, res) => {
 const _smartyCrypto = require('crypto');
 const _smartyHttps  = require('https');
 
-// POST JSON to a provider and return { status, json }.
-// Uses Node's https module pinned to IPv4 (family: 4). This matters: on
-// container hosts like Railway the IPv6 route is broken, and the global
-// `fetch` (undici) tries the IPv6 address first and HANGS until timeout —
-// that was the "(20)" abort error. The GET self-test already proved that an
-// IPv4 https request works on this host, so the AI POST uses the same path.
-// Retries ONCE on a genuine network/timeout failure (a fresh connection), and
-// NEVER on an HTTP error — so a bad key/quota (400/401/429) surfaces at once.
-async function _smartyPostJson(urlStr, headers, bodyObj) {
-  const payload = JSON.stringify(bodyObj);
-  let lastErr;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      return await _smartyPostJsonHttps(urlStr, headers, payload);
-    } catch (e) {
-      lastErr = e;
-      const code = e.code || e.message || '';
-      const netlike = /ETIMEDOUT|ENETUNREACH|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|timed out/i.test(code);
-      if (attempt === 0 && netlike) { await new Promise(r => setTimeout(r, 800)); continue; }  // one fresh retry
-      break;
-    }
-  }
-  const code = (lastErr && (lastErr.code || lastErr.message)) || 'network error';
-  const err = new Error(`Can't reach the AI server (${code}) — network/firewall issue on the server, not the key.`);
-  err.network = true;
-  throw err;
-}
-
-// Low-level IPv4 https POST (fresh socket each call).
-function _smartyPostJsonHttps(urlStr, headers, payload) {
+// POST JSON over Node's built-in https — the same plain, proven transport the
+// app used originally. No `family`/`agent` tweaks (those caused the Railway
+// ETIMEDOUT); just open a normal HTTPS request. Works for all three providers
+// identically. Returns { status, json }. On a socket-level failure it throws a
+// clear "network" error so the chat can tell it apart from a bad key.
+function _smartyPostJson(urlStr, headers, bodyObj) {
   return new Promise((resolve, reject) => {
     let u;
     try { u = new URL(urlStr); } catch (e) { return reject(e); }
-    const data = Buffer.from(payload);
+    const data = Buffer.from(JSON.stringify(bodyObj));
     const r = _smartyHttps.request({
-      method: 'POST', hostname: u.hostname, port: u.port || 443, path: u.pathname + u.search,
-      family: 4,       // force IPv4 — the whole fix: avoids the broken-IPv6 hang on the host
-      agent: false,    // fresh socket, never a stale pooled one
-      headers: Object.assign({ 'Content-Type': 'application/json', 'Content-Length': data.length, 'Connection': 'close' }, headers || {})
+      method: 'POST', hostname: u.hostname, path: u.pathname + u.search,
+      headers: Object.assign({ 'Content-Type': 'application/json', 'Content-Length': data.length }, headers || {})
     }, (resp) => {
       let buf = '';
       resp.on('data', c => { buf += c; });
-      resp.on('end', () => { let json = {}; try { json = buf ? JSON.parse(buf) : {}; } catch (_) { json = { _raw: buf }; } resolve({ status: resp.statusCode || 0, json }); });
+      resp.on('end', () => {
+        let json = {};
+        try { json = buf ? JSON.parse(buf) : {}; } catch (_) { json = { _raw: buf }; }
+        resolve({ status: resp.statusCode || 0, json });
+      });
     });
-    r.on('error', reject);
-    r.setTimeout(30000, () => r.destroy(Object.assign(new Error('connection timed out'), { code: 'ETIMEDOUT' })));
+    r.on('error', (e) => {
+      const err = new Error(`Can't reach the AI server (${e.code || e.message}) — network issue on the server, not the key.`);
+      err.network = true; reject(err);
+    });
+    r.setTimeout(30000, () => r.destroy(Object.assign(new Error('AI request timed out'), { code: 'ETIMEDOUT', network: true })));
     r.write(data); r.end();
-  });
-}
-
-// Quick reachability probe (no key needed) so the admin can see whether the
-// SERVER can even reach each AI provider. Hitting GET / returns 404/400 — that
-// still means "reachable" (ok:true); a timeout or ENETUNREACH means blocked.
-function _smartyPing(hostname) {
-  return new Promise((resolve) => {
-    const req = _smartyHttps.request({ method: 'GET', hostname, port: 443, path: '/', family: 4, autoSelectFamily: true, agent: false }, (resp) => {
-      resp.resume();
-      resolve({ ok: true, status: resp.statusCode });
-    });
-    req.on('error', (e) => resolve({ ok: false, error: e.code || e.message }));
-    req.setTimeout(12000, () => { req.destroy(); resolve({ ok: false, error: 'TIMEOUT' }); });
-    req.end();
   });
 }
 
@@ -17958,21 +17924,14 @@ app.post('/api/smarty/updates/read', async (req, res) => {
 //  school chose, so the admin only pastes a key and turns it on.
 // =====================================================================
 
-// Default model per provider — changed in ONE place if ever needed.
-// NOTE: Google retires named Gemini models over time (gemini-1.5-flash, then
-// gemini-2.0-flash were both retired). 'gemini-flash-latest' is Google's
-// self-updating alias that always points at the current flash model, so it
-// keeps working without a code change when they roll a new version.
+// One default model per provider — the admin only pastes a key, nothing to pick.
+// Each value is a "latest" alias (not a pinned version) so it keeps working when
+// the provider rolls a new model, with no code change and no version list.
 const SMARTY_DEFAULT_MODEL = {
-  gemini:    'gemini-flash-latest',
+  gemini:    'gemini-flash-latest',       // Google's self-updating flash alias
   openai:    'gpt-4o-mini',
   anthropic: 'claude-3-5-haiku-latest'
 };
-
-// Gemini models to try in order — if one is "not available / not found"
-// (Google renames/retires models), the call falls through to the next, so
-// Smarty keeps working. The alias is first; explicit recent versions back it up.
-const SMARTY_GEMINI_FALLBACKS = ['gemini-flash-latest', 'gemini-3.8-flash', 'gemini-2.5-flash'];
 
 function _smartyMaskKey(key) {
   if (!key) return null;
@@ -18056,22 +18015,6 @@ app.post('/api/smarty/ai-config', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET self-test — tells the admin whether THE SERVER can reach each AI
-// provider at all. Use this when answers time out: if a host shows ok:false
-// with TIMEOUT / ENETUNREACH / EAI_AGAIN, the server's internet/firewall is
-// blocking it — no key will work until that's fixed.
-app.get('/api/smarty/ai-selftest', async (req, res) => {
-  if (!_smartyIsAdmin(req)) return res.status(403).json({ error: 'Only the Super Admin can run the self-test.' });
-  const hosts = ['generativelanguage.googleapis.com', 'api.openai.com', 'api.anthropic.com'];
-  const reachability = {};
-  for (const h of hosts) reachability[h] = await _smartyPing(h);
-  res.json({
-    nodeVersion: process.version,
-    proxyEnv: process.env.HTTPS_PROXY || process.env.https_proxy || null,
-    reachability
-  });
-});
-
 // =====================================================================
 //  PART 5 — the AI answer route (POST /api/smarty/ask)
 //  Reads the school's key + provider, checks the cache, else calls the
@@ -18086,34 +18029,15 @@ const SMARTY_SYSTEM =
   "relevant screen in the app. Be warm and encouraging.";
 
 async function _smartyCallGemini(key, model, question) {
-  const tries = [model, ...SMARTY_GEMINI_FALLBACKS].filter((m, i, a) => m && a.indexOf(m) === i);
-  const body = {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
+  const { status, json } = await _smartyPostJson(url, {}, {
     system_instruction: { parts: [{ text: SMARTY_SYSTEM }] },
     contents: [{ role: 'user', parts: [{ text: question }] }],
     generationConfig: { maxOutputTokens: 500, temperature: 0.6 }
-  };
-  let lastErr = 'Gemini error';
-  // Up to 3 passes over the model list. A retired model (404) or a momentarily
-  // overloaded one (503 "high demand" / 429) just moves on to the next model;
-  // if every model is busy we wait a moment and sweep the list again, so a
-  // transient spike doesn't surface as a failure. A real error (bad key = 400)
-  // stops immediately.
-  for (let pass = 0; pass < 3; pass++) {
-    for (const m of tries) {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${encodeURIComponent(key)}`;
-      const { status, json } = await _smartyPostJson(url, {}, body);
-      if (status >= 200 && status < 300) {
-        return ((json.candidates && json.candidates[0] && json.candidates[0].content && json.candidates[0].content.parts) || [])
-          .map(p => p.text || '').join('').trim();
-      }
-      lastErr = (json.error && json.error.message) || `Gemini HTTP ${status}`;
-      const retryable = status === 404 || status === 429 || status === 503 ||
-        /not found|no longer available|not available|unsupported|deprecated|overloaded|unavailable|high demand|try again/i.test(lastErr);
-      if (!retryable) throw new Error(lastErr);   // bad key / other — stop now
-    }
-    if (pass < 2) await new Promise(r => setTimeout(r, 1200 * (pass + 1)));  // all busy — wait, then sweep again
-  }
-  throw new Error(lastErr);
+  });
+  if (status < 200 || status >= 300) throw new Error((json.error && json.error.message) || `Gemini HTTP ${status}`);
+  return ((json.candidates && json.candidates[0] && json.candidates[0].content && json.candidates[0].content.parts) || [])
+    .map(p => p.text || '').join('').trim();
 }
 async function _smartyCallOpenAI(key, model, question) {
   const { status, json } = await _smartyPostJson('https://api.openai.com/v1/chat/completions',
