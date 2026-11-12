@@ -528,8 +528,15 @@ export default function Smarty({ onNavigate }) {
     } catch (_) {}
     dropTyping(tk);
     if (d && d.ok && d.answer) { pushBot({ tone: 'violet', text: d.answer, ai: true }); flash('talking'); return; }
+    const admin = /admin|developer|principal/i.test(role || '');
+    if (d && d.reason === 'network') {
+      // Server can't reach the internet — keys are irrelevant here.
+      pushBot({ tone: 'amber', text: admin
+        ? "⚠️ The AI couldn't be reached — the **server can't connect to the internet** for the AI provider (firewall / egress block / proxy). This isn't the key. Run **/api/smarty/ai-selftest** and ask your host to allow outbound HTTPS."
+        : "⚠️ The AI service is temporarily unavailable. Please try again later." });
+      return;
+    }
     if (d && (d.reason === 'provider_error' || d.reason === 'empty_answer')) {
-      const admin = /admin|developer|principal/i.test(role || '');
       // Admins see the real reason (e.g. "quota exceeded"); everyone else sees a simple note.
       pushBot({ tone: 'amber', text: admin
         ? `⚠️ The AI couldn't answer right now.${d.error ? ` **Reason:** ${d.error}` : ''}\n\nIf this is a free key it's usually the quota limit — enable billing on the key, or paste a different provider's key in **Smarty AI**, then **Test**.`
