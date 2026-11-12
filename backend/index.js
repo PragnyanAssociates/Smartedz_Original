@@ -17594,7 +17594,10 @@ function _smartyPostJson(urlStr, headers, bodyObj) {
       path: u.pathname + u.search,
       family: 4,              // force IPv4: on hosts with broken IPv6 egress Node
       autoSelectFamily: true, // tries the AAAA address first and HANGS until timeout
-      headers: Object.assign({ 'Content-Type': 'application/json', 'Content-Length': data.length }, headers || {})
+      agent: false,           // NEVER reuse a pooled keep-alive socket — on container
+                              // hosts the egress NAT silently drops idle sockets, so a
+                              // reused one hangs until timeout. A fresh socket each call fixes it.
+      headers: Object.assign({ 'Content-Type': 'application/json', 'Content-Length': data.length, 'Connection': 'close' }, headers || {})
     }, (resp) => {
       let buf = '';
       resp.on('data', c => { buf += c; });
@@ -17607,10 +17610,12 @@ function _smartyPostJson(urlStr, headers, bodyObj) {
     // A socket-level failure (DNS / firewall / no route) is a SERVER network
     // problem, not a bad key or quota — say so clearly so nobody keeps swapping keys.
     r.on('error', (e) => {
-      e.message = `Can't reach the AI server (${e.code || e.message}) — this is a network/firewall issue on the server, not the key.`;
-      reject(e);
+      const code = e.code || e.message || 'network error';
+      const err = new Error(`Can't reach the AI server (${code}) — network/firewall issue on the server, not the key.`);
+      err.network = true;
+      reject(err);
     });
-    r.setTimeout(30000, () => r.destroy(new Error("Can't reach the AI server (connection timed out) — this is a network/firewall issue on the server, not the key.")));
+    r.setTimeout(30000, () => r.destroy(Object.assign(new Error('connection timed out'), { code: 'ETIMEDOUT' })));
     r.write(data); r.end();
   });
 }
@@ -17620,7 +17625,7 @@ function _smartyPostJson(urlStr, headers, bodyObj) {
 // still means "reachable" (ok:true); a timeout or ENETUNREACH means blocked.
 function _smartyPing(hostname) {
   return new Promise((resolve) => {
-    const req = _smartyHttps.request({ method: 'GET', hostname, port: 443, path: '/', family: 4, autoSelectFamily: true }, (resp) => {
+    const req = _smartyHttps.request({ method: 'GET', hostname, port: 443, path: '/', family: 4, autoSelectFamily: true, agent: false }, (resp) => {
       resp.resume();
       resolve({ ok: true, status: resp.statusCode });
     });
@@ -18118,14 +18123,19 @@ app.post('/api/smarty/ask', async (req, res) => {
     const cfg = rows[0];
     if (!cfg || !cfg.enabled || !cfg.api_key) return res.json({ ok: false, reason: 'disabled' });
 
-    // cache lookup (normalised question -> sha256)
+    // cache lookup (normalised question -> sha256). The Test button sends
+    // fresh:true so it always makes a REAL live call and never reports a
+    // cached success as if the provider were reachable.
+    const fresh = !!(req.body && req.body.fresh);
     const qNorm = question.toLowerCase().replace(/\s+/g, ' ').trim();
     const qHash = _smartyCrypto.createHash('sha256').update(qNorm).digest('hex');
-    try {
-      const [c] = await db.execute(
-        'SELECT answer FROM smarty_ai_cache WHERE institutionId = ? AND q_hash = ? LIMIT 1', [institutionId, qHash]);
-      if (c.length) return res.json({ ok: true, answer: c[0].answer, cached: true });
-    } catch (_) {}
+    if (!fresh) {
+      try {
+        const [c] = await db.execute(
+          'SELECT answer FROM smarty_ai_cache WHERE institutionId = ? AND q_hash = ? LIMIT 1', [institutionId, qHash]);
+        if (c.length) return res.json({ ok: true, answer: c[0].answer, cached: true });
+      } catch (_) {}
+    }
 
     const provider = SMARTY_DEFAULT_MODEL[cfg.provider] ? cfg.provider : 'gemini';
     const model = SMARTY_DEFAULT_MODEL[provider];
@@ -18137,7 +18147,10 @@ app.post('/api/smarty/ask', async (req, res) => {
       else answer = await _smartyCallGemini(cfg.api_key, model, question);
     } catch (e) {
       console.warn('[smarty ask]', provider, model, e.message);
-      return res.json({ ok: false, reason: 'provider_error', error: e.message });
+      // Separate a server-can't-reach-the-internet failure from a real API
+      // error (bad key / quota), so the chat shows the right advice.
+      const isNet = e.network || /ETIMEDOUT|ENETUNREACH|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|timed out|reach the AI server/i.test(e.message || '');
+      return res.json({ ok: false, reason: isNet ? 'network' : 'provider_error', error: e.message });
     }
 
     answer = (answer || '').trim();
@@ -18200,6 +18213,7 @@ function ping(hostname) {
   console.log('-----');
   for (const h of HOSTS) console.log(await ping(h));
 })();
+
 
 
 // =====================================================================

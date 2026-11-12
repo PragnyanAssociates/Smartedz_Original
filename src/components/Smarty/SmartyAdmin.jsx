@@ -302,7 +302,7 @@ function AiSettingsTab({ instId }) {
     try {
       const res = await fetch(`${API_BASE_URL}/smarty/ask`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: 'In one short sentence, say hello as a connection test.' })
+        body: JSON.stringify({ question: 'In one short sentence, say hello as a connection test.', fresh: true })
       });
       const d = await res.json().catch(() => ({}));
       if (d && d.ok) setTestMsg({ ok: true, text: d.answer });
