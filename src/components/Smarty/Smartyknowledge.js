@@ -10,9 +10,14 @@
 //  staff/admins never see class-based questions.
 // =====================================================================
 
+import { MODULES } from '../../Screens/Modules';
+
 export const LIVE_IDS = ['next-class', 'hw-today', 'attendance', 'cal-today', 'cal-next-holiday', 'cal-month', 'my-notifications'];
 
-export const BUILTINS = [
+// The hand-written pack (how-tos + live cards). Below it, an "Open <module>"
+// shortcut is generated for EVERY module in Modules.js, so Smarty can open
+// any screen — including new modules — with no extra entries to maintain.
+const CURATED = [
   // ---- LIVE (filled from bootstrap) — only for people who HAVE a class ----
   { id: 'next-class', q: 'My next class', roles: ['student', 'teacher', 'parent'], tone: 'sky', icon: '🔔',
     keywords: ['next class', 'my class', 'do i have class', 'what class', 'class now', 'timetable', 'period', 'upcoming class'] },
@@ -163,6 +168,40 @@ export const BUILTINS = [
     answer: { text: "The Directory holds every member's profile 👥", link: 'Directory', linkLabel: 'Open Directory',
       steps: ['Open the **Directory**.', 'Filter by role, or pick the **Student** tab and a class.', 'Search by name, username or email.', 'Open a card for full details — plus Performance, Attendance and Report Card, with a year filter for past years.'] } },
 ];
+
+// ---- auto "Open <module>" shortcuts for EVERY module -----------------
+// Built from Modules.js so Smarty knows every screen (Syllabus, Transport,
+// Exams, Gallery, Meals, PTM, Online Classes, Digital Labs, Study Materials,
+// GroupChat, Inventory, Alumni, Support, Lesson Plan, Daily Expenses, …).
+// Each is role-'all' but Smarty.jsx still hides it if the user can't see that
+// module (answer.link is permission-checked), so it's automatically role-aware.
+const _slug = (s) => String(s || '').toLowerCase().trim();
+const MODULE_OPENERS = MODULES
+  .filter(m => m.navigateTo && !m.alwaysVisible)   // openable screens only
+  .map(m => {
+    const label = m.label || m.title || m.id;
+    const lc = _slug(label);
+    const idlc = _slug(m.id);
+    const kw = new Set([
+      lc, idlc,
+      'open ' + lc, 'open ' + idlc,
+      'go to ' + lc, 'show ' + lc, 'show me ' + lc,
+      lc + ' tab', lc + ' page', lc + ' module', 'where is ' + lc,
+    ]);
+    return {
+      id: 'mod-' + m.id,
+      q: 'Open ' + label,
+      roles: 'all',
+      tone: 'brand',
+      icon: '➡️',
+      keywords: Array.from(kw).filter(Boolean),
+      answer: { text: 'Opening ' + label + ' 👇', link: m.id, linkLabel: 'Open ' + label, tone: 'brand' },
+    };
+  });
+
+// Full pack = curated entries first (so a specific how-to wins over a plain
+// "open"), then the generic openers for every remaining module.
+export const BUILTINS = [...CURATED, ...MODULE_OPENERS];
 
 // Starter chips per role bucket. Smarty.jsx then drops any whose module
 // the user can't see, and any live one with no data. "What's new?" is

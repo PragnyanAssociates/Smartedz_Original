@@ -18048,7 +18048,7 @@ async function _smartyCallGemini(key, model, question) {
   const { status, json } = await _smartyPostJson(url, {}, {
     system_instruction: { parts: [{ text: SMARTY_SYSTEM }] },
     contents: [{ role: 'user', parts: [{ text: question }] }],
-    generationConfig: { maxOutputTokens: 500, temperature: 0.6 }
+    generationConfig: { maxOutputTokens: 800, temperature: 0.6 }
   });
   if (status < 200 || status >= 300) throw new Error((json.error && json.error.message) || `Gemini HTTP ${status}`);
   return ((json.candidates && json.candidates[0] && json.candidates[0].content && json.candidates[0].content.parts) || [])
@@ -18057,14 +18057,14 @@ async function _smartyCallGemini(key, model, question) {
 async function _smartyCallOpenAI(key, model, question) {
   const { status, json } = await _smartyPostJson('https://api.openai.com/v1/chat/completions',
     { 'Authorization': `Bearer ${key}` },
-    { model, max_tokens: 500, temperature: 0.6, messages: [{ role: 'system', content: SMARTY_SYSTEM }, { role: 'user', content: question }] });
+    { model, max_tokens: 800, temperature: 0.6, messages: [{ role: 'system', content: SMARTY_SYSTEM }, { role: 'user', content: question }] });
   if (status < 200 || status >= 300) throw new Error((json.error && json.error.message) || `OpenAI HTTP ${status}`);
   return ((json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content) || '').trim();
 }
 async function _smartyCallAnthropic(key, model, question) {
   const { status, json } = await _smartyPostJson('https://api.anthropic.com/v1/messages',
     { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-    { model, max_tokens: 500, system: SMARTY_SYSTEM, messages: [{ role: 'user', content: question }] });
+    { model, max_tokens: 800, system: SMARTY_SYSTEM, messages: [{ role: 'user', content: question }] });
   if (status < 200 || status >= 300) throw new Error((json.error && json.error.message) || `Anthropic HTTP ${status}`);
   return ((json.content && json.content[0] && json.content[0].text) || '').trim();
 }
@@ -18115,12 +18115,15 @@ app.post('/api/smarty/ask', async (req, res) => {
     // them; otherwise Smarty answers generally. _smartyRetrieve lives in the RAG
     // block — guarded so this still runs if that block isn't pasted in.
     let promptQuestion = question;
+    let grounded = false, sources = '';
     try {
       const ctx = (typeof _smartyRetrieve === 'function')
         ? await _smartyRetrieve(institutionId, question, { class_id: asker.class_id, restrictClass })
         : [];
       if (ctx && ctx.length) {
-        const joined = ctx.map((c, i) => `[${i + 1}] ${c.title}: ${c.content}`).join('\n\n').slice(0, 6000);
+        grounded = true;
+        sources = Array.from(new Set(ctx.map(c => c.title).filter(Boolean))).slice(0, 3).join('; ');
+        const joined = ctx.map((c, i) => `[${i + 1}] ${c.title}: ${c.content}`).join('\n\n').slice(0, 7000);
         promptQuestion =
           "Answer the question using mainly the school's textbook excerpts below. " +
           "If they don't cover it, say you couldn't find it in the book, then give a short general answer. " +
@@ -18152,7 +18155,7 @@ app.post('/api/smarty/ask', async (req, res) => {
         [institutionId, qHash, question, answer]);
     } catch (_) {}
 
-    res.json({ ok: true, answer });
+    res.json({ ok: true, answer, grounded, sources });
   } catch (err) {
     console.error('smarty/ask error:', err);
     res.status(500).json({ ok: false, error: err.message });
@@ -18406,6 +18409,27 @@ app.get('/api/smarty/rag/status', async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
+// ---- Super-Admin: test what the book search returns for a query ----
+//  Open in the browser (while logged in) or hit from the app:
+//    GET /api/smarty/rag/search?q=production and employment
+//  If "matches" is empty, the index is empty or the table is missing —
+//  create smarty_doc_chunks, paste this block, then Rebuild book index.
+app.get('/api/smarty/rag/search', async (req, res) => {
+  if (!_smartyIsAdmin(req)) return res.status(403).json({ error: 'Only the Super Admin can test the search.' });
+  const q = String(req.query.q || '').trim();
+  try {
+    const rows = await _smartyRetrieve(req.auth.institutionId, q, { restrictClass: false });
+    res.json({
+      ok: true, q, count: rows.length,
+      matches: rows.map(r => ({
+        title: r.title, source_type: r.source_type,
+        score: Number(r.score).toFixed(3),
+        preview: String(r.content || '').slice(0, 140)
+      }))
+    });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 // =====================================================================
 //  AUTO-INDEX HOOKS (optional — keeps the index fresh without a rebuild)
 //  Add these ONE-LINERS inside your existing Section 22 syllabus routes,
@@ -18422,6 +18446,8 @@ app.get('/api/smarty/rag/status', async (req, res) => {
 //  They're safe to call fire-and-forget. If you skip them, just press
 //  "Rebuild book index" in Smarty → Smarty AI after adding material.
 // =====================================================================
+
+
 
 
 

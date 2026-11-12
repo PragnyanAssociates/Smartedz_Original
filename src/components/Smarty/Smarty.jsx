@@ -527,7 +527,11 @@ export default function Smarty({ onNavigate }) {
       d = res.ok ? await res.json() : null;
     } catch (_) {}
     dropTyping(tk);
-    if (d && d.ok && d.answer) { pushBot({ tone: 'violet', text: d.answer, ai: true }); flash('talking'); return; }
+    if (d && d.ok && d.answer) {
+      // When the answer came from the uploaded textbook, show the source.
+      const text = d.grounded ? `${d.answer}${d.sources ? `\n\n📖 _From your book: ${d.sources}_` : '\n\n📖 _From your textbook_'}` : d.answer;
+      pushBot({ tone: 'violet', text, ai: true }); flash('talking'); return;
+    }
     const admin = /admin|developer|principal/i.test(role || '');
     if (d && d.reason === 'network') {
       // Server can't reach the internet — keys are irrelevant here.
