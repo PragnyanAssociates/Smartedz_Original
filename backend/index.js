@@ -18117,48 +18117,6 @@ app.post('/api/smarty/ask', async (req, res) => {
 // =====================================================================
 
 
-// =====================================================================
-//  smarty-nettest.js  —  does THIS server have internet to the AI providers?
-//
-//  Put this file on the SAME machine that runs your backend (index.js),
-//  in any folder, then run:
-//
-//      node smarty-nettest.js
-//
-//  No API key and no login needed. It just tries to open an HTTPS
-//  connection to each AI provider and prints the result.
-//
-//  Reading the output:
-//    ok: true   (status 404/400 is fine)  -> the server CAN reach it.
-//    ok: false  TIMEOUT / ENETUNREACH / EAI_AGAIN / ECONNREFUSED
-//               -> the server is BLOCKED from the internet (firewall/egress).
-//    proxyEnv has a value -> this server only reaches the net via a proxy.
-// =====================================================================
-const https = require('https');
-
-const HOSTS = ['generativelanguage.googleapis.com', 'api.openai.com', 'api.anthropic.com'];
-
-function ping(hostname) {
-  return new Promise((resolve) => {
-    const t0 = Date.now();
-    const req = https.request(
-      { method: 'GET', hostname, port: 443, path: '/', family: 4, autoSelectFamily: true },
-      (r) => { r.resume(); resolve({ hostname, ok: true, status: r.statusCode, ms: Date.now() - t0 }); }
-    );
-    req.on('error', (e) => resolve({ hostname, ok: false, error: e.code || e.message, ms: Date.now() - t0 }));
-    req.setTimeout(12000, () => { req.destroy(); resolve({ hostname, ok: false, error: 'TIMEOUT', ms: Date.now() - t0 }); });
-    req.end();
-  });
-}
-
-(async () => {
-  console.log('Node version :', process.version);
-  console.log('proxyEnv     :', process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy || null);
-  console.log('-----');
-  for (const h of HOSTS) console.log(await ping(h));
-})();
-
-
 
 // =====================================================================
 const PORT = process.env.PORT || 3001;
