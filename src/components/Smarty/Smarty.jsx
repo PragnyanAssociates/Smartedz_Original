@@ -528,9 +528,17 @@ export default function Smarty({ onNavigate }) {
     } catch (_) {}
     dropTyping(tk);
     if (d && d.ok && d.answer) {
-      // When the answer came from the uploaded textbook, show the source.
-      const text = d.grounded ? `${d.answer}${d.sources ? `\n\n📖 _From your book: ${d.sources}_` : '\n\n📖 _From your textbook_'}` : d.answer;
-      pushBot({ tone: 'violet', text, ai: true }); flash('talking'); return;
+      // Badge: a fresh AI answer shows "✨ AI"; book/library/stored answers show
+      // "✨ Smarty". Grounded answers also show which chapter/term they came from.
+      const fromAI = d.source === 'ai';
+      const src = d.grounded ? (d.sources ? `\n\n📖 _From your book: ${d.sources}_` : '\n\n📖 _From your textbook_') : '';
+      pushBot({ tone: 'violet', text: d.answer + src, ai: fromAI, smarty: !fromAI });
+      flash('talking'); return;
+    }
+    if (d && d.reason === 'no_match') {
+      // AI is off and nothing matched in the books/library.
+      pushBot({ tone: 'sky', text: "I couldn't find that in the textbooks or library yet. Your school can add it in **Syllabus**, or turn on **Smarty AI** for general answers.", smarty: true });
+      return;
     }
     const admin = /admin|developer|principal/i.test(role || '');
     if (d && d.reason === 'network') {
@@ -738,6 +746,7 @@ function Message({ m, onNav }) {
       <div className="smy-bubble" style={{ '--tone': `var(${tone})` }}>
         <span dangerouslySetInnerHTML={{ __html: fmt(a.text) }} />
         {a.ai && <span className="smy-aibadge">✨ AI</span>}
+        {a.smarty && <span className="smy-smbadge">✨ Smarty</span>}
         {a.digest && <div className="smy-digest">{a.digest.map((d, i) => <span key={i} className="smy-dpill" style={{ '--ct': `var(${toneVar[d.tone] || '--brand'})` }}>{d.icon} {d.label}</span>)}</div>}
         {a.steps && <ul className="smy-steps">{a.steps.map((s, i) => <li key={i}><span className="smy-n">✓</span><span dangerouslySetInnerHTML={{ __html: fmt(s) }} /></li>)}</ul>}
         {a.card && <div className="smy-card"><span className="smy-em">{a.card.em}</span><div><div className="smy-t">{a.card.t}</div><div className="smy-s">{a.card.s}</div></div></div>}
@@ -902,6 +911,7 @@ const CSS = `
 .smy-digest{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
 .smy-dpill{font-size:11.5px;font-weight:800;color:var(--ink);background:color-mix(in srgb,var(--ct,var(--brand)) 14%,var(--panel));border:1px solid color-mix(in srgb,var(--ct,var(--brand)) 36%,transparent);padding:4px 9px;border-radius:999px;display:inline-flex;align-items:center;gap:5px}
 .smy-aibadge{display:inline-block;margin-left:6px;font-family:var(--fh);font-size:9px;font-weight:700;color:#fff;background:linear-gradient(135deg,var(--ga),var(--gb));padding:1px 7px;border-radius:999px;vertical-align:middle;letter-spacing:.3px}
+.smy-smbadge{display:inline-block;margin-left:6px;font-family:var(--fh);font-size:9px;font-weight:700;color:#fff;background:linear-gradient(135deg,var(--brand),var(--violet));padding:1px 7px;border-radius:999px;vertical-align:middle;letter-spacing:.3px}
 .smy-confetti{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:60}
 .smy-confetti span{position:absolute;top:-24px;animation:smyFall 1.6s ease-in forwards}
 @keyframes smyFall{0%{transform:translateY(0) rotate(0);opacity:1}100%{transform:translateY(680px) rotate(360deg);opacity:0}}

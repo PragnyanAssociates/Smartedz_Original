@@ -18079,7 +18079,7 @@ app.post('/api/smarty/ask', async (req, res) => {
     const [rows] = await db.execute(
       'SELECT provider, api_key, enabled FROM smarty_ai_config WHERE institutionId = ? LIMIT 1', [institutionId]);
     const cfg = rows[0];
-    if (!cfg || !cfg.enabled || !cfg.api_key) return res.json({ ok: false, reason: 'disabled' });
+    const aiOn = !!(cfg && cfg.enabled && cfg.api_key);   // AI is optional now
 
     // Who is asking — used to scope the textbook search and the cache by class,
     // so a student only gets their class's books and answers never cross classes.
@@ -18103,34 +18103,57 @@ app.post('/api/smarty/ask', async (req, res) => {
       try {
         const [c] = await db.execute(
           'SELECT answer FROM smarty_ai_cache WHERE institutionId = ? AND q_hash = ? LIMIT 1', [institutionId, qHash]);
-        if (c.length) return res.json({ ok: true, answer: c[0].answer, cached: true });
+        if (c.length) return res.json({ ok: true, answer: c[0].answer, cached: true, source: 'smarty' });
       } catch (_) {}
     }
 
-    const provider = SMARTY_DEFAULT_MODEL[cfg.provider] ? cfg.provider : 'gemini';
-    const model = SMARTY_DEFAULT_MODEL[provider];
-
-    // Textbook retrieval (keyword / MySQL FULLTEXT). When the uploaded books,
-    // keywords or library files have a relevant match, the answer is GROUNDED in
-    // them; otherwise Smarty answers generally. _smartyRetrieve lives in the RAG
-    // block — guarded so this still runs if that block isn't pasted in.
-    let promptQuestion = question;
-    let grounded = false, sources = '';
+    // Textbook/library retrieval — pure keyword search, needs NO AI.
+    let ctx = [];
     try {
-      const ctx = (typeof _smartyRetrieve === 'function')
+      ctx = (typeof _smartyRetrieve === 'function')
         ? await _smartyRetrieve(institutionId, question, { class_id: asker.class_id, restrictClass })
         : [];
-      if (ctx && ctx.length) {
-        grounded = true;
-        sources = Array.from(new Set(ctx.map(c => c.title).filter(Boolean))).slice(0, 3).join('; ');
-        const joined = ctx.map((c, i) => `[${i + 1}] ${c.title}: ${c.content}`).join('\n\n').slice(0, 7000);
-        promptQuestion =
-          "Answer the question using mainly the school's textbook excerpts below. " +
-          "If they don't cover it, say you couldn't find it in the book, then give a short general answer. " +
-          "Keep it clear and age-appropriate, and name the chapter or term you used.\n\n" +
-          "TEXTBOOK EXCERPTS:\n" + joined + "\n\nQUESTION: " + question;
-      }
     } catch (e) { console.warn('[smarty retrieve]', e.message); }
+    const sources = ctx.length
+      ? Array.from(new Set(ctx.map(c => c.title).filter(Boolean))).slice(0, 3).join('; ')
+      : '';
+
+    const saveCache = async (ans) => {
+      try {
+        await db.execute(
+          'INSERT INTO smarty_ai_cache (institutionId, q_hash, question, answer) VALUES (?, ?, ?, ?) ' +
+          'ON DUPLICATE KEY UPDATE answer = VALUES(answer), created_at = CURRENT_TIMESTAMP',
+          [institutionId, qHash, question, ans]);
+      } catch (_) {}
+    };
+
+    // ---- NO AI KEY: answer straight from the book (extractive). This lets a
+    //      school WITHOUT an AI key still get textbook/library answers.
+    //      Badge = Smarty (it's the school's own stored content, not live AI).
+    if (!aiOn) {
+      if (!ctx.length) return res.json({ ok: false, reason: 'no_match' });
+      const best = String(ctx[0].content || '').trim();
+      const excerpt = best.length > 900 ? best.slice(0, 900).replace(/\s+\S*$/, '') + '…' : best;
+      const answer = `**${ctx[0].title}**\n\n${excerpt}`;
+      await saveCache(answer);
+      return res.json({ ok: true, answer, grounded: true, sources, source: 'smarty' });
+    }
+
+    // ---- AI KEY PRESENT: the AI writes the answer, grounded in the book when
+    //      there's a match. A fresh AI answer is badged AI; once cached it's Smarty.
+    const provider = SMARTY_DEFAULT_MODEL[cfg.provider] ? cfg.provider : 'gemini';
+    const model = SMARTY_DEFAULT_MODEL[provider];
+    let promptQuestion = question;
+    let grounded = false;
+    if (ctx.length) {
+      grounded = true;
+      const joined = ctx.map((c, i) => `[${i + 1}] ${c.title}: ${c.content}`).join('\n\n').slice(0, 7000);
+      promptQuestion =
+        "Answer the question using mainly the school's textbook excerpts below. " +
+        "If they don't cover it, say you couldn't find it in the book, then give a short general answer. " +
+        "Keep it clear and age-appropriate, and name the chapter or term you used.\n\n" +
+        "TEXTBOOK EXCERPTS:\n" + joined + "\n\nQUESTION: " + question;
+    }
 
     let answer = '';
     try {
@@ -18139,23 +18162,13 @@ app.post('/api/smarty/ask', async (req, res) => {
       else answer = await _smartyCallGemini(cfg.api_key, model, promptQuestion);
     } catch (e) {
       console.warn('[smarty ask]', provider, model, e.message);
-      // Separate a server-can't-reach-the-internet failure from a real API
-      // error (bad key / quota), so the chat shows the right advice.
       const isNet = e.network || /ETIMEDOUT|ENETUNREACH|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|timed out|reach the AI server/i.test(e.message || '');
       return res.json({ ok: false, reason: isNet ? 'network' : 'provider_error', error: e.message });
     }
-
     answer = (answer || '').trim();
     if (!answer) return res.json({ ok: false, reason: 'empty_answer' });
-
-    try {
-      await db.execute(
-        'INSERT INTO smarty_ai_cache (institutionId, q_hash, question, answer) VALUES (?, ?, ?, ?) ' +
-        'ON DUPLICATE KEY UPDATE answer = VALUES(answer), created_at = CURRENT_TIMESTAMP',
-        [institutionId, qHash, question, answer]);
-    } catch (_) {}
-
-    res.json({ ok: true, answer, grounded, sources });
+    await saveCache(answer);
+    res.json({ ok: true, answer, grounded, sources, source: 'ai' });
   } catch (err) {
     console.error('smarty/ask error:', err);
     res.status(500).json({ ok: false, error: err.message });
