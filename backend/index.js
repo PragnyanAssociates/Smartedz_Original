@@ -18212,7 +18212,7 @@ let _ragMammoth = null; try { _ragMammoth = require('mammoth'); } catch (_) {}  
 let _ragXlsx    = null; try { _ragXlsx = require('xlsx'); }       catch (_) {}   // .xls/.xlsx (optional)
 
 // ---- text extraction ------------------------------------------------
-async function _ragPdfText(buffer, maxPages = 80) {
+async function _ragPdfText(buffer, maxPages = 400) {   // cover whole books, even a single 240-page chapter
   try {
     const data = new Uint8Array(buffer);
     const doc = await _ragPdfjs.getDocument({ data, useSystemFonts: true, isEvalSupported: false }).promise;
@@ -18258,7 +18258,7 @@ function _ragChunks(text, size = 1200) {
     if (piece) chunks.push(piece);
     i = end;
   }
-  return chunks.slice(0, 40);   // cap chunks per source so one huge file can't flood the index
+  return chunks.slice(0, 600);  // cap per source — 600 x 1200 chars covers a ~240-page book in one chapter
 }
 
 // ---- insert / delete chunks ----------------------------------------
@@ -18364,24 +18364,38 @@ async function ragReindexInstitution(institutionId) {
 async function _smartyRetrieve(institutionId, question, scope) {
   const q = String(question || '').trim();
   if (q.length < 3) return [];
-  const params = [q, institutionId];
-  let classClause = '';
-  if (scope && scope.restrictClass && scope.class_id) {
-    classClause = ' AND (class_id = ? OR class_id IS NULL)';
-    params.push(scope.class_id);
-  }
-  params.push(q);
+  const restrict = !!(scope && scope.restrictClass && scope.class_id);
+  const classClause = restrict ? ' AND (class_id = ? OR class_id IS NULL)' : '';
+  const classParam  = restrict ? [scope.class_id] : [];
+
+  // 1) natural-language match (best relevance)
   try {
+    const params = [q, institutionId, ...classParam, q];
     const [rows] = await db.execute(
       `SELECT title, content, source_type,
               MATCH(title, content) AGAINST (? IN NATURAL LANGUAGE MODE) AS score
          FROM smarty_doc_chunks
         WHERE institutionId = ?${classClause}
           AND MATCH(title, content) AGAINST (? IN NATURAL LANGUAGE MODE)
-        ORDER BY score DESC
-        LIMIT 6`, params);
+        ORDER BY score DESC LIMIT 6`, params);
+    if (rows && rows.length) return rows;
+  } catch (e) { console.warn('[rag retrieve nl]', e.message); }
+
+  // 2) boolean fallback — OR the meaningful words, so a partial match still lands
+  try {
+    const words = q.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length >= 3);
+    if (!words.length) return [];
+    const expr = words.join(' ');   // space = OR in BOOLEAN MODE
+    const params = [expr, institutionId, ...classParam, expr];
+    const [rows] = await db.execute(
+      `SELECT title, content, source_type,
+              MATCH(title, content) AGAINST (? IN BOOLEAN MODE) AS score
+         FROM smarty_doc_chunks
+        WHERE institutionId = ?${classClause}
+          AND MATCH(title, content) AGAINST (? IN BOOLEAN MODE)
+        ORDER BY score DESC LIMIT 6`, params);
     return rows || [];
-  } catch (e) { console.warn('[rag retrieve]', e.message); return []; }
+  } catch (e) { console.warn('[rag retrieve bool]', e.message); return []; }
 }
 
 // ---- Super-Admin: rebuild the whole index --------------------------

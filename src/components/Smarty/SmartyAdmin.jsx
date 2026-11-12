@@ -343,6 +343,21 @@ function AiSettingsTab({ instId }) {
     setReindexing(false);
   };
 
+  // ---- Test what the book search finds for a query ----
+  const [ragQ, setRagQ]           = useState('');
+  const [searching, setSearching] = useState(false);
+  const [ragHits, setRagHits]     = useState(null);
+  const bookSearch = async () => {
+    if (!ragQ.trim()) return;
+    setSearching(true); setRagHits(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/smarty/rag/search?q=${encodeURIComponent(ragQ.trim())}`);
+      const d = await res.json().catch(() => ({}));
+      setRagHits(d && d.ok ? (d.matches || []) : []);
+    } catch (_) { setRagHits([]); }
+    setSearching(false);
+  };
+
   if (loading) return <div className="h-40 grid place-items-center"><Loader2 className="animate-spin size-6 text-primary" /></div>;
 
   const configured = !!cfg?.configured;
@@ -453,6 +468,34 @@ function AiSettingsTab({ instId }) {
             {reindexing ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />} {reindexing ? 'Rebuilding…' : 'Rebuild book index'}
           </button>
           {ragMsg && <p className={`mt-2 text-[11px] font-medium ${ragMsg.ok ? 'text-emerald-600' : 'text-red-600'}`}>{ragMsg.text}</p>}
+
+          {/* Test what the book search returns for a question */}
+          <div className="mt-3 pt-3 border-t border-zinc-100">
+            <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1.5">Test book search</p>
+            <div className="flex items-center gap-2">
+              <input value={ragQ} onChange={e => setRagQ(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') bookSearch(); }}
+                placeholder="e.g. respiration versus combustion"
+                className="h-8 flex-1 rounded-md border border-zinc-200 bg-white px-2.5 text-xs text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20" />
+              <button onClick={bookSearch} disabled={searching || !ragQ.trim()}
+                className="h-8 px-3 rounded-md ring-1 ring-zinc-200 text-zinc-700 text-xs font-semibold inline-flex items-center gap-1.5 hover:bg-zinc-50 disabled:text-zinc-300">
+                {searching ? <Loader2 className="size-3.5 animate-spin" /> : 'Search'}
+              </button>
+            </div>
+            {ragHits != null && (
+              ragHits.length === 0
+                ? <p className="mt-2 text-[11px] text-red-600 font-medium">No book passages matched — the index is empty or doesn't contain this. Rebuild after uploading the book.</p>
+                : <ul className="mt-2 space-y-1.5">
+                    {ragHits.map((h, i) => (
+                      <li key={i} className="text-[11px] text-zinc-600 bg-zinc-50 ring-1 ring-black/5 rounded px-2 py-1.5">
+                        <span className="font-semibold text-zinc-800">{h.title}</span>
+                        <span className="text-zinc-400"> · {h.source_type} · score {h.score}</span>
+                        <div className="text-zinc-500 line-clamp-2 mt-0.5">{h.preview}…</div>
+                      </li>
+                    ))}
+                  </ul>
+            )}
+          </div>
         </div>
 
         <div className="bg-white ring-1 ring-black/5 rounded-lg p-5 shadow-sm">
