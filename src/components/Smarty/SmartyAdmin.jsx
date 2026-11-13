@@ -4,7 +4,7 @@ import { API_BASE_URL } from '../../apiConfig';
 import { MODULES } from '../../Screens/Modules';
 import {
   Bot, Plus, Trash2, Save, X, Megaphone, MessageSquareText, Loader2, Eye, EyeOff, Send,
-  Sparkles, KeyRound, CheckCircle2, ShieldCheck, ExternalLink, RefreshCw, BookOpen
+  Sparkles, KeyRound, CheckCircle2, ShieldCheck, ExternalLink, RefreshCw, BookOpen, HelpCircle
 } from 'lucide-react';
 
 // =====================================================================
@@ -23,16 +23,23 @@ export default function SmartyAdmin() {
   const { user } = useAuth();
   const instId = user?.institutionId;
   const [tab, setTab] = useState('questions');
+  const [help, setHelp] = useState(false);
 
   return (
     <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 space-y-6">
-      <header className="flex items-center gap-3">
-        <div className="size-10 rounded-xl bg-primary/10 text-primary grid place-items-center ring-1 ring-primary/20"><Bot className="size-5" /></div>
-        <div>
+      <header className="flex items-start gap-3">
+        <div className="size-10 rounded-xl bg-primary/10 text-primary grid place-items-center ring-1 ring-primary/20 shrink-0"><Bot className="size-5" /></div>
+        <div className="min-w-0">
           <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Smarty Assistant</h1>
           <p className="text-sm text-zinc-500">Add your own questions and post app updates. Built-in help works without any setup.</p>
         </div>
+        <button onClick={() => setHelp(true)}
+          className="ml-auto shrink-0 inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors self-start">
+          <HelpCircle className="size-3.5" /> User Guide
+        </button>
       </header>
+
+      {help && <SmartyHelpModal tab={tab} onClose={() => setHelp(false)} />}
 
       <div className="flex bg-zinc-100/80 p-1 rounded-md w-full sm:w-fit">
         {[['questions', 'Questions', MessageSquareText], ['updates', "What's New", Megaphone], ['ai', 'Smarty AI', Sparkles]].map(([id, label, Icon]) => (
@@ -46,6 +53,72 @@ export default function SmartyAdmin() {
       {tab === 'questions' ? <QuestionsTab instId={instId} />
         : tab === 'updates' ? <UpdatesTab instId={instId} />
         : <AiSettingsTab instId={instId} />}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ User Guide
+//  A how-to manual for the Smarty Assistant console. Same primary-header +
+//  numbered-step look as every other module's guide, and it follows the tab
+//  you're standing on.
+const SMARTY_GUIDES = {
+  questions: {
+    title: 'Custom Questions',
+    steps: [
+      ['1 · What this is', 'Smarty already answers common how-to questions on its own. Here you add extra Q&A that is specific to your school — your rules, your fees, your timings — so Smarty replies in your own words.'],
+      ['2 · Add a question', 'Fill in the question, the answer, and (optionally) a category. Write the answer the way you’d tell a parent — short and clear.'],
+      ['3 · Who sees it', 'Set the roles the answer is for (everyone, or just Students, Teachers, Parents…). It only ever shows to those roles.'],
+      ['4 · Keywords & link', 'Keywords are the other ways people might ask the same thing, so Smarty still matches it. An optional link opens the right screen from the reply.'],
+      ['5 · Turn on / off & edit', 'Use the toggle to switch an answer on or off without deleting it, and edit or remove any row later.'],
+    ],
+    note: 'These answers are checked before the AI, so they’re instant and free. Keep them accurate — if a rule changes, update the answer here.'
+  },
+  updates: {
+    title: "What's New",
+    steps: [
+      ['1 · What this is', 'Post a short “What’s new” update — a new feature, a holiday, an exam notice. It shows inside Smarty and also goes to everyone’s Notifications.'],
+      ['2 · Write the update', 'Give it a title and a message. Keep it brief — people read it on a phone.'],
+      ['3 · Choose who gets it', 'Target everyone or specific roles, so only the right people are notified.'],
+      ['4 · Post it', 'Posting fans the update out to the chosen roles right away and lists it here.'],
+      ['5 · Remove one', 'Delete an update when it’s no longer relevant — it stops showing in Smarty.'],
+    ],
+    note: 'Updates are announcements, not saved answers. Use Custom Questions for things people will keep asking, and What’s New for one-off news.'
+  },
+  ai: {
+    title: 'Smarty AI',
+    steps: [
+      ['1 · Open-ended answers (optional)', 'Paste ONE API key from Gemini, ChatGPT or Claude, turn Status On, and Save. Smarty detects the provider automatically and uses it only for open questions it can’t answer from your books or custom Q&A.'],
+      ['2 · Where to get a key', 'Use the links on the left to create a key, copy it, and paste it in. Without a key, Smarty still answers from built-in help, your custom questions and your textbooks.'],
+      ['3 · Answer from your textbooks', 'Smarty reads the books, keywords and Library files you upload in Syllabus, scoped to each student’s class. After adding or changing material, press Rebuild book index. Scanned (image) books are read with OCR the first time.'],
+      ['4 · Saved answers', 'To stay fast, Smarty reuses answers it has already worked out. If one came out wrong, type that exact question under “Forget one answer”. “Clear all” wipes every saved answer (ticks a confirm box first) — your key, books and settings are untouched.'],
+      ['5 · Test it', 'Use Test on the key to check it works, and Test book search to see what a question pulls from your books.'],
+    ],
+    note: 'The key is stored on your school’s server record — only the Super Admin here can view it; students and teachers never can. Answers about a student’s own data are never cached or shared.'
+  }
+};
+
+function SmartyHelpModal({ tab, onClose }) {
+  const content = SMARTY_GUIDES[tab] || SMARTY_GUIDES.questions;
+  return (
+    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-zinc-900/50 backdrop-blur-sm p-4" onClick={onClose}>
+      <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-lg max-h-[85vh] overflow-y-auto shadow-xl" onClick={e => e.stopPropagation()}>
+        <div className="bg-primary text-white px-5 py-3 flex items-center justify-between sticky top-0">
+          <span className="text-sm font-bold flex items-center gap-2"><HelpCircle className="size-4" /> {content.title}</span>
+          <button onClick={onClose} className="text-white/80 hover:text-white"><X className="size-5" /></button>
+        </div>
+        <div className="p-5 space-y-3">
+          {content.steps.map(([t, d], i) => (
+            <div key={i} className="rounded-md ring-1 ring-zinc-100 bg-zinc-50/60 p-3">
+              <p className="text-xs font-semibold text-zinc-800">{t}</p>
+              <p className="text-[11px] text-zinc-600 leading-relaxed mt-1">{d}</p>
+            </div>
+          ))}
+          <div className="rounded-md bg-blue-50/60 ring-1 ring-blue-100 p-3 flex gap-2">
+            <ShieldCheck className="size-4 text-blue-500 shrink-0 mt-0.5" />
+            <p className="text-[11px] text-blue-800 leading-relaxed">{content.note}</p>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -422,6 +495,7 @@ function AiSettingsTab({ instId }) {
   const [forgetQ, setForgetQ] = useState('');
   const [cacheMsg, setCacheMsg] = useState(null);
   const [cacheBusy, setCacheBusy] = useState(false);
+  const [clearConfirm, setClearConfirm] = useState(false);   // extra guard for "Clear all"
   const forgetOne = async () => {
     if (!forgetQ.trim()) return;
     setCacheBusy(true); setCacheMsg(null);
@@ -438,12 +512,14 @@ function AiSettingsTab({ instId }) {
     setCacheBusy(false);
   };
   const clearAll = async () => {
-    if (!window.confirm('Clear every saved answer for this school? Questions will be answered fresh after this.')) return;
+    if (!clearConfirm) return;   // the checkbox must be ticked first
+    if (!window.confirm('Delete every saved answer for this school? This cannot be undone. Smarty will keep working and rebuild answers as questions come in.')) return;
     setCacheBusy(true); setCacheMsg(null);
     try {
       const res = await fetch(`${API_BASE_URL}/smarty/cache/clear`, { method: 'POST' });
       const d = await res.json().catch(() => ({}));
       setCacheMsg(d.ok ? { ok: true, text: `Cleared ${d.removed || 0} saved answer(s).` } : { ok: false, text: d.error || 'Could not clear.' });
+      if (d.ok) setClearConfirm(false);
     } catch (e) { setCacheMsg({ ok: false, text: e.message }); }
     setCacheBusy(false);
   };
@@ -454,9 +530,10 @@ function AiSettingsTab({ instId }) {
   const provName = AI_PROVIDER_NAME[cfg?.provider] || 'AI';
 
   return (
-    <div className="grid lg:grid-cols-2 gap-6">
-      {/* left: the single key form */}
-      <div className="bg-white ring-1 ring-black/5 rounded-lg p-5 shadow-sm space-y-5 h-fit">
+    <div className="grid lg:grid-cols-2 gap-6 items-start">
+      {/* left: the key form + where-to-get-a-key (fills the space under the form) */}
+      <div className="space-y-4">
+      <div className="bg-white ring-1 ring-black/5 rounded-lg p-5 shadow-sm space-y-5">
         <div className="flex items-start gap-3">
           <div className="size-10 rounded-xl bg-violet-50 text-violet-600 grid place-items-center ring-1 ring-violet-200 shrink-0"><Sparkles className="size-5" /></div>
           <div>
@@ -524,10 +601,9 @@ function AiSettingsTab({ instId }) {
             <span className="font-semibold">{testMsg.ok ? '✓ Working — ' : '✕ Failed — '}</span>{testMsg.text}
           </div>
         )}
-      </div>
+        </div>
 
-      {/* right: where to get a key + privacy */}
-      <div className="space-y-4">
+        {/* Where to get a key — moved here to fill the empty space under the form */}
         <div className="bg-white ring-1 ring-black/5 rounded-lg p-5 shadow-sm">
           <h4 className="text-xs font-semibold text-zinc-800 mb-3 flex items-center gap-1.5"><KeyRound className="size-3.5 text-primary" /> Where to get a key</h4>
           <p className="text-[11px] text-zinc-600 leading-relaxed mb-3">Create a key with any <strong>one</strong> of these, copy it, paste it above, turn Status <strong>On</strong>, and Save:</p>
@@ -545,6 +621,57 @@ function AiSettingsTab({ instId }) {
               </li>
             ))}
           </ul>
+        </div>
+      </div>
+
+      {/* right: saved answers + textbooks + privacy */}
+      <div className="space-y-4">
+
+        {/* Saved answers — its own card, up top, so it's easy to find */}
+        <div className="bg-white ring-1 ring-black/5 rounded-lg p-5 shadow-sm">
+          <h4 className="text-xs font-semibold text-zinc-800 mb-1 flex items-center gap-1.5"><Sparkles className="size-3.5 text-violet-500" /> Saved answers</h4>
+          <p className="text-[11px] text-zinc-500 leading-relaxed mb-3">
+            To stay fast, Smarty saves the answers it has already worked out and reuses them. If one came out wrong, remove it here and Smarty will answer it fresh next time.
+          </p>
+
+          {/* Forget ONE answer */}
+          <div className="rounded-md ring-1 ring-zinc-200 bg-zinc-50/60 p-3">
+            <p className="text-[11px] font-semibold text-zinc-700">Forget one answer</p>
+            <p className="text-[10px] text-zinc-500 leading-relaxed mt-0.5 mb-2">
+              Type the <strong>exact</strong> question that got a wrong reply (for example <span className="font-semibold text-zinc-700">Sunlight?</span>). Only that one saved answer is removed — every other saved answer stays.
+            </p>
+            <div className="flex items-center gap-2">
+              <input value={forgetQ} onChange={e => setForgetQ(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') forgetOne(); }}
+                placeholder="e.g. Sunlight?"
+                className="h-8 flex-1 rounded-md border border-zinc-200 bg-white px-2.5 text-xs text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20" />
+              <button onClick={forgetOne} disabled={cacheBusy || !forgetQ.trim()}
+                className="h-8 px-4 rounded-md bg-primary text-white text-xs font-semibold inline-flex items-center gap-1.5 hover:bg-primary/90 disabled:bg-zinc-200 disabled:text-zinc-400">
+                {cacheBusy ? <Loader2 className="size-3.5 animate-spin" /> : 'Forget'}
+              </button>
+            </div>
+          </div>
+
+          {/* Clear ALL — danger zone, needs the checkbox ticked first */}
+          <div className="mt-3 rounded-md ring-1 ring-red-200 bg-red-50/50 p-3">
+            <p className="text-[11px] font-semibold text-red-700">Clear all saved answers</p>
+            <p className="text-[10px] text-zinc-600 leading-relaxed mt-0.5">
+              Deletes <strong>every</strong> saved answer for the whole school at once. Smarty keeps working — it just recomputes answers as questions come in, so replies are a little slower until they build up again. Your textbooks, API key and settings are <strong>not</strong> touched. This can’t be undone.
+            </p>
+            <label className="flex items-start gap-2 mt-2 cursor-pointer select-none">
+              <input type="checkbox" checked={clearConfirm} onChange={e => setClearConfirm(e.target.checked)}
+                className="mt-0.5 size-3.5 rounded border-zinc-300 text-red-600 focus:ring-red-500" />
+              <span className="text-[10px] font-medium text-zinc-700 leading-relaxed">Yes, I really want to delete all the stored answers for this school.</span>
+            </label>
+            <button onClick={clearAll} disabled={cacheBusy || !clearConfirm}
+              className="mt-2 h-8 px-4 rounded-md text-xs font-semibold inline-flex items-center gap-1.5 transition-colors bg-red-600 text-white hover:bg-red-700 disabled:bg-zinc-200 disabled:text-zinc-400 disabled:cursor-not-allowed">
+              {cacheBusy ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />} Clear all saved answers
+            </button>
+          </div>
+
+          {cacheMsg && (
+            <p className={`mt-3 text-[11px] font-medium ${cacheMsg.ok ? 'text-emerald-600' : 'text-red-600'}`}>{cacheMsg.text}</p>
+          )}
         </div>
 
         <div className="bg-white ring-1 ring-black/5 rounded-lg p-5 shadow-sm">
@@ -629,40 +756,6 @@ function AiSettingsTab({ instId }) {
                   </ul>
             )}
           </div>
-
-          {/* Fix a wrong saved answer. Smarty caches replies for speed; if one
-              is wrong, forget it here so it's answered fresh next time. */}
-          <div className="mt-3 pt-3 border-t border-zinc-100">
-            <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1.5">Saved answers</p>
-            <p className="text-[11px] text-zinc-500 mb-2">Smarty remembers answers to be fast. If a reply was wrong, type that exact question to forget it — or clear them all.</p>
-            <div className="flex items-center gap-2">
-              <input value={forgetQ} onChange={e => setForgetQ(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') forgetOne(); }}
-                placeholder="e.g. Sunlight?"
-                className="h-8 flex-1 rounded-md border border-zinc-200 bg-white px-2.5 text-xs text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20" />
-              <button onClick={forgetOne} disabled={cacheBusy || !forgetQ.trim()}
-                className="h-8 px-3 rounded-md ring-1 ring-zinc-200 text-zinc-700 text-xs font-semibold inline-flex items-center gap-1.5 hover:bg-zinc-50 disabled:text-zinc-300">
-                {cacheBusy ? <Loader2 className="size-3.5 animate-spin" /> : 'Forget'}
-              </button>
-              <button onClick={clearAll} disabled={cacheBusy}
-                className="h-8 px-3 rounded-md ring-1 ring-red-200 text-red-600 text-xs font-semibold hover:bg-red-50 disabled:opacity-50">
-                Clear all
-              </button>
-            </div>
-            {cacheMsg && (
-              <p className={`mt-2 text-[11px] font-medium ${cacheMsg.ok ? 'text-emerald-600' : 'text-red-600'}`}>{cacheMsg.text}</p>
-            )}
-          </div>
-        </div>
-
-        <div className="bg-white ring-1 ring-black/5 rounded-lg p-5 shadow-sm">
-          <h4 className="text-xs font-semibold text-zinc-800 mb-3 flex items-center gap-1.5"><ShieldCheck className="size-3.5 text-emerald-600" /> How we keep it safe</h4>
-          <ul className="text-[11px] text-zinc-600 leading-relaxed space-y-1.5 list-disc pl-4">
-            <li>One key, one AI — Smarty detects the provider from the key and uses only that one.</li>
-            <li>The key is stored on your school's server record (not in the app code). Only the Super Admin here can view it — students and teachers never can.</li>
-            <li>Smarty answers common questions from its built-in help first (free, instant); the key is used only when a question needs it.</li>
-            <li>General answers are cached so the same question doesn't call the API twice. Answers about a student's own data are never cached or shared.</li>
-          </ul>
         </div>
       </div>
     </div>
