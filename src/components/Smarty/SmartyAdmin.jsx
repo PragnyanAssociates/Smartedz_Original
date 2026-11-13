@@ -313,38 +313,90 @@ function AiSettingsTab({ instId }) {
   };
 
   // ---- Textbook knowledge (RAG): rebuild the searchable book index ----
+  //  Rebuild now runs in the BACKGROUND on the server (OCR of a scanned book
+  //  takes minutes). We start it, then poll /rag/status for live progress.
   const [ragChunks, setRagChunks]   = useState(null);
+  const [ragOcr, setRagOcr]         = useState(null);     // 'on' | 'off' (OCR available?)
+  const [ragEngine, setRagEngine]   = useState(null);     // 'native' | 'wasm' | 'none'
   const [reindexing, setReindexing] = useState(false);
+  const [ragJob, setRagJob]         = useState(null);     // live progress while running
   const [ragMsg, setRagMsg]         = useState(null);
+  const [ocrTest, setOcrTest]       = useState(null);     // self-test result
+  const [ocrTesting, setOcrTesting] = useState(false);
+  const ragPoll = useRef(null);
+
   const loadRag = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/smarty/rag/status`);
       const d = await res.json().catch(() => ({}));
-      if (d && d.ok) setRagChunks(d.chunks);
+      if (d && d.ok) {
+        setRagChunks(d.chunks);
+        setRagOcr(d.ocr || null);
+        setRagEngine(d.ocrEngine || null);
+        if (d.job && d.job.running) { setReindexing(true); setRagJob(d.job); startRagPoll(); }
+      }
     } catch (_) {}
   }, []);
-  useEffect(() => { loadRag(); }, [loadRag]);
-  const reindex = async () => {
-    setReindexing(true); setRagMsg(null);
+
+  const runOcrTest = async () => {
+    setOcrTesting(true); setOcrTest(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/smarty/rag/reindex`, {
+      const res = await fetch(`${API_BASE_URL}/smarty/rag/ocrtest`);
+      const d = await res.json().catch(() => ({}));
+      setOcrTest(d || { ok: false, reason: 'No response.' });
+    } catch (e) { setOcrTest({ ok: false, reason: e.message }); }
+    setOcrTesting(false);
+  };
+
+  const finishRag = (job) => {
+    setReindexing(false); setRagJob(null);
+    if (ragPoll.current) { clearInterval(ragPoll.current); ragPoll.current = null; }
+    loadRag();
+    if (job && job.error) { setRagMsg({ ok: false, text: `Rebuild failed: ${job.error}` }); return; }
+    const r = (job && job.result) || {};
+    if (r.ocr === 'off' && r.scanned) {
+      setRagMsg({ ok: false, text: `Indexed ${r.chunks} passages, but your textbooks are scanned images and OCR is not installed. Run  npm install mupdf tesseract.js --save  on the server and rebuild, so Smarty can read scanned books.` });
+    } else if (r.scanned) {
+      setRagMsg({ ok: false, text: `Indexed ${r.chunks} passages, but no text could be read from ${r.chapters} chapter(s) even after OCR. Check the PDFs, or add keywords per chapter.` });
+    } else {
+      const ocrNote = r.ocrChapters ? ` (${r.ocrChapters} scanned via OCR)` : '';
+      setRagMsg({ ok: true, text: `Indexed ${r.chunks} passages — ${(r.chars || 0).toLocaleString()} chars from ${r.chapters} chapter(s)${ocrNote} and ${r.files} library file(s).` });
+    }
+  };
+
+  const startRagPoll = useCallback(() => {
+    if (ragPoll.current) return;
+    ragPoll.current = setInterval(async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/smarty/rag/status`);
+        const d = await res.json().catch(() => ({}));
+        if (!d || !d.ok) return;
+        setRagChunks(d.chunks);
+        if (d.job && d.job.running) { setRagJob(d.job); }
+        else { finishRag(d.job); }
+      } catch (_) {}
+    }, 2000);
+  }, []);
+
+  useEffect(() => { loadRag(); return () => { if (ragPoll.current) clearInterval(ragPoll.current); }; }, [loadRag]);
+
+  const reindex = async (force = false) => {
+    setReindexing(true); setRagMsg(null); setRagJob(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/smarty/rag/reindex${force ? '?force=1' : ''}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
       });
       const d = await res.json().catch(() => ({}));
-      if (d && d.ok) {
-        setRagChunks(d.chunks);
-        if (d.scanned || (d.chapters > 0 && !d.chars)) {
-          setRagMsg({ ok: false, text: `Indexed ${d.chunks} passages, but 0 characters of text were read from ${d.chapters} chapter(s). Your textbook PDFs are scanned images (no text layer) — they need OCR, or add keywords per chapter. Library/keywords still work.` });
-        } else {
-          setRagMsg({ ok: true, text: `Indexed ${d.chunks} passages (${d.chars.toLocaleString()} chars of text) from ${d.chapters} chapter(s) and ${d.files} library file(s).` });
-        }
+      if (d && d.ok && d.started) {
+        setRagOcr(d.ocr || ragOcr);
+        startRagPoll();                 // watch progress
       } else if (d && d.reason === 'busy') {
-        setRagMsg({ ok: false, text: 'A rebuild is already running — try again in a moment.' });
+        startRagPoll();                 // already running — just watch it
       } else {
-        setRagMsg({ ok: false, text: (d && d.error) || 'Rebuild failed.' });
+        setReindexing(false);
+        setRagMsg({ ok: false, text: (d && d.error) || 'Could not start the rebuild.' });
       }
-    } catch (e) { setRagMsg({ ok: false, text: e.message }); }
-    setReindexing(false);
+    } catch (e) { setReindexing(false); setRagMsg({ ok: false, text: e.message }); }
   };
 
   // ---- Test what the book search finds for a query ----
@@ -464,13 +516,56 @@ function AiSettingsTab({ instId }) {
         <div className="bg-white ring-1 ring-black/5 rounded-lg p-5 shadow-sm">
           <h4 className="text-xs font-semibold text-zinc-800 mb-2 flex items-center gap-1.5"><BookOpen className="size-3.5 text-violet-500" /> Answer from your textbooks</h4>
           <p className="text-[11px] text-zinc-600 leading-relaxed mb-3">
-            Smarty can answer from the books, keywords and Library files you upload in <strong>Syllabus</strong>, scoped to each student's class. After adding or changing material, rebuild the index so Smarty can read it.
+            Smarty can answer from the books, keywords and Library files you upload in <strong>Syllabus</strong>, scoped to each student's class — <strong>with or without AI</strong>. After adding or changing material, rebuild the index so Smarty can read it. Scanned (image) textbooks are read with on-device OCR the first time, then cached.
             {ragChunks != null && <> Currently <strong>{ragChunks}</strong> passage{ragChunks === 1 ? '' : 's'} indexed.</>}
           </p>
-          <button onClick={reindex} disabled={reindexing}
-            className="h-9 px-4 rounded-md ring-1 ring-zinc-200 text-zinc-700 text-xs font-semibold inline-flex items-center gap-1.5 hover:bg-zinc-50 disabled:text-zinc-300 disabled:ring-zinc-100">
-            {reindexing ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />} {reindexing ? 'Rebuilding…' : 'Rebuild book index'}
-          </button>
+
+          {/* OCR engine state (scanned books need it) */}
+          {ragOcr === 'off' && (
+            <div className="mb-3 rounded-md bg-amber-50 ring-1 ring-amber-200 px-3 py-2 text-[11px] text-amber-800 leading-relaxed">
+              <strong>Scanned-book reading (OCR) is not installed.</strong> Text books still work. Best fix: add <code className="bg-amber-100 px-1 rounded">tesseract-ocr</code> + <code className="bg-amber-100 px-1 rounded">poppler-utils</code> on the server (fast, reliable). Then rebuild.
+            </div>
+          )}
+          {ragOcr === 'on' && (
+            <div className={`mb-3 rounded-md px-3 py-2 text-[11px] leading-relaxed ring-1 ${ragEngine === 'native' ? 'bg-emerald-50 ring-emerald-200 text-emerald-800' : 'bg-sky-50 ring-sky-200 text-sky-800'}`}>
+              OCR engine: <strong>{ragEngine === 'native' ? 'Native Tesseract (fast & reliable)' : 'WASM fallback (slower — consider installing native Tesseract + poppler)'}</strong>.
+              <button onClick={runOcrTest} disabled={ocrTesting}
+                className="ml-2 underline font-semibold disabled:opacity-50">
+                {ocrTesting ? 'Testing…' : 'Run OCR self-test'}
+              </button>
+            </div>
+          )}
+          {ocrTest && (
+            <div className={`mb-3 rounded-md px-3 py-2 text-[11px] leading-relaxed ring-1 ${ocrTest.ok ? 'bg-emerald-50 ring-emerald-200 text-emerald-800' : 'bg-red-50 ring-red-200 text-red-700'}`}>
+              {ocrTest.ok
+                ? <><strong>✓ OCR is reading pages.</strong> Engine {ocrTest.engine}, {ocrTest.chars} chars from page 1 of “{ocrTest.title}” in {ocrTest.ms}ms.<br /><span className="text-emerald-700">Sample: “{ocrTest.sample}”</span></>
+                : <><strong>✕ OCR check:</strong> {ocrTest.reason || ocrTest.note || ocrTest.error || 'could not read the page.'}</>}
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            <button onClick={() => reindex(false)} disabled={reindexing}
+              className="h-9 px-4 rounded-md ring-1 ring-zinc-200 text-zinc-700 text-xs font-semibold inline-flex items-center gap-1.5 hover:bg-zinc-50 disabled:text-zinc-300 disabled:ring-zinc-100">
+              {reindexing ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />} {reindexing ? 'Rebuilding…' : 'Rebuild book index'}
+            </button>
+            {!reindexing && ragOcr === 'on' && (
+              <button onClick={() => reindex(true)} title="Ignore the OCR cache and read every scanned page again"
+                className="h-9 px-3 rounded-md ring-1 ring-zinc-200 text-zinc-500 text-[11px] font-semibold inline-flex items-center gap-1.5 hover:bg-zinc-50">
+                Re-OCR from scratch
+              </button>
+            )}
+          </div>
+
+          {/* live progress while the background job runs */}
+          {reindexing && ragJob && (
+            <div className="mt-2 text-[11px] text-zinc-500 font-medium">
+              {ragJob.phase === 'chapters' && <>Reading chapter {ragJob.chapter} of {ragJob.totalChapters}
+                {ragJob.ocrPages > 0 && <> · OCR page {ragJob.ocrPage}/{ragJob.ocrPages}</>}…</>}
+              {ragJob.phase === 'library' && <>Reading library files ({ragJob.files})
+                {ragJob.ocrPages > 0 && <> · OCR page {ragJob.ocrPage}/{ragJob.ocrPages}</>}…</>}
+              {(ragJob.phase === 'starting' || !ragJob.phase) && <>Starting…</>}
+            </div>
+          )}
           {ragMsg && <p className={`mt-2 text-[11px] font-medium ${ragMsg.ok ? 'text-emerald-600' : 'text-red-600'}`}>{ragMsg.text}</p>}
 
           {/* Test what the book search returns for a question */}

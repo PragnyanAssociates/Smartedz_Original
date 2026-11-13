@@ -1,0 +1,22 @@
+# =====================================================================
+#  Railway / Nixpacks — install the NATIVE OCR engine for Smarty
+#
+#  Put this file named  nixpacks.toml  in your BACKEND project root
+#  (the same folder as package.json), commit, and redeploy.
+#
+#  It installs:
+#    • tesseract   — the real OCR program (reads text from scanned pages)
+#    • poppler_utils — provides pdftoppm (turns PDF pages into images)
+#
+#  After deploy, open  /api/smarty/rag/status  — it should show
+#  "ocrEngine": "native". Then press "Rebuild book index".
+#
+#  Add Telugu/Hindi too if your books are in those scripts:
+#    nixPkgs below already pulls the core; set the env var
+#    SMARTY_OCR_LANG = "eng+tel"  in Railway → Variables, and add
+#    tesseract's language data package for that script.
+# =====================================================================
+
+[phases.setup]
+# These merge with whatever Nixpacks already installs for your Node app.
+nixPkgs = ["...", "tesseract", "poppler_utils"]

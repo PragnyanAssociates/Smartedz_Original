@@ -18225,12 +18225,20 @@ app.post('/api/smarty/ask', async (req, res) => {
 //      PRIMARY KEY (source_type, source_id)
 //    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 //
-//  INSTALL (OCR for scanned books + Word/Excel library files):
-//    npm install mupdf tesseract.js mammoth xlsx --save
-//    (mupdf = turns scanned PDF pages into images, pure WASM, no native build;
-//     tesseract.js = reads text from those images, pure WASM, no AI.
-//     If these two are missing, text books still index fine — only scanned
-//     books stay blank, and the status will say "ocr: off".)
+//  INSTALL — OCR for scanned books (no AI). TWO engines, native preferred:
+//    BEST (native, fast, reliable): install the system programs
+//        tesseract-ocr  +  poppler-utils
+//      On Railway (Nixpacks): drop the included  nixpacks.toml  in the backend
+//      root and redeploy. On a Dockerfile:  RUN apt-get update && apt-get
+//      install -y tesseract-ocr poppler-utils.
+//    FALLBACK (pure WASM, no system packages, slower/heavier):
+//        npm install mupdf tesseract.js --save
+//    Word/Excel library files (optional):  npm install mammoth xlsx --save
+//
+//    Smarty auto-detects: it uses native if present, else WASM, else text-only.
+//    Check  /api/smarty/rag/status  -> "ocrEngine": "native" | "wasm" | "none".
+//    Env knobs:  SMARTY_OCR_LANG (default "eng", e.g. "eng+tel"),
+//                SMARTY_OCR_DPI  (default 200).
 //
 //  AFTER PASTING: as Super Admin, POST /api/smarty/rag/reindex once to index
 //  everything already uploaded. It runs in the BACKGROUND — poll
@@ -18241,9 +18249,32 @@ app.post('/api/smarty/ask', async (req, res) => {
 const _ragPdfjs = require('pdfjs-dist/legacy/build/pdf.js');  // already installed for Syllabus
 let _ragMammoth = null; try { _ragMammoth = require('mammoth'); }      catch (_) {}  // .docx (optional)
 let _ragXlsx    = null; try { _ragXlsx = require('xlsx'); }            catch (_) {}  // .xls/.xlsx (optional)
-let _ragMupdf   = null; try { _ragMupdf = require('mupdf'); }          catch (_) {}  // PDF page -> image (OCR)
-let _ragTess    = null; try { _ragTess = require('tesseract.js'); }    catch (_) {}  // image -> text (OCR)
-const _ragOcrReady = !!(_ragMupdf && _ragTess);
+// ---- OCR engine detection ------------------------------------------
+//  PREFERRED: the NATIVE Tesseract program + poppler's pdftoppm, installed
+//  on the server (fast, accurate, reliable). FALLBACK: the pure-WASM
+//  tesseract.js + mupdf (works with no system packages, but slower and
+//  memory-heavy on hosted containers — often the reason OCR "silently fails").
+const _cp   = require('child_process');
+const _os   = require('os');
+const _fs   = require('fs');
+const _path = require('path');
+
+function _hasBin(bin) {
+  try { _cp.execFileSync('sh', ['-c', `command -v ${bin}`], { stdio: 'ignore' }); return true; }
+  catch (_) { return false; }
+}
+const _ragHasTesseract = _hasBin('tesseract');
+const _ragHasPdftoppm  = _hasBin('pdftoppm');
+const _ragNativeOcr    = _ragHasTesseract && _ragHasPdftoppm;
+
+let _ragMupdf = null; try { _ragMupdf = require('mupdf'); }       catch (_) {}  // WASM rasterize (fallback)
+let _ragTess  = null; try { _ragTess  = require('tesseract.js'); } catch (_) {}  // WASM OCR (fallback)
+const _ragWasmOcr = !!(_ragMupdf && _ragTess);
+
+const _ragOcrReady  = _ragNativeOcr || _ragWasmOcr;
+const _ragOcrEngine = _ragNativeOcr ? 'native' : (_ragWasmOcr ? 'wasm' : 'none');
+console.log(`[smarty rag] OCR engine: ${_ragOcrEngine}` +
+  ` (tesseract=${_ragHasTesseract?'yes':'no'}, pdftoppm=${_ragHasPdftoppm?'yes':'no'}, wasm=${_ragWasmOcr?'yes':'no'})`);
 
 // ---- plain text extraction (fast, no OCR) --------------------------
 async function _ragPdfText(buffer, maxPages = 400) {   // cover whole books, even a single 240-page chapter
@@ -18264,44 +18295,78 @@ async function _ragPdfText(buffer, maxPages = 400) {   // cover whole books, eve
   } catch (e) { console.warn('[rag pdf]', e.message); return ''; }
 }
 
-// ---- LOCAL OCR for scanned PDFs (mupdf rasterize -> tesseract) ------
-//  No AI, no quota. One Tesseract worker is reused for the whole job
-//  (created lazily, terminated after the rebuild) to keep memory low.
+// ---- LOCAL OCR for scanned PDFs (no AI, no quota) ------------------
+const _ragOcrLang = process.env.SMARTY_OCR_LANG || 'eng';   // e.g. 'eng' or 'eng+tel'
+const _ragOcrDpi  = parseInt(process.env.SMARTY_OCR_DPI || '200', 10);
+
+function _execFile(cmd, args, opts) {
+  return new Promise((resolve, reject) => {
+    _cp.execFile(cmd, args, Object.assign({ maxBuffer: 96 * 1024 * 1024 }, opts || {}),
+      (err, stdout) => err ? reject(err) : resolve(stdout));
+  });
+}
+
+// --- NATIVE path: pdftoppm (render) -> tesseract (read), page by page ---
+//  Page-by-page keeps memory tiny even for a 240-page book.
+async function _ragOcrPdfNative(buffer, maxPages, onPage) {
+  const dir = _fs.mkdtempSync(_path.join(_os.tmpdir(), 'smocr-'));
+  const pdf = _path.join(dir, 'in.pdf');
+  try {
+    _fs.writeFileSync(pdf, buffer);
+    // page count (use pdfjs we already have; fall back to maxPages)
+    let total = maxPages;
+    try {
+      const d = await _ragPdfjs.getDocument({ data: new Uint8Array(buffer) }).promise;
+      total = Math.min(d.numPages, maxPages); try { await d.destroy(); } catch (_) {}
+    } catch (_) {}
+    const out = [];
+    for (let i = 1; i <= total; i++) {
+      const pfx = _path.join(dir, 'pg');
+      try {
+        // render ONE page to PNG
+        await _execFile('pdftoppm', ['-png', '-r', String(_ragOcrDpi), '-f', String(i), '-l', String(i), pdf, pfx]);
+        const f = _fs.readdirSync(dir).find(n => n.startsWith('pg') && n.endsWith('.png'));
+        if (f) {
+          const img = _path.join(dir, f);
+          // --psm 6: a uniform block of text (good for textbook pages); --oem 1: LSTM engine
+          const txt = await _execFile('tesseract', [img, 'stdout', '-l', _ragOcrLang, '--psm', '6', '--oem', '1']);
+          if (txt && txt.trim()) out.push(txt);
+          try { _fs.unlinkSync(img); } catch (_) {}
+        }
+      } catch (e) { console.warn('[rag ocr native]', i, e.message); }
+      if (onPage) { try { onPage(i, total); } catch (_) {} }
+    }
+    return out.join('\n');
+  } catch (e) { console.warn('[rag ocr native pdf]', e.message); return ''; }
+  finally { try { _fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {} }
+}
+
+// --- WASM fallback: mupdf (render) -> tesseract.js (read) ---------------
 let _ragTessWorker = null;
 async function _ragGetWorker() {
   if (!_ragTess) return null;
   if (_ragTessWorker) return _ragTessWorker;
-  try {
-    // tesseract.js v4/v5: createWorker('eng') loads the language itself.
-    _ragTessWorker = await _ragTess.createWorker('eng');
-    return _ragTessWorker;
-  } catch (e) { console.warn('[rag ocr worker]', e.message); _ragTessWorker = null; return null; }
+  try { _ragTessWorker = await _ragTess.createWorker(_ragOcrLang); return _ragTessWorker; }
+  catch (e) { console.warn('[rag ocr worker]', e.message); _ragTessWorker = null; return null; }
 }
 async function _ragCloseWorker() {
   if (_ragTessWorker) { try { await _ragTessWorker.terminate(); } catch (_) {} _ragTessWorker = null; }
 }
-
-// Render one PDF page to a PNG Buffer at the given DPI. Returns null on failure.
-function _ragRenderPage(mdoc, index, dpi) {
+function _ragRenderPageWasm(mdoc, index, dpi) {
   let page = null, pix = null;
   try {
     page = mdoc.loadPage(index);
     const s = dpi / 72;
-    const matrix = (_ragMupdf.Matrix && _ragMupdf.Matrix.scale)
-      ? _ragMupdf.Matrix.scale(s, s) : [s, 0, 0, s, 0, 0];
+    const matrix = (_ragMupdf.Matrix && _ragMupdf.Matrix.scale) ? _ragMupdf.Matrix.scale(s, s) : [s, 0, 0, s, 0, 0];
     pix = page.toPixmap(matrix, _ragMupdf.ColorSpace.DeviceRGB, false);
-    const png = pix.asPNG();                 // Uint8Array
-    return Buffer.from(png);
+    return Buffer.from(pix.asPNG());
   } catch (e) { console.warn('[rag render]', index, e.message); return null; }
   finally {
     try { pix && pix.destroy && pix.destroy(); } catch (_) {}
     try { page && page.destroy && page.destroy(); } catch (_) {}
   }
 }
-
-// OCR a whole PDF buffer. onPage(i,n) is called after each page for progress.
-async function _ragOcrPdf(buffer, maxPages, onPage) {
-  if (!_ragOcrReady) return '';
+async function _ragOcrPdfWasm(buffer, maxPages, onPage) {
   let mdoc = null;
   try {
     mdoc = _ragMupdf.Document.openDocument(new Uint8Array(buffer), 'application/pdf');
@@ -18310,18 +18375,23 @@ async function _ragOcrPdf(buffer, maxPages, onPage) {
     if (!worker) return '';
     const out = [];
     for (let i = 0; i < total; i++) {
-      const png = _ragRenderPage(mdoc, i, 150);   // 150 DPI: good enough for print, light on memory
+      const png = _ragRenderPageWasm(mdoc, i, 150);
       if (png) {
-        try {
-          const { data } = await worker.recognize(png);
-          if (data && data.text) out.push(data.text);
-        } catch (e) { console.warn('[rag ocr page]', i, e.message); }
+        try { const { data } = await worker.recognize(png); if (data && data.text) out.push(data.text); }
+        catch (e) { console.warn('[rag ocr page]', i, e.message); }
       }
       if (onPage) { try { onPage(i + 1, total); } catch (_) {} }
     }
     return out.join('\n');
   } catch (e) { console.warn('[rag ocr pdf]', e.message); return ''; }
   finally { try { mdoc && mdoc.destroy && mdoc.destroy(); } catch (_) {} }
+}
+
+// OCR a whole PDF buffer with whichever engine is available. onPage(i,n) = progress.
+async function _ragOcrPdf(buffer, maxPages, onPage) {
+  if (_ragNativeOcr) return _ragOcrPdfNative(buffer, maxPages, onPage);
+  if (_ragWasmOcr)   return _ragOcrPdfWasm(buffer, maxPages, onPage);
+  return '';
 }
 
 // OCR cache: run once, reuse on every later rebuild.
@@ -18544,7 +18614,7 @@ async function ragReindexInstitution(institutionId, opts = {}) {
   // scanned & still blank = image books that OCR could not read (usually OCR libs not installed)
   const scanned = chapters > 0 && textChapters === 0;
   return { chapters, files, chunks: n, chars, textChapters, ocrChapters, scanned,
-           ocr: _ragOcrReady ? 'on' : 'off',
+           ocr: _ragOcrReady ? 'on' : 'off', ocrEngine: _ragOcrEngine,
            word: _ragMammoth ? 'on' : 'off', excel: _ragXlsx ? 'on' : 'off' };
 }
 
@@ -18654,7 +18724,7 @@ app.post('/api/smarty/rag/reindex', async (req, res) => {
     }
   })();
 
-  res.json({ ok: true, started: true, ocr: _ragOcrReady ? 'on' : 'off' });
+  res.json({ ok: true, started: true, ocr: _ragOcrReady ? 'on' : 'off', ocrEngine: _ragOcrEngine });
 });
 
 // ---- Super-Admin: status / progress --------------------------------
@@ -18665,11 +18735,61 @@ app.get('/api/smarty/rag/status', async (req, res) => {
       'SELECT COUNT(*) AS chunks FROM smarty_doc_chunks WHERE institutionId = ?', [req.auth.institutionId]);
     res.json({
       ok: true, chunks,
-      ocr: _ragOcrReady ? 'on' : 'off',
+      ocr: _ragOcrReady ? 'on' : 'off', ocrEngine: _ragOcrEngine,
+      tesseract: _ragHasTesseract, pdftoppm: _ragHasPdftoppm,
       word: _ragMammoth ? 'on' : 'off', excel: _ragXlsx ? 'on' : 'off',
       job: _ragJob
     });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ---- Super-Admin: OCR SELF-TEST ------------------------------------
+//  Proves whether OCR actually reads a scanned page. It takes the first
+//  chapter that has (almost) no text layer, OCRs just its FIRST page, and
+//  returns the engine used, how many characters came out, and a sample —
+//  so "OCR isn't working" becomes a precise, visible result.
+//    GET /api/smarty/rag/ocrtest            (first scanned chapter)
+//    GET /api/smarty/rag/ocrtest?chapter=57 (a specific chapter id)
+app.get('/api/smarty/rag/ocrtest', async (req, res) => {
+  if (!_smartyIsAdmin(req)) return res.status(403).json({ error: 'Only the Super Admin can run the OCR test.' });
+  if (!_ragOcrReady) {
+    return res.json({ ok: false, engine: 'none',
+      reason: 'OCR is not installed. Install the native engine (recommended): add tesseract-ocr + poppler-utils to the server, or run  npm install mupdf tesseract.js --save  for the WASM fallback.' });
+  }
+  try {
+    const instId = req.auth.institutionId;
+    const only = parseInt(req.query.chapter || '0', 10);
+    // find a scanned chapter (little/no text layer), or the one asked for
+    let chapterId = only;
+    if (!chapterId) {
+      const [chs] = await db.execute(
+        `SELECT c.id, c.doc_data FROM syllabus_chapters c JOIN syllabus s ON s.id = c.syllabus_id
+          WHERE s.institutionId = ? AND c.doc_data IS NOT NULL LIMIT 25`, [instId]);
+      for (const c of chs) {
+        const b64 = String(c.doc_data).replace(/^data:[^;]+;base64,/, '');
+        const t = await _ragPdfText(Buffer.from(b64, 'base64'), 3);
+        if ((t || '').replace(/\s/g, '').length < 100) { chapterId = c.id; break; }
+      }
+    }
+    if (!chapterId) return res.json({ ok: false, engine: _ragOcrEngine, reason: 'No scanned chapter found (all chapters already have a text layer).' });
+
+    const [rows] = await db.execute('SELECT id, title, doc_data FROM syllabus_chapters WHERE id = ?', [chapterId]);
+    if (!rows.length || !rows[0].doc_data) return res.json({ ok: false, engine: _ragOcrEngine, reason: 'Chapter has no PDF.' });
+    const b64 = String(rows[0].doc_data).replace(/^data:[^;]+;base64,/, '');
+    const buf = Buffer.from(b64, 'base64');
+
+    const t0 = Date.now();
+    const text = await _ragOcrPdf(buf, 1);   // OCR just the first page
+    const ms = Date.now() - t0;
+    const chars = (text || '').replace(/\s/g, '').length;
+    res.json({
+      ok: chars > 0, engine: _ragOcrEngine, chapterId, title: rows[0].title,
+      ms, chars, sample: String(text || '').replace(/\s+/g, ' ').trim().slice(0, 400),
+      note: chars > 0
+        ? 'OCR is reading the page. Rebuild the index to OCR every page of every scanned book.'
+        : 'OCR ran but read 0 characters from this page — the scan may be very low quality, rotated, or a non-English script (set SMARTY_OCR_LANG). Try a higher SMARTY_OCR_DPI.'
+    });
+  } catch (e) { res.status(500).json({ ok: false, engine: _ragOcrEngine, error: e.message }); }
 });
 
 // ---- Super-Admin: test what the book search returns for a query ----
