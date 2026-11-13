@@ -18040,19 +18040,21 @@ app.post('/api/smarty/ai-config', async (req, res) => {
 //  provider and caches the answer. Only general questions reach here.
 // =====================================================================
 const SMARTY_SYSTEM =
-  "You are Smarty, a friendly, concise assistant inside the SmartEdz school app " +
-  "used by students, parents, teachers and staff in India. Answer general-knowledge " +
-  "and educational questions clearly and briefly (2-5 short sentences), in simple " +
-  "language suitable for school. Do NOT invent school-specific data such as a " +
-  "person's marks, attendance or fees; if asked for those, tell them to open the " +
-  "relevant screen in the app. Be warm and encouraging.";
+  "You are Smarty, a friendly assistant inside the SmartEdz school app used by " +
+  "students, parents, teachers and staff in India. Answer in simple language " +
+  "suitable for school. Match the length to the question: a line or two for a " +
+  "simple question, and a full, complete explanation — with steps, examples or " +
+  "points where they help — when the question is broad or needs detail. Never cut " +
+  "an answer off mid-thought; finish the thought. Do NOT invent school-specific " +
+  "data such as a person's marks, attendance or fees; if asked for those, tell " +
+  "them to open the relevant screen in the app. Be warm and encouraging.";
 
 async function _smartyCallGemini(key, model, question) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
   const { status, json } = await _smartyPostJson(url, {}, {
     system_instruction: { parts: [{ text: SMARTY_SYSTEM }] },
     contents: [{ role: 'user', parts: [{ text: question }] }],
-    generationConfig: { maxOutputTokens: 800, temperature: 0.6 }
+    generationConfig: { maxOutputTokens: 1500, temperature: 0.6 }
   });
   if (status < 200 || status >= 300) throw new Error((json.error && json.error.message) || `Gemini HTTP ${status}`);
   return ((json.candidates && json.candidates[0] && json.candidates[0].content && json.candidates[0].content.parts) || [])
@@ -18061,14 +18063,14 @@ async function _smartyCallGemini(key, model, question) {
 async function _smartyCallOpenAI(key, model, question) {
   const { status, json } = await _smartyPostJson('https://api.openai.com/v1/chat/completions',
     { 'Authorization': `Bearer ${key}` },
-    { model, max_tokens: 800, temperature: 0.6, messages: [{ role: 'system', content: SMARTY_SYSTEM }, { role: 'user', content: question }] });
+    { model, max_tokens: 1500, temperature: 0.6, messages: [{ role: 'system', content: SMARTY_SYSTEM }, { role: 'user', content: question }] });
   if (status < 200 || status >= 300) throw new Error((json.error && json.error.message) || `OpenAI HTTP ${status}`);
   return ((json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content) || '').trim();
 }
 async function _smartyCallAnthropic(key, model, question) {
   const { status, json } = await _smartyPostJson('https://api.anthropic.com/v1/messages',
     { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-    { model, max_tokens: 800, system: SMARTY_SYSTEM, messages: [{ role: 'user', content: question }] });
+    { model, max_tokens: 1500, system: SMARTY_SYSTEM, messages: [{ role: 'user', content: question }] });
   if (status < 200 || status >= 300) throw new Error((json.error && json.error.message) || `Anthropic HTTP ${status}`);
   return ((json.content && json.content[0] && json.content[0].text) || '').trim();
 }
@@ -18165,8 +18167,13 @@ app.post('/api/smarty/ask', async (req, res) => {
         ? await _smartyRetrieve(institutionId, question, { class_id: asker.class_id, restrictClass })
         : [];
     } catch (e) { console.warn('[smarty retrieve]', e.message); }
+    // Only credit a MEANINGFUL chapter/title. Generic upload titles like
+    // "Full Document" or "Index" tell the reader nothing, so we drop them and
+    // let the UI fall back to a plain "from your textbook".
+    const _junkTitle = /^(full document|document|untitled.*|index|contents?|table of contents|cover|page\s*\d+|chapter\s*\d*)$/i;
     const sources = ctx.length
-      ? Array.from(new Set(ctx.map(c => c.title).filter(Boolean))).slice(0, 3).join('; ')
+      ? Array.from(new Set(ctx.map(c => String(c.title || '').trim())
+          .filter(t => t && !_junkTitle.test(t)))).slice(0, 3).join('; ')
       : '';
 
     // A retrieved passage counts only when it's genuinely about the question.
@@ -18206,9 +18213,12 @@ app.post('/api/smarty/ask', async (req, res) => {
       grounded = true;
       const joined = ctx.map((c, i) => `[${i + 1}] ${c.title}: ${c.content}`).join('\n\n').slice(0, 7000);
       promptQuestion =
-        "Answer the question using mainly the school's textbook excerpts below. " +
-        "If they don't cover it, say you couldn't find it in the book, then give a short general answer. " +
-        "Keep it clear and age-appropriate, and name the chapter or term you used.\n\n" +
+        "Use the school's textbook excerpts below to answer the question when they cover it. " +
+        "Answer as fully as the question needs — a line or two for a simple question, and a complete, " +
+        "step-by-step or detailed explanation for a bigger one. Never cut the answer off; finish it. " +
+        "Write it clearly, in simple school-appropriate language.\n" +
+        "IMPORTANT: if these excerpts do not actually contain the answer, begin your reply with the token " +
+        "[[GENERAL]] on its own, then answer from general knowledge. If you DID use the excerpts, do not write that token.\n\n" +
         "TEXTBOOK EXCERPTS:\n" + joined + "\n\nQUESTION: " + question;
     }
 
@@ -18224,6 +18234,19 @@ app.post('/api/smarty/ask', async (req, res) => {
     }
     answer = (answer || '').trim();
     if (!answer) return res.json({ ok: false, reason: 'empty_answer' });
+
+    // Only keep the "from your book" credit when the answer really came from it.
+    // The model marks a general answer with [[GENERAL]] (stripped here); a plain
+    // phrase check is the backup, so we never claim a source the answer didn't use.
+    if (grounded) {
+      if (/\[\[\s*general\s*\]\]/i.test(answer)) {
+        grounded = false;
+        answer = answer.replace(/\[\[\s*general\s*\]\]/ig, '').trim();
+      } else if (/\b(could\s*n'?t|couldn’t|can['’]?t|cannot|did\s*n'?t|do\s*n'?t|not)\b[^.?!\n]{0,60}\b(book|textbook|excerpts?|provided (?:text|material|excerpts?))\b/i.test(answer)) {
+        grounded = false;
+      }
+    }
+
     await saveCache(answer);
     res.json({ ok: true, answer, grounded, sources: grounded ? sources : '', source: 'ai' });
   } catch (err) {
