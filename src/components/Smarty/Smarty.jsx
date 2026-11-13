@@ -583,6 +583,12 @@ export default function Smarty({ onNavigate }) {
     if (COMPLIMENTS.some(c => t.includes(c))) return compliment();  // thanks / praise
     const chit = smalltalk(t);                                      // greetings / small talk
     if (chit) return deliver(chit);
+    // Live-data questions (counts / lists about a module) go STRAIGHT to the
+    // backend resolver, so a stray module keyword (e.g. "periods", "subjects")
+    // doesn't open a screen instead of answering. The backend is role-scoped.
+    const LIVE_Q    = /\b(how many|how much|number of|count|total|list|name the|which|what are|what subjects)\b/;
+    const LIVE_NOUN = /\b(chapters?|lessons?|periods?|subjects?|students?|teachers?|staff|admissions?|applications?|admitted|enrol|enroll)\b/;
+    if (LIVE_Q.test(t) && LIVE_NOUN.test(t)) return askAI(v);
     const id = match(v);                                            // built-in rule answers
     if (id) return respond(id);
     askAI(v);                                                       // everything else → AI

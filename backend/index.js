@@ -18094,6 +18094,17 @@ app.post('/api/smarty/ask', async (req, res) => {
     const restrictClass = _roleLc.includes('student') || _roleLc.includes('parent');
     const scopeTag = restrictClass && asker.class_id ? `c${asker.class_id}` : 'all';
 
+    // LIVE module data (syllabus chapters / periods / subjects, …) — answered
+    // straight from the DB: always fresh, role-scoped, no AI, NOT cached (counts
+    // change). Returns null for anything that isn't a live question, so the book
+    // search + AI still handle everything else.
+    try {
+      if (typeof _smartyLiveAnswer === 'function') {
+        const live = await _smartyLiveAnswer(institutionId, question, asker);
+        if (live && live.answer) return res.json({ ok: true, answer: live.answer, source: 'smarty', live: true });
+      }
+    } catch (e) { console.warn('[smarty live]', e.message); }
+
     // cache lookup (normalised question + scope -> sha256). The Test button sends
     // fresh:true so it always makes a REAL live call.
     const fresh = !!(req.body && req.body.fresh);
@@ -18177,6 +18188,8 @@ app.post('/api/smarty/ask', async (req, res) => {
 // =====================================================================
 // ===================== END SMARTY BACKEND ============================
 // =====================================================================
+
+
 
 // =====================================================================
 // ====== SMARTY RAG — answer from the uploaded textbooks & library =====
@@ -18712,6 +18725,134 @@ async function _smartyRetrieve(institutionId, question, scope) {
     } catch (e) { console.warn('[rag like]', e.message); return []; }
   }
   return [];
+}
+
+// =====================================================================
+//  LIVE module data — answers from the DATABASE (not OCR, not AI), always
+//  fresh and ROLE-SCOPED. Called by /smarty/ask BEFORE the book search.
+//  Returns { answer } to answer now, or null to fall through to book/AI.
+//
+//  SECURITY: students & parents are locked to THEIR OWN class — any other
+//  class they name is ignored, so they can never read another class's data.
+//  Staff (teacher / principal / super admin / …) may ask about any class.
+//
+//  Phase 1 = SYLLABUS (chapters / periods / subjects for a class + subject).
+//  Timetable, Admissions and Directory plug into the same function next.
+// =====================================================================
+function _liveClassLabel(c) { return `${c.className || ''}${c.section ? ' - ' + c.section : ''}`.trim(); }
+
+// --- PERMISSION CHECK — mirrors the app's PermissionsContext exactly --------
+//  Developer / Super Admin: always allowed (they see everything).
+//  Everyone else: allowed only if the permissions table grants can_read AND
+//  the module isn't hidden. No row = denied (same as the sidebar hiding it).
+async function _smartyRoleId(institutionId, roleName) {
+  if (!roleName) return null;
+  try {   // roles is usually per-institution; fall back if that column doesn't exist
+    const [r] = await db.execute('SELECT id FROM roles WHERE role_name = ? AND institutionId = ? LIMIT 1', [roleName, institutionId]);
+    if (r.length) return r[0].id;
+  } catch (_) {}
+  try {
+    const [r] = await db.execute('SELECT id FROM roles WHERE role_name = ? LIMIT 1', [roleName]);
+    if (r.length) return r[0].id;
+  } catch (_) {}
+  return null;
+}
+async function _smartyCan(asker, institutionId, moduleName) {
+  const role = (asker.role || '').trim();
+  const rl = role.toLowerCase();
+  if (rl === 'developer' || rl === 'super admin') return true;   // full access
+  const roleId = await _smartyRoleId(institutionId, role);
+  if (!roleId) return false;
+  try {
+    const [p] = await db.execute(
+      'SELECT can_read, is_hidden FROM permissions WHERE role_id = ? AND module_name = ? LIMIT 1',
+      [roleId, moduleName]);
+    if (!p.length) return false;                        // no row = hidden/denied
+    return !!p[0].can_read && !p[0].is_hidden;
+  } catch (_) { return false; }
+}
+
+async function _smartyLiveAnswer(institutionId, question, asker) {
+  const q = ' ' + String(question || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim() + ' ';
+  const wantChapters = /\bchapters?\b|\blessons?\b/.test(q);
+  const wantPeriods  = /\bperiods?\b/.test(q);
+  const wantSubjects = /\bsubjects?\b/.test(q);
+  if (!wantChapters && !wantPeriods && !wantSubjects) return null;   // not a syllabus question
+
+  // PERMISSION GATE: only answer if this role may read the Syllabus module.
+  // Denied → return null so the question still flows to the book/AI (which is
+  // itself class-scoped), but no live module data is exposed.
+  if (!(await _smartyCan(asker, institutionId, 'Syllabus'))) return null;
+
+  const wantList = /\blist\b|\bwhat\b|\bwhich\b|\bshow\b|\bname the\b/.test(q);
+
+  const role = (asker.role || '').toLowerCase();
+  const isStudentParent = role.includes('student') || role.includes('parent');
+
+  const [classes]  = await db.execute('SELECT id, className, section FROM classes WHERE institutionId = ?', [institutionId]);
+  const [subjects] = await db.execute('SELECT id, name FROM subjects WHERE institutionId = ?', [institutionId]);
+
+  // --- which class is mentioned (longest name match wins) ---
+  let cls = null, bestLen = 0;
+  for (const c of classes) {
+    for (const name of [_liveClassLabel(c).toLowerCase(), String(c.className || '').toLowerCase()]) {
+      if (name && name.length > bestLen && q.includes(' ' + name + ' ')) { cls = c; bestLen = name.length; }
+    }
+  }
+  if (!cls) {
+    const m = q.match(/\bclass\s+([0-9]{1,2}|[ivx]+|lkg|ukg|nursery)\b/);
+    if (m) cls = classes.find(c => String(c.className || '').toLowerCase().replace(/^class\s*/, '') === m[1]) || null;
+  }
+
+  // --- ROLE LOCK: students & parents only ever see their OWN class ---
+  if (isStudentParent) {
+    if (!asker.class_id) return { answer: "I can only look this up for your own class, and your account doesn't have a class set yet. Please ask your school to set it." };
+    cls = classes.find(c => c.id === asker.class_id) || null;   // ignore any other class they named
+  }
+
+  // --- which subject is mentioned ---
+  let subj = null, sLen = 0;
+  for (const s of subjects) {
+    const name = String(s.name || '').toLowerCase();
+    if (name && name.length > sLen && q.includes(' ' + name + ' ')) { subj = s; sLen = name.length; }
+  }
+
+  if (!cls && !subj) return null;   // nothing concrete — let the book/AI try instead
+
+  // ===== subjects of a class =====
+  if (wantSubjects && !wantChapters && !wantPeriods) {
+    if (!cls) return { answer: "Which class do you mean? For example: *what subjects does Class 5 have?*" };
+    const [rows] = await db.execute(
+      `SELECT DISTINCT sub.name FROM syllabus s JOIN subjects sub ON sub.id = s.subject_id
+         WHERE s.institutionId = ? AND s.class_id = ? ORDER BY sub.name`, [institutionId, cls.id]);
+    if (!rows.length) return { answer: `No syllabus has been set up yet for **${_liveClassLabel(cls)}**.` };
+    const names = rows.map(r => r.name);
+    return { answer: `**${_liveClassLabel(cls)}** has **${names.length}** subject${names.length === 1 ? '' : 's'} with a syllabus:\n\n${names.map(n => '• ' + n).join('\n')}` };
+  }
+
+  // chapters / periods need both a class AND a subject
+  if (!cls)  return { answer: "Which class? e.g. *how many chapters in Class 5 Science?*" };
+  if (!subj) return { answer: `Which subject in **${_liveClassLabel(cls)}**? e.g. *how many chapters in ${_liveClassLabel(cls)} Science?*` };
+
+  const [sylRows] = await db.execute(
+    `SELECT id FROM syllabus WHERE institutionId = ? AND class_id = ? AND subject_id = ? ORDER BY updated_at DESC LIMIT 1`,
+    [institutionId, cls.id, subj.id]);
+  if (!sylRows.length) return { answer: `There's no **${subj.name}** syllabus set up for **${_liveClassLabel(cls)}** yet.` };
+
+  const [chs] = await db.execute(
+    `SELECT title, periods FROM syllabus_chapters WHERE syllabus_id = ?
+      ORDER BY (page_from IS NULL), page_from, chapter_order, id`, [sylRows[0].id]);
+  const chapterCount = chs.length;
+  const totalPeriods = chs.reduce((a, c) => a + (parseInt(c.periods, 10) || 0), 0);
+
+  if (wantPeriods && !wantChapters) {
+    return { answer: `**${subj.name} — ${_liveClassLabel(cls)}** has **${totalPeriods}** period${totalPeriods === 1 ? '' : 's'} planned across **${chapterCount}** chapter${chapterCount === 1 ? '' : 's'}.` };
+  }
+  if (wantList && chapterCount) {
+    const list = chs.slice(0, 60).map((c, i) => `${i + 1}. ${c.title}`).join('\n');
+    return { answer: `**${subj.name} — ${_liveClassLabel(cls)}** has **${chapterCount}** chapter${chapterCount === 1 ? '' : 's'}:\n\n${list}` };
+  }
+  return { answer: `**${subj.name} — ${_liveClassLabel(cls)}** has **${chapterCount}** chapter${chapterCount === 1 ? '' : 's'}, with **${totalPeriods}** period${totalPeriods === 1 ? '' : 's'} planned in total.` };
 }
 
 // ---- Super-Admin: rebuild the whole index (BACKGROUND job) ---------
