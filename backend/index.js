@@ -18267,14 +18267,39 @@ const _ragHasTesseract = _hasBin('tesseract');
 const _ragHasPdftoppm  = _hasBin('pdftoppm');
 const _ragNativeOcr    = _ragHasTesseract && _ragHasPdftoppm;
 
-let _ragMupdf = null; try { _ragMupdf = require('mupdf'); }       catch (_) {}  // WASM rasterize (fallback)
-let _ragTess  = null; try { _ragTess  = require('tesseract.js'); } catch (_) {}  // WASM OCR (fallback)
-const _ragWasmOcr = !!(_ragMupdf && _ragTess);
+// Detect the WASM packages WITHOUT executing them. require.resolve finds the
+// package (even an ES module) without running it, so this works for `mupdf`,
+// which is ESM-only and would THROW on require() in this CommonJS backend.
+function _pkgPresent(name) { try { require.resolve(name); return true; } catch (_) { return false; } }
+const _ragHasMupdf = _pkgPresent('mupdf');
+const _ragHasTessPkg = _pkgPresent('tesseract.js');
+const _ragWasmOcr = _ragHasMupdf && _ragHasTessPkg;
+
+// mupdf is an ES module — it can only be loaded with dynamic import(), never
+// require(). Load it lazily the first time OCR actually runs.
+let _ragMupdf = null, _ragMupdfTried = false;
+async function _ragLoadMupdf() {
+  if (_ragMupdfTried) return _ragMupdf;
+  _ragMupdfTried = true;
+  try {
+    const m = await import('mupdf');
+    _ragMupdf = (m && m.Document) ? m : (m && m.default && m.default.Document ? m.default : (m && m.default) || m);
+  } catch (e) { console.warn('[rag mupdf import]', e.message); _ragMupdf = null; }
+  return _ragMupdf;
+}
+// tesseract.js ships a CommonJS build, so require() is fine; load it lazily too.
+let _ragTess = null;
+function _ragLoadTess() {
+  if (_ragTess) return _ragTess;
+  try { _ragTess = require('tesseract.js'); } catch (e) { console.warn('[rag tess require]', e.message); _ragTess = null; }
+  return _ragTess;
+}
 
 const _ragOcrReady  = _ragNativeOcr || _ragWasmOcr;
 const _ragOcrEngine = _ragNativeOcr ? 'native' : (_ragWasmOcr ? 'wasm' : 'none');
 console.log(`[smarty rag] OCR engine: ${_ragOcrEngine}` +
-  ` (tesseract=${_ragHasTesseract?'yes':'no'}, pdftoppm=${_ragHasPdftoppm?'yes':'no'}, wasm=${_ragWasmOcr?'yes':'no'})`);
+  ` (tesseract=${_ragHasTesseract?'yes':'no'}, pdftoppm=${_ragHasPdftoppm?'yes':'no'},` +
+  ` mupdf=${_ragHasMupdf?'yes':'no'}, tesseract.js=${_ragHasTessPkg?'yes':'no'})`);
 
 // ---- plain text extraction (fast, no OCR) --------------------------
 async function _ragPdfText(buffer, maxPages = 400) {   // cover whole books, even a single 240-page chapter
@@ -18344,9 +18369,10 @@ async function _ragOcrPdfNative(buffer, maxPages, onPage) {
 // --- WASM fallback: mupdf (render) -> tesseract.js (read) ---------------
 let _ragTessWorker = null;
 async function _ragGetWorker() {
-  if (!_ragTess) return null;
+  const T = _ragLoadTess();
+  if (!T) return null;
   if (_ragTessWorker) return _ragTessWorker;
-  try { _ragTessWorker = await _ragTess.createWorker(_ragOcrLang); return _ragTessWorker; }
+  try { _ragTessWorker = await T.createWorker(_ragOcrLang); return _ragTessWorker; }
   catch (e) { console.warn('[rag ocr worker]', e.message); _ragTessWorker = null; return null; }
 }
 async function _ragCloseWorker() {
@@ -18367,9 +18393,11 @@ function _ragRenderPageWasm(mdoc, index, dpi) {
   }
 }
 async function _ragOcrPdfWasm(buffer, maxPages, onPage) {
+  const mupdf = await _ragLoadMupdf();
+  if (!mupdf || !mupdf.Document) { console.warn('[rag ocr] mupdf failed to load'); return ''; }
   let mdoc = null;
   try {
-    mdoc = _ragMupdf.Document.openDocument(new Uint8Array(buffer), 'application/pdf');
+    mdoc = mupdf.Document.openDocument(new Uint8Array(buffer), 'application/pdf');
     const total = Math.min(mdoc.countPages(), maxPages);
     const worker = await _ragGetWorker();
     if (!worker) return '';
