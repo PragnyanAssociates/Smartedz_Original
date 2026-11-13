@@ -18090,6 +18090,7 @@ app.post('/api/smarty/ask', async (req, res) => {
         [(req.body && req.body.userId) || 0, institutionId]);
       if (u.length) asker = u[0];
     } catch (_) {}
+    asker.userId = Number((req.body && req.body.userId)) || null;   // live handlers scope by this
     const _roleLc = (asker.role || '').toLowerCase();
     const restrictClass = _roleLc.includes('student') || _roleLc.includes('parent');
     const scopeTag = restrictClass && asker.class_id ? `c${asker.class_id}` : 'all';
@@ -18757,7 +18758,7 @@ async function _smartyRoleId(institutionId, roleName) {
   } catch (_) {}
   return null;
 }
-async function _smartyCan(asker, institutionId, moduleName) {
+async function _smartyCan(asker, institutionId, moduleName, action) {
   const role = (asker.role || '').trim();
   const rl = role.toLowerCase();
   if (rl === 'developer' || rl === 'super admin') return true;   // full access
@@ -18765,34 +18766,16 @@ async function _smartyCan(asker, institutionId, moduleName) {
   if (!roleId) return false;
   try {
     const [p] = await db.execute(
-      'SELECT can_read, is_hidden FROM permissions WHERE role_id = ? AND module_name = ? LIMIT 1',
+      'SELECT can_read, can_edit, is_hidden FROM permissions WHERE role_id = ? AND module_name = ? LIMIT 1',
       [roleId, moduleName]);
-    if (!p.length) return false;                        // no row = hidden/denied
-    return !!p[0].can_read && !p[0].is_hidden;
+    if (!p.length || p[0].is_hidden) return false;      // no row / hidden = denied
+    if (action === 'edit') return !!p[0].can_edit;
+    return !!p[0].can_read;
   } catch (_) { return false; }
 }
 
-async function _smartyLiveAnswer(institutionId, question, asker) {
-  const q = ' ' + String(question || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim() + ' ';
-  const wantChapters = /\bchapters?\b|\blessons?\b/.test(q);
-  const wantPeriods  = /\bperiods?\b/.test(q);
-  const wantSubjects = /\bsubjects?\b/.test(q);
-  if (!wantChapters && !wantPeriods && !wantSubjects) return null;   // not a syllabus question
-
-  // PERMISSION GATE: only answer if this role may read the Syllabus module.
-  // Denied → return null so the question still flows to the book/AI (which is
-  // itself class-scoped), but no live module data is exposed.
-  if (!(await _smartyCan(asker, institutionId, 'Syllabus'))) return null;
-
-  const wantList = /\blist\b|\bwhat\b|\bwhich\b|\bshow\b|\bname the\b/.test(q);
-
-  const role = (asker.role || '').toLowerCase();
-  const isStudentParent = role.includes('student') || role.includes('parent');
-
-  const [classes]  = await db.execute('SELECT id, className, section FROM classes WHERE institutionId = ?', [institutionId]);
-  const [subjects] = await db.execute('SELECT id, name FROM subjects WHERE institutionId = ?', [institutionId]);
-
-  // --- which class is mentioned (longest name match wins) ---
+// --- shared matchers (reused by every live domain) ------------------
+function _liveMatchClass(q, classes) {
   let cls = null, bestLen = 0;
   for (const c of classes) {
     for (const name of [_liveClassLabel(c).toLowerCase(), String(c.className || '').toLowerCase()]) {
@@ -18803,23 +18786,203 @@ async function _smartyLiveAnswer(institutionId, question, asker) {
     const m = q.match(/\bclass\s+([0-9]{1,2}|[ivx]+|lkg|ukg|nursery)\b/);
     if (m) cls = classes.find(c => String(c.className || '').toLowerCase().replace(/^class\s*/, '') === m[1]) || null;
   }
-
-  // --- ROLE LOCK: students & parents only ever see their OWN class ---
-  if (isStudentParent) {
-    if (!asker.class_id) return { answer: "I can only look this up for your own class, and your account doesn't have a class set yet. Please ask your school to set it." };
-    cls = classes.find(c => c.id === asker.class_id) || null;   // ignore any other class they named
-  }
-
-  // --- which subject is mentioned ---
+  return cls;
+}
+function _liveMatchSubject(q, subjects) {
   let subj = null, sLen = 0;
   for (const s of subjects) {
     const name = String(s.name || '').toLowerCase();
     if (name && name.length > sLen && q.includes(' ' + name + ' ')) { subj = s; sLen = name.length; }
   }
+  return subj;
+}
 
-  if (!cls && !subj) return null;   // nothing concrete — let the book/AI try instead
+//  Dispatcher: works out which module the question is about and routes to a
+//  role-scoped handler. Each handler returns { answer } or null (fall through).
+//  Order matters: Study Materials & Attendance are checked before Syllabus so
+//  "materials"/"attendance" don't get mistaken for a syllabus "lesson".
+async function _smartyLiveAnswer(institutionId, question, asker) {
+  const q = ' ' + String(question || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim() + ' ';
 
-  // ===== subjects of a class =====
+  if (/\b(study material|study materials|materials?|worksheets?|notes|presentations?|video lectures?)\b/.test(q)
+      && !/\blesson plan\b/.test(q)) {
+    return _liveMaterials(institutionId, q, asker);
+  }
+  if (/\battendance\b|\bpresent\b|\babsent\b/.test(q)) {
+    return _liveAttendance(institutionId, q, asker);
+  }
+  if (/\bhomework\b|\bassignments?\b/.test(q)) {
+    return _liveHomework(institutionId, q, asker);
+  }
+  if (/\bonline class(?:es)?\b|\blive class(?:es)?\b|\brecorded class(?:es)?\b|\brecordings?\b|\blectures?\b/.test(q)) {
+    return _liveOnlineClasses(institutionId, q, asker);
+  }
+  if (/\bdigital labs?\b|\blabs?\b/.test(q)) {
+    return _liveLabs(institutionId, q, asker);
+  }
+  if (/\bchapters?\b|\blessons?\b|\bperiods?\b|\bsubjects?\b/.test(q) && !/\blesson plan\b/.test(q)) {
+    return _liveSyllabus(institutionId, q, asker);
+  }
+  return null;
+}
+
+// -------------------------------------------------------------------
+//  Module names are CONFIRMED against Modules.js (permissions match).
+//  Only the two TABLE names below are worth a quick check in your DB:
+//    SHOW TABLES LIKE '%class%';   SHOW TABLES LIKE '%lab%';
+const _MOD_HW  = 'Homework';           // confirmed
+const _MOD_OC  = 'OnlineClasses';      // confirmed (Modules.js)
+const _MOD_LAB = 'DigitalLabs';        // confirmed (Modules.js)
+const _T_HW    = 'homework';           // confirmed
+const _T_HWSUB = 'homework_submissions'; // confirmed
+const _T_OC    = 'online_classes';     // confirmed
+const _T_LAB   = 'digital_labs';       // confirmed
+
+// ===== HOMEWORK =====
+//  Student/parent: their class (with a pending count that excludes what they
+//  submitted). Teacher/staff: their OWN homework. Super Admin: everything.
+async function _liveHomework(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, _MOD_HW))) return null;
+  const role = (asker.role || '').toLowerCase();
+  const isStudentParent = role.includes('student') || role.includes('parent');
+  const isPriv = role === 'developer' || role === 'super admin';
+  const [classes] = await db.execute('SELECT id, className, section FROM classes WHERE institutionId = ?', [institutionId]);
+  let cls = _liveMatchClass(q, classes);
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const wantUpcoming = /\bpending\b|\bdue\b|\btoday\b|\bremaining\b|\bupcoming\b/.test(q);
+
+  let where = 'h.institutionId = ?'; const params = [institutionId];
+  if (isStudentParent) {
+    if (!asker.class_id) return { answer: "I can only look up homework for your own class, which isn't set on your account yet." };
+    where += ' AND h.class_id = ?'; params.push(asker.class_id);
+    cls = classes.find(c => c.id === asker.class_id) || null;
+  } else if (!isPriv) {
+    where += ' AND h.created_by = ?'; params.push(asker.userId || 0);
+    if (cls) { where += ' AND h.class_id = ?'; params.push(cls.id); }
+  } else if (cls) { where += ' AND h.class_id = ?'; params.push(cls.id); }
+  if (wantUpcoming && !isStudentParent) { where += ' AND h.due_date >= ?'; params.push(today); }
+
+  const [rows] = await db.execute(`SELECT h.title FROM ${_T_HW} h WHERE ${where} ORDER BY h.due_date DESC LIMIT 40`, params);
+  const scope = cls ? _liveClassLabel(cls) : (isPriv ? 'the school' : 'your homework');
+
+  if (isStudentParent) {
+    if (!rows.length) return { answer: 'You have no homework assigned right now.' };
+    let pending = rows.length;
+    try {
+      const [[r]] = await db.execute(
+        `SELECT COUNT(*) AS n FROM ${_T_HW} h
+          WHERE h.institutionId = ? AND h.class_id = ?
+            AND NOT EXISTS (SELECT 1 FROM ${_T_HWSUB} s WHERE s.homework_id = h.id AND s.student_id = ?)`,
+        [institutionId, asker.class_id, asker.userId || 0]);
+      pending = Number(r.n || 0);
+    } catch (_) {}
+    return { answer: `You have **${pending}** pending homework out of **${rows.length}** assigned. Open **Homework** to submit.` };
+  }
+
+  if (!rows.length) return { answer: `No homework found for ${scope}${wantUpcoming ? ' due from today' : ''}.` };
+  const wantList = /\blist\b|\bwhat\b|\bwhich\b|\bshow\b/.test(q);
+  if (wantList) {
+    const lines = rows.slice(0, 25).map((r, i) => `${i + 1}. ${r.title}`).join('\n');
+    return { answer: `**${rows.length}** homework for ${scope}:\n\n${lines}` };
+  }
+  return { answer: `There ${rows.length === 1 ? 'is' : 'are'} **${rows.length}** homework for ${scope}${wantUpcoming ? ' due from today onward' : ''}.` };
+}
+
+// ===== ONLINE CLASSES =====
+//  Student/parent: their class (+ All-Classes sessions). Teacher/staff: their
+//  OWN sessions. Super Admin: everything. Live / recorded / upcoming filters.
+async function _liveOnlineClasses(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, _MOD_OC))) return null;
+  const role = (asker.role || '').toLowerCase();
+  const isStudentParent = role.includes('student') || role.includes('parent');
+  const isPriv = role === 'developer' || role === 'super admin';
+  const [classes] = await db.execute('SELECT id, className, section FROM classes WHERE institutionId = ?', [institutionId]);
+  let cls = _liveMatchClass(q, classes);
+  const wantLive = /\blive\b/.test(q), wantRec = /\brecorded\b|\brecording\b|\blecture\b/.test(q);
+  const wantUpcoming = /\bupcoming\b|\btoday\b|\bnext\b|\bscheduled\b/.test(q);
+  const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+
+  let where = 'o.institutionId = ?'; const params = [institutionId];
+  if (isStudentParent) {
+    if (!asker.class_id) return { answer: "I can only look up classes for your own class, which isn't set yet." };
+    where += ' AND (o.class_id = ? OR o.class_id IS NULL)'; params.push(asker.class_id);
+    cls = classes.find(c => c.id === asker.class_id) || null;
+  } else if (!isPriv) {
+    where += ' AND o.created_by = ?'; params.push(asker.userId || 0);
+    if (cls) { where += ' AND o.class_id = ?'; params.push(cls.id); }
+  } else if (cls) { where += ' AND o.class_id = ?'; params.push(cls.id); }
+  if (wantLive && !wantRec) where += " AND o.class_type = 'live'";
+  if (wantRec && !wantLive) where += " AND o.class_type = 'recorded'";
+  if (wantUpcoming) { where += ' AND o.class_datetime >= ?'; params.push(now); }
+
+  const [rows] = await db.execute(`SELECT o.title, o.class_type FROM ${_T_OC} o WHERE ${where} ORDER BY o.class_datetime DESC LIMIT 40`, params);
+  const scope = cls ? _liveClassLabel(cls) : (isPriv ? 'the school' : 'your classes');
+  const kind = (wantLive && !wantRec) ? 'live ' : (wantRec && !wantLive) ? 'recorded ' : '';
+  if (!rows.length) return { answer: `No ${kind}online classes found for ${scope}${wantUpcoming ? ' coming up' : ''}.` };
+  const wantList = /\blist\b|\bwhat\b|\bwhich\b|\bshow\b/.test(q);
+  if (wantList) {
+    const lines = rows.slice(0, 25).map((r, i) => `${i + 1}. ${r.title} (${r.class_type})`).join('\n');
+    return { answer: `**${rows.length}** ${kind}online class${rows.length === 1 ? '' : 'es'} for ${scope}:\n\n${lines}` };
+  }
+  return { answer: `There ${rows.length === 1 ? 'is' : 'are'} **${rows.length}** ${kind}online class${rows.length === 1 ? '' : 'es'} for ${scope}${wantUpcoming ? ' coming up' : ''}. Open **Online Classes** to join or watch.` };
+}
+
+// ===== DIGITAL LABS =====
+//  Student/parent: their class. Teacher/staff: their OWN labs. Super Admin: all.
+async function _liveLabs(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, _MOD_LAB))) return null;
+  const role = (asker.role || '').toLowerCase();
+  const isStudentParent = role.includes('student') || role.includes('parent');
+  const isPriv = role === 'developer' || role === 'super admin';
+  const [classes]  = await db.execute('SELECT id, className, section FROM classes WHERE institutionId = ?', [institutionId]);
+  const [subjects] = await db.execute('SELECT id, name FROM subjects WHERE institutionId = ?', [institutionId]);
+  let cls = _liveMatchClass(q, classes);
+  const subj = _liveMatchSubject(q, subjects);
+
+  let where = 'l.institutionId = ?'; const params = [institutionId];
+  if (isStudentParent) {
+    if (!asker.class_id) return { answer: "I can only look up labs for your own class, which isn't set yet." };
+    where += ' AND l.class_id = ?'; params.push(asker.class_id);
+    cls = classes.find(c => c.id === asker.class_id) || null;
+  } else if (!isPriv) {
+    where += ' AND l.created_by = ?'; params.push(asker.userId || 0);
+    if (cls) { where += ' AND l.class_id = ?'; params.push(cls.id); }
+  } else if (cls) { where += ' AND l.class_id = ?'; params.push(cls.id); }
+  if (subj) { where += ' AND l.subject_id = ?'; params.push(subj.id); }
+
+  const [rows] = await db.execute(`SELECT l.title FROM ${_T_LAB} l WHERE ${where} ORDER BY l.id DESC LIMIT 40`, params);
+  const scope = cls ? _liveClassLabel(cls) : (isPriv ? 'the school' : 'your labs');
+  const sub = subj ? ` · ${subj.name}` : '';
+  if (!rows.length) return { answer: `No digital labs found for ${scope}${sub} yet.` };
+  const wantList = /\blist\b|\bwhat\b|\bwhich\b|\bshow\b/.test(q);
+  if (wantList) {
+    const lines = rows.slice(0, 25).map((r, i) => `${i + 1}. ${r.title}`).join('\n');
+    return { answer: `**${rows.length}** digital lab${rows.length === 1 ? '' : 's'} for ${scope}${sub}:\n\n${lines}` };
+  }
+  return { answer: `There ${rows.length === 1 ? 'is' : 'are'} **${rows.length}** digital lab${rows.length === 1 ? '' : 's'} for ${scope}${sub}. Open **Digital Labs** to view them.` };
+}
+
+// ===== SYLLABUS (chapters / periods / subjects for a class + subject) =====
+async function _liveSyllabus(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, 'Syllabus'))) return null;
+  const wantChapters = /\bchapters?\b|\blessons?\b/.test(q);
+  const wantPeriods  = /\bperiods?\b/.test(q);
+  const wantSubjects = /\bsubjects?\b/.test(q);
+  const wantList     = /\blist\b|\bwhat\b|\bwhich\b|\bshow\b|\bname the\b/.test(q);
+  const role = (asker.role || '').toLowerCase();
+  const isStudentParent = role.includes('student') || role.includes('parent');
+
+  const [classes]  = await db.execute('SELECT id, className, section FROM classes WHERE institutionId = ?', [institutionId]);
+  const [subjects] = await db.execute('SELECT id, name FROM subjects WHERE institutionId = ?', [institutionId]);
+
+  let cls = _liveMatchClass(q, classes);
+  if (isStudentParent) {
+    if (!asker.class_id) return { answer: "I can only look this up for your own class, and your account doesn't have a class set yet. Please ask your school to set it." };
+    cls = classes.find(c => c.id === asker.class_id) || null;   // lock to their class
+  }
+  const subj = _liveMatchSubject(q, subjects);
+  if (!cls && !subj) return null;
+
   if (wantSubjects && !wantChapters && !wantPeriods) {
     if (!cls) return { answer: "Which class do you mean? For example: *what subjects does Class 5 have?*" };
     const [rows] = await db.execute(
@@ -18830,7 +18993,6 @@ async function _smartyLiveAnswer(institutionId, question, asker) {
     return { answer: `**${_liveClassLabel(cls)}** has **${names.length}** subject${names.length === 1 ? '' : 's'} with a syllabus:\n\n${names.map(n => '• ' + n).join('\n')}` };
   }
 
-  // chapters / periods need both a class AND a subject
   if (!cls)  return { answer: "Which class? e.g. *how many chapters in Class 5 Science?*" };
   if (!subj) return { answer: `Which subject in **${_liveClassLabel(cls)}**? e.g. *how many chapters in ${_liveClassLabel(cls)} Science?*` };
 
@@ -18853,6 +19015,103 @@ async function _smartyLiveAnswer(institutionId, question, asker) {
     return { answer: `**${subj.name} — ${_liveClassLabel(cls)}** has **${chapterCount}** chapter${chapterCount === 1 ? '' : 's'}:\n\n${list}` };
   }
   return { answer: `**${subj.name} — ${_liveClassLabel(cls)}** has **${chapterCount}** chapter${chapterCount === 1 ? '' : 's'}, with **${totalPeriods}** period${totalPeriods === 1 ? '' : 's'} planned in total.` };
+}
+
+// ===== STUDY MATERIALS — mirrors the app's exposure exactly =====
+//  Student/parent: their class's materials (any uploader).
+//  Teacher / other staff with read: only THEIR OWN uploads.
+//  Super Admin / Developer: everything.  Gated by the StudyMaterials module.
+async function _liveMaterials(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, 'StudyMaterials'))) return null;
+  const role = (asker.role || '').toLowerCase();
+  const isStudentParent = role.includes('student') || role.includes('parent');
+  const isPriv = role === 'developer' || role === 'super admin';
+
+  const [classes]  = await db.execute('SELECT id, className, section FROM classes WHERE institutionId = ?', [institutionId]);
+  const [subjects] = await db.execute('SELECT id, name FROM subjects WHERE institutionId = ?', [institutionId]);
+  let cls = _liveMatchClass(q, classes);
+  const subj = _liveMatchSubject(q, subjects);
+
+  let where = 'm.institutionId = ?';
+  const params = [institutionId];
+  if (isStudentParent) {
+    if (!asker.class_id) return { answer: "I can only look up materials for your own class, which isn't set on your account yet." };
+    where += ' AND m.class_id = ?'; params.push(asker.class_id);
+    cls = classes.find(c => c.id === asker.class_id) || null;
+  } else if (!isPriv) {
+    where += ' AND m.uploaded_by = ?'; params.push(asker.userId || 0);   // staff see only their own uploads
+    if (cls) { where += ' AND m.class_id = ?'; params.push(cls.id); }
+  } else if (cls) {
+    where += ' AND m.class_id = ?'; params.push(cls.id);
+  }
+  if (subj) { where += ' AND m.subject_id = ?'; params.push(subj.id); }
+
+  const [rows] = await db.execute(
+    `SELECT m.title, m.material_type, s.name AS subject_name
+       FROM study_materials m LEFT JOIN subjects s ON s.id = m.subject_id
+      WHERE ${where} ORDER BY m.created_at DESC LIMIT 40`, params);
+
+  const scope = cls ? _liveClassLabel(cls) : (isPriv ? 'your school' : 'your uploads');
+  const sub = subj ? ` · ${subj.name}` : '';
+  if (!rows.length) return { answer: `No study materials found for ${scope}${sub} yet.` };
+  const wantList = /\blist\b|\bwhat\b|\bwhich\b|\bshow\b/.test(q);
+  if (wantList) {
+    const lines = rows.slice(0, 25).map((r, i) => `${i + 1}. ${r.title}${r.subject_name ? ` — ${r.subject_name}` : ''} (${r.material_type})`).join('\n');
+    return { answer: `**${rows.length}** study material${rows.length === 1 ? '' : 's'} for ${scope}${sub}:\n\n${lines}\n\n_Open **Study Materials** to view or download them._` };
+  }
+  return { answer: `There ${rows.length === 1 ? 'is' : 'are'} **${rows.length}** study material${rows.length === 1 ? '' : 's'} for ${scope}${sub}. Open **Study Materials** to view them.` };
+}
+
+// ===== ATTENDANCE — personal data, scoped tightly =====
+//  Students & parents get NOTHING about others here (their own stays on the
+//  live attendance card). Teachers → only the classes they teach. Any class
+//  needs Super Admin / Developer, or a role with Attendance EDIT.
+async function _liveAttendance(institutionId, q, asker) {
+  const role = (asker.role || '').toLowerCase();
+  const isPriv = role === 'developer' || role === 'super admin';
+  const isTeacher = role.includes('teacher');
+  const canSeeOthers = isPriv || isTeacher || (await _smartyCan(asker, institutionId, 'Attendance', 'edit'));
+  if (!canSeeOthers) return null;   // students / parents / read-only → never expose others
+
+  const [classes] = await db.execute('SELECT id, className, section FROM classes WHERE institutionId = ?', [institutionId]);
+  const cls = _liveMatchClass(q, classes);
+  if (!cls) return { answer: "Which class? e.g. *how many present in Class 5 today?*" };
+
+  if (isTeacher && !isPriv) {   // a teacher may only see classes they teach
+    try {
+      const [tc] = await db.execute('SELECT DISTINCT class_id FROM timetable_entries WHERE teacher_id = ?', [asker.userId || 0]);
+      const ids = new Set(tc.map(r => Number(r.class_id)));
+      if (!ids.has(Number(cls.id))) return { answer: `You can only see attendance for the classes you teach, and **${_liveClassLabel(cls)}** isn't one of them.` };
+    } catch (_) {}
+  }
+
+  const yearId = await resolveYearId(institutionId);
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const overall = /\b(overall|so far|this year|percentage|average|year)\b/.test(q);
+
+  const [[{ tot }]] = await db.execute(
+    "SELECT COUNT(*) AS tot FROM users WHERE institutionId = ? AND class_id = ? AND LOWER(TRIM(role)) = 'student' AND (status IS NULL OR LOWER(TRIM(status)) = 'active')",
+    [institutionId, cls.id]);
+
+  if (overall) {
+    const [[r]] = await db.execute(
+      `SELECT SUM(a.status='P') AS p, COUNT(*) AS t FROM attendance a JOIN users u ON u.id = a.user_id
+        WHERE u.institutionId = ? AND u.class_id = ? AND a.academic_year_id = ?`, [institutionId, cls.id, yearId]);
+    const p = Number(r.p || 0), t = Number(r.t || 0);
+    const pct = t > 0 ? Math.round((p / t) * 100) : 0;
+    if (t === 0) return { answer: `No attendance has been recorded yet this year for **${_liveClassLabel(cls)}** (${tot} student${tot === 1 ? '' : 's'}).` };
+    return { answer: `**${_liveClassLabel(cls)}** attendance this year: **${pct}%** (${p} present out of ${t} marks, ${tot} student${tot === 1 ? '' : 's'}).` };
+  }
+
+  const [[r]] = await db.execute(
+    `SELECT SUM(a.status='P') AS p, SUM(a.status='A') AS a2, COUNT(*) AS m
+       FROM attendance a JOIN users u ON u.id = a.user_id
+      WHERE u.institutionId = ? AND u.class_id = ? AND a.attendance_date = ? AND a.academic_year_id = ?`,
+    [institutionId, cls.id, today, yearId]);
+  const p = Number(r.p || 0), ab = Number(r.a2 || 0), m = Number(r.m || 0);
+  if (m === 0) return { answer: `Attendance for **${_liveClassLabel(cls)}** hasn't been marked today yet. The class has **${tot}** student${tot === 1 ? '' : 's'}.` };
+  const notMarked = Math.max(0, tot - m);
+  return { answer: `**${_liveClassLabel(cls)}** today: **${p} present**, **${ab} absent**${notMarked ? `, ${notMarked} not marked` : ''} (out of ${tot} student${tot === 1 ? '' : 's'}).` };
 }
 
 // ---- Super-Admin: rebuild the whole index (BACKGROUND job) ---------

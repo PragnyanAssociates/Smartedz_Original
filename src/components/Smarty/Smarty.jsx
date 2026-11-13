@@ -586,9 +586,17 @@ export default function Smarty({ onNavigate }) {
     // Live-data questions (counts / lists about a module) go STRAIGHT to the
     // backend resolver, so a stray module keyword (e.g. "periods", "subjects")
     // doesn't open a screen instead of answering. The backend is role-scoped.
+    // A leading navigation verb ("open …", "go to …") is left for the opener.
+    const NAV       = /^(open|go to|goto|show me|take me|navigate)\b/;
     const LIVE_Q    = /\b(how many|how much|number of|count|total|list|name the|which|what are|what subjects)\b/;
-    const LIVE_NOUN = /\b(chapters?|lessons?|periods?|subjects?|students?|teachers?|staff|admissions?|applications?|admitted|enrol|enroll)\b/;
-    if (LIVE_Q.test(t) && LIVE_NOUN.test(t)) return askAI(v);
+    const LIVE_NOUN = /\b(chapters?|lessons?|periods?|subjects?|students?|teachers?|staff|admissions?|applications?|admitted|enrol|enroll|study material|study materials|materials?|worksheets?|homework|assignments?|online class|online classes|live class|recorded|recordings?|lectures?|digital labs?|labs?)\b/;
+    if (!NAV.test(t)) {
+      if (LIVE_Q.test(t) && LIVE_NOUN.test(t)) return askAI(v);
+      // Module data about a specific class (staff-scoped on the backend). The
+      // "class" requirement keeps a student's own "my attendance/homework" on
+      // its live card instead.
+      if (/\b(attendance|present|absent|homework|assignments?|online class|live class|recorded|labs?|lectures?)\b/.test(t) && /\bclass\b/.test(t)) return askAI(v);
+    }
     const id = match(v);                                            // built-in rule answers
     if (id) return respond(id);
     askAI(v);                                                       // everything else → AI
