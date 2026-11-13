@@ -414,6 +414,40 @@ function AiSettingsTab({ instId }) {
     setSearching(false);
   };
 
+  // ---- Saved-answers (cache) controls ----
+  //  Smarty stores book/AI answers for speed. A wrong one (e.g. a vague
+  //  one-word question that matched the wrong passage) can be forgotten here so
+  //  the next ask is answered fresh. "Forget" clears one typed question;
+  //  "Clear all" wipes every saved answer for the school.
+  const [forgetQ, setForgetQ] = useState('');
+  const [cacheMsg, setCacheMsg] = useState(null);
+  const [cacheBusy, setCacheBusy] = useState(false);
+  const forgetOne = async () => {
+    if (!forgetQ.trim()) return;
+    setCacheBusy(true); setCacheMsg(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/smarty/forget`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: forgetQ.trim() })
+      });
+      const d = await res.json().catch(() => ({}));
+      setCacheMsg(d.ok ? { ok: true, text: d.removed ? `Forgotten — removed ${d.removed} saved answer(s). It'll be answered fresh next time.` : 'No saved answer matched that exact question.' }
+                       : { ok: false, text: d.error || 'Could not clear it.' });
+      if (d.ok && d.removed) setForgetQ('');
+    } catch (e) { setCacheMsg({ ok: false, text: e.message }); }
+    setCacheBusy(false);
+  };
+  const clearAll = async () => {
+    if (!window.confirm('Clear every saved answer for this school? Questions will be answered fresh after this.')) return;
+    setCacheBusy(true); setCacheMsg(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/smarty/cache/clear`, { method: 'POST' });
+      const d = await res.json().catch(() => ({}));
+      setCacheMsg(d.ok ? { ok: true, text: `Cleared ${d.removed || 0} saved answer(s).` } : { ok: false, text: d.error || 'Could not clear.' });
+    } catch (e) { setCacheMsg({ ok: false, text: e.message }); }
+    setCacheBusy(false);
+  };
+
   if (loading) return <div className="h-40 grid place-items-center"><Loader2 className="animate-spin size-6 text-primary" /></div>;
 
   const configured = !!cfg?.configured;
@@ -593,6 +627,30 @@ function AiSettingsTab({ instId }) {
                       </li>
                     ))}
                   </ul>
+            )}
+          </div>
+
+          {/* Fix a wrong saved answer. Smarty caches replies for speed; if one
+              is wrong, forget it here so it's answered fresh next time. */}
+          <div className="mt-3 pt-3 border-t border-zinc-100">
+            <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1.5">Saved answers</p>
+            <p className="text-[11px] text-zinc-500 mb-2">Smarty remembers answers to be fast. If a reply was wrong, type that exact question to forget it — or clear them all.</p>
+            <div className="flex items-center gap-2">
+              <input value={forgetQ} onChange={e => setForgetQ(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') forgetOne(); }}
+                placeholder="e.g. Sunlight?"
+                className="h-8 flex-1 rounded-md border border-zinc-200 bg-white px-2.5 text-xs text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20" />
+              <button onClick={forgetOne} disabled={cacheBusy || !forgetQ.trim()}
+                className="h-8 px-3 rounded-md ring-1 ring-zinc-200 text-zinc-700 text-xs font-semibold inline-flex items-center gap-1.5 hover:bg-zinc-50 disabled:text-zinc-300">
+                {cacheBusy ? <Loader2 className="size-3.5 animate-spin" /> : 'Forget'}
+              </button>
+              <button onClick={clearAll} disabled={cacheBusy}
+                className="h-8 px-3 rounded-md ring-1 ring-red-200 text-red-600 text-xs font-semibold hover:bg-red-50 disabled:opacity-50">
+                Clear all
+              </button>
+            </div>
+            {cacheMsg && (
+              <p className={`mt-2 text-[11px] font-medium ${cacheMsg.ok ? 'text-emerald-600' : 'text-red-600'}`}>{cacheMsg.text}</p>
             )}
           </div>
         </div>

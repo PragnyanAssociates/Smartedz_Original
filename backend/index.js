@@ -8577,6 +8577,10 @@ app.delete('/api/admin/kitchen/staff/:userId', async (req, res) => {
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+
+
+
 // =====================================================================
 // === 21. PARENT TEACHER MEETINGS (PTM)  (TENANT-SCOPED) ==============
 //   List uses identity from the token; create/update take institutionId
@@ -18069,6 +18073,41 @@ async function _smartyCallAnthropic(key, model, question) {
   return ((json.content && json.content[0] && json.content[0].text) || '').trim();
 }
 
+// A retrieved passage is only a confident answer when it's actually ABOUT the
+// question — not merely mentions a word from it once. This is what stops a
+// vague one-word query ("Sunlight?") from returning a random textbook passage
+// that happens to contain the word (the bug where a wrong answer got stored).
+const _SMARTY_STOP = new Set(['the','a','an','is','are','was','were','be','what','whats','who','how','why','when','where','which','of','to','in','on','at','and','or','for','with','about','does','do','did','me','my','you','your','this','that','give','tell','explain','define','meaning','answer','please']);
+function _smartyContentWords(q) {
+  return String(q || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)
+    .filter(w => w.length >= 3 && !_SMARTY_STOP.has(w));
+}
+function _smartyRelevant(question, ctx) {
+  if (!ctx || !ctx.length) return false;
+  const words = _smartyContentWords(question);
+  if (words.length === 0) return false;
+  const title = String(ctx[0].title || '').toLowerCase();
+  const content = String(ctx[0].content || '').toLowerCase();
+  // Single-keyword query: a passing mention isn't enough — require the word in
+  // the chapter/source title, or appearing at least twice (so the passage is
+  // genuinely about it, not just name-dropping it).
+  if (words.length === 1) {
+    const w = words[0];
+    if (title.includes(w)) return true;
+    return content.split(w).length - 1 >= 2;
+  }
+  // Multi-word query: at least half of the meaningful words should appear.
+  const hay = title + ' ' + content;
+  const present = words.filter(w => hay.includes(w)).length;
+  return present >= Math.ceil(words.length / 2);
+}
+// Don't cache vague/one-word questions — a wrong answer to "Sunlight?" shouldn't
+// get stored and then returned fast forever.
+function _smartyCacheable(question) {
+  return _smartyContentWords(question).length >= 2 ||
+         String(question || '').trim().split(/\s+/).length >= 3;
+}
+
 app.post('/api/smarty/ask', async (req, res) => {
   try {
     const institutionId = req.auth.institutionId;
@@ -18086,7 +18125,7 @@ app.post('/api/smarty/ask', async (req, res) => {
     let asker = { role: '', class_id: null };
     try {
       const [u] = await db.execute(
-        'SELECT role, class_id FROM users WHERE id = ? AND institutionId = ? LIMIT 1',
+        'SELECT role, class_id, section FROM users WHERE id = ? AND institutionId = ? LIMIT 1',
         [(req.body && req.body.userId) || 0, institutionId]);
       if (u.length) asker = u[0];
     } catch (_) {}
@@ -18130,7 +18169,11 @@ app.post('/api/smarty/ask', async (req, res) => {
       ? Array.from(new Set(ctx.map(c => c.title).filter(Boolean))).slice(0, 3).join('; ')
       : '';
 
+    // A retrieved passage counts only when it's genuinely about the question.
+    const relevant = _smartyRelevant(question, ctx);
+
     const saveCache = async (ans) => {
+      if (!_smartyCacheable(question)) return;   // never store a vague/one-word answer
       try {
         await db.execute(
           'INSERT INTO smarty_ai_cache (institutionId, q_hash, question, answer) VALUES (?, ?, ?, ?) ' +
@@ -18142,8 +18185,10 @@ app.post('/api/smarty/ask', async (req, res) => {
     // ---- NO AI KEY: answer straight from the book (extractive). This lets a
     //      school WITHOUT an AI key still get textbook/library answers.
     //      Badge = Smarty (it's the school's own stored content, not live AI).
+    //      Only answer when the passage is actually RELEVANT — otherwise say we
+    //      couldn't find it, rather than returning (and caching) a wrong passage.
     if (!aiOn) {
-      if (!ctx.length) return res.json({ ok: false, reason: 'no_match' });
+      if (!ctx.length || !relevant) return res.json({ ok: false, reason: 'no_match' });
       const best = String(ctx[0].content || '').trim();
       const excerpt = best.length > 900 ? best.slice(0, 900).replace(/\s+\S*$/, '') + '…' : best;
       const answer = `**${ctx[0].title}**\n\n${excerpt}`;
@@ -18157,7 +18202,7 @@ app.post('/api/smarty/ask', async (req, res) => {
     const model = SMARTY_DEFAULT_MODEL[provider];
     let promptQuestion = question;
     let grounded = false;
-    if (ctx.length) {
+    if (ctx.length && relevant) {
       grounded = true;
       const joined = ctx.map((c, i) => `[${i + 1}] ${c.title}: ${c.content}`).join('\n\n').slice(0, 7000);
       promptQuestion =
@@ -18180,7 +18225,7 @@ app.post('/api/smarty/ask', async (req, res) => {
     answer = (answer || '').trim();
     if (!answer) return res.json({ ok: false, reason: 'empty_answer' });
     await saveCache(answer);
-    res.json({ ok: true, answer, grounded, sources, source: 'ai' });
+    res.json({ ok: true, answer, grounded, sources: grounded ? sources : '', source: 'ai' });
   } catch (err) {
     console.error('smarty/ask error:', err);
     res.status(500).json({ ok: false, error: err.message });
@@ -18820,6 +18865,25 @@ async function _smartyLiveAnswer(institutionId, question, asker) {
   if (/\bdigital labs?\b|\blabs?\b/.test(q)) {
     return _liveLabs(institutionId, q, asker);
   }
+  if (/\bfees?\b|\bbalance\b|\bhow much do i owe\b|\boutstanding\b|\bdues?\b|\bunpaid\b|\bcollection\b|\brazorpay\b|\bpay (?:my|the) fee\b|\bhow (?:do|can) i pay\b/.test(q)) {
+    return _liveFees(institutionId, q, asker);
+  }
+  if (/\bptm\b|\bparent[- ]?teacher\b|\bparent meeting\b|\bpt meeting\b/.test(q)) {
+    return _livePTM(institutionId, q, asker);
+  }
+  if (/\bfood menu\b|\bmeals?\b|\blunch\b|\bbreakfast\b|\bdinner\b|\bsupper\b|\bsnacks?\b|\bdining\b|\bmenu\b/.test(q)) {
+    return _liveMeals(institutionId, q, asker);
+  }
+  if (/\breport card\b|\breport cards\b|\bprogress card\b|\bmarks card\b|\bgrade card\b/.test(q)) {
+    return _liveReports(institutionId, q, asker);
+  }
+  if (/\bperformance\b|\btopper\b|\btop\s+\d+\b|\btop (?:student|students|performer|three|five|ten)\b|\bbest student\b|\bwho topped\b|\bclass rank\b|\bmy rank\b|\brank\b/.test(q)) {
+    return _livePerformance(institutionId, q, asker);
+  }
+  if (/\bexams?\b|\bdatesheet\b|\bdate sheet\b/.test(q)
+      || (/\b(results?|marks?|scores?)\b/.test(q) && /\bexam\b|\bmy\b/.test(q))) {
+    return _liveExams(institutionId, q, asker);
+  }
   if (/\bchapters?\b|\blessons?\b|\bperiods?\b|\bsubjects?\b/.test(q) && !/\blesson plan\b/.test(q)) {
     return _liveSyllabus(institutionId, q, asker);
   }
@@ -18837,6 +18901,45 @@ const _T_HW    = 'homework';           // confirmed
 const _T_HWSUB = 'homework_submissions'; // confirmed
 const _T_OC    = 'online_classes';     // confirmed
 const _T_LAB   = 'digital_labs';       // confirmed
+const _MOD_EXAM  = 'Exams';            // confirmed (Modules.js)
+const _MOD_PTM   = 'PTM';              // confirmed (Modules.js)
+const _MOD_MEALS = 'Meals';            // confirmed (Modules.js)
+const _T_EXAM    = 'online_exams';        // confirmed
+const _T_EXAMATT = 'online_exam_attempts';// confirmed
+const _T_EXAMSCH = 'exam_schedules';      // confirmed
+const _T_PTM     = 'ptm_meetings';        // confirmed
+const _T_SLOTS   = 'meal_slots';          // confirmed
+const _T_MENU    = 'meal_menu';           // confirmed
+const _MOD_REPORTS = 'Reports';           // confirmed (Modules.js)
+const _MOD_PERF    = 'Performance';       // confirmed (Modules.js)
+const _T_MARKS     = 'student_marks';     // confirmed (offline marks)
+const _T_STM       = 'subject_teacher_map'; // confirmed (teacher assignments)
+const _MOD_FEE   = 'FeeManagement';       // confirmed (FeeManagement.js MODULE_NAME)
+const _FT_PLANS  = 'fee_class_plans';     // confirmed (FeeBackend.js)
+const _FT_ASSIGN = 'student_fee_assignments'; // confirmed
+const _FT_PAY    = 'fee_payments';        // confirmed
+const _FT_ACC    = 'fee_accounts';        // confirmed
+
+// Marks without trailing decimals: 20.00 -> 20, 19.50 -> 19.5 (mirrors fmtNum).
+function _liveFmtMarks(v) {
+  const n = Number(v);
+  if (isNaN(n)) return '0';
+  return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(2)));
+}
+// Indian-rupee formatting for fee answers, e.g. 45000 -> ₹45,000.
+function _liveINR(v) { return '₹' + Number(v || 0).toLocaleString('en-IN'); }
+
+// Railway stores naive UTC datetimes; render them in IST for the answer text
+// (mirrors the frontend fmtIST helper used across the module screens).
+function _liveFmtIST(val) {
+  if (!val) return '';
+  let d;
+  if (typeof val === 'string' && !val.includes('T') && !val.endsWith('Z')) d = new Date(val.replace(' ', 'T') + 'Z');
+  else d = new Date(val);
+  if (isNaN(d.getTime())) return String(val);
+  return d.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true });
+}
+const _LIVE_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
 // ===== HOMEWORK =====
 //  Student/parent: their class (with a pending count that excludes what they
@@ -19114,6 +19217,334 @@ async function _liveAttendance(institutionId, q, asker) {
   return { answer: `**${_liveClassLabel(cls)}** today: **${p} present**, **${ab} absent**${notMarked ? `, ${notMarked} not marked` : ''} (out of ${tot} student${tot === 1 ? '' : 's'}).` };
 }
 
+// ===== EXAMS — online exams, exam timetables, and a student's own result =====
+//  Student/parent: their class's PUBLISHED exams (+ their own graded results).
+//  Teacher / staff: only the exams they created. Super Admin / Admin: all.
+//  "timetable"/"schedule"/"datesheet" → exam_schedules; "my result/marks" →
+//  the student's graded attempts; otherwise a count of online exams.
+async function _liveExams(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, _MOD_EXAM))) return null;
+  const role = (asker.role || '').toLowerCase();
+  const isStudentParent = role.includes('student') || role.includes('parent');
+  const isPriv = role === 'developer' || role === 'super admin' || role === 'admin';
+  const [classes] = await db.execute('SELECT id, className, section FROM classes WHERE institutionId = ?', [institutionId]);
+  let cls = _liveMatchClass(q, classes);
+
+  // --- exam timetables / schedules ---
+  if (/\btimetable\b|\bschedule\b|\bdatesheet\b|\bdate sheet\b/.test(q)) {
+    let where = 'es.institutionId = ?'; const params = [institutionId];
+    if (isStudentParent) {
+      if (!asker.class_id) return { answer: "I can only look up the exam timetable for your own class, which isn't set on your account yet." };
+      where += ' AND (es.class_id = ? OR es.class_id IS NULL)'; params.push(asker.class_id);
+      cls = classes.find(c => c.id === asker.class_id) || null;
+    } else if (cls) { where += ' AND es.class_id = ?'; params.push(cls.id); }
+    const [rows] = await db.execute(`SELECT es.title, es.exam_type FROM ${_T_EXAMSCH} es WHERE ${where} ORDER BY es.created_at DESC LIMIT 40`, params);
+    const scope = cls ? _liveClassLabel(cls) : 'the school';
+    if (!rows.length) return { answer: `No exam timetables have been published for ${scope} yet.` };
+    const wantList = /\blist\b|\bwhat\b|\bwhich\b|\bshow\b/.test(q);
+    if (wantList) {
+      const lines = rows.slice(0, 25).map((r, i) => `${i + 1}. ${r.title} (${r.exam_type === 'External' ? 'Govt' : 'School'})`).join('\n');
+      return { answer: `**${rows.length}** exam timetable${rows.length === 1 ? '' : 's'} for ${scope}:\n\n${lines}` };
+    }
+    return { answer: `There ${rows.length === 1 ? 'is' : 'are'} **${rows.length}** exam timetable${rows.length === 1 ? '' : 's'} for ${scope}. Open **Exams** to view them.` };
+  }
+
+  // --- a student's / parent's own result ---
+  if (isStudentParent && /\bresults?\b|\bmarks?\b|\bscores?\b|\bgrades?\b/.test(q)) {
+    const [rows] = await db.execute(
+      `SELECT e.title, a.final_score, e.total_marks
+         FROM ${_T_EXAMATT} a JOIN ${_T_EXAM} e ON e.id = a.exam_id
+        WHERE a.student_id = ? AND a.status = 'graded'
+        ORDER BY a.graded_at DESC LIMIT 20`, [asker.userId || 0]);
+    if (!rows.length) return { answer: "You don't have any graded exam results yet. Open **Exams** to see your exams." };
+    const lines = rows.slice(0, 10).map(r => `• ${r.title}: **${r.final_score}** / ${r.total_marks}`).join('\n');
+    return { answer: `Your latest result${rows.length === 1 ? '' : 's'}:\n\n${lines}` };
+  }
+
+  // --- online exams (default count / list) ---
+  let where = "e.institutionId = ? AND e.status = 'published'"; let params = [institutionId];
+  if (isStudentParent) {
+    if (!asker.class_id) return { answer: "I can only look up exams for your own class, which isn't set on your account yet." };
+    where += ' AND e.class_id = ? AND (e.section IS NULL OR e.section = ?)'; params.push(asker.class_id, asker.section || '');
+    cls = classes.find(c => c.id === asker.class_id) || null;
+  } else if (!isPriv) {
+    where = 'e.institutionId = ? AND e.created_by = ?'; params = [institutionId, asker.userId || 0];
+    if (cls) { where += ' AND e.class_id = ?'; params.push(cls.id); }
+  } else if (cls) { where += ' AND e.class_id = ?'; params.push(cls.id); }
+
+  const [rows] = await db.execute(`SELECT e.title FROM ${_T_EXAM} e WHERE ${where} ORDER BY e.created_at DESC LIMIT 40`, params);
+  const scope = cls ? _liveClassLabel(cls) : (isPriv ? 'the school' : (isStudentParent ? 'your class' : 'you'));
+  if (!rows.length) return { answer: `No online exams found for ${scope}.` };
+  const wantList = /\blist\b|\bwhat\b|\bwhich\b|\bshow\b/.test(q);
+  if (wantList) {
+    const lines = rows.slice(0, 25).map((r, i) => `${i + 1}. ${r.title}`).join('\n');
+    return { answer: `**${rows.length}** online exam${rows.length === 1 ? '' : 's'} for ${scope}:\n\n${lines}` };
+  }
+  return { answer: `There ${rows.length === 1 ? 'is' : 'are'} **${rows.length}** online exam${rows.length === 1 ? '' : 's'} for ${scope}. Open **Exams** to ${isStudentParent ? 'attempt them' : 'manage them'}.` };
+}
+
+// ===== PTM — parent-teacher meetings =====
+//  Student/parent: meetings for their class/section (or whole-school ones).
+//  Teacher / staff: only the meetings they're assigned to. Super Admin / Admin: all.
+async function _livePTM(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, _MOD_PTM))) return null;
+  const role = (asker.role || '').toLowerCase();
+  const isStudentParent = role.includes('student') || role.includes('parent');
+  const isPriv = role === 'developer' || role === 'super admin' || role === 'admin';
+  const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const wantUpcoming = /\bupcoming\b|\btoday\b|\bnext\b|\bscheduled\b/.test(q);
+
+  let where = 'p.institutionId = ?'; const params = [institutionId];
+  if (isStudentParent) {
+    if (!asker.class_id) return { answer: "I can only look up meetings for your own class, which isn't set on your account yet." };
+    where += ' AND (p.class_id IS NULL OR p.class_id = ?) AND (p.section IS NULL OR p.section = ?)';
+    params.push(asker.class_id, asker.section || '');
+  } else if (!isPriv) {
+    where += ' AND p.teacher_id = ?'; params.push(asker.userId || 0);   // staff → own meetings
+  }
+  if (wantUpcoming) { where += " AND p.meeting_datetime >= ? AND p.status = 'Scheduled'"; params.push(now); }
+
+  const [rows] = await db.execute(
+    `SELECT p.subject_focus, p.meeting_datetime FROM ${_T_PTM} p WHERE ${where} ORDER BY p.meeting_datetime DESC LIMIT 40`, params);
+  const whose = isStudentParent ? 'your class' : (isPriv ? 'the school' : 'you');
+  if (!rows.length) return { answer: `No parent-teacher meetings${wantUpcoming ? ' coming up' : ''} for ${whose} right now.` };
+  const wantList = /\blist\b|\bwhat\b|\bwhich\b|\bshow\b|\bwhen\b/.test(q);
+  if (wantList) {
+    const lines = rows.slice(0, 20).map((r, i) => `${i + 1}. ${r.subject_focus || 'PTM'} — ${_liveFmtIST(r.meeting_datetime)}`).join('\n');
+    return { answer: `**${rows.length}** parent-teacher meeting${rows.length === 1 ? '' : 's'}${wantUpcoming ? ' coming up' : ''}:\n\n${lines}\n\n_Open **PTM** for details._` };
+  }
+  return { answer: `There ${rows.length === 1 ? 'is' : 'are'} **${rows.length}** parent-teacher meeting${rows.length === 1 ? '' : 's'}${wantUpcoming ? ' coming up' : ''} for ${whose}. Open **PTM** to view them.` };
+}
+
+// ===== FOOD MENU — the weekly meal plan (school-wide, read-only) =====
+//  Everyone with Meals read access sees the same weekly menu. Defaults to
+//  TODAY (IST); "tomorrow", a named weekday, "week", or a meal-slot name
+//  (lunch/breakfast/…) narrow it. Kitchen/Store stock isn't exposed here.
+async function _liveMeals(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, _MOD_MEALS))) return null;
+  const [slots] = await db.execute(`SELECT id, name FROM ${_T_SLOTS} WHERE institutionId = ? ORDER BY slot_order, id`, [institutionId]);
+  if (!slots.length) return { answer: "The school hasn't set up its meal plan yet." };
+  const [menu] = await db.execute(`SELECT slot_id, day_index, items FROM ${_T_MENU} WHERE institutionId = ?`, [institutionId]);
+  const cell = (slotId, day) => {
+    const m = menu.find(x => Number(x.slot_id) === Number(slotId) && Number(x.day_index) === day);
+    return m && m.items ? String(m.items).trim() : '';
+  };
+
+  // Which day? default today (IST). JS getDay: 0=Sun..6=Sat → 0=Mon..6=Sun.
+  const istNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  let dayIdx = (istNow.getDay() + 6) % 7;
+  let dayWord = 'today';
+  if (/\btomorrow\b/.test(q)) { dayIdx = (dayIdx + 1) % 7; dayWord = 'tomorrow'; }
+  for (let i = 0; i < 7; i++) { if (q.includes(' ' + _LIVE_DAYS[i].toLowerCase() + ' ')) { dayIdx = i; dayWord = _LIVE_DAYS[i]; } }
+
+  // Whole week?
+  if (/\bweek\b|\bweekly\b|\bwhole week\b/.test(q)) {
+    const lines = _LIVE_DAYS.map((d, di) => {
+      const parts = slots.map(s => { const it = cell(s.id, di); return it ? `${s.name}: ${it}` : null; }).filter(Boolean);
+      return parts.length ? `**${d}** — ${parts.join(' · ')}` : null;
+    }).filter(Boolean);
+    if (!lines.length) return { answer: "The weekly menu hasn't been filled in yet." };
+    return { answer: `This week's menu:\n\n${lines.join('\n')}` };
+  }
+
+  // A specific meal slot (lunch / breakfast / …)?
+  const slot = slots.find(s => q.includes(' ' + String(s.name || '').toLowerCase() + ' '));
+  const whenLabel = (dayWord === 'today' || dayWord === 'tomorrow') ? dayWord : `on ${_LIVE_DAYS[dayIdx]}`;
+  if (slot) {
+    const it = cell(slot.id, dayIdx);
+    if (!it) return { answer: `No ${slot.name.toLowerCase()} is planned for ${whenLabel}.` };
+    return { answer: `**${slot.name}** ${whenLabel}: ${it}` };
+  }
+
+  // All meals for the chosen day.
+  const parts = slots.map(s => { const it = cell(s.id, dayIdx); return it ? `**${s.name}**: ${it}` : null; }).filter(Boolean);
+  if (!parts.length) return { answer: `No menu is planned for ${whenLabel === 'today' ? 'today' : whenLabel === 'tomorrow' ? 'tomorrow' : _LIVE_DAYS[dayIdx]}.` };
+  const heading = dayWord === 'today' ? "Today's" : dayWord === 'tomorrow' ? "Tomorrow's" : `${_LIVE_DAYS[dayIdx]}'s`;
+  return { answer: `${heading} menu:\n\n${parts.map(p => '• ' + p).join('\n')}` };
+}
+
+// Per-student total marks for a class in a year (highest first), from the
+// offline marks table. Used by Performance for topper + rank. Raw total is the
+// same number Marks Entry shows as the class grand total per student.
+async function _liveClassTotals(institutionId, classId, yearId) {
+  const [rows] = await db.execute(
+    `SELECT sm.student_id, u.name, u.roll_no, SUM(sm.marks_obtained) AS total
+       FROM ${_T_MARKS} sm JOIN users u ON u.id = sm.student_id
+      WHERE sm.institutionId = ? AND sm.class_id = ? AND sm.academic_year_id = ?
+      GROUP BY sm.student_id, u.name, u.roll_no
+      HAVING total IS NOT NULL
+      ORDER BY total DESC, u.roll_no`,
+    [institutionId, classId, yearId]);
+  return rows;
+}
+
+// ===== REPORTS — offline report card / marks =====
+//  Student/parent: a summary of THEIR OWN report card (total marks, exams,
+//  subjects) + a pointer to the card. Teacher/staff/Super Admin: a class's
+//  report-card readiness (students, how many have marks). Gated by Reports.
+async function _liveReports(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, _MOD_REPORTS))) return null;
+  const role = (asker.role || '').toLowerCase();
+  const isStudentParent = role.includes('student') || role.includes('parent');
+  const yearId = await resolveYearId(institutionId);
+
+  if (isStudentParent) {
+    if (!asker.class_id) return { answer: "I can only pull up your report card for your own class, which isn't set on your account yet." };
+    const [[r]] = await db.execute(
+      `SELECT SUM(marks_obtained) AS total, COUNT(DISTINCT exam_type_id) AS exams, COUNT(DISTINCT subject_id) AS subjects
+         FROM ${_T_MARKS} WHERE student_id = ? AND academic_year_id = ?`,
+      [asker.userId || 0, yearId]);
+    if (!r || r.total == null) return { answer: "No marks have been entered on your report card yet this year. Open **My Report Card** once your school adds them." };
+    return { answer: `Your report card so far: **${_liveFmtMarks(r.total)}** total marks across **${r.exams}** exam${Number(r.exams) === 1 ? '' : 's'} and **${r.subjects}** subject${Number(r.subjects) === 1 ? '' : 's'}. Open **My Report Card** to view or print it.` };
+  }
+
+  const [classes] = await db.execute('SELECT id, className, section FROM classes WHERE institutionId = ?', [institutionId]);
+  const cls = _liveMatchClass(q, classes);
+  if (!cls) return { answer: "Which class's report cards? e.g. *report cards for Class 5*" };
+  const [[{ tot }]] = await db.execute(
+    "SELECT COUNT(*) AS tot FROM users WHERE institutionId = ? AND class_id = ? AND LOWER(TRIM(role)) = 'student' AND (status IS NULL OR LOWER(TRIM(status)) = 'active')",
+    [institutionId, cls.id]);
+  const [[m]] = await db.execute(
+    `SELECT COUNT(DISTINCT student_id) AS graded FROM ${_T_MARKS} WHERE institutionId = ? AND class_id = ? AND academic_year_id = ?`,
+    [institutionId, cls.id, yearId]);
+  const graded = m ? Number(m.graded || 0) : 0;
+  return { answer: `**${_liveClassLabel(cls)}** has **${tot}** student${tot === 1 ? '' : 's'}${graded ? `, **${graded}** with marks entered this year` : ' — no marks entered this year yet'}. Open **Reports → Report Cards** to view or print them.` };
+}
+
+// ===== PERFORMANCE — class topper & rank (offline marks) =====
+//  Student/parent: THEIR OWN rank in their class + the topper (locked to their
+//  class). Teacher: only the classes they're assigned to. Super Admin / Admin:
+//  any class. Ranked by total marks for the active year. Gated by Performance.
+async function _livePerformance(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, _MOD_PERF))) return null;
+  const role = (asker.role || '').toLowerCase();
+  const isStudentParent = role.includes('student') || role.includes('parent');
+  const isPriv = role === 'developer' || role === 'super admin' || role === 'admin';
+  const isTeacher = role.includes('teacher');
+  const yearId = await resolveYearId(institutionId);
+  const [classes] = await db.execute('SELECT id, className, section FROM classes WHERE institutionId = ?', [institutionId]);
+
+  // --- Student / parent: own rank + class topper (own class only) ---
+  if (isStudentParent) {
+    if (!asker.class_id) return { answer: "I can only look up your performance for your own class, which isn't set on your account yet." };
+    const cls = classes.find(c => c.id === asker.class_id) || null;
+    const label = cls ? _liveClassLabel(cls) : 'your class';
+    const totals = await _liveClassTotals(institutionId, asker.class_id, yearId);
+    if (!totals.length) return { answer: `No exam marks have been entered yet for **${label}** this year.` };
+    const topper = totals[0];
+    const meIdx = totals.findIndex(t => Number(t.student_id) === Number(asker.userId));
+    if (meIdx < 0) {
+      return { answer: `No marks have been entered for you yet this year. The class topper so far is **${topper.name}** with **${_liveFmtMarks(topper.total)}** marks.` };
+    }
+    const me = totals[meIdx];
+    if (meIdx === 0) {
+      return { answer: `You're the **class topper** 🎉 — **#1** of ${totals.length} in **${label}** with **${_liveFmtMarks(me.total)}** total marks. Open **Performance** for the full picture.` };
+    }
+    return { answer: `You're ranked **#${meIdx + 1}** of ${totals.length} in **${label}** with **${_liveFmtMarks(me.total)}** total marks. The topper is **${topper.name}** with **${_liveFmtMarks(topper.total)}**. Open **Performance** to see more.` };
+  }
+
+  // --- Staff: topper / top students for a class ---
+  const cls = _liveMatchClass(q, classes);
+  if (!cls) return { answer: "Which class? e.g. *who is the topper in Class 5?*" };
+
+  if (isTeacher && !isPriv) {   // a teacher only sees the classes they teach
+    try {
+      const [tc] = await db.execute(`SELECT DISTINCT class_id FROM ${_T_STM} WHERE teacher_id = ?`, [asker.userId || 0]);
+      const ids = new Set(tc.map(r => Number(r.class_id)));
+      if (!ids.has(Number(cls.id))) return { answer: `You can only see performance for the classes you teach, and **${_liveClassLabel(cls)}** isn't one of them.` };
+    } catch (_) {}
+  }
+
+  const totals = await _liveClassTotals(institutionId, cls.id, yearId);
+  if (!totals.length) return { answer: `No exam marks have been entered yet for **${_liveClassLabel(cls)}** this year.` };
+  const wantList = /\btop\s+\d+\b|\btop (?:three|five|ten)\b|\btop students?\b|\blist\b|\branking\b/.test(q);
+  if (wantList) {
+    const top = totals.slice(0, 5).map((t, i) => `${i + 1}. ${t.name}${t.roll_no ? ` (Roll ${t.roll_no})` : ''} — **${_liveFmtMarks(t.total)}**`).join('\n');
+    return { answer: `Top students in **${_liveClassLabel(cls)}** (by total marks):\n\n${top}` };
+  }
+  const topper = totals[0];
+  return { answer: `The topper in **${_liveClassLabel(cls)}** is **${topper.name}**${topper.roll_no ? ` (Roll ${topper.roll_no})` : ''} with **${_liveFmtMarks(topper.total)}** total marks, out of **${totals.length}** student${totals.length === 1 ? '' : 's'} with marks. Open **Performance** for the full ranking.` };
+}
+
+// ===== FEE MANAGEMENT & ACCOUNTS ASSISTANT =====
+//  Student/parent: THEIR OWN balance (expected − concession − paid), locked to
+//  their account. Teacher/staff/Super Admin: school or per-class collection and
+//  pending approvals. "How do I pay / payment methods" answers from the school's
+//  fee account settings. Gated by the FeeManagement module. All money is scoped
+//  to the ACTIVE academic year (never cached — balances change).
+async function _liveFees(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, _MOD_FEE))) return null;
+  const role = (asker.role || '').toLowerCase();
+  const isStudentParent = role.includes('student') || role.includes('parent');
+
+  // --- How to pay / payment methods → the school's account settings ---
+  if (/\bhow (?:do|can) i pay\b|\bpayment method\b|\bpay online\b|\bpay offline\b|\brazorpay\b|\bupi\b|\bpay the fee\b|\bpay my fee\b/.test(q)
+      && !/\bbalance\b|\bowe\b|\boutstanding\b|\bdue\b/.test(q)) {
+    const [acc] = await db.execute(
+      `SELECT account_name, online_enabled, offline_enabled, offline_instructions FROM ${_FT_ACC} WHERE institutionId = ? LIMIT 1`,
+      [institutionId]);
+    if (!acc.length) return { answer: "Your school hasn't set up fee payment options yet. Please check with the office." };
+    const a = acc[0];
+    const ways = [];
+    if (a.online_enabled)  ways.push('**Online** — UPI, cards or netbanking, confirmed instantly');
+    if (a.offline_enabled) ways.push('**Offline** — pay at the school office, then upload the receipt for approval');
+    if (!ways.length) return { answer: "No payment method is switched on right now — please contact the school office." };
+    let out = `You can pay ${ways.join(', or ')}.`;
+    if (a.offline_enabled && a.offline_instructions) out += `\n\n_${String(a.offline_instructions).trim()}_`;
+    if (isStudentParent) out += '\n\nOpen **My Fee** to pay or upload a slip.';
+    return { answer: out };
+  }
+
+  // --- Student / parent: their own balance ---
+  if (isStudentParent) {
+    if (!asker.class_id) return { answer: "I can only look up your fee once your class is set on your account." };
+    const yearId = await resolveYearId(institutionId);
+    const sid = asker.userId || 0;
+    const [[plans]] = await db.execute(
+      `SELECT COALESCE(SUM(full_fee), 0) AS expected FROM ${_FT_PLANS}
+        WHERE institutionId = ? AND (academic_year_id <=> ?) AND class_id = ?`,
+      [institutionId, yearId, asker.class_id]);
+    const [[conc]] = await db.execute(
+      `SELECT COALESCE(SUM(concession_amount), 0) AS c FROM ${_FT_ASSIGN}
+        WHERE institutionId = ? AND (academic_year_id <=> ?) AND student_id = ?`,
+      [institutionId, yearId, sid]);
+    const [[pay]] = await db.execute(
+      `SELECT COALESCE(SUM(CASE WHEN status = 'paid' THEN amount END), 0) AS paid,
+              COALESCE(SUM(CASE WHEN status = 'pending' THEN amount END), 0) AS pending
+         FROM ${_FT_PAY} WHERE institutionId = ? AND (academic_year_id <=> ?) AND student_id = ?`,
+      [institutionId, yearId, sid]);
+    const expected = Math.max(0, Number(plans.expected || 0) - Number(conc.c || 0));
+    const paid = Number(pay.paid || 0), pending = Number(pay.pending || 0);
+    const balance = Math.max(0, expected - paid);
+    if (expected <= 0) return { answer: "Your school hasn't set a fee for your class yet. Open **My Fee** to check back later." };
+    if (balance <= 0) return { answer: `You're all paid up 🎉 — **${_liveINR(paid)}** paid of ${_liveINR(expected)}. Open **My Fee** for your receipts.` };
+    return { answer: `Your fee: **${_liveINR(balance)}** still due — ${_liveINR(paid)} paid of ${_liveINR(expected)}${pending > 0 ? `, and ${_liveINR(pending)} under verification` : ''}. Open **My Fee** to pay or upload a slip.` };
+  }
+
+  // --- Staff / Super Admin: collection or pending approvals (optionally a class) ---
+  const yearId = await resolveYearId(institutionId);
+  const [classes] = await db.execute('SELECT id, className, section FROM classes WHERE institutionId = ?', [institutionId]);
+  const cls = _liveMatchClass(q, classes);
+  let where = 'institutionId = ? AND (academic_year_id <=> ?)'; const params = [institutionId, yearId];
+  if (cls) { where += ' AND class_id = ?'; params.push(cls.id); }
+
+  if (/\bpending\b|\bto approve\b|\bapproval\b|\bverify\b|\bverification\b|\bawaiting\b/.test(q)) {
+    const [[r]] = await db.execute(
+      `SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS amt FROM ${_FT_PAY} WHERE ${where} AND status = 'pending'`, params);
+    const n = Number(r.n || 0);
+    if (!n) return { answer: `No fee payments are waiting for approval${cls ? ` in **${_liveClassLabel(cls)}**` : ''} right now.` };
+    return { answer: `**${n}** offline payment${n === 1 ? '' : 's'} (${_liveINR(r.amt)}) ${n === 1 ? 'is' : 'are'} waiting for approval${cls ? ` in **${_liveClassLabel(cls)}**` : ''}. Open **Fee Management → Payments** to review.` };
+  }
+
+  const [[r]] = await db.execute(
+    `SELECT COALESCE(SUM(CASE WHEN status = 'paid' THEN amount END), 0) AS collected,
+            COALESCE(SUM(CASE WHEN status = 'pending' THEN amount END), 0) AS pending
+       FROM ${_FT_PAY} WHERE ${where}`, params);
+  const scope = cls ? _liveClassLabel(cls) : 'the school';
+  const pend = Number(r.pending || 0);
+  return { answer: `Fees collected this year for ${scope}: **${_liveINR(r.collected)}**${pend > 0 ? ` (plus ${_liveINR(pend)} pending approval)` : ''}. Open **Fee Management → Paid / Unpaid** for the full roster.` };
+}
+
 // ---- Super-Admin: rebuild the whole index (BACKGROUND job) ---------
 //  OCR of a big scanned book takes minutes, far longer than an HTTP
 //  request may stay open, so we start the job and return immediately.
@@ -19235,6 +19666,34 @@ app.get('/api/smarty/rag/search', async (req, res) => {
         preview: String(r.content || '').slice(0, 140)
       }))
     });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ---- Super-Admin: FORGET a wrong stored answer -----------------------
+//  Smarty caches book/AI answers for speed. If one is wrong (e.g. a vague
+//  one-word question that matched the wrong passage), this removes the stored
+//  copy so the next ask is answered fresh. A 👎 on a reply calls this with the
+//  exact question text; the admin screen can also clear a typed question.
+//    POST /api/smarty/forget   { question }
+app.post('/api/smarty/forget', async (req, res) => {
+  if (!_smartyIsAdmin(req)) return res.status(403).json({ error: 'Only the Super Admin can clear saved answers.' });
+  const q = String((req.body && req.body.question) || '').trim();
+  if (!q) return res.status(400).json({ ok: false, error: 'question is required.' });
+  try {
+    const [r] = await db.execute(
+      'DELETE FROM smarty_ai_cache WHERE institutionId = ? AND LOWER(TRIM(question)) = LOWER(TRIM(?))',
+      [req.auth.institutionId, q]);
+    res.json({ ok: true, removed: r.affectedRows || 0 });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ---- Super-Admin: CLEAR every saved answer for this school -----------
+//    POST /api/smarty/cache/clear
+app.post('/api/smarty/cache/clear', async (req, res) => {
+  if (!_smartyIsAdmin(req)) return res.status(403).json({ error: 'Only the Super Admin can clear saved answers.' });
+  try {
+    const [r] = await db.execute('DELETE FROM smarty_ai_cache WHERE institutionId = ?', [req.auth.institutionId]);
+    res.json({ ok: true, removed: r.affectedRows || 0 });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
