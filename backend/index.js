@@ -14802,6 +14802,7 @@ app.get('/api/expenses/export/:institutionId', async (req, res) => {
 
 
 
+
 // =================================================================
 //  SECTION 29 — TRANSPORT
 //  Assumes `app`, `db` (mysql2/promise pool) and `resolveYearId`
@@ -18888,6 +18889,24 @@ async function _smartyLiveAnswer(institutionId, question, asker) {
   if (/\bdigital labs?\b|\blabs?\b/.test(q)) {
     return _liveLabs(institutionId, q, asker);
   }
+  if (/\bbus(?:es)?\b|\btransport\b|\bmy route\b|\bbus route\b|\bbus driver\b|\bvehicles?\b|\bpickup point\b|\bdrop point\b/.test(q)
+      || (/\broutes?\b|\bdrivers?\b|\bassistants?\b/.test(q) && /\bbus\b|\btransport\b|\broute\b|\bhow many\b|\bmy\b/.test(q))) {
+    return _liveTransport(institutionId, q, asker);
+  }
+  if (/\bgroup ?chats?\b|\bchat groups?\b|\bmy groups?\b|\bunread (?:messages?|chats?)\b/.test(q)
+      || (/\bgroups?\b/.test(q) && /\bchat\b|\bmessages?\b|\bunread\b|\bmember\b|\bhow many\b|\bwhich\b|\blist\b/.test(q))) {
+    return _liveGroupChat(institutionId, q, asker);
+  }
+  if (/\bgallery\b|\balbums?\b|\bphotos?\b|\bpictures?\b/.test(q)
+      || (/\bimages?\b|\bvideos?\b/.test(q) && /\bgallery\b|\balbums?\b|\bhow many\b/.test(q))) {
+    return _liveGallery(institutionId, q, asker);
+  }
+  if (/\balumni\b|\balumnus\b|\bpassout\b|\bpassed out\b|\bpass out\b|\bgraduates?\b|\bex[- ]students?\b|\bclass of \d{4}\b/.test(q)) {
+    return _liveAlumni(institutionId, q, asker);
+  }
+  if (/\bsupport tickets?\b|\btickets?\b|\bhelp ?desk\b|\bmy tickets?\b|\braise a ticket\b|\bsupport request\b/.test(q)) {
+    return _liveSupport(institutionId, q, asker);
+  }
   if (/\bfees?\b|\bbalance\b|\bhow much do i owe\b|\boutstanding\b|\bdues?\b|\bunpaid\b|\bcollection\b|\brazorpay\b|\bpay (?:my|the) fee\b|\bhow (?:do|can) i pay\b/.test(q)) {
     return _liveFees(institutionId, q, asker);
   }
@@ -18942,6 +18961,23 @@ const _FT_PLANS  = 'fee_class_plans';     // confirmed (FeeBackend.js)
 const _FT_ASSIGN = 'student_fee_assignments'; // confirmed
 const _FT_PAY    = 'fee_payments';        // confirmed
 const _FT_ACC    = 'fee_accounts';        // confirmed
+const _MOD_TRANSPORT = 'Transport';       // confirmed (Transport.js MODULE_NAME)
+const _TT_RS     = 'transport_route_students'; // confirmed (transport backend)
+const _TT_ROUTES = 'transport_routes';         // confirmed
+const _TT_VEH    = 'transport_vehicles';       // confirmed
+const _TT_STAFF  = 'transport_staff';          // confirmed
+const _TT_LIVE   = 'transport_live_location';  // confirmed
+const _MOD_GALLERY = 'Gallery';           // confirmed (Gallery.jsx can('Gallery', …))
+const _GT_GAL    = 'gallery';             // confirmed (gallery backend)
+const _MOD_GROUPCHAT = 'GroupChat';       // confirmed (group-chat backend module_name)
+const _GC_GROUPS = 'groups';              // reserved word → always backtick in SQL
+const _GC_MEMBERS = 'group_members';      // confirmed
+const _GC_MSGS   = 'group_chat_messages'; // confirmed
+const _GC_SEEN   = 'group_last_seen';     // confirmed
+const _MOD_ALUMNI = 'Alumni';             // confirmed (Alumni.jsx can('Alumni', …))
+const _AL_TBL    = 'alumni';              // confirmed (alumni backend)
+const _MOD_SUPPORT = 'Support';           // confirmed (support backend / DEFAULT_MODULES)
+const _ST_TICKETS = 'support_tickets';    // confirmed
 
 // Marks without trailing decimals: 20.00 -> 20, 19.50 -> 19.5 (mirrors fmtNum).
 function _liveFmtMarks(v) {
@@ -19568,6 +19604,351 @@ async function _liveFees(institutionId, q, asker) {
   return { answer: `Fees collected this year for ${scope}: **${_liveINR(r.collected)}**${pend > 0 ? ` (plus ${_liveINR(pend)} pending approval)` : ''}. Open **Fee Management → Paid / Unpaid** for the full roster.` };
 }
 
+// -------------------------------------------------------------------
+//  TRANSPORT  (school bus: routes, crew, live tracking)
+//  Scoping:
+//    student / parent -> their OWN bus (route, vehicle, crew + phones, stops)
+//    driver / assistant (crew) -> the route(s) assigned to them
+//    Super Admin / Admin -> fleet counts, crew counts, which buses are live
+//  Transport has NO academic-year column (roads don't reset in June), so
+//  every query here is institution-scoped only.
+// -------------------------------------------------------------------
+
+//  One source of truth for "is this bus actually on the road right now?",
+//  mirroring the frontend tripState(): running means the trip row says
+//  'running' (or legacy is_active with no status), and it's genuinely LIVE
+//  only while it's still pinging (fresh < 30s) with real coordinates.
+async function _liveBusState(routeId) {
+  try {
+    const [[t]] = await db.execute(
+      `SELECT trip_status, is_active, trip_type, lat, lng,
+              TIMESTAMPDIFF(SECOND, updated_at, NOW()) AS secs
+         FROM ${_TT_LIVE} WHERE route_id = ? LIMIT 1`, [routeId]);
+    if (!t) return { running: false, live: false, trip_type: null };
+    const running = t.trip_status === 'running' || (t.trip_status == null && !!t.is_active);
+    const live = running && t.secs != null && Number(t.secs) < 30 && t.lat != null && t.lng != null;
+    return { running, live, trip_type: t.trip_type };
+  } catch (_) { return { running: false, live: false, trip_type: null }; }
+}
+
+async function _liveTransport(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, _MOD_TRANSPORT))) return null;
+  const role = (asker.role || '').toLowerCase();
+  const isStudentParent = role.includes('student') || role.includes('parent');
+  const isPriv = role === 'developer' || role === 'super admin' || role === 'admin';
+  const isCrew = !isPriv && (role.includes('driver') || role.includes('assistant'));
+  const uid = asker.userId || 0;
+  const wantLive = /\brunning\b|\blive\b|\bwhere is\b|\bwhere s\b|\bon the way\b|\bcoming\b|\bstarted\b|\btracking\b|\breached\b|\barrived\b/.test(q);
+
+  // ---------------- Student / parent: their own bus ----------------
+  if (isStudentParent) {
+    const [rs] = await db.execute(
+      `SELECT route_id, pickup_point_id, drop_point_id FROM ${_TT_RS} WHERE student_id = ? LIMIT 1`, [uid]);
+    if (!rs.length) return { answer: "You're not assigned to a school bus route yet. If you take the school bus, please check with your transport in-charge. Open **Transport** for details." };
+    const routeId = rs[0].route_id;
+    const [[r]] = await db.execute(
+      `SELECT r.route_name, r.route_code, v.vehicle_no, v.vehicle_name,
+              d.name AS driver_name, c.name AS assistant_name,
+              ds.phone AS driver_phone, cs.phone AS assistant_phone
+         FROM ${_TT_ROUTES} r
+         LEFT JOIN ${_TT_VEH} v   ON v.id = r.vehicle_id
+         LEFT JOIN users d        ON d.id = r.driver_id
+         LEFT JOIN users c        ON c.id = r.assistant_id
+         LEFT JOIN ${_TT_STAFF} ds ON ds.user_id = r.driver_id    AND ds.staff_role = 'Driver'    AND ds.institutionId = r.institutionId
+         LEFT JOIN ${_TT_STAFF} cs ON cs.user_id = r.assistant_id AND cs.staff_role = 'Assistant' AND cs.institutionId = r.institutionId
+        WHERE r.id = ? LIMIT 1`, [routeId]);
+    if (!r) return { answer: "Your bus route isn't fully set up yet. Please check with your transport in-charge. Open **Transport** for details." };
+    const busName = r.vehicle_no ? `${r.vehicle_no}${r.vehicle_name ? ` – ${r.vehicle_name}` : ''}` : r.route_name;
+
+    if (wantLive) {
+      const st = await _liveBusState(routeId);
+      const trip = st.trip_type === 'drop' ? 'drop' : 'pickup';
+      if (st.live)    return { answer: `🚌 Your bus (**${busName}**) is **on the road now** — the ${trip} trip is live. Open **Transport** to follow it on the map.` };
+      if (st.running) return { answer: `Your bus trip has started but its live location paused for a moment. Open **Transport** to watch the map.` };
+      return { answer: `Your bus isn't running right now. It'll appear live on the map in **Transport** as soon as your driver starts the trip.` };
+    }
+
+    // Stop names from the route's points (pickup + drop).
+    let stopLine = '';
+    try {
+      const ids = [rs[0].pickup_point_id, rs[0].drop_point_id].filter(Boolean);
+      if (ids.length) {
+        const [pts] = await db.execute(
+          `SELECT id, title FROM transport_route_points WHERE route_id = ? AND id IN (${ids.map(() => '?').join(',')})`,
+          [routeId, ...ids]);
+        const byId = {}; pts.forEach(p => { byId[p.id] = p.title; });
+        const pu = byId[rs[0].pickup_point_id], dr = byId[rs[0].drop_point_id];
+        if (pu && dr && pu !== dr) stopLine = ` Your stops: pickup at **${pu}**, drop at **${dr}**.`;
+        else if (pu || dr)        stopLine = ` Your stop: **${pu || dr}**.`;
+      }
+    } catch (_) { /* points are optional */ }
+
+    const bits = [`Your bus is **${r.route_name}**${r.vehicle_no ? ` (${busName})` : ''}.`];
+    if (r.driver_name)    bits.push(`Driver: **${r.driver_name}**${r.driver_phone ? ` (${r.driver_phone})` : ''}.`);
+    if (r.assistant_name) bits.push(`Assistant: **${r.assistant_name}**${r.assistant_phone ? ` (${r.assistant_phone})` : ''}.`);
+    if (stopLine) bits.push(stopLine.trim());
+    bits.push('Open **Transport** for stops and live tracking.');
+    return { answer: bits.join(' ') };
+  }
+
+  // ---------------- Crew (driver / assistant): their route(s) ----------------
+  if (isCrew) {
+    const [rows] = await db.execute(
+      `SELECT r.id, r.route_name, v.vehicle_no,
+              (SELECT COUNT(*) FROM ${_TT_RS} s WHERE s.route_id = r.id) AS students
+         FROM ${_TT_ROUTES} r
+         LEFT JOIN ${_TT_VEH} v ON v.id = r.vehicle_id
+        WHERE r.institutionId = ? AND (r.driver_id = ? OR r.assistant_id = ?)
+        ORDER BY r.route_name`, [institutionId, uid, uid]);
+    if (!rows.length) return { answer: "No bus route is assigned to you yet — your transport in-charge will assign one. Open **Transport** to check." };
+    if (rows.length === 1) {
+      const r = rows[0];
+      return { answer: `Your route is **${r.route_name}**${r.vehicle_no ? ` (${r.vehicle_no})` : ''} with **${r.students}** student${Number(r.students) === 1 ? '' : 's'}. Open **Transport** to start the trip and mark attendance.` };
+    }
+    const lines = rows.map(r => `• ${r.route_name}${r.vehicle_no ? ` (${r.vehicle_no})` : ''} — ${r.students} student${Number(r.students) === 1 ? '' : 's'}`).join('\n');
+    return { answer: `You're assigned to **${rows.length}** routes:\n\n${lines}\n\n_Open **Transport** to pick one and start the trip._` };
+  }
+
+  // ---------------- Super Admin / Admin: fleet view ----------------
+  // Which buses are live right now?
+  if (wantLive) {
+    const [rows] = await db.execute(
+      `SELECT l.trip_status, l.is_active, l.trip_type, l.driver_name, l.lat, l.lng,
+              TIMESTAMPDIFF(SECOND, l.updated_at, NOW()) AS secs,
+              r.route_name, v.vehicle_no
+         FROM ${_TT_LIVE} l
+         JOIN ${_TT_ROUTES} r ON r.id = l.route_id
+         LEFT JOIN ${_TT_VEH} v ON v.id = r.vehicle_id
+        WHERE r.institutionId = ?`, [institutionId]);
+    const liveRows = rows.filter(x => {
+      const running = x.trip_status === 'running' || (x.trip_status == null && !!x.is_active);
+      return running && x.secs != null && Number(x.secs) < 30 && x.lat != null && x.lng != null;
+    });
+    if (!liveRows.length) return { answer: "No buses are on the road right now. Open **Transport → Routes** to watch them once trips begin." };
+    const lines = liveRows.map(x => `• ${x.route_name}${x.vehicle_no ? ` (${x.vehicle_no})` : ''} — ${x.trip_type === 'drop' ? 'drop' : 'pickup'} trip${x.driver_name ? `, ${x.driver_name}` : ''}`).join('\n');
+    return { answer: `**${liveRows.length}** bus${liveRows.length === 1 ? ' is' : 'es are'} running now:\n\n${lines}\n\n_Open **Transport → Routes** to follow them live._` };
+  }
+
+  // Crew counts (drivers / assistants).
+  if (/\bdrivers?\b|\bassistants?\b|\bcrew\b|\btransport staff\b/.test(q)) {
+    const wantAssist = /\bassistants?\b/.test(q) && !/\bdrivers?\b/.test(q);
+    if (/\bcrew\b|\btransport staff\b/.test(q) && !/\bdrivers?\b|\bassistants?\b/.test(q)) {
+      const [[dr]] = await db.execute(`SELECT COUNT(*) AS n FROM ${_TT_STAFF} WHERE institutionId = ? AND staff_role = 'Driver'    AND (is_active IS NULL OR is_active = 1)`, [institutionId]);
+      const [[as]] = await db.execute(`SELECT COUNT(*) AS n FROM ${_TT_STAFF} WHERE institutionId = ? AND staff_role = 'Assistant' AND (is_active IS NULL OR is_active = 1)`, [institutionId]);
+      return { answer: `Transport crew: **${dr.n}** driver${Number(dr.n) === 1 ? '' : 's'} and **${as.n}** assistant${Number(as.n) === 1 ? '' : 's'}. Open **Transport → Drivers & Assistants**.` };
+    }
+    const roleName = wantAssist ? 'Assistant' : 'Driver';
+    const [[c]] = await db.execute(
+      `SELECT COUNT(*) AS n FROM ${_TT_STAFF} WHERE institutionId = ? AND staff_role = ? AND (is_active IS NULL OR is_active = 1)`,
+      [institutionId, roleName]);
+    return { answer: `There ${Number(c.n) === 1 ? 'is' : 'are'} **${c.n}** ${roleName.toLowerCase()}${Number(c.n) === 1 ? '' : 's'} in Transport. Open **Transport → Drivers & Assistants**.` };
+  }
+
+  // Route count.
+  if (/\broutes?\b/.test(q)) {
+    const [[c]] = await db.execute(`SELECT COUNT(*) AS n FROM ${_TT_ROUTES} WHERE institutionId = ?`, [institutionId]);
+    return { answer: `There ${Number(c.n) === 1 ? 'is' : 'are'} **${c.n}** bus route${Number(c.n) === 1 ? '' : 's'}. Open **Transport → Routes** for stops, crew and tracking.` };
+  }
+
+  // Fleet count (buses / vehicles) — the default.
+  const [[v]] = await db.execute(
+    `SELECT COUNT(*) AS n FROM ${_TT_VEH} WHERE institutionId = ? AND (is_active IS NULL OR is_active = 1)`, [institutionId]);
+  return { answer: `There ${Number(v.n) === 1 ? 'is' : 'are'} **${v.n}** vehicle${Number(v.n) === 1 ? '' : 's'} in the fleet. Open **Transport → Vehicles** to manage them.` };
+}
+
+// Format a DATE value as "14 Nov 2026" without timezone drift (slice the
+// stored YYYY-MM-DD; event dates are plain dates, not timestamps).
+function _liveFmtDate(v) {
+  if (!v) return '';
+  const s = String(v).slice(0, 10);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return s;
+  const mon = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][Number(m[2]) - 1] || m[2];
+  return `${Number(m[3])} ${mon} ${m[1]}`;
+}
+
+// -------------------------------------------------------------------
+//  GALLERY  (event photo / video albums)
+//  Gallery is institution-wide (not per-student), so anyone with Gallery
+//  read permission sees the same albums — institution-scoped only.
+// -------------------------------------------------------------------
+async function _liveGallery(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, _MOD_GALLERY))) return null;
+  const isCount = /\bhow many\b|\bcount\b|\bnumber of\b|\btotal\b/.test(q);
+
+  // Photo / video item counts.
+  if (/\bphotos?\b|\bpictures?\b|\bimages?\b|\bvideos?\b/.test(q) && isCount) {
+    const wantVideo = /\bvideos?\b/.test(q) && !/\bphotos?\b|\bpictures?\b|\bimages?\b/.test(q);
+    const ftype = wantVideo ? 'video' : 'photo';
+    const [[r]] = await db.execute(
+      `SELECT COUNT(*) AS n FROM ${_GT_GAL} WHERE institutionId = ? AND file_type = ?`, [institutionId, ftype]);
+    const noun = ftype === 'video' ? 'video' : 'photo';
+    return { answer: `There ${Number(r.n) === 1 ? 'is' : 'are'} **${r.n}** ${noun}${Number(r.n) === 1 ? '' : 's'} in the Gallery. Open **Gallery** to browse the albums.` };
+  }
+
+  const [rows] = await db.execute(
+    `SELECT title, event_date, COUNT(*) AS n
+       FROM ${_GT_GAL} WHERE institutionId = ?
+      GROUP BY title, event_date
+      ORDER BY event_date DESC`, [institutionId]);
+  if (!rows.length) return { answer: "There are no photo albums in the Gallery yet. Once an event is added, it'll show up here." };
+
+  // Latest / most recent album.
+  if (/\blatest\b|\brecent\b|\bnewest\b|\blast\b/.test(q)) {
+    const a = rows[0];
+    return { answer: `The latest album is **${a.title}** (${_liveFmtDate(a.event_date)}) with **${a.n}** item${Number(a.n) === 1 ? '' : 's'}. Open **Gallery** to view it.` };
+  }
+
+  // Count of albums.
+  if (isCount && /\balbums?\b/.test(q)) {
+    return { answer: `There ${rows.length === 1 ? 'is' : 'are'} **${rows.length}** album${rows.length === 1 ? '' : 's'} in the Gallery. Open **Gallery** to browse them.` };
+  }
+
+  // Default: how many, plus the most recent few.
+  const top = rows.slice(0, 5).map(a => `• ${a.title} — ${_liveFmtDate(a.event_date)} (${a.n} item${Number(a.n) === 1 ? '' : 's'})`).join('\n');
+  return { answer: `There ${rows.length === 1 ? 'is' : 'are'} **${rows.length}** album${rows.length === 1 ? '' : 's'} in the Gallery${rows.length > 5 ? '. Most recent five' : ''}:\n\n${top}\n\n_Open **Gallery** to view all albums._` };
+}
+
+// -------------------------------------------------------------------
+//  GROUP CHAT  (WhatsApp-style groups)
+//  Scoping:
+//    everyone -> the groups they belong to, with their own unread counts
+//    Super Admin / Admin -> can also ask the school-wide group count
+//  Unread mirrors the app's badge: messages from others newer than the
+//  user's last-seen time for that group.
+// -------------------------------------------------------------------
+async function _liveGroupChat(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, _MOD_GROUPCHAT))) return null;
+  const role = (asker.role || '').toLowerCase();
+  const isPriv = role === 'developer' || role === 'super admin' || role === 'admin';
+  const uid = asker.userId || 0;
+  const mine = /\bmy\b|\bi am\b|\bi'm\b|\bam i\b|\bi belong\b/.test(q);
+  const wantUnread = /\bunread\b|\bnew messages?\b|\bunseen\b/.test(q);
+
+  // Admin asking a school-wide count (not about their own membership).
+  if (isPriv && !mine && /\bhow many\b|\bcount\b|\bnumber of\b|\btotal\b/.test(q)) {
+    const [[r]] = await db.execute(
+      `SELECT COUNT(*) AS n FROM \`${_GC_GROUPS}\` WHERE institutionId = ?`, [institutionId]);
+    return { answer: `There ${Number(r.n) === 1 ? 'is' : 'are'} **${r.n}** chat group${Number(r.n) === 1 ? '' : 's'} in the school. Open **Group Chat** to manage them.` };
+  }
+
+  // Everyone else (and admins asking about "my groups"): their own groups.
+  const [rows] = await db.execute(
+    `SELECT g.id, g.name,
+            (SELECT COUNT(*) FROM ${_GC_MSGS} m
+              WHERE m.group_id = g.id AND m.user_id <> ?
+                AND m.timestamp > COALESCE(gls.last_seen_timestamp, '1970-01-01')) AS unread
+       FROM \`${_GC_GROUPS}\` g
+       JOIN ${_GC_MEMBERS} gm ON gm.group_id = g.id AND gm.user_id = ?
+       LEFT JOIN ${_GC_SEEN} gls ON gls.group_id = g.id AND gls.user_id = ?
+      WHERE g.institutionId = ?
+      ORDER BY g.name`, [uid, uid, uid, institutionId]);
+  if (!rows.length) {
+    return { answer: isPriv
+      ? "You're not a member of any chat groups yet. Open **Group Chat** to see every group in the school."
+      : "You're not in any chat groups yet. When you're added to one, it'll appear in **Group Chat**." };
+  }
+
+  if (wantUnread) {
+    const un = rows.filter(r => Number(r.unread) > 0);
+    const total = un.reduce((s, r) => s + Number(r.unread), 0);
+    if (!total) return { answer: "You're all caught up — no unread messages in your chat groups. 🎉" };
+    const lines = un.map(r => `• ${r.name} — ${r.unread} unread`).join('\n');
+    return { answer: `You have **${total}** unread message${total === 1 ? '' : 's'} across **${un.length}** group${un.length === 1 ? '' : 's'}:\n\n${lines}\n\n_Open **Group Chat** to catch up._` };
+  }
+
+  const total = rows.reduce((s, r) => s + Number(r.unread), 0);
+  const lines = rows.slice(0, 8).map(r => `• ${r.name}${Number(r.unread) > 0 ? ` (${r.unread} unread)` : ''}`).join('\n');
+  return { answer: `You're in **${rows.length}** chat group${rows.length === 1 ? '' : 's'}${total > 0 ? `, with **${total}** unread message${total === 1 ? '' : 's'}` : ''}${rows.length > 8 ? ' (showing 8)' : ''}:\n\n${lines}\n\n_Open **Group Chat** to jump in._` };
+}
+
+// -------------------------------------------------------------------
+//  ALUMNI  (past students — institution-wide, admin/staff module)
+//  Alumni records aren't per-student, so anyone with Alumni read sees the
+//  same set — institution-scoped only. passout_year is the graduation
+//  label; created_at drives the module's own year filter.
+// -------------------------------------------------------------------
+async function _liveAlumni(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, _MOD_ALUMNI))) return null;
+
+  // A specific passout year ("class of 2024", "passed out in 2023").
+  const ym = q.match(/\b(?:19|20)\d{2}\b/);
+  if (ym) {
+    const yr = ym[0];
+    const [[r]] = await db.execute(
+      `SELECT COUNT(*) AS n FROM ${_AL_TBL} WHERE institutionId = ? AND passout_year = ?`, [institutionId, yr]);
+    return { answer: `**${r.n}** alumn${Number(r.n) === 1 ? 'us' : 'i'} passed out in **${yr}**. Open **Alumni** to see them.` };
+  }
+
+  // Most recently added.
+  if (/\blatest\b|\brecent\b|\bnewest\b|\blast added\b/.test(q)) {
+    const [rows] = await db.execute(
+      `SELECT name, passout_year, final_class FROM ${_AL_TBL}
+        WHERE institutionId = ? ORDER BY created_at DESC LIMIT 5`, [institutionId]);
+    if (!rows.length) return { answer: "There are no alumni records yet. Students appear here when promoted to Alumni." };
+    const lines = rows.map(a => `• ${a.name}${a.passout_year ? ` — ${a.passout_year}` : ''}${a.final_class ? ` (${a.final_class})` : ''}`).join('\n');
+    return { answer: `Most recently added alumni:\n\n${lines}\n\n_Open **Alumni** to view all._` };
+  }
+
+  // Total, with a passout-year breakdown.
+  const [[t]] = await db.execute(`SELECT COUNT(*) AS n FROM ${_AL_TBL} WHERE institutionId = ?`, [institutionId]);
+  if (!Number(t.n)) return { answer: "There are no alumni records yet. Students appear here when promoted to Alumni." };
+
+  const [years] = await db.execute(
+    `SELECT passout_year, COUNT(*) AS n FROM ${_AL_TBL}
+      WHERE institutionId = ? AND passout_year IS NOT NULL AND passout_year <> ''
+      GROUP BY passout_year ORDER BY passout_year DESC LIMIT 6`, [institutionId]);
+  if (!years.length) {
+    return { answer: `There ${Number(t.n) === 1 ? 'is' : 'are'} **${t.n}** alumn${Number(t.n) === 1 ? 'us' : 'i'} on record. Open **Alumni** to browse and search.` };
+  }
+  const yl = years.map(y => `• ${y.passout_year}: ${y.n}`).join('\n');
+  return { answer: `There ${Number(t.n) === 1 ? 'is' : 'are'} **${t.n}** alumn${Number(t.n) === 1 ? 'us' : 'i'} on record. By passout year:\n\n${yl}\n\n_Open **Alumni** to browse and search._` };
+}
+
+// -------------------------------------------------------------------
+//  SUPPORT  (tickets to the SmartEdz team — institution-scoped)
+//  Statuses: open=Waiting, assigned=Assigned, active=In progress,
+//  closed=Closed. "my" narrows to tickets the asker opened.
+// -------------------------------------------------------------------
+async function _liveSupport(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, _MOD_SUPPORT))) return null;
+  const uid = asker.userId || 0;
+  const mine = /\bmy\b|\bi raised\b|\bi opened\b|\bi created\b/.test(q);
+
+  let where = 'institutionId = ?'; const params = [institutionId];
+  if (mine) { where += ' AND opened_by = ?'; params.push(uid); }
+
+  let wantStatus = null;
+  if (/\bwaiting\b|\bunassigned\b|\bqueue\b|\bopen tickets?\b|\bpending\b/.test(q)) wantStatus = 'open';
+  else if (/\bin progress\b|\bactive\b|\bongoing\b/.test(q)) wantStatus = 'active';
+  else if (/\bassigned\b/.test(q)) wantStatus = 'assigned';
+  else if (/\bclosed\b|\bresolved\b/.test(q)) wantStatus = 'closed';
+
+  if (wantStatus) {
+    const [[r]] = await db.execute(
+      `SELECT COUNT(*) AS n FROM ${_ST_TICKETS} WHERE ${where} AND status = ?`, [...params, wantStatus]);
+    const label = { open: 'waiting', assigned: 'assigned', active: 'in-progress', closed: 'closed' }[wantStatus];
+    return { answer: `${mine ? 'You have' : 'There are'} **${r.n}** ${label} support ticket${Number(r.n) === 1 ? '' : 's'}. Open **Support** to view them.` };
+  }
+
+  const [rows] = await db.execute(
+    `SELECT status, COUNT(*) AS n FROM ${_ST_TICKETS} WHERE ${where} GROUP BY status`, params);
+  if (!rows.length) {
+    return { answer: mine
+      ? "You haven't raised any support tickets. Open **Support** to raise one."
+      : "There are no support tickets yet. Open **Support** to raise one if you need help." };
+  }
+  const by = {}; rows.forEach(r => { by[r.status] = Number(r.n); });
+  const total = rows.reduce((s, r) => s + Number(r.n), 0);
+  const openN = (by.open || 0) + (by.assigned || 0) + (by.active || 0);
+  const parts = [];
+  if (by.open)     parts.push(`${by.open} waiting`);
+  if (by.assigned) parts.push(`${by.assigned} assigned`);
+  if (by.active)   parts.push(`${by.active} in progress`);
+  if (by.closed)   parts.push(`${by.closed} closed`);
+  return { answer: `${mine ? 'You have' : 'There are'} **${total}** support ticket${total === 1 ? '' : 's'}${parts.length ? ` — ${parts.join(', ')}` : ''}.${openN ? ` **${openN}** still open.` : ''} Open **Support** to view them.` };
+}
+
 // ---- Super-Admin: rebuild the whole index (BACKGROUND job) ---------
 //  OCR of a big scanned book takes minutes, far longer than an HTTP
 //  request may stay open, so we start the job and return immediately.
@@ -19736,8 +20117,6 @@ app.post('/api/smarty/cache/clear', async (req, res) => {
 //  They're safe to call fire-and-forget. If you skip them, just press
 //  "Rebuild book index" in Smarty → Smarty AI after adding material.
 // =====================================================================
-
-
 
 
 

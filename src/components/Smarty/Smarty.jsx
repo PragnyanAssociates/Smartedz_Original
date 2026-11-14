@@ -589,12 +589,12 @@ export default function Smarty({ onNavigate }) {
     // A leading navigation verb ("open …", "go to …") is left for the opener.
     const NAV       = /^(open|go to|goto|show me|take me|navigate)\b/;
     const LIVE_Q    = /\b(how many|how much|number of|count|total|list|name the|which|what are|what subjects)\b/;
-    const LIVE_NOUN = /\b(chapters?|lessons?|periods?|subjects?|students?|teachers?|staff|admissions?|applications?|admitted|enrol|enroll|study material|study materials|materials?|worksheets?|homework|assignments?|online class|online classes|live class|recorded|recordings?|lectures?|digital labs?|labs?|exams?|timetables?|datesheet|results?|marks?|ptm|meetings?|menu|meals?|report cards?|performance|topper|rank|fees?|balance|dues?|unpaid|collection)\b/;
+    const LIVE_NOUN = /\b(chapters?|lessons?|periods?|subjects?|students?|teachers?|staff|admissions?|applications?|admitted|enrol|enroll|study material|study materials|materials?|worksheets?|homework|assignments?|online class|online classes|live class|recorded|recordings?|lectures?|digital labs?|labs?|exams?|timetables?|datesheet|results?|marks?|ptm|meetings?|menu|meals?|report cards?|performance|topper|rank|fees?|balance|dues?|unpaid|collection|bus(?:es)?|vehicles?|routes?|drivers?|assistants?|transport|gallery|albums?|photos?|pictures?|images?|group ?chats?|groups?|alumni|alumnus|passout|graduates?|tickets?)\b/;
     // Exams, PTM, food menu, report cards and performance are always answered
     // with live, role-scoped data — any non-navigation question about them goes
     // straight to the resolver (otherwise a stray keyword like "exam"/"ptm"/
     // "lunch"/"topper" opens the screen instead of answering).
-    const LIVE_ALWAYS = /\b(exams?|datesheet|date sheet|exam schedule|exam timetable|ptm|parent[- ]?teacher|food menu|weekly menu|meals?|lunch|breakfast|dinner|dining|report cards?|progress card|marks card|performance|topper|top \d+ students?|top students?|best student|who topped|my rank|class rank|my fee|fees?|balance|how much do i owe|outstanding|dues?|unpaid|fee collection|how (?:do|can) i pay)\b/;
+    const LIVE_ALWAYS = /\b(exams?|datesheet|date sheet|exam schedule|exam timetable|ptm|parent[- ]?teacher|food menu|weekly menu|meals?|lunch|breakfast|dinner|dining|report cards?|progress card|marks card|performance|topper|top \d+ students?|top students?|best student|who topped|my rank|class rank|my fee|fees?|balance|how much do i owe|outstanding|dues?|unpaid|fee collection|how (?:do|can) i pay|my bus|my route|bus route|bus driver|which bus|is my bus|where is (?:my|the) bus|buses running|live buses|gallery|albums?|photos?|pictures?|group ?chats?|chat groups?|my groups?|unread|alumni|alumnus|passout|passed out|graduates?|class of \d{4}|support tickets?|my tickets?|help ?desk|how many tickets)\b/;
     if (!NAV.test(t)) {
       if (LIVE_ALWAYS.test(t)) return askAI(v);
       if (LIVE_Q.test(t) && LIVE_NOUN.test(t)) return askAI(v);
