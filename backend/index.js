@@ -18144,7 +18144,7 @@ app.post('/api/smarty/ask', async (req, res) => {
     try {
       if (typeof _smartyLiveAnswer === 'function') {
         const live = await _smartyLiveAnswer(institutionId, question, asker);
-        if (live && live.answer) return res.json({ ok: true, answer: live.answer, source: 'smarty', live: true });
+        if (live && live.answer) return res.json({ ok: true, answer: live.answer, source: 'smarty', live: true, options: Array.isArray(live.options) && live.options.length ? live.options : undefined });
       }
     } catch (e) { console.warn('[smarty live]', e.message); }
 
@@ -18926,6 +18926,13 @@ async function _smartyLiveAnswer(institutionId, question, asker) {
       || (/\b(results?|marks?|scores?)\b/.test(q) && /\bexam\b|\bmy\b/.test(q))) {
     return _liveExams(institutionId, q, asker);
   }
+  // A named student's marks (subject-wise, by exam) — only engages when a
+  // student name actually resolves within the asker's permitted scope, so it
+  // returns null (and falls through) for generic "marks" questions.
+  if (/\bmarks?\b|\bscores?\b|\bgrades?\b/.test(q)) {
+    const sm = await _liveStudentMarks(institutionId, q, asker);
+    if (sm) return sm;
+  }
   if (/\bchapters?\b|\blessons?\b|\bperiods?\b|\bsubjects?\b/.test(q) && !/\blesson plan\b/.test(q)) {
     return _liveSyllabus(institutionId, q, asker);
   }
@@ -18956,6 +18963,9 @@ const _MOD_REPORTS = 'Reports';           // confirmed (Modules.js)
 const _MOD_PERF    = 'Performance';       // confirmed (Modules.js)
 const _T_MARKS     = 'student_marks';     // confirmed (offline marks)
 const _T_STM       = 'subject_teacher_map'; // confirmed (teacher assignments)
+const _T_EXTYPES   = 'exam_types';        // confirmed (name, class_id, exam_order, kind)
+const _T_SUBJECTS  = 'subjects';          // confirmed (id, name)
+const _T_EXMAX     = 'exam_max_marks';    // confirmed (class_id, exam_type_id, subject_id, max_marks)
 const _MOD_FEE   = 'FeeManagement';       // confirmed (FeeManagement.js MODULE_NAME)
 const _FT_PLANS  = 'fee_class_plans';     // confirmed (FeeBackend.js)
 const _FT_ASSIGN = 'student_fee_assignments'; // confirmed
@@ -19523,6 +19533,193 @@ async function _livePerformance(institutionId, q, asker) {
   }
   const topper = totals[0];
   return { answer: `The topper in **${_liveClassLabel(cls)}** is **${topper.name}**${topper.roll_no ? ` (Roll ${topper.roll_no})` : ''} with **${_liveFmtMarks(topper.total)}** total marks, out of **${totals.length}** student${totals.length === 1 ? '' : 's'} with marks. Open **Performance** for the full ranking.` };
+}
+
+// ===== STUDENT MARKS LOOKUP (by name → exam → subject-wise) =====
+//  "Aarav total marks" / "Aarav AT1 marks" → the named student's marks,
+//  subject by subject, for a chosen exam, with the per-exam total and %.
+//
+//  Fully permission-scoped (who can look up WHICH students):
+//    student / parent          → their OWN marks only
+//    teacher (not privileged)   → students in the classes they teach (subject_teacher_map)
+//    Super Admin / Admin / Dev  → every student in the institution
+//
+//  Stateless, but interactive: when more than one student shares the name,
+//  or no exam is chosen, it returns clickable `options` (prepared follow-up
+//  queries carrying an id: selector) so the UI can show a pick list.
+const _SM_STOP = new Set([
+  'marks','mark','score','scores','grade','grades','total','overall','all',
+  'subject','subjects','subjectwise','wise','report','card','result','results',
+  'of','the','for','show','me','what','whats','is','are','in','on','and','s',
+  'student','students','exam','exams','test','how','much','many','get','got',
+  'his','her','their','please','tell','give','an','a','to','do','i','my','you'
+]);
+function _smNameGuess(q) {
+  const cleaned = String(q)
+    .replace(/\bid\s*:?\s*\d+\b/g, ' ')
+    .replace(/\broll\s*(?:no\.?|number)?\s*\d+\b/g, ' ')
+    .replace(/\bclass\s+[0-9a-z]+\b/g, ' ')
+    .replace(/\b(?:at|fa|sa|pt|ut|term|unit|mid|final)\s*\d{0,2}\b/g, ' ');
+  return cleaned.split(/\s+/).filter(w => w && w.length > 1 && !_SM_STOP.has(w));
+}
+function _smFirst(name) { return String(name || '').trim().split(/\s+/)[0] || String(name || ''); }
+
+async function _liveStudentMarks(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, _MOD_REPORTS))) return null;
+  const role = (asker.role || '').toLowerCase();
+  const isStudentParent = role.includes('student') || role.includes('parent');
+  const isPriv = role === 'developer' || role === 'super admin' || role === 'admin';
+  const isTeacher = role.includes('teacher');
+  const uid = asker.userId || 0;
+
+  // Selectors that can appear in a (clicked) follow-up query.
+  const idSel   = (q.match(/\bid\s*:?\s*(\d+)\b/) || [])[1];
+  const rollSel = (q.match(/\broll\s*(?:no\.?|number)?\s*(\d+)\b/) || [])[1];
+  const tokens  = _smNameGuess(q);
+  const wantTotal = /\btotal\b|\boverall\b|\ball exams?\b|\bgrand total\b/.test(q);
+  const examHint  = (q.match(/\b(?:at|fa|sa|pt|ut|term|unit|mid|final)\s*\d{0,2}\b/) || [])[0] || '';
+
+  // Not a named-student query (e.g. "class 5 marks") → let it fall through.
+  if (!idSel && !rollSel && !tokens.length) return null;
+
+  const [classes] = await db.execute('SELECT id, className, section FROM classes WHERE institutionId = ?', [institutionId]);
+  const classLabelById = (cid) => { const c = classes.find(x => Number(x.id) === Number(cid)); return c ? _liveClassLabel(c) : ''; };
+
+  // ---- Resolve the student, scoped by role ----
+  let studentRow = null;
+
+  if (isStudentParent) {
+    // Own marks only. If they named someone else, decline gently.
+    const [me] = await db.execute(
+      'SELECT id, name, roll_no, class_id, section FROM users WHERE id = ? AND institutionId = ? LIMIT 1', [uid, institutionId]);
+    if (!me.length) return { answer: "I couldn't find your student record to pull up marks." };
+    const selfName = String(me[0].name || '').toLowerCase();
+    const namedSomeoneElse = tokens.length && !tokens.some(t => selfName.includes(t));
+    if (namedSomeoneElse) return { answer: "You can only look up your **own** marks. Just ask **my marks** (or pick an exam, e.g. *my AT1 marks*)." };
+    studentRow = me[0];
+  } else {
+    // Staff path: resolve by id / roll / name within scope.
+    let where = "u.institutionId = ? AND LOWER(TRIM(u.role)) = 'student' AND (u.status IS NULL OR LOWER(TRIM(u.status)) = 'active')";
+    const params = [institutionId];
+    if (idSel)   { where += ' AND u.id = ?';       params.push(Number(idSel)); }
+    if (rollSel) { where += ' AND u.roll_no = ?';  params.push(rollSel); }
+    tokens.forEach(t => { where += ' AND LOWER(u.name) LIKE ?'; params.push('%' + t + '%'); });
+
+    if (isTeacher && !isPriv) {
+      const [tc] = await db.execute(`SELECT DISTINCT class_id FROM ${_T_STM} WHERE teacher_id = ?`, [uid]);
+      const taught = tc.map(r => Number(r.class_id)).filter(Boolean);
+      if (!taught.length) return { answer: "You don't have any classes assigned yet, so I can't look up student marks for you." };
+      where += ` AND u.class_id IN (${taught.map(() => '?').join(',')})`;
+      params.push(...taught);
+    }
+
+    const [cands] = await db.execute(
+      `SELECT u.id, u.name, u.roll_no, u.class_id, u.section
+         FROM users u WHERE ${where} ORDER BY u.name, u.roll_no LIMIT 25`, params);
+
+    const guessStr = tokens.join(' ') || (idSel ? `#${idSel}` : `roll ${rollSel}`);
+    if (!cands.length) {
+      return { answer: `I couldn't find a student named **"${guessStr}"**${isTeacher && !isPriv ? ' in your classes' : ''}. Check the spelling, or add a class/roll (e.g. *${_smFirst(guessStr)} class 5 marks*).` };
+    }
+    if (cands.length > 1) {
+      // Carry the exam / total intent into each pick so one tap finishes.
+      const tail = examHint ? ` ${examHint}` : (wantTotal ? ' total' : '');
+      const options = cands.slice(0, 8).map(c => {
+        const cl = classLabelById(c.class_id);
+        return {
+          label: `${c.name}${cl ? ` — ${cl}` : ''}${c.roll_no ? ` · Roll ${c.roll_no}` : ''}`,
+          send: `${_smFirst(c.name)} id:${c.id}${tail} marks`.replace(/\s+/g, ' ').trim()
+        };
+      });
+      return { answer: `I found **${cands.length}** students matching **"${guessStr}"**. Which one?`, options };
+    }
+    studentRow = cands[0];
+  }
+
+  // ---- Exams this student actually has marks for (this year, entered only) ----
+  const yearId = await resolveYearId(institutionId);
+  const name = studentRow.name;
+  const cl = classLabelById(studentRow.class_id);
+  const label = `${name}${cl ? ` (${cl}${studentRow.roll_no ? `, Roll ${studentRow.roll_no}` : ''})` : (studentRow.roll_no ? ` (Roll ${studentRow.roll_no})` : '')}`;
+
+  const [exs] = await db.execute(
+    `SELECT DISTINCT et.id, et.name, et.exam_order
+       FROM ${_T_MARKS} sm JOIN ${_T_EXTYPES} et ON et.id = sm.exam_type_id
+      WHERE sm.student_id = ? AND sm.academic_year_id = ? AND sm.marks_obtained IS NOT NULL
+        AND (et.kind IS NULL OR et.kind <> 'derived')
+      ORDER BY et.exam_order, et.id`, [studentRow.id, yearId]);
+  if (!exs.length) return { answer: `No marks have been entered for **${name}** yet this year. Open **Reports → Report Cards** once the school adds them.` };
+
+  // Clickable follow-ups carry an id: selector back to this handler. Only
+  // staff get them — a student's "my <exam> marks" is handled by the online
+  // Exams resolver, so chips there would misroute.
+  const baseSend = `${_smFirst(name)} id:${studentRow.id}`;
+  const examOptions = () => isStudentParent ? undefined : exs.map(e => ({ label: e.name, send: `${baseSend} ${e.name} marks`.replace(/\s+/g, ' ').trim() }));
+
+  // Which exam did they ask for?
+  const qns = String(q).replace(/[^a-z0-9]/g, '');
+  let chosen = null;
+  for (const e of exs) { const en = String(e.name).toLowerCase().replace(/[^a-z0-9]/g, ''); if (en && qns.includes(en)) { chosen = e; break; } }
+
+  // ---- Overall total (asked for "total", or several exams and nothing picked) ----
+  if (wantTotal || (!chosen && exs.length > 1 && /\btotal\b/.test(q))) {
+    const [[t]] = await db.execute(
+      `SELECT SUM(marks_obtained) AS total, COUNT(DISTINCT subject_id) AS subj
+         FROM ${_T_MARKS} WHERE student_id = ? AND academic_year_id = ?`, [studentRow.id, yearId]);
+    return {
+      answer: `**${label}** — total marks this year: **${_liveFmtMarks(t.total)}** across **${exs.length}** exam${exs.length === 1 ? '' : 's'} (${exs.map(e => e.name).join(', ')}). Pick an exam for the subject-wise breakdown:`,
+      options: examOptions()
+    };
+  }
+
+  // ---- No exam chosen: ask which (unless there's only one) ----
+  if (!chosen) {
+    if (exs.length === 1) chosen = exs[0];
+    else if (isStudentParent) return {
+      answer: `**${label}** has marks in **${exs.length}** exams (${exs.map(e => e.name).join(', ')}). Ask for one, e.g. *my ${exs[0].name} marks*, or open **My Report Card** for the full card.`
+    };
+    else return {
+      answer: `**${label}** has marks in **${exs.length}** exams. Which one would you like — subject-wise?`,
+      options: [...examOptions(), { label: 'Total (all exams)', send: `${baseSend} total marks`.replace(/\s+/g, ' ').trim() }]
+    };
+  }
+
+  // ---- Subject-wise marks for the chosen exam ----
+  const [rows] = await db.execute(
+    `SELECT sub.name AS subject, sm.subject_id, sm.class_id, sm.marks_obtained
+       FROM ${_T_MARKS} sm JOIN ${_T_SUBJECTS} sub ON sub.id = sm.subject_id
+      WHERE sm.student_id = ? AND sm.academic_year_id = ? AND sm.exam_type_id = ?
+        AND sm.marks_obtained IS NOT NULL
+      ORDER BY sub.name`, [studentRow.id, yearId, chosen.id]);
+  if (!rows.length) return { answer: `No **${chosen.name}** marks are entered for **${name}** yet. Pick another exam, or open **Reports → Report Cards**.`, options: examOptions() };
+
+  // Max marks for this exam: per (class, subject), default = subject_id 0.
+  const [mx] = await db.execute(
+    `SELECT class_id, subject_id, max_marks FROM ${_T_EXMAX} WHERE exam_type_id = ?`, [chosen.id]);
+  const maxMap = {};
+  mx.forEach(r => { const cm = (maxMap[r.class_id] = maxMap[r.class_id] || { def: null, by: {} }); if (Number(r.subject_id) === 0) cm.def = r.max_marks; else cm.by[r.subject_id] = r.max_marks; });
+  const maxFor = (cid, sid) => { const cm = maxMap[cid]; if (!cm) return null; const sp = cm.by[sid]; if (sp !== undefined && sp !== null) return Number(sp); if (cm.def !== undefined && cm.def !== null) return Number(cm.def); return null; };
+
+  let tot = 0, pos = 0;
+  const lines = rows.map(r => {
+    const v = parseFloat(r.marks_obtained);
+    const mv = maxFor(r.class_id, r.subject_id);
+    if (!isNaN(v)) tot += v;
+    if (mv != null) pos += mv;
+    return `• ${r.subject}: **${_liveFmtMarks(r.marks_obtained)}${mv != null ? `/${_liveFmtMarks(mv)}` : ''}**`;
+  }).join('\n');
+  const pct = pos > 0 ? Math.round((tot / pos) * 1000) / 10 : null;
+
+  let opts;
+  if (!isStudentParent) {
+    opts = exs.filter(e => e.id !== chosen.id).map(e => ({ label: e.name, send: `${baseSend} ${e.name} marks`.replace(/\s+/g, ' ').trim() }));
+    opts.push({ label: 'Total (all exams)', send: `${baseSend} total marks`.replace(/\s+/g, ' ').trim() });
+  }
+
+  return {
+    answer: `**${label}** — **${chosen.name}**:\n\n${lines}\n\n**Total: ${_liveFmtMarks(tot)}${pos > 0 ? `/${_liveFmtMarks(pos)}` : ''}**${pct != null ? ` (${pct}%)` : ''}. Open **Reports → Report Cards** for the full card.`,
+    options: opts
+  };
 }
 
 // ===== FEE MANAGEMENT & ACCOUNTS ASSISTANT =====

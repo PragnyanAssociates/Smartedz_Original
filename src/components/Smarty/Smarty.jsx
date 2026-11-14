@@ -540,6 +540,13 @@ export default function Smarty({ onNavigate }) {
       const fromAI = d.source === 'ai';
       const src = d.grounded ? (d.sources ? `\n\n📖 _From your book: ${d.sources}_` : '\n\n📖 _From your textbook_') : '';
       pushBot({ tone: 'violet', text: d.answer + src, ai: fromAI, smarty: !fromAI });
+      // Interactive follow-ups (e.g. pick a student / pick an exam): each chip
+      // carries a prepared query that is re-sent straight to the resolver.
+      if (Array.isArray(d.options) && d.options.length) {
+        setChips(d.options.slice(0, 8)
+          .filter(o => o && o.label && o.send)
+          .map((o, i) => ({ id: 'opt-' + i, label: o.label, send: o.send, tone: 'violet', icon: '▸' })));
+      }
       flash('talking'); return;
     }
     if (d && d.reason === 'no_match') {
@@ -594,7 +601,7 @@ export default function Smarty({ onNavigate }) {
     // with live, role-scoped data — any non-navigation question about them goes
     // straight to the resolver (otherwise a stray keyword like "exam"/"ptm"/
     // "lunch"/"topper" opens the screen instead of answering).
-    const LIVE_ALWAYS = /\b(exams?|datesheet|date sheet|exam schedule|exam timetable|ptm|parent[- ]?teacher|food menu|weekly menu|meals?|lunch|breakfast|dinner|dining|report cards?|progress card|marks card|performance|topper|top \d+ students?|top students?|best student|who topped|my rank|class rank|my fee|fees?|balance|how much do i owe|outstanding|dues?|unpaid|fee collection|how (?:do|can) i pay|my bus|my route|bus route|bus driver|which bus|is my bus|where is (?:my|the) bus|buses running|live buses|gallery|albums?|photos?|pictures?|group ?chats?|chat groups?|my groups?|unread|alumni|alumnus|passout|passed out|graduates?|class of \d{4}|support tickets?|my tickets?|help ?desk|how many tickets)\b/;
+    const LIVE_ALWAYS = /\b(exams?|datesheet|date sheet|exam schedule|exam timetable|ptm|parent[- ]?teacher|food menu|weekly menu|meals?|lunch|breakfast|dinner|dining|report cards?|progress card|marks card|performance|topper|top \d+ students?|top students?|best student|who topped|my rank|class rank|my fee|fees?|balance|how much do i owe|outstanding|dues?|unpaid|fee collection|how (?:do|can) i pay|my bus|my route|bus route|bus driver|which bus|is my bus|where is (?:my|the) bus|buses running|live buses|gallery|albums?|photos?|pictures?|group ?chats?|chat groups?|my groups?|unread|alumni|alumnus|passout|passed out|graduates?|class of \d{4}|support tickets?|my tickets?|help ?desk|how many tickets|marks?|scores?|grades?)\b/;
     if (!NAV.test(t)) {
       if (LIVE_ALWAYS.test(t)) return askAI(v);
       if (LIVE_Q.test(t) && LIVE_NOUN.test(t)) return askAI(v);
@@ -737,7 +744,7 @@ export default function Smarty({ onNavigate }) {
 
           <div className="smy-chips">
             {chips.map(c => (
-              <button key={c.id} className="smy-chip" style={{ '--ct': `var(${toneVar[c.tone] || '--brand'})` }} onClick={() => { pushMe(c.label); respond(c.id); }}>
+              <button key={c.id} className="smy-chip" style={{ '--ct': `var(${toneVar[c.tone] || '--brand'})` }} onClick={() => { if (c.send) { pushMe(c.label); setChips([]); askAI(c.send); } else { pushMe(c.label); respond(c.id); } }}>
                 <span className="smy-ic" style={{ background: `var(${toneVar[c.tone] || '--brand'})` }}>{c.icon}</span>{c.label}
               </button>
             ))}
