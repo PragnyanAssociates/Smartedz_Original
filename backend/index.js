@@ -17537,25 +17537,18 @@ app.get('/api/admin/online-count/:instId', async (req, res) => {
 
 
 
-// =====================================================================
-// ============ SMARTY — COMPLETE BACKEND (single block) ===============
-//
-//  Paste this ONE block into index.js, anywhere AFTER these already exist
-//  (they do — near the top / Notifications section):
-//      db , sameTenant() , resolveYearId() , createNotifications()
-//  A good spot is right after the Notifications section. If you already
-//  pasted older Smarty blocks, DELETE them and use only this file.
-//
-//  Works on ANY Node version — the AI call uses the built-in https module,
-//  so you do NOT need Node 18 or node-fetch.
+// SMARTY — backend block. Paste into index.js after db, sameTenant,
+// resolveYearId, createNotifications exist (near the Notifications section).
 //
 //  ---------------------------------------------------------------------
-//  RUN THESE TABLES ONCE (copy into your MySQL):
+//  RUN ONCE (MySQL). Browse-by-module adds live_query to smarty_questions:
+//    ALTER TABLE smarty_questions ADD COLUMN live_query VARCHAR(255) NULL;
 //  ---------------------------------------------------------------------
 //  CREATE TABLE IF NOT EXISTS smarty_questions (
 //    id INT AUTO_INCREMENT PRIMARY KEY, institutionId INT NOT NULL,
 //    category VARCHAR(80), question VARCHAR(255) NOT NULL, answer TEXT NOT NULL,
 //    roles VARCHAR(120) DEFAULT 'all', link VARCHAR(80), keywords TEXT,
+//    live_query VARCHAR(255) NULL,
 //    sort_order INT DEFAULT 0, is_active TINYINT(1) DEFAULT 1,
 //    created_by INT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP );
 //
@@ -17794,7 +17787,7 @@ app.get('/api/smarty/bootstrap/:userId', async (req, res) => {
     let questions = [];
     try {
       const [qRows] = await db.execute(
-        'SELECT id, category, question, answer, roles, link, keywords FROM smarty_questions WHERE institutionId = ? AND is_active = 1 ORDER BY sort_order, id',
+        'SELECT id, category, question, answer, roles, link, keywords, live_query FROM smarty_questions WHERE institutionId = ? AND is_active = 1 ORDER BY sort_order, id',
         [me.institutionId]);
       questions = qRows.filter(q => _smartyRoleMatch(q.roles, me.role));
     } catch (_) {}
@@ -17839,21 +17832,21 @@ app.get('/api/smarty/questions/:instId', async (req, res) => {
 
 app.post('/api/smarty/questions', async (req, res) => {
   const institutionId = req.auth.institutionId;
-  const { id, category, question, answer, roles, link, keywords, sort_order, is_active } = req.body || {};
+  const { id, category, question, answer, roles, link, keywords, live_query, sort_order, is_active } = req.body || {};
   if (!question || !answer) return res.status(400).json({ error: 'question and answer are required.' });
   try {
     if (id) {
       const [own] = await db.execute('SELECT institutionId FROM smarty_questions WHERE id = ?', [id]);
       if (!own.length || !sameTenant(req, own[0].institutionId)) return res.status(403).json({ error: 'Not your question.' });
       await db.execute(
-        `UPDATE smarty_questions SET category = ?, question = ?, answer = ?, roles = ?, link = ?, keywords = ?, sort_order = ?, is_active = ? WHERE id = ?`,
-        [category || null, question, answer, roles || 'all', link || null, keywords || null, sort_order || 0, is_active == null ? 1 : (is_active ? 1 : 0), id]);
+        `UPDATE smarty_questions SET category = ?, question = ?, answer = ?, roles = ?, link = ?, keywords = ?, live_query = ?, sort_order = ?, is_active = ? WHERE id = ?`,
+        [category || null, question, answer, roles || 'all', link || null, keywords || null, live_query || null, sort_order || 0, is_active == null ? 1 : (is_active ? 1 : 0), id]);
       return res.json({ success: true, id });
     }
     const [r] = await db.execute(
-      `INSERT INTO smarty_questions (institutionId, category, question, answer, roles, link, keywords, sort_order, is_active, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [institutionId, category || null, question, answer, roles || 'all', link || null, keywords || null, sort_order || 0, is_active == null ? 1 : (is_active ? 1 : 0), req.auth.id || null]);
+      `INSERT INTO smarty_questions (institutionId, category, question, answer, roles, link, keywords, live_query, sort_order, is_active, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [institutionId, category || null, question, answer, roles || 'all', link || null, keywords || null, live_query || null, sort_order || 0, is_active == null ? 1 : (is_active ? 1 : 0), req.auth.id || null]);
     res.json({ success: true, id: r.insertId });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -18873,6 +18866,22 @@ function _liveMatchSubject(q, subjects) {
 async function _smartyLiveAnswer(institutionId, question, asker) {
   const q = ' ' + String(question || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim() + ' ';
 
+  if (/\bactive users\b|\bregistered users\b|\bhow many users\b|\bstudents enrolled\b|\bhow many students\b|\bhow many teachers\b|\bteachers and staff\b|\bstaff members\b|\bacademic year\b|\bdashboard summary\b|\bschool dashboard\b|\bdashboard information\b|\boverall (?:academic )?performance\b|\bperformance summary\b|\btop performing students\b|\btop performers\b|\bhighest and lowest\b|\bperformance distribution\b|\bperformance range\b|\bhow many students fall\b|\bneeding (?:academic )?support\b|\bacademic support\b/.test(q)) {
+    const ov = await _liveOverview(institutionId, q, asker);
+    if (ov) return ov;
+  }
+  if (/\bper role\b|\beach role\b|\bassigned to each role\b|\broles configured\b|\bshow the roles\b|\blist the roles\b|\bclasses configured\b|\bshow the classes\b|\blist the classes\b|\binactive users\b|\bsubscription\b|\bwhich subscription\b|\bwhen does.*subscription\b/.test(q)) {
+    const ml = await _liveManageLogins(institutionId, q, asker);
+    if (ml) return ml;
+  }
+  if ((/\bpre[- ]?admissions?\b|\badmissions?\b|\bapplications?\b/.test(q)) && /\bpending\b|\bapproved\b|\brejected\b|\bcounts?\b|\btotals?\b|\bcompare\b|\bgrouped\b|\bjoining class\b/.test(q)) {
+    const pa = await _livePreAdmissions(institutionId, q, asker);
+    if (pa) return pa;
+  }
+  if (/\bworking days?\b/.test(q) || ((/\bperiods?\b|\bbreaks?\b/.test(q)) && /\btimetable\b|\btimings?\b|\bbreak\b/.test(q))) {
+    const tt = await _liveTimetable(institutionId, q, asker);
+    if (tt) return tt;
+  }
   if (/\b(study material|study materials|materials?|worksheets?|notes|presentations?|video lectures?)\b/.test(q)
       && !/\blesson plan\b/.test(q)) {
     return _liveMaterials(institutionId, q, asker);
@@ -18933,8 +18942,209 @@ async function _smartyLiveAnswer(institutionId, question, asker) {
     const sm = await _liveStudentMarks(institutionId, q, asker);
     if (sm) return sm;
   }
+  if (/\blibrary\b/.test(q) && /\bonline\b|\bphysical\b|\boffline\b|\boverdue\b|\bbooks?\b|\bhow many\b|\bissued\b|\bcatalogue?\b|\bdigital\b|\be[- ]?books?\b/.test(q)) {
+    const lib = await _liveLibrary(institutionId, q, asker);
+    if (lib) return lib;
+  }
   if (/\bchapters?\b|\blessons?\b|\bperiods?\b|\bsubjects?\b/.test(q) && !/\blesson plan\b/.test(q)) {
     return _liveSyllabus(institutionId, q, asker);
+  }
+  return null;
+}
+
+// OVERVIEW — dashboard counts, active year and school-wide performance.
+// Counts are admin-only; performance is admin/teacher; active year is open.
+async function _overviewPerf(institutionId) {
+  const yearId = await resolveYearId(institutionId);
+  const [classes] = await db.execute('SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section', [institutionId]);
+  const [examTypes] = await db.execute(`SELECT id, name FROM ${_T_EXTYPES} WHERE institutionId = ? ORDER BY exam_order, id`, [institutionId]);
+  const [maxRows] = await db.execute(
+    `SELECT m.exam_type_id, m.class_id, m.subject_id, m.max_marks
+       FROM ${_T_EXMAX} m JOIN ${_T_EXTYPES} t ON t.id = m.exam_type_id WHERE t.institutionId = ?`, [institutionId]);
+  const maxMap = {};
+  maxRows.forEach(r => { const c = maxMap[r.class_id] || (maxMap[r.class_id] = {}); const e = c[r.exam_type_id] || (c[r.exam_type_id] = { def: null, by: {} }); if (Number(r.subject_id) === 0) e.def = r.max_marks; else e.by[r.subject_id] = r.max_marks; });
+  const possFor = (cid, et, sid) => { const e = maxMap[cid] && maxMap[cid][et]; if (!e) return null; const ov = e.by[sid]; if (ov != null) return Number(ov); if (e.def != null) return Number(e.def); return null; };
+  const [marks] = await db.execute(
+    `SELECT sm.student_id, sm.class_id, sm.subject_id, sm.exam_type_id, sm.marks_obtained, u.name AS student_name, u.roll_no
+       FROM ${_T_MARKS} sm JOIN users u ON u.id = sm.student_id
+      WHERE sm.institutionId = ? AND sm.academic_year_id = ? AND LOWER(TRIM(u.role)) = 'student'
+        AND (u.status IS NULL OR LOWER(TRIM(u.status)) <> 'alumni')`, [institutionId, yearId]);
+  const students = {}, completed = new Set();
+  marks.forEach(m => {
+    if (m.marks_obtained == null) return; const obt = Number(m.marks_obtained); if (isNaN(obt)) return;
+    const poss = possFor(m.class_id, m.exam_type_id, m.subject_id); if (poss == null || poss <= 0) return;
+    completed.add(Number(m.exam_type_id));
+    const s = students[m.student_id] || (students[m.student_id] = { name: m.student_name, roll_no: m.roll_no, class_id: m.class_id, obtained: 0, possible: 0 });
+    s.obtained += obt; s.possible += poss;
+  });
+  const r1 = n => Math.round(n * 10) / 10;
+  const classMeta = {};
+  classes.forEach(c => { classMeta[c.id] = { class_id: c.id, label: `${c.className}${c.section ? ' - ' + c.section : ''}`, obtained: 0, possible: 0, top: null }; });
+  const studentList = [];
+  Object.values(students).forEach(s => {
+    if (s.possible <= 0) return; const pct = r1((s.obtained / s.possible) * 100);
+    studentList.push({ name: s.name, roll_no: s.roll_no, class_id: s.class_id, obtained: Math.round(s.obtained), possible: Math.round(s.possible), pct });
+    const cm = classMeta[s.class_id]; if (cm) { cm.obtained += s.obtained; cm.possible += s.possible; if (!cm.top || pct > cm.top.pct) cm.top = { name: s.name, roll_no: s.roll_no, pct }; }
+  });
+  const classList = Object.values(classMeta).filter(c => c.possible > 0)
+    .map(c => ({ class_id: c.class_id, label: c.label, pct: r1((c.obtained / c.possible) * 100), top: c.top }))
+    .sort((a, b) => b.pct - a.pct);
+  studentList.sort((a, b) => b.pct - a.pct);
+  return { examsCompleted: examTypes.filter(t => completed.has(Number(t.id))).map(t => t.name), students: studentList, classes: classList };
+}
+
+async function _liveOverview(institutionId, q, asker) {
+  const role = (asker.role || '').toLowerCase();
+  const isPriv = role === 'developer' || role === 'super admin' || role.includes('admin');
+  const isTeacher = role.includes('teacher');
+  const staff = isPriv || isTeacher;
+  const notAlumni = "(status IS NULL OR LOWER(TRIM(status)) <> 'alumni')";
+
+  if (/\bactive academic year\b|\bwhich academic year\b|\bcurrent academic year\b|\bacademic year\b.*\bactive\b|\bactive\b.*\bacademic year\b/.test(q)) {
+    const [[y]] = await db.execute('SELECT name FROM academic_years WHERE institutionId = ? AND isActive = 1 LIMIT 1', [institutionId]);
+    return { answer: y && y.name ? `The active academic year is **${y.name}**.` : 'No academic year is marked active yet. Set one in **System Configuration → Academics Year**.' };
+  }
+  if ((/\bactive users\b|\bregistered users\b|\bhow many users\b/.test(q)) && !/\brole\b/.test(q)) {
+    if (!isPriv) return { answer: 'Only admins can see the full user counts.' };
+    const [[r]] = await db.execute(`SELECT COUNT(*) AS n FROM users WHERE institutionId = ? AND ${notAlumni}`, [institutionId]);
+    return { answer: `There ${r.n == 1 ? 'is' : 'are'} **${r.n}** active user${r.n == 1 ? '' : 's'} registered in the ERP. Open **Overview** for the dashboard.` };
+  }
+  if (/\bstudents enrolled\b|\bhow many students\b/.test(q) && !/\bclass\b|\bfall\b|\brange\b|\bperformance\b|\bsupport\b/.test(q)) {
+    if (!staff) return null;
+    const [[r]] = await db.execute(`SELECT COUNT(*) AS n FROM users WHERE institutionId = ? AND LOWER(TRIM(role)) = 'student' AND ${notAlumni}`, [institutionId]);
+    return { answer: `**${r.n}** student${r.n == 1 ? '' : 's'} ${r.n == 1 ? 'is' : 'are'} currently enrolled.` };
+  }
+  if (/\bhow many teachers\b|\bteachers and staff\b|\bstaff members\b/.test(q)) {
+    if (!isPriv) return null;
+    const [[r]] = await db.execute(`SELECT COUNT(*) AS n FROM users WHERE institutionId = ? AND LOWER(TRIM(role)) <> 'student' AND ${notAlumni}`, [institutionId]);
+    return { answer: `There ${r.n == 1 ? 'is' : 'are'} **${r.n}** teacher${r.n == 1 ? '' : 's'} and staff member${r.n == 1 ? '' : 's'} registered.` };
+  }
+  if (/\bdashboard summary\b|\bschool dashboard\b|\bdashboard information\b/.test(q)) {
+    if (!isPriv) return { answer: 'Your dashboard is the **Overview** screen — it shows your classes, timetable, attendance and notices for your role.' };
+    const [[u]] = await db.execute(`SELECT COUNT(*) AS n FROM users WHERE institutionId = ? AND ${notAlumni}`, [institutionId]);
+    const [[s]] = await db.execute(`SELECT COUNT(*) AS n FROM users WHERE institutionId = ? AND LOWER(TRIM(role)) = 'student' AND ${notAlumni}`, [institutionId]);
+    const [[c]] = await db.execute('SELECT COUNT(*) AS n FROM classes WHERE institutionId = ?', [institutionId]);
+    const [[y]] = await db.execute('SELECT name FROM academic_years WHERE institutionId = ? AND isActive = 1 LIMIT 1', [institutionId]);
+    return { answer: `**School summary**${y && y.name ? ` · ${y.name}` : ''}:\n\n• **${u.n}** active users\n• **${s.n}** students\n• **${Number(u.n) - Number(s.n)}** teachers & staff\n• **${c.n}** classes\n\n_Open **Overview** for the full dashboard._` };
+  }
+  if (/\boverall (?:academic )?performance\b|\bperformance summary\b|\btop performing students\b|\btop performers\b|\bhighest and lowest\b|\bperformance distribution\b|\bdistribution across\b|\bperformance range\b|\bhow many students fall\b|\bneeding (?:academic )?support\b|\bacademic support\b/.test(q)) {
+    if (!staff) return null;
+    const perf = await _overviewPerf(institutionId);
+    if (!perf.students.length) return { answer: "No exam marks have been entered yet, so there's no performance data. Add marks in **Reports → Marks Entry**." };
+    const exams = perf.examsCompleted.join(', ') || 'exams';
+    if (/\bdistribution\b|\bhighest and lowest\b/.test(q)) {
+      const top = perf.classes[0], low = perf.classes[perf.classes.length - 1];
+      const lines = perf.classes.slice(0, 8).map(c => `• ${c.label}: ${c.pct}%`).join('\n');
+      return { answer: `**Class performance** (${exams}):\n\n${lines}\n\nHighest: **${top.label}** (${top.pct}%)${low && low !== top ? ` · Lowest: **${low.label}** (${low.pct}%)` : ''}. Open **Performance Reports** for detail.` };
+    }
+    if (/\bperformance range\b|\bhow many students fall\b/.test(q)) {
+      const hi = perf.students.filter(s => s.pct >= 80).length, mid = perf.students.filter(s => s.pct >= 50 && s.pct < 80).length, lo = perf.students.filter(s => s.pct < 50).length;
+      return { answer: `Across **${perf.students.length}** students with results:\n\n• **${hi}** above 80%\n• **${mid}** between 50–80%\n• **${lo}** below 50%\n\n_Open **Performance Reports** to drill in._` };
+    }
+    if (/\bneeding (?:academic )?support\b|\bacademic support\b/.test(q)) {
+      const need = perf.students.filter(s => s.pct < 50).slice(0, 10);
+      if (!need.length) return { answer: `No student is below 50% right now — the lowest is **${perf.students[perf.students.length - 1].pct}%**. 🎉` };
+      const lines = need.map(s => `• ${s.name}${s.roll_no ? ` (Roll ${s.roll_no})` : ''} — ${s.pct}%`).join('\n');
+      return { answer: `**${need.length}** student${need.length == 1 ? '' : 's'} below 50% may need support (by recorded results):\n\n${lines}\n\n_Open **Performance Reports** for more._` };
+    }
+    if (/\btop performing students\b|\btop performers\b/.test(q)) {
+      const lines = perf.students.slice(0, 5).map((s, i) => `${i + 1}. **${s.name}**${s.roll_no ? ` (Roll ${s.roll_no})` : ''} — ${s.pct}% (${s.obtained}/${s.possible})`).join('\n');
+      return { answer: `**Top performers** (${exams}):\n\n${lines}\n\n_Open **Performance Reports** for the full list._` };
+    }
+    const tObt = perf.students.reduce((a, s) => a + s.obtained, 0), tPos = perf.students.reduce((a, s) => a + s.possible, 0);
+    const pct = tPos > 0 ? Math.round((tObt / tPos) * 1000) / 10 : null, top = perf.students[0];
+    return { answer: `**Overall academic performance** · ${exams}:\n\n• School average: **${pct != null ? pct + '%' : '—'}**\n• Students with results: **${perf.students.length}**\n• Top class: **${perf.classes[0].label}** (${perf.classes[0].pct}%)\n• Topper: **${top.name}** (${top.pct}%)\n\n_Open **Performance Reports** for the breakdown._` };
+  }
+  return null;
+}
+
+// MANAGE LOGINS — admin-only: role/class/user counts and subscription state.
+async function _liveManageLogins(institutionId, q, asker) {
+  const role = (asker.role || '').toLowerCase();
+  const isPriv = role === 'developer' || role === 'super admin' || role.includes('admin');
+  if (!isPriv) return null;
+  const notAlumni = "(status IS NULL OR LOWER(TRIM(status)) <> 'alumni')";
+
+  if (/\bper role\b|\busers (?:per|by|assigned to each|in each) role\b|\brole\b/.test(q) && /\busers\b|\bhow many\b|\bper role\b/.test(q)) {
+    const [rows] = await db.execute(`SELECT role, COUNT(*) AS n FROM users WHERE institutionId = ? AND ${notAlumni} GROUP BY role ORDER BY n DESC`, [institutionId]);
+    if (!rows.length) return { answer: 'No users are registered yet.' };
+    const tot = rows.reduce((a, r) => a + Number(r.n), 0);
+    return { answer: `**${tot}** users by role:\n\n${rows.map(r => `• ${r.role || '—'}: ${r.n}`).join('\n')}\n\n_Open **System Configuration → Users**._` };
+  }
+  if (/\broles configured\b|\bshow the roles\b|\blist the roles\b|\bwhat roles\b|\broles in the erp\b/.test(q)) {
+    const [rows] = await db.execute('SELECT role_name FROM roles WHERE institutionId = ? ORDER BY role_name', [institutionId]);
+    if (!rows.length) return { answer: 'No roles are configured yet.' };
+    return { answer: `**${rows.length}** roles: ${rows.map(r => r.role_name).join(', ')}.\n\n_Manage them in **System Configuration → Roles**._` };
+  }
+  if ((/\bclasses configured\b|\bshow the classes\b|\blist the classes\b|\bwhat classes\b/.test(q)) && !/\bsubject/.test(q)) {
+    const [rows] = await db.execute('SELECT className, section FROM classes WHERE institutionId = ? ORDER BY className, section', [institutionId]);
+    if (!rows.length) return { answer: 'No classes are configured yet. Add them in **System Configuration → Classes**.' };
+    const labels = rows.map(c => `${c.className}${c.section ? ` - ${c.section}` : ''}`);
+    return { answer: `**${labels.length}** classes: ${labels.join(', ')}.\n\n_Manage them in **System Configuration → Classes**._` };
+  }
+  if (/\binactive users\b|\bdeactivated users\b|\bshow all inactive\b/.test(q)) {
+    const [[r]] = await db.execute("SELECT COUNT(*) AS n FROM users WHERE institutionId = ? AND LOWER(TRIM(status)) = 'inactive'", [institutionId]);
+    return { answer: `There ${r.n == 1 ? 'is' : 'are'} **${r.n}** inactive user${r.n == 1 ? '' : 's'}. Open **System Configuration → Inactive** to reactivate or remove them.` };
+  }
+  if (/\bsubscription\b|\bexpire\b|\bexpiry\b|\bvalidity\b|\brenew\b|\bplan\b/.test(q)) {
+    const [[inst]] = await db.execute('SELECT name, usage_plan, plan_start_date FROM institutions WHERE id = ? LIMIT 1', [institutionId]);
+    if (!inst) return { answer: "Subscription details aren't available right now." };
+    const PLAN_DAYS = { '7 days': 7, '30 days': 30, '90 days': 90, '180 days': 180, '1 year': 365, '3 years': 365 * 3, 'Full Time': null };
+    const plan = inst.usage_plan || 'Full Time';
+    const label = plan === 'Full Time' ? 'Life Time' : plan;
+    const days = PLAN_DAYS[plan];
+    if (days == null) return { answer: `Your plan is **${label}** — it never expires. To change it, contact your SmartEdz representative or raise a ticket in **Support**.` };
+    const start = new Date(inst.plan_start_date);
+    if (isNaN(start.getTime())) return { answer: `You're on the **${label}** plan. Open **System Configuration → Subscription** for the dates.` };
+    const end = new Date(start); end.setDate(end.getDate() + days);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const endMid = new Date(end); endMid.setHours(0, 0, 0, 0);
+    const daysLeft = Math.ceil((endMid - today) / 86400000);
+    const endStr = `${String(end.getDate()).padStart(2, '0')}/${String(end.getMonth() + 1).padStart(2, '0')}/${end.getFullYear()}`;
+    if (/\bexpire\b|\bexpiry\b|\bvalidity\b|\bwhen\b/.test(q)) {
+      return { answer: daysLeft < 0 ? `Your **${label}** plan **expired** on ${endStr}. Contact SmartEdz to renew.` : `Your **${label}** plan is valid until **${endStr}** (${daysLeft} day${daysLeft == 1 ? '' : 's'} left).` };
+    }
+    return { answer: `You're on the **${label}** plan${daysLeft >= 0 ? `, valid until **${endStr}** (${daysLeft} day${daysLeft == 1 ? '' : 's'} left)` : ` — **expired** on ${endStr}`}. Open **System Configuration → Subscription**.` };
+  }
+  return null;
+}
+
+// PRE-ADMISSIONS / ADMISSIONS — admin-only counts over pre_admissions.
+async function _livePreAdmissions(institutionId, q, asker) {
+  const role = (asker.role || '').toLowerCase();
+  const isPriv = role === 'developer' || role === 'super admin' || role.includes('admin');
+  if (!isPriv) return null;
+  const T = 'pre_admissions';
+  const byClass = /\bgrouped\b|\bjoining class\b|\bby class\b|\bper class\b/.test(q);
+
+  if (/\bpending\b/.test(q)) {
+    if (byClass) {
+      const [rows] = await db.execute(`SELECT joining_grade, COUNT(*) AS n FROM ${T} WHERE institutionId = ? AND status = 'Pending' GROUP BY joining_grade ORDER BY n DESC`, [institutionId]);
+      if (!rows.length) return { answer: 'No pending applications right now.' };
+      const tot = rows.reduce((a, r) => a + Number(r.n), 0);
+      return { answer: `**${tot}** pending applications by joining class:\n\n${rows.map(r => `• ${r.joining_grade || '—'}: ${r.n}`).join('\n')}\n\n_Open **Pre-Admissions**._` };
+    }
+    const [[r]] = await db.execute(`SELECT COUNT(*) AS n FROM ${T} WHERE institutionId = ? AND status = 'Pending'`, [institutionId]);
+    return { answer: `There ${r.n == 1 ? 'is' : 'are'} **${r.n}** pending pre-admission application${r.n == 1 ? '' : 's'}. Open **Pre-Admissions** to review them.` };
+  }
+  if (/\bcompare\b|\btotals?\b/.test(q)) {
+    const [rows] = await db.execute(`SELECT admission_year AS yr, COUNT(*) AS n FROM ${T} WHERE institutionId = ? AND status = 'Approved' AND admission_year IS NOT NULL GROUP BY admission_year ORDER BY admission_year DESC`, [institutionId]);
+    if (!rows.length) return { answer: 'No approved admissions on record yet.' };
+    return { answer: `Approved admissions by year:\n\n${rows.map(r => `• ${r.yr}: ${r.n}`).join('\n')}\n\n_Open **Admissions** for the breakdown._` };
+  }
+  if (byClass || /\bcounts?\b/.test(q)) {
+    const [rows] = await db.execute(`SELECT joining_grade, COUNT(*) AS n FROM ${T} WHERE institutionId = ? AND status = 'Approved' GROUP BY joining_grade ORDER BY n DESC`, [institutionId]);
+    if (!rows.length) return { answer: 'No approved admissions yet.' };
+    const tot = rows.reduce((a, r) => a + Number(r.n), 0);
+    return { answer: `**${tot}** approved admissions by joining class:\n\n${rows.map(r => `• ${r.joining_grade || '—'}: ${r.n}`).join('\n')}\n\n_Open **Admissions**._` };
+  }
+  if (/\bapproved\b/.test(q)) {
+    const [[r]] = await db.execute(`SELECT COUNT(*) AS n FROM ${T} WHERE institutionId = ? AND status = 'Approved'`, [institutionId]);
+    return { answer: `There ${r.n == 1 ? 'is' : 'are'} **${r.n}** approved admission record${r.n == 1 ? '' : 's'}. Open **Admissions** to view them.` };
+  }
+  if (/\brejected\b/.test(q)) {
+    const [[r]] = await db.execute(`SELECT COUNT(*) AS n FROM ${T} WHERE institutionId = ? AND status = 'Rejected'`, [institutionId]);
+    return { answer: `There ${r.n == 1 ? 'is' : 'are'} **${r.n}** rejected application${r.n == 1 ? '' : 's'}. Open **Admissions → Rejected** to view them.` };
   }
   return null;
 }
@@ -19187,6 +19397,91 @@ async function _liveSyllabus(institutionId, q, asker) {
     return { answer: `**${subj.name} — ${_liveClassLabel(cls)}** has **${chapterCount}** chapter${chapterCount === 1 ? '' : 's'}:\n\n${list}` };
   }
   return { answer: `**${subj.name} — ${_liveClassLabel(cls)}** has **${chapterCount}** chapter${chapterCount === 1 ? '' : 's'}, with **${totalPeriods}** period${totalPeriods === 1 ? '' : 's'} planned in total.` };
+}
+
+// ===== LIBRARY — online catalogue, physical stock and overdue loans =====
+//  Online book count/list: admin + students (Library read). Physical stock
+//  and overdue loans: privileged only. Book-level and issue/return actions
+//  stay on the Library screen.
+async function _liveLibrary(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, 'Library'))) return null;
+  const role = (asker.role || '').toLowerCase();
+  const isPriv = role === 'developer' || role === 'super admin' || role.includes('admin');
+  const wantList = /\blist\b|\bshow\b|\bwhich\b|\bwhat\b|\btitles?\b/.test(q);
+
+  if (/\boverdue\b/.test(q)) {
+    if (!isPriv) return null;
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    const [rows] = await db.execute(
+      `SELECT b.title AS book_title, i.due_date, COALESCE(u.name, i.borrower_name) AS borrower
+         FROM library_issues i LEFT JOIN library_books b ON b.id = i.book_id
+         LEFT JOIN users u ON u.id = i.member_user_id
+        WHERE i.institutionId = ? AND i.status = 'issued' AND i.due_date IS NOT NULL AND i.due_date < ?
+        ORDER BY i.due_date ASC LIMIT 40`, [institutionId, today]);
+    if (!rows.length) return { answer: 'No library books are overdue right now. 📚' };
+    const lines = rows.map(r => `• ${r.book_title || 'Untitled'} — ${r.borrower || 'Unknown'} (due ${_liveFmtDate(r.due_date)})`).join('\n');
+    return { answer: `**${rows.length}** overdue book${rows.length === 1 ? '' : 's'}:\n\n${lines}` };
+  }
+
+  if (/\bonline\b|\bdigital\b|\be[- ]?books?\b/.test(q)) {
+    const [[{ n }]] = await db.execute('SELECT COUNT(*) AS n FROM library_online_books WHERE institutionId = ?', [institutionId]);
+    if (wantList && n > 0) {
+      const [rows] = await db.execute('SELECT title, author FROM library_online_books WHERE institutionId = ? ORDER BY title LIMIT 30', [institutionId]);
+      const lines = rows.map((r, i) => `${i + 1}. ${r.title}${r.author ? ` — ${r.author}` : ''}`).join('\n');
+      return { answer: `**${n}** online book${n === 1 ? '' : 's'} in the library:\n\n${lines}${n > 30 ? '\n\n_…and more. Open **Library** to browse._' : ''}` };
+    }
+    return { answer: `The Online Library has **${n}** book${n === 1 ? '' : 's'}. Open **Library** to read or download them.` };
+  }
+
+  if (/\bphysical\b|\boffline\b|\bcatalogue?\b|\bbooks?\b/.test(q)) {
+    if (!isPriv) return null;
+    const [[{ n }]] = await db.execute('SELECT COUNT(*) AS n FROM library_books WHERE institutionId = ?', [institutionId]);
+    const [[{ c }]] = await db.execute("SELECT COUNT(*) AS c FROM library_issues WHERE institutionId = ? AND status = 'issued'", [institutionId]);
+    return { answer: `The physical catalogue has **${n}** book title${n === 1 ? '' : 's'}, with **${c}** currently issued. Open **Library → Offline** to manage them.` };
+  }
+  return null;
+}
+
+// ===== TIMETABLE — school-wide schedule configuration =====
+//  Working days and the period/break grid are institution + active-year
+//  settings (no selection needed), so Smarty answers them directly. Class-
+//  and teacher-specific timetables stay on the Timetable screen.
+async function _liveTimetable(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, 'Timetable'))) return null;
+  const yearId = await resolveYearId(institutionId);
+  if (!yearId) return { answer: 'No active academic year is set yet, so the timetable configuration is not available.' };
+  const isWorking = (d) => d.is_working === 1 || d.is_working === null;
+
+  if (/\bworking days?\b/.test(q) && !/\bperiods?\b|\bbreak\b|\btimings?\b/.test(q)) {
+    const [days] = await db.execute(
+      'SELECT day_name, is_working FROM timetable_days WHERE institutionId = ? AND academic_year_id = ? ORDER BY id',
+      [institutionId, yearId]);
+    if (!days.length) return { answer: 'Working days have not been set up on the Timetable yet.' };
+    const on = days.filter(isWorking).map(d => d.day_name);
+    const off = days.filter(d => !isWorking(d)).map(d => d.day_name);
+    let a = `**Working days:** ${on.length ? on.join(', ') : 'none set'}.`;
+    if (off.length) a += `\n**Off:** ${off.join(', ')}.`;
+    return { answer: a };
+  }
+
+  const [periods] = await db.execute(
+    'SELECT name, start_time, end_time, is_break FROM timetable_periods WHERE institutionId = ? AND academic_year_id = ? ORDER BY period_index',
+    [institutionId, yearId]);
+  if (!periods.length) return { answer: 'No periods or breaks have been configured on the Timetable yet.' };
+  const fmt = (t) => {
+    if (!t) return '';
+    const [h, m] = String(t).split(':');
+    let hh = parseInt(h, 10); if (isNaN(hh)) return '';
+    const ap = hh >= 12 ? 'PM' : 'AM'; hh = hh % 12 || 12;
+    return `${hh}:${m || '00'} ${ap}`;
+  };
+  const lines = periods.map(p => {
+    const when = p.start_time ? ` (${fmt(p.start_time)} – ${fmt(p.end_time)})` : '';
+    return `• ${p.is_break ? '☕ ' : ''}${p.name}${when}${p.is_break ? ' — break' : ''}`;
+  }).join('\n');
+  const nBreak = periods.filter(p => p.is_break).length;
+  const nClass = periods.length - nBreak;
+  return { answer: `**${nClass}** teaching period${nClass === 1 ? '' : 's'} and **${nBreak}** break${nBreak === 1 ? '' : 's'} per day:\n\n${lines}` };
 }
 
 // ===== STUDY MATERIALS — mirrors the app's exposure exactly =====

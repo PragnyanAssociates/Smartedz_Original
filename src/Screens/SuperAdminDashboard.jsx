@@ -24,7 +24,7 @@ import StudyMaterialsScreen from '../components/study-materials/StudyMaterialsSc
 import Syllabus from '../components/Syllabus/Syllabus';
 import WhatsAppLayout from '../components/chat/WhatsAppLayout';
 import Alumni from '../components/Alumni/Alumni';
-import LessonPlan from '../components/LessonPlan/LessonPlan';
+// import LessonPlan from '../components/LessonPlan/LessonPlan';
 import NotificationsScreen from './NotificationsScreen';
 import Profile from './Profile';
 import OnlineClasses from '../components/OnlineClasses/OnlineClasses';
@@ -180,7 +180,7 @@ function DashboardShell() {
       case 'Syllabus':          return <Syllabus/>;
       case 'GroupChat':         return <WhatsAppLayout/>;
       case 'Alumni':            return <Alumni/>;
-      case 'LessonPlan':        return <LessonPlan/>;
+      // case 'LessonPlan':        return <LessonPlan/>;
       case 'InventoryAssets':   return <InventoryAssets/>;
       case 'Support':           return <Support/>;
       case 'Library':           return <Library/>;

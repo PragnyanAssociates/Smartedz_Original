@@ -24,6 +24,14 @@ import smartyPic from './SmartyPic.png';  // static profile photo used in the he
 
 const idToModule = {}, idToLabel = {};
 MODULES.forEach(m => { idToModule[m.id] = m.module_name; idToLabel[m.id] = m.label || m.title || m.id; });
+// Resolve a module name/label/id string to its Modules.js id (used to group
+// "Browse by module" questions by the module they belong to).
+const _modId = (s) => {
+  if (!s) return null;
+  const t = String(s).toLowerCase().trim();
+  const m = MODULES.find(x => String(x.id).toLowerCase() === t || String(x.module_name || '').toLowerCase() === t || String(x.label || '').toLowerCase() === t);
+  return m ? m.id : null;
+};
 // Modules everyone can open regardless of the permission matrix (home, profile,
 // notifications are always reachable) — so Smarty never hides their shortcuts.
 const ALWAYS_VISIBLE = new Set(['overview', ...MODULES.filter(m => m.alwaysVisible).map(m => m.id)]);
@@ -143,6 +151,7 @@ export default function Smarty({ onNavigate }) {
   const [mood, setMood] = useState('idle');
   const [msgs, setMsgs] = useState([]);
   const [chips, setChips] = useState([]);
+  const [aliases, setAliases] = useState({});   // module_name -> alias (Menu Settings)
   const [input, setInput] = useState('');
   const [boot, setBoot] = useState(null);
   const [unread, setUnread] = useState(0);
@@ -232,6 +241,8 @@ export default function Smarty({ onNavigate }) {
       if (q.link && !canSeeLink(q.link)) return;
       pool.push({
         id: 'c' + q.id, q: q.question, roles: q.roles, tone: 'brand', icon: '💬',
+        module: _modId(q.category) || (q.link || null),
+        send: q.live_query || undefined,
         keywords: [String(q.question || '').toLowerCase(), ...String(q.keywords || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean)],
         answer: { text: q.answer, link: q.link || null, linkLabel: q.link ? ('Open ' + (idToLabel[q.link] || q.link)) : null, tone: 'brand' }
       });
@@ -324,7 +335,10 @@ export default function Smarty({ onNavigate }) {
   // compact default row: Suggest questions + 2 role-important + What's new (4)
   const starters = useCallback((b, pool) => {
     const imp = IMPORTANT_BY_ROLE[roleBucket(role)] || IMPORTANT_BY_ROLE.default;
-    const out = [{ id: 'suggest-q', label: 'Suggest questions', icon: '💡', tone: 'brand' }];
+    const out = [
+      { id: 'suggest-q', label: 'Suggest questions', icon: '💡', tone: 'brand' },
+      { id: 'browse', nav: 'modules', label: 'Browse by module', icon: '📚', tone: 'violet' }
+    ];
     imp.forEach(id => {
       if (id === 'hw-today' && !b?.homework) return;
       if (id === 'attendance' && !b?.attendance) return;
@@ -332,7 +346,7 @@ export default function Smarty({ onNavigate }) {
       if (e) out.push({ id: e.id, label: e.q, icon: e.icon || '💬', tone: e.tone || 'brand' });
     });
     out.push({ id: 'news', label: "What's new?", icon: '📣', tone: 'violet' });
-    return out.slice(0, 4);
+    return out.slice(0, 5);
   }, [role]);
 
   // expanded, personalised list shown when the user taps "Suggest questions"
@@ -374,6 +388,15 @@ export default function Smarty({ onNavigate }) {
     } catch (e) { setBoot({}); return {}; }
   }, [user]);
   useEffect(() => { load(); }, [load]);
+
+  // Module aliases (school's renamed sidebar labels) for the module browser.
+  useEffect(() => {
+    if (!user?.institutionId) return;
+    fetch(`${API_BASE_URL}/admin/module-order/${user.institutionId}`)
+      .then(r => r.ok ? r.json() : [])
+      .then(rows => { const a = {}; (Array.isArray(rows) ? rows : []).forEach(r => { if (r.alias) a[r.module_name] = r.alias; }); setAliases(a); })
+      .catch(() => {});
+  }, [user?.institutionId]);
 
   const toBottom = () => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; };
   useEffect(() => { toBottom(); }, [msgs, open]);
@@ -694,6 +717,36 @@ export default function Smarty({ onNavigate }) {
     else { setToast(`Opening “${idToLabel[linkId] || linkId}”…`); setTimeout(() => setToast(''), 2000); }
   };
 
+  // ---- Browse-by-module navigator: module list -> that module's questions ----
+  const aliasLabel = (id) => aliases[idToModule[id]] || idToLabel[id] || String(id);
+  // Browse-by-module shows only entries explicitly tagged to a module (curated
+  // built-ins + admin questions whose Category maps to a module), never the
+  // generic openers/how-tos, so each module's list stays clean and intentional.
+  const moduleOf = (e) => e.module ? (_modId(e.module) || e.module) : null;
+  const navMenu = (target) => {
+    const b = boot || {};
+    const pool = b._pool || buildPool(b);
+    if (target === 'modules') {
+      const ids = [], seen = new Set();
+      pool.forEach(e => { const mid = moduleOf(e); if (mid && canSeeLink(mid) && !seen.has(mid)) { seen.add(mid); ids.push(mid); } });
+      ids.sort((a, c) => MODULES.findIndex(m => m.id === a) - MODULES.findIndex(m => m.id === c));
+      deliver({ tone: 'violet', text: 'Pick a module and I’ll show what you can ask about it 👇' });
+      setChips(ids.map(id => ({ id: 'nav-' + id, nav: 'mod:' + id, label: aliasLabel(id), icon: '📂', tone: 'brand' })));
+      return;
+    }
+    if (target.startsWith('mod:')) {
+      const mid = target.slice(4);
+      const qs = pool.filter(e => moduleOf(e) === mid);
+      deliver({ tone: 'brand', text: `Here’s what I can tell you about **${aliasLabel(mid)}** 👇` });
+      const list = qs.slice(0, 40).map(e => e.send ? { id: e.id, label: e.q, send: e.send, icon: e.icon || '💬', tone: e.tone || 'brand' }
+        : e.ref ? { id: e.id, label: e.q, ref: e.ref, icon: e.icon || '💬', tone: e.tone || 'brand' }
+          : { id: e.id, label: e.q, icon: e.icon || '💬', tone: e.tone || 'brand' });
+      list.push({ id: 'nav-back', nav: 'modules', label: '⟵ All modules', icon: '📚', tone: 'violet' });
+      setChips(list);
+      return;
+    }
+  };
+
   // header identity: name line + role/class/roll pills
   const u = boot?.user || {};
   const uName = u.name || user?.name || '';
@@ -744,7 +797,7 @@ export default function Smarty({ onNavigate }) {
 
           <div className="smy-chips">
             {chips.map(c => (
-              <button key={c.id} className="smy-chip" style={{ '--ct': `var(${toneVar[c.tone] || '--brand'})` }} onClick={() => { if (c.send) { pushMe(c.label); setChips([]); askAI(c.send); } else { pushMe(c.label); respond(c.id); } }}>
+              <button key={c.id} className="smy-chip" style={{ '--ct': `var(${toneVar[c.tone] || '--brand'})` }} onClick={() => { if (c.nav) { pushMe(c.label); navMenu(c.nav); } else if (c.send) { pushMe(c.label); setChips([]); askAI(c.send); } else if (c.ref) { pushMe(c.label); respond(c.ref); } else { pushMe(c.label); respond(c.id); } }}>
                 <span className="smy-ic" style={{ background: `var(${toneVar[c.tone] || '--brand'})` }}>{c.icon}</span>{c.label}
               </button>
             ))}

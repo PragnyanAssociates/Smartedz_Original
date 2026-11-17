@@ -76,14 +76,14 @@ export const MODULES = [
     imageSource: 'https://cdn-icons-png.flaticon.com/128/17163/17163937.png',
     navigateTo: '/Attendance'
   },
-    {
-    id: 'LessonPlan',
-    module_name: 'LessonPlan',
-    label: 'LessonPlan',
-    title: 'LessonPlan',
-    imageSource: 'https://cdn-icons-png.flaticon.com/128/5341/5341025.png',
-    navigateTo: '/LessonPlan'
-  },
+  //   {
+  //   id: 'LessonPlan',
+  //   module_name: 'LessonPlan',
+  //   label: 'LessonPlan',
+  //   title: 'LessonPlan',
+  //   imageSource: 'https://cdn-icons-png.flaticon.com/128/5341/5341025.png',
+  //   navigateTo: '/LessonPlan'
+  // },
    {
     id: 'Homework',
     module_name: 'Homework', // Must match backend exactly
