@@ -190,8 +190,20 @@ export default function Overview() {
   if (!bundle) return null;
 
   const admin = bundle.admin || {};
-  const users = admin.users || [];
   const isStudent = (u) => (u.role || '').toLowerCase().includes('student');
+  const statusOf  = (u) => (u.status || 'active').toLowerCase();
+  // The Overview counts LIVE accounts only — Active + Inactive. Alumni (and
+  // anyone hard-deleted, who is already gone from the table) are excluded, so
+  // these totals match Smarty's school summary instead of over-counting.
+  const users         = (admin.users || []).filter(u => statusOf(u) !== 'alumni');
+  const activeUsers   = users.filter(u => statusOf(u) === 'active');
+  const inactiveUsers = users.filter(u => statusOf(u) === 'inactive');
+  // Active / Inactive split for any slice of users (whole school, students,
+  // staff) — each KPI card shows its own breakdown underneath the total.
+  const countBoth = (pred) => ({
+    active:   activeUsers.filter(pred).length,
+    inactive: inactiveUsers.filter(pred).length
+  });
   const activeYear = (admin.academicYears || []).find(y => y.isActive);
 
   const entries = Array.isArray(bundle.tt?.entries) ? bundle.tt.entries : [];
@@ -202,9 +214,12 @@ export default function Overview() {
   const distinctClasses = new Set(entries.map(e => e.class_id).filter(Boolean)).size;
 
   const VALUES = {
-    total_users:    { value: users.length, sub: 'System Authorized users' },
-    students:       { value: users.filter(isStudent).length, sub: 'Enrolled' },
-    teachers_staff: { value: users.filter(u => !isStudent(u)).length, sub: 'Active members' },
+    total_users:    { value: users.length, sub: 'Active + Inactive users',
+                      breakdown: countBoth(() => true) },
+    students:       { value: users.filter(isStudent).length, sub: 'Enrolled',
+                      breakdown: countBoth(isStudent) },
+    teachers_staff: { value: users.filter(u => !isStudent(u)).length, sub: 'Active members',
+                      breakdown: countBoth(u => !isStudent(u)) },
     classes:        { value: (admin.classes || []).length, sub: 'Configured' },
     roles:          { value: (admin.roles || []).length, sub: 'RBAC' },
     active_year:    { value: activeYear?.name || 'None', sub: 'Current term', isText: true },
@@ -377,12 +392,20 @@ function Box({ id, right, children }) {
   );
 }
 
-function KpiBox({ id, value, sub, isText }) {
+function KpiBox({ id, value, sub, isText, breakdown }) {
   return (
     <Box id={id}>
       <div className="flex flex-col">
         <span className={`${isText ? 'text-xl' : 'text-2xl tabular-nums'} font-semibold text-zinc-900 truncate`} title={String(value)}>{value}</span>
         <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 truncate">{sub}</span>
+        {breakdown && (
+          <span className="text-[9px] font-semibold tracking-wide tabular-nums truncate mt-0.5"
+            title={`Active ${breakdown.active} · Inactive ${breakdown.inactive}`}>
+            <span className="text-emerald-600">Active: {breakdown.active}</span>
+            <span className="mx-1 text-zinc-300">·</span>
+            <span className="text-amber-600">Inactive: {breakdown.inactive}</span>
+          </span>
+        )}
       </div>
     </Box>
   );

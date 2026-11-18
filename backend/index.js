@@ -18041,7 +18041,14 @@ const SMARTY_SYSTEM =
   "points where they help — when the question is broad or needs detail. Never cut " +
   "an answer off mid-thought; finish the thought. Do NOT invent school-specific " +
   "data such as a person's marks, attendance or fees; if asked for those, tell " +
-  "them to open the relevant screen in the app. Be warm and encouraging.";
+  "them to open the relevant screen in the app. Be warm and encouraging. " +
+  "When your answer includes a mathematical or chemical formula or equation, write " +
+  "it in LaTeX so it renders cleanly: wrap a short inline formula in single dollar " +
+  "signs ($…$) and a standalone equation in double dollar signs ($$…$$). For example " +
+  "$H_2O$, $Na^+$, $\\frac{1}{2}mv^2$, and " +
+  "$$6CO_2 + 6H_2O \\rightarrow C_6H_{12}O_6 + 6O_2$$. Use standard LaTeX (_ for " +
+  "subscripts, ^ for superscripts, \\frac, \\sqrt, \\times, \\rightarrow). Do not use " +
+  "the \\ce command or any non-LaTeX markup for formulas.";
 
 async function _smartyCallGemini(key, model, question) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;

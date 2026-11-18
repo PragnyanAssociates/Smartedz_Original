@@ -4,6 +4,8 @@ import { usePermissions } from '../../Screens/PermissionsContext';
 import { API_BASE_URL } from '../../apiConfig';
 import { MODULES } from '../../Screens/Modules';
 import { BUILTINS, LIVE_IDS, STARTERS_BY_ROLE } from './Smartyknowledge';
+import katex from 'katex';               // renders LaTeX math/formulas like a textbook.
+import 'katex/dist/katex.min.css';       // KaTeX stylesheet (required for correct layout).
 import smartyGif from './smarty.gif';   // animated waving character on the launcher.
 import smartyPic from './SmartyPic.png';  // static profile photo used in the header + chat avatars.
 
@@ -848,7 +850,69 @@ function Message({ m, onNav }) {
   );
 }
 const Mini = () => <span className="smy-mini"><img src={smartyPic} alt="Smarty" /></span>;
-function fmt(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>'); }
+// Math + chemistry rendering.
+//   • Formulas the model wraps in LaTeX delimiters — $…$ / \(…\) (inline) and
+//     $$…$$ / \[…\] (block) — are rendered with KaTeX, so fractions, roots,
+//     exponents and equations look exactly like a textbook/PDF.
+//   • Any bare LaTeX left outside delimiters (e.g. "CO_2", "\rightarrow") is
+//     cleaned up to plain Unicode by smyMath() as a safety net, so nothing ever
+//     shows raw backslashes. Digits-only subscripts keep it from touching the
+//     "_italic_" underscores used elsewhere in answers.
+const _SUB = { '0':'₀','1':'₁','2':'₂','3':'₃','4':'₄','5':'₅','6':'₆','7':'₇','8':'₈','9':'₉' };
+const _SUP = { '0':'⁰','1':'¹','2':'²','3':'³','4':'⁴','5':'⁵','6':'⁶','7':'⁷','8':'⁸','9':'⁹','+':'⁺','-':'⁻' };
+const _subs = (t) => t.replace(/[0-9]/g, c => _SUB[c] || c);
+const _sups = (t) => t.replace(/[0-9+\-]/g, c => _SUP[c] || c);
+function smyMath(s) {
+  let t = String(s || '');
+  // commands → symbols (xrightarrow, longrightarrow, Rightarrow, ...)
+  t = t.replace(/\\[a-zA-Z]*rightarrow\b/g, ' → ')
+       .replace(/\\[a-zA-Z]*leftarrow\b/g, ' ← ')
+       .replace(/\\rightleftharpoons\b/g, ' ⇌ ')
+       .replace(/\\times\b/g, '×').replace(/\\cdot\b/g, '·')
+       .replace(/\\pm\b/g, '±').replace(/\\Delta\b/g, 'Δ');
+  // \text{...} / \mathrm{...} → their contents (run twice for simple nesting)
+  t = t.replace(/\\(?:text|mathrm|mathbf|mathit|mathsf)\s*\{([^{}]*)\}/g, '$1')
+       .replace(/\\(?:text|mathrm|mathbf|mathit|mathsf)\s*\{([^{}]*)\}/g, '$1');
+  // subscripts (digits only) and superscripts (digits + charge signs)
+  t = t.replace(/_\{([0-9]+)\}/g, (_, g) => _subs(g)).replace(/_([0-9])/g, (_, g) => _subs(g));
+  t = t.replace(/\^\{([0-9+\-]+)\}/g, (_, g) => _sups(g)).replace(/\^([0-9+\-])/g, (_, g) => _sups(g));
+  // drop LaTeX spacing commands and any leftover braces
+  t = t.replace(/\\[,;:!> ]/g, ' ').replace(/\{([^{}]*)\}/g, '$1');
+  return t;
+}
+// Escape → unicode-cleanup → bold, for the prose BETWEEN math spans.
+function _fmtText(s) {
+  return smyMath(
+    String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  ).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+}
+// Render one LaTeX span with KaTeX; fall back to the plain-text cleanup if it
+// can't parse (so a stray formula degrades gracefully instead of throwing).
+function _tex(src, display) {
+  try {
+    return katex.renderToString(src, { displayMode: display, throwOnError: false, strict: 'ignore' });
+  } catch (_) {
+    return _fmtText(src);
+  }
+}
+// Split the answer into math spans ($$…$$, \[…\], $…$, \(…\)) and prose, then
+// render each part appropriately and stitch the HTML back together.
+const _MATH_RE = /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|\$([^$\n]+?)\$/g;
+function fmt(s) {
+  const src = String(s || '');
+  let out = '', last = 0, m;
+  _MATH_RE.lastIndex = 0;
+  while ((m = _MATH_RE.exec(src)) !== null) {
+    out += _fmtText(src.slice(last, m.index));
+    if (m[1] != null)      out += _tex(m[1], true);    // $$…$$
+    else if (m[2] != null) out += _tex(m[2], true);    // \[…\]
+    else if (m[3] != null) out += _tex(m[3], false);   // \(…\)
+    else                   out += _tex(m[4], false);   // $…$
+    last = _MATH_RE.lastIndex;
+  }
+  out += _fmtText(src.slice(last));
+  return out;
+}
 
 function Defs() {
   return (

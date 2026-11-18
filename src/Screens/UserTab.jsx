@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, Edit, Trash2, X, Search, UserCircle2, BookOpen, Camera, AtSign, GraduationCap, ChevronDown, Eye } from 'lucide-react';
+import { Plus, Edit, UserMinus, X, Search, UserCircle2, BookOpen, Camera, AtSign, GraduationCap, ChevronDown, Eye } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
 
 export default function UserTab({ data, fetchData, user }) {
@@ -194,11 +194,24 @@ export default function UserTab({ data, fetchData, user }) {
     setIsModalOpen(true);
   };
 
-  const handleDelete = async (u) => {
-    if (u.role === 'Super Admin') return alert('The Super Admin account cannot be deleted from here.');
-    if (!window.confirm(`Permanently delete "${u.name}"?\n\nThis removes the record from the school and frees their roll number / PEN / TC for reuse. To keep the record without login access, set them to Inactive instead.`)) return;
-    await fetch(`${API_BASE_URL}/admin/users/${u.id}`, { method: 'DELETE' });
-    fetchData();
+  // Users are never hard-deleted from this screen — only set to Inactive.
+  // They move to the Inactive tab (no login), but stay in the records and keep
+  // their roll number for the year. Permanent deletion lives on the Inactive
+  // and Alumni screens only, so the Users tab can't silently shrink the school.
+  const handleSetInactive = async (u) => {
+    if (u.role === 'Super Admin') return alert('The Super Admin account cannot be set to inactive.');
+    if (!window.confirm(`Are you sure you want to set "${u.name}" to Inactive?\n\nThey will lose login access and move to the Inactive tab. Their roll number stays reserved for this academic year, and you can reactivate them any time.`)) return;
+    const res = await fetch(`${API_BASE_URL}/admin/users/${u.id}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'inactive' })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(err.error || 'Failed to set the user inactive.');
+    } else {
+      fetchData();
+    }
   };
 
   const handlePicChange = (e) => {
@@ -478,8 +491,8 @@ export default function UserTab({ data, fetchData, user }) {
                       <button onClick={() => openEdit(u)} title="Edit" className="p-1.5 text-zinc-400 hover:text-zinc-700 rounded transition-colors">
                         <Edit className="size-4 shrink-0" />
                       </button>
-                      <button onClick={() => handleDelete(u)} title="Delete" className="p-1.5 text-zinc-400 hover:text-accent rounded transition-colors">
-                        <Trash2 className="size-4 shrink-0" />
+                      <button onClick={() => handleSetInactive(u)} title="Set Inactive" className="p-1.5 text-zinc-400 hover:text-amber-600 rounded transition-colors">
+                        <UserMinus className="size-4 shrink-0" />
                       </button>
                     </div>
                   </td>
