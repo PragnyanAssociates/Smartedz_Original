@@ -38,6 +38,10 @@ const _modId = (s) => {
 // notifications are always reachable) — so Smarty never hides their shortcuts.
 const ALWAYS_VISIBLE = new Set(['overview', ...MODULES.filter(m => m.alwaysVisible).map(m => m.id)]);
 const toneVar = { sky: '--sky', amber: '--amber', emerald: '--emerald', rose: '--rose', violet: '--violet', brand: '--brand' };
+// Browse-by-module cards: a relevant icon + a rotating accent colour per module.
+const MOD_ICON = { overview: '🏠', 'manage-login': '🔑', DailyExpenses: '🧾', FeeManagement: '💰', Transport: '🚌', timetable: '📅', 'academic-calendar': '🗓️', attendance: '✅', Exams: '📝', reports: '📄', Performance: '📈', Directory: '👥', Gallery: '🖼️', Homework: '📚', Meals: '🍽️', PTM: '🧑‍🏫', OnlineClasses: '💻', DigitalLabs: '🔬', PreAdmissions: '🗂️', Admissions: '🎓', StudyMaterials: '📖', Syllabus: '📘', GroupChat: '💬', Alumni: '🎓', InventoryAssets: '📦', Support: '🛟', Library: '📚', notifications: '🔔', profile: '👤' };
+const MOD_TONES = ['violet', 'sky', 'amber', 'emerald', 'rose', 'brand'];
+const modIcon = (id) => MOD_ICON[id] || '📂';
 
 // contextual follow-up chips shown after an answer (ids are filtered by role/visibility)
 const FOLLOW = {
@@ -153,6 +157,7 @@ export default function Smarty({ onNavigate }) {
   const [mood, setMood] = useState('idle');
   const [msgs, setMsgs] = useState([]);
   const [chips, setChips] = useState([]);
+  const [modAll, setModAll] = useState(false);     // module card grid: View all / View less
   const [aliases, setAliases] = useState({});   // module_name -> alias (Menu Settings)
   const [input, setInput] = useState('');
   const [boot, setBoot] = useState(null);
@@ -176,19 +181,33 @@ export default function Smarty({ onNavigate }) {
   const moveFn = useRef(null);
   const upFn = useRef(null);
 
+  // Where the launcher sits is a PER-USER, per-device preference. The storage
+  // key is scoped by institution + user id, so on a shared computer (or after a
+  // logout/login) one person's position never leaks to another, and schools on
+  // this multi-tenant app stay isolated. It lives in localStorage, so each
+  // device a user signs in on keeps its own spot.
+  const fabKey = user?.id ? `smy_fab_pos_${user?.institutionId || '0'}_${user.id}` : null;
   useEffect(() => {
+    // Retire the old shared key that made every user on a device inherit the
+    // same position.
+    try { localStorage.removeItem('smy_fab_pos'); } catch (_) {}
+    if (!fabKey) return;
     try {
-      const s = localStorage.getItem('smy_fab_pos');
+      const s = localStorage.getItem(fabKey);
       if (s) {
         const p = JSON.parse(s);
         if (p && typeof p.left === 'number') {
           const left = Math.max(4, Math.min(window.innerWidth - 110, p.left));
           const top = Math.max(4, Math.min(window.innerHeight - 130, p.top));
           setFabPos({ left, top }); posRef.current = { left, top };
+          return;
         }
       }
+      // No saved spot for THIS user on this device → fall back to the default
+      // corner (so a new user never starts on the previous user's position).
+      setFabPos(null); posRef.current = null;
     } catch (_) {}
-  }, []);
+  }, [fabKey]);
 
   const onFabDown = (e) => {
     const r = e.currentTarget.getBoundingClientRect();
@@ -208,7 +227,7 @@ export default function Smarty({ onNavigate }) {
       window.removeEventListener('pointermove', moveFn.current);
       window.removeEventListener('pointerup', upFn.current);
       setDragging(false);
-      if (posRef.current) { try { localStorage.setItem('smy_fab_pos', JSON.stringify(posRef.current)); } catch (_) {} }
+      if (fabKey && posRef.current) { try { localStorage.setItem(fabKey, JSON.stringify(posRef.current)); } catch (_) {} }
     };
     window.addEventListener('pointermove', moveFn.current);
     window.addEventListener('pointerup', upFn.current);
@@ -334,22 +353,10 @@ export default function Smarty({ onNavigate }) {
     return null;
   }, []);
 
-  // compact default row: Suggest questions + 2 role-important + What's new (4)
-  const starters = useCallback((b, pool) => {
-    const imp = IMPORTANT_BY_ROLE[roleBucket(role)] || IMPORTANT_BY_ROLE.default;
-    const out = [
-      { id: 'suggest-q', label: 'Suggest questions', icon: '💡', tone: 'brand' },
-      { id: 'browse', nav: 'modules', label: 'Browse by module', icon: '📚', tone: 'violet' }
-    ];
-    imp.forEach(id => {
-      if (id === 'hw-today' && !b?.homework) return;
-      if (id === 'attendance' && !b?.attendance) return;
-      const e = pool.find(x => x.id === id);
-      if (e) out.push({ id: e.id, label: e.q, icon: e.icon || '💬', tone: e.tone || 'brand' });
-    });
-    out.push({ id: 'news', label: "What's new?", icon: '📣', tone: 'violet' });
-    return out.slice(0, 5);
-  }, [role]);
+  // The default quick-chip row is intentionally empty now: "Browse by module"
+  // is rendered as a PERMANENT button in the composer area (always visible,
+  // even after answering a question), and everything else is asked by typing.
+  const starters = useCallback(() => [], []);
 
   // expanded, personalised list shown when the user taps "Suggest questions"
   const fullSuggestions = (b) => {
@@ -459,8 +466,9 @@ export default function Smarty({ onNavigate }) {
     if (!a) return suggest();
     freqBump(user?.id, id);                 // learn what this user asks most
     deliver(a);
-    const fol = FOLLOW[id];
-    if (fol) setChips(followChips(fol, b));
+    // No follow-up question chips: after answering, the current module's
+    // question list (if browsing) stays put so another can be picked, and the
+    // permanent "Browse by module" button is always there to start over.
   };
   const respondWith = (id, b) => { const a = answerFor(id, b); if (a) deliver(a); };
 
@@ -725,15 +733,24 @@ export default function Smarty({ onNavigate }) {
   // built-ins + admin questions whose Category maps to a module), never the
   // generic openers/how-tos, so each module's list stays clean and intentional.
   const moduleOf = (e) => e.module ? (_modId(e.module) || e.module) : null;
+
+  // Ordered, permission-filtered list of module ids for the browser.
+  const moduleIdList = () => {
+    const b = boot || {};
+    const pool = b._pool || buildPool(b);
+    const ids = [], seen = new Set();
+    pool.forEach(e => { const mid = moduleOf(e); if (mid && canSeeLink(mid) && !seen.has(mid)) { seen.add(mid); ids.push(mid); } });
+    ids.sort((a, c) => MODULES.findIndex(m => m.id === a) - MODULES.findIndex(m => m.id === c));
+    return ids;
+  };
+  // Browse-by-module cards show the first few, then View all / View less.
+  const MOD_PREVIEW = 3;
+
   const navMenu = (target) => {
     const b = boot || {};
     const pool = b._pool || buildPool(b);
-    if (target === 'modules') {
-      const ids = [], seen = new Set();
-      pool.forEach(e => { const mid = moduleOf(e); if (mid && canSeeLink(mid) && !seen.has(mid)) { seen.add(mid); ids.push(mid); } });
-      ids.sort((a, c) => MODULES.findIndex(m => m.id === a) - MODULES.findIndex(m => m.id === c));
-      deliver({ tone: 'violet', text: 'Pick a module and I’ll show what you can ask about it 👇' });
-      setChips(ids.map(id => ({ id: 'nav-' + id, nav: 'mod:' + id, label: aliasLabel(id), icon: '📂', tone: 'brand' })));
+    if (target === 'modules') {           // back to the module card grid
+      setChips([]);
       return;
     }
     if (target.startsWith('mod:')) {
@@ -797,17 +814,52 @@ export default function Smarty({ onNavigate }) {
             {msgs.map(m => <Message key={m.k} m={m} onNav={navTo} />)}
           </div>
 
-          <div className="smy-chips">
-            {chips.map(c => (
-              <button key={c.id} className="smy-chip" style={{ '--ct': `var(${toneVar[c.tone] || '--brand'})` }} onClick={() => { if (c.nav) { pushMe(c.label); navMenu(c.nav); } else if (c.send) { pushMe(c.label); setChips([]); askAI(c.send); } else if (c.ref) { pushMe(c.label); respond(c.ref); } else { pushMe(c.label); respond(c.id); } }}>
-                <span className="smy-ic" style={{ background: `var(${toneVar[c.tone] || '--brand'})` }}>{c.icon}</span>{c.label}
-              </button>
-            ))}
+          {/* Browse by Module — attractive card grid: 3 by default, View all / View less */}
+          <div className="smy-browse-wrap">
+            <div className="smy-browse-head">
+              <span className="smy-browse-title"><span className="smy-browse-ic">📂</span>Browse by Module</span>
+              {!modAll && moduleIdList().length > MOD_PREVIEW && (
+                <button className="smy-browse-all" onClick={() => setModAll(true)}>View all →</button>
+              )}
+            </div>
+            <div className={`smy-modgrid ${modAll ? 'smy-modgrid-all' : ''}`}>
+              {(modAll ? moduleIdList() : moduleIdList().slice(0, MOD_PREVIEW)).map((id, i) => (
+                <button key={id} className="smy-modcard" style={{ '--ct': `var(${toneVar[MOD_TONES[i % MOD_TONES.length]]})` }}
+                  onClick={() => { pushMe(aliasLabel(id)); navMenu('mod:' + id); }}>
+                  <span className="smy-modcard-ic">{modIcon(id)}</span>
+                  <span className="smy-modcard-label">{aliasLabel(id)}</span>
+                </button>
+              ))}
+            </div>
+            {modAll && moduleIdList().length > MOD_PREVIEW && (
+              <button className="smy-viewless" onClick={() => setModAll(false)}>View less ▴</button>
+            )}
+          </div>
+
+          {chips.length > 0 && (
+            <div className="smy-chips">
+              {chips.map(c => (
+                <button key={c.id} className="smy-chip" style={{ '--ct': `var(${toneVar[c.tone] || '--brand'})` }} onClick={() => { if (c.nav) { pushMe(c.label); navMenu(c.nav); } else if (c.send) { pushMe(c.label); askAI(c.send); } else if (c.ref) { pushMe(c.label); respond(c.ref); } else { pushMe(c.label); respond(c.id); } }}>
+                  <span className="smy-ic" style={{ background: `var(${toneVar[c.tone] || '--brand'})` }}>{c.icon}</span>{c.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div className="smy-guide">
+            <span className="smy-guide-row"><span className="smy-star">✦</span><span><b>Tap a module</b> &mdash; for anything about your school data.</span></span>
+            <span className="smy-guide-row"><span className="smy-star">✦</span><span><b>Textbook &amp; general questions</b> &mdash; just ask directly below.</span></span>
           </div>
 
           <form className="smy-composer" onSubmit={onSend}>
             <input value={input} onChange={e => setInput(e.target.value)} placeholder={listening ? 'Listening… speak now' : 'Ask Smarty anything…'} aria-label="Ask Smarty" />
-            {SR && <button type="button" className={`smy-iconbtn ${listening ? 'live' : ''}`} onClick={() => (listening ? stopListen() : startListen())} title="Speak your question" aria-label="Voice input">🎤</button>}
+            {SR && (
+              <button type="button" className={`smy-mic ${listening ? 'live' : ''}`} onClick={() => (listening ? stopListen() : startListen())} title={listening ? 'Stop listening' : 'Speak your question'} aria-label="Voice input">
+                {listening
+                  ? <span className="smy-wave" aria-hidden="true"><i /><i /><i /><i /></span>
+                  : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="2.5" width="6" height="12" rx="3" /><path d="M5 11a7 7 0 0 0 14 0" /><path d="M12 18v3.5" /><path d="M8.5 21.5h7" /></svg>}
+              </button>
+            )}
             <button className="smy-send" type="submit" aria-label="Send">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z" /></svg>
             </button>
@@ -973,100 +1025,138 @@ function Defs() {
 }
 
 const CSS = `
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap');
 .smy{--brand:#5b57e6;--brand-2:#7a76ff;--amber:#f59e0b;--emerald:#10b981;--rose:#fb6f92;--violet:#8b5cf6;--sky:#2bb3e8;
   --panel:#ffffff;--app:#f4f6fb;--ink:#262636;--muted:#8186a0;--line:#eceef6;--me:#5b57e6;
-  --ga:#6d5cf6;--gb:#c558e0;--sh:0 18px 50px -12px rgba(91,87,230,.4);
-  --fh:'Fredoka',system-ui,sans-serif;--fb:'Nunito','Segoe UI',system-ui,sans-serif;font-family:var(--fb);color-scheme:light}
+  --ga:#5a46ea;--g2:#7a57f2;--gb:#9061f5;--sh:0 16px 44px -14px rgba(60,54,170,.4);
+  --fh:'Plus Jakarta Sans','Fredoka',system-ui,sans-serif;--fb:'Plus Jakarta Sans','Nunito','Segoe UI',system-ui,sans-serif;font-family:var(--fb);letter-spacing:-.01em;color-scheme:light}
 .smy *{box-sizing:border-box}
 .smy button{font-family:inherit}
-.smy-launcher{position:fixed;z-index:9998;right:16px;bottom:14px;width:101px;height:122px;border:none;cursor:grab;touch-action:none;padding:0;overflow:visible;background:transparent;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:0;animation:smyFloat 3s ease-in-out infinite}
+.smy-launcher{position:fixed;z-index:9998;right:16px;bottom:14px;width:132px;height:152px;border:none;cursor:grab;touch-action:none;padding:0;overflow:visible;background:transparent;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:0;animation:smyFloat 3s ease-in-out infinite}
 .smy-launcher.smy-dragging{animation:none;cursor:grabbing}
-.smy-fab-label{font-family:var(--fh);font-weight:700;font-size:11px;color:var(--brand);background:#fff;padding:2px 10px;border-radius:999px;box-shadow:0 4px 10px -4px rgba(0,0,0,.4);line-height:1.2;margin-top:-12px}
+.smy-fab-label{font-family:var(--fh);font-weight:800;font-size:12px;color:var(--brand);margin-left: 11px;margin-top:-35px}
 .smy-launcher.smy-call{animation:smyBounce .6s ease}
 @keyframes smyBounce{0%,100%{transform:translateY(0)}30%{transform:translateY(-10px)}60%{transform:translateY(-3px)}}
 .smy-fab{width:56px;height:68px;overflow:visible;filter:drop-shadow(0 5px 5px rgba(0,0,0,.3))}
-.smy-fab-img{width:99px;height:99px;object-fit:contain;pointer-events:none;filter:drop-shadow(1.3px 0 0 #1f2430) drop-shadow(-1.3px 0 0 #1f2430) drop-shadow(0 1.3px 0 #1f2430) drop-shadow(0 -1.3px 0 #1f2430) drop-shadow(0 4px 5px rgba(0,0,0,.35))}
+.smy-fab-img{width:128px;height:128px;object-fit:contain;pointer-events:none;filter:drop-shadow(1.3px 0 0 #1f2430) drop-shadow(-1.3px 0 0 #1f2430) drop-shadow(0 1.3px 0 #1f2430) drop-shadow(0 -1.3px 0 #1f2430)}
 .smy-ping{position:absolute;top:-2px;right:-2px;min-width:22px;height:22px;padding:0 5px;border-radius:999px;background:var(--rose);color:#fff;font-family:var(--fh);font-weight:700;font-size:12px;display:grid;place-items:center;border:2px solid var(--panel);z-index:3}
-.smy-nudge{position:absolute;bottom:78px;right:0;z-index:3;background:var(--panel);color:var(--ink);font-weight:800;font-size:12.5px;padding:10px 13px;border-radius:14px;box-shadow:var(--sh);width:max-content;max-width:182px;text-align:left;border:1.5px solid var(--line);animation:smyNudge .35s ease both}
+.smy-nudge{position:absolute;bottom:78px;right:0;z-index:3;background:var(--panel);color:var(--ink);font-weight:800;font-size:12.5px;padding:10px 13px;border-radius:11px;box-shadow:var(--sh);width:max-content;max-width:182px;text-align:left;border:1.5px solid var(--line);animation:smyNudge .35s ease both}
 .smy-nudge:after{content:"";position:absolute;bottom:-7px;right:24px;width:14px;height:14px;background:var(--panel);border-right:1.5px solid var(--line);border-bottom:1.5px solid var(--line);transform:rotate(45deg)}
 @keyframes smyNudge{from{opacity:0;transform:translateY(8px) scale(.9)}to{opacity:1;transform:none}}
 @keyframes smyFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
-.smy-panel{position:fixed;z-index:9999;display:flex;flex-direction:column;overflow:hidden;right:20px;bottom:20px;width:400px;max-width:calc(100vw - 32px);height:min(660px,calc(100vh - 40px));background:var(--panel);border-radius:26px;box-shadow:var(--sh);border:1px solid var(--line);transition:width .28s cubic-bezier(.22,1,.36,1),height .28s cubic-bezier(.22,1,.36,1)}
+.smy-panel{position:fixed;z-index:9999;display:flex;flex-direction:column;overflow:hidden;right:20px;bottom:20px;width:400px;max-width:calc(100vw - 32px);height:min(660px,calc(100vh - 40px));background:var(--panel);border-radius:16px;box-shadow:var(--sh);border:1px solid var(--line);transition:width .28s cubic-bezier(.22,1,.36,1),height .28s cubic-bezier(.22,1,.36,1)}
 .smy-big{width:min(860px,calc(100vw - 32px));height:min(900px,calc(100vh - 40px))}
 .smy-pop{animation:smyPop .34s cubic-bezier(.22,1.2,.36,1)}
 @keyframes smyPop{from{transform:scale(.6) translateY(30px);opacity:0}to{transform:none;opacity:1}}
-.smy-head-bar{background:linear-gradient(130deg,var(--ga),var(--gb));color:#fff;padding:12px 14px;position:relative;flex:0 0 auto;min-height:98px;display:flex;align-items:center;gap:10px;overflow:hidden}
+.smy-head-bar{background:linear-gradient(130deg,var(--ga),var(--g2) 50%,var(--gb));color:#fff;padding:12px 14px;position:relative;flex:0 0 auto;min-height:98px;display:flex;align-items:center;gap:10px;overflow:hidden}
 .smy-idbox{display:flex;flex-direction:column;align-items:center;gap:1px;flex:0 0 auto;z-index:1}
-.smy-brand{font-family:var(--fh);font-weight:600;font-size:15px;line-height:1;display:flex;align-items:center;gap:3px;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.25)}
+.smy-brand{font-family:var(--fh);font-weight:600;font-size:13px;line-height:1;display:flex;align-items:center;gap:3px;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.25)}
 .smy-head-bar:before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 80% -10%,rgba(255,255,255,.25),transparent 55%)}
 .smy-hero{position:relative;width:60px;height:60px;flex:0 0 auto;z-index:1}
-.smy-hero-img{width:60px;height:60px;object-fit:cover;border-radius:50%;box-shadow:0 4px 12px -3px rgba(0,0,0,.22)}
+.smy-hero-img{width:60px;height:60px;object-fit:contain}
 .smy-who{flex:1;min-width:0;padding-left:4px;z-index:1}
 .smy-who h2{font-family:var(--fh);font-weight:600;font-size:20px;margin:0;display:flex;align-items:center;gap:6px;line-height:1}
-.smy-user{font-family:var(--fh);font-weight:600;font-size:17px;opacity:.98;text-transform:capitalize;line-height:1.1}
+.smy-user{font-family:var(--fh);font-weight:600;font-size:15px;opacity:.98;text-transform:capitalize;line-height:1.1}
 .smy-meta{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
-.smy-meta span{font-size:10px;font-weight:800;background:rgba(255,255,255,.22);padding:3px 8px;border-radius:999px;font-family:var(--fh)}
-.smy-status{font-size:11px;font-weight:800;opacity:.92;display:flex;align-items:center;gap:6px;margin-top:8px}
+.smy-meta span{font-size:9px;font-weight:800;background:rgba(255,255,255,.22);padding:3px 9px;border-radius:7px;font-family:var(--fh)}
+.smy-status{font-size:10px;font-weight:800;opacity:.92;display:flex;align-items:center;gap:6px;margin-top:8px}
 .smy-status i{width:8px;height:8px;border-radius:50%;background:#7CFFB2;animation:smyLive 2s infinite}
 @keyframes smyLive{0%{box-shadow:0 0 0 0 rgba(124,255,178,.7)}70%{box-shadow:0 0 0 7px rgba(124,255,178,0)}100%{box-shadow:0 0 0 0 rgba(124,255,178,0)}}
 .smy-headbtns{position:absolute;top:10px;right:12px;z-index:2;display:flex;gap:6px}
-.smy-xbtn{appearance:none;border:none;background:rgba(255,255,255,.2);color:#fff;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:15px;display:grid;place-items:center;line-height:1}
+.smy-xbtn{appearance:none;border:none;background:rgba(255,255,255,.2);color:#fff;width:30px;height:30px;border-radius:9px;cursor:pointer;font-size:15px;display:grid;place-items:center;line-height:1}
 .smy-xbtn:hover{background:rgba(255,255,255,.34)}
 .smy-expand{font-size:16px}
-.smy-scroll{flex:1;overflow-y:auto;padding:16px 14px 6px;display:flex;flex-direction:column;gap:13px;background:var(--app);scrollbar-width:thin;scrollbar-color:rgba(140,140,170,.3) transparent}
+.smy-scroll{flex:1;overflow-y:auto;padding:12px 14px 6px;display:flex;flex-direction:column;gap:10px;background:var(--app);scrollbar-width:thin;scrollbar-color:rgba(140,140,170,.3) transparent}
 .smy-scroll::-webkit-scrollbar{width:5px}
 .smy-scroll::-webkit-scrollbar-track{background:transparent}
 .smy-scroll::-webkit-scrollbar-thumb{background:rgba(140,140,170,.28);border-radius:999px}
 .smy-scroll::-webkit-scrollbar-thumb:hover{background:rgba(140,140,170,.45)}
 .smy-msg{display:flex;gap:8px;align-items:flex-end;max-width:100%;animation:smyRise .34s ease both}
 @keyframes smyRise{from{transform:translateY(10px);opacity:0}to{transform:none;opacity:1}}
-.smy-mini{width:34px;height:34px;flex:0 0 auto;overflow:hidden;border-radius:50%;align-self:flex-end}
-.smy-mini img{width:34px;height:34px;object-fit:cover;border-radius:50%;box-shadow:0 2px 6px -2px rgba(0,0,0,.18)}
-.smy-bubble{padding:12px 15px;border-radius:20px;font-size:14px;font-weight:600;max-width:84%;color:var(--ink);line-height:1.45}
-.smy-bot .smy-bubble{background:color-mix(in srgb,var(--tone,var(--brand)) 9%,var(--panel));border:1.5px solid color-mix(in srgb,var(--tone,var(--brand)) 22%,transparent);border-bottom-left-radius:7px;box-shadow:0 6px 18px -10px color-mix(in srgb,var(--tone,var(--brand)) 70%,transparent)}
+.smy-mini{width:40px;height:40px;flex:0 0 auto;align-self:flex-end}
+.smy-mini img{width:40px;height:40px;object-fit:contain}
+.smy-bubble{padding:9px 12px;border-radius:12px;font-size:12px;font-weight:600;max-width:85%;color:var(--ink);line-height:1.4}
+.smy-bot .smy-bubble{background:color-mix(in srgb,var(--tone,var(--brand)) 9%,var(--panel));border:1.5px solid color-mix(in srgb,var(--tone,var(--brand)) 22%,transparent);border-bottom-left-radius:4px;box-shadow:0 6px 18px -10px color-mix(in srgb,var(--tone,var(--brand)) 70%,transparent)}
 .smy-bot .smy-plain{background:var(--panel);border-color:var(--line)}
-.smy-me{flex-direction:row-reverse}.smy-me .smy-bubble{background:linear-gradient(135deg,var(--ga),var(--me));color:#fff;border-bottom-right-radius:6px;box-shadow:0 5px 14px -7px rgba(91,87,230,.7)}
+.smy-me{flex-direction:row-reverse}.smy-me .smy-bubble{background:linear-gradient(135deg,var(--ga),var(--me));color:#fff;border-bottom-right-radius:4px;box-shadow:0 5px 14px -7px rgba(91,87,230,.7)}
 .smy-bubble b{font-weight:800}
 .smy-steps{margin:9px 0 0;padding:0;list-style:none;display:grid;gap:7px}
-.smy-steps li{display:flex;gap:9px;align-items:flex-start;font-weight:700;font-size:13.5px}
+.smy-steps li{display:flex;gap:9px;align-items:flex-start;font-weight:700;font-size:12.5px}
 .smy-n{width:20px;height:20px;border-radius:50%;background:var(--tone,var(--brand));color:#fff;font-family:var(--fh);font-size:11px;display:grid;place-items:center;flex:0 0 auto;margin-top:1px}
-.smy-card{margin-top:10px;border-radius:15px;padding:11px 13px;display:flex;align-items:center;gap:11px;background:color-mix(in srgb,var(--tone,var(--brand)) 16%,var(--panel));border:1.5px solid color-mix(in srgb,var(--tone,var(--brand)) 40%,transparent)}
-.smy-em{font-size:24px}.smy-t{font-weight:800;font-size:14px}.smy-s{font-size:12px;color:var(--muted);font-weight:700;margin-top:1px}
-.smy-extra{margin-top:8px;font-size:12.5px;color:var(--muted);font-weight:700}
-.smy-act{margin-top:11px;display:inline-flex;align-items:center;gap:7px;border:none;cursor:pointer;color:#fff;font-family:var(--fh);font-weight:600;font-size:13px;padding:9px 15px;border-radius:11px;background:linear-gradient(135deg,var(--tone,var(--brand)),color-mix(in srgb,var(--tone,var(--brand)) 50%,var(--gb)));box-shadow:0 7px 16px -8px color-mix(in srgb,var(--tone,var(--brand)) 85%,transparent)}
+.smy-card{margin-top:8px;border-radius:9px;padding:9px 11px;display:flex;align-items:center;gap:10px;background:color-mix(in srgb,var(--tone,var(--brand)) 16%,var(--panel));border:1.5px solid color-mix(in srgb,var(--tone,var(--brand)) 40%,transparent)}
+.smy-em{font-size:20px}.smy-t{font-weight:800;font-size:13px}.smy-s{font-size:11px;color:var(--muted);font-weight:700;margin-top:1px}
+.smy-extra{margin-top:8px;font-size:11.5px;color:var(--muted);font-weight:700}
+.smy-act{margin-top:11px;display:inline-flex;align-items:center;gap:7px;border:none;cursor:pointer;color:#fff;font-family:var(--fh);font-weight:600;font-size:12px;padding:9px 14px;border-radius:9px;background:linear-gradient(135deg,var(--tone,var(--brand)),color-mix(in srgb,var(--tone,var(--brand)) 50%,var(--gb)));box-shadow:0 7px 16px -8px color-mix(in srgb,var(--tone,var(--brand)) 85%,transparent)}
 .smy-act:hover{filter:brightness(1.07)}.smy-arw{font-size:15px}
 .smy-feed{display:grid;gap:8px;margin-top:9px}
-.smy-item{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--violet);border-radius:12px;padding:9px 12px}
+.smy-item{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--ga);border-radius:8px;padding:9px 12px}
 .smy-item.smy-new{border-left-color:var(--rose)}
-.smy-ttl{font-weight:800;font-size:13px;display:flex;gap:7px;align-items:center}
-.smy-bd{font-size:12.5px;color:var(--muted);font-weight:700;margin-top:2px}
-.smy-tag{font-size:10px;font-family:var(--fh);font-weight:700;color:#fff;background:var(--rose);padding:1px 7px;border-radius:999px}
+.smy-ttl{font-weight:800;font-size:12px;display:flex;gap:7px;align-items:center}
+.smy-bd{font-size:11.5px;color:var(--muted);font-weight:700;margin-top:2px}
+.smy-tag{font-size:10px;font-family:var(--fh);font-weight:700;color:#fff;background:var(--rose);padding:1px 7px;border-radius:6px}
 .smy-typing{display:flex;gap:4px;padding:14px}
 .smy-typing span{width:7px;height:7px;border-radius:50%;background:var(--muted);opacity:.6;animation:smyTb 1.1s infinite}
 .smy-typing span:nth-child(2){animation-delay:.18s}.smy-typing span:nth-child(3){animation-delay:.36s}
 @keyframes smyTb{0%,60%,100%{transform:translateY(0);opacity:.4}30%{transform:translateY(-4px);opacity:1}}
 .smy-chips{display:flex;flex-wrap:wrap;gap:8px;padding:8px 14px 4px;background:var(--panel)}
-.smy-chip{border:1.5px solid color-mix(in srgb,var(--ct,var(--brand)) 32%,var(--line));background:color-mix(in srgb,var(--ct,var(--brand)) 9%,var(--panel));cursor:pointer;font-weight:800;font-size:12.5px;color:var(--ink);padding:8px 13px;border-radius:999px;display:inline-flex;align-items:center;gap:7px;transition:transform .12s}
+.smy-chip{border:1.5px solid color-mix(in srgb,var(--ct,var(--brand)) 32%,var(--line));background:color-mix(in srgb,var(--ct,var(--brand)) 9%,var(--panel));cursor:pointer;font-weight:700;font-size:11.5px;color:var(--ink);padding:8px 12px;border-radius:9px;display:inline-flex;align-items:center;gap:7px;transition:transform .12s,box-shadow .12s}
 .smy-chip:hover{transform:translateY(-2px)}
+/* permanent Browse-by-module button — solid so it reads as the primary action */
+.smy-browse{background:linear-gradient(135deg,var(--ga),var(--gb));border-color:transparent;color:#fff;box-shadow:0 7px 16px -8px color-mix(in srgb,var(--ga) 80%,transparent)}
+.smy-browse .smy-ic{background:rgba(255,255,255,.22)!important}
+.smy-browse:hover{transform:translateY(-2px);filter:brightness(1.04)}
 .smy-ic{width:19px;height:19px;border-radius:7px;display:grid;place-items:center;font-size:11px;color:#fff}
-.smy-composer{flex:0 0 auto;padding:10px 12px;background:var(--panel);border-top:1px solid var(--line);display:flex;gap:9px;align-items:center}
-.smy-composer input{flex:1;min-width:0;border:1.5px solid var(--line);background:var(--app);color:var(--ink);border-radius:999px;padding:11px 15px;font-weight:700;font-size:14px;outline:none}
+/* ===== Browse-by-Module card grid (replaces the old Browse button) ===== */
+.smy-browse-wrap{background:var(--panel);padding:8px 14px 5px;display:flex;flex-direction:column;gap:7px}
+.smy-browse-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.smy-browse-title{display:inline-flex;align-items:center;gap:7px;font-family:var(--fh);font-weight:800;font-size:12.5px;color:var(--ink);letter-spacing:-.01em}
+.smy-browse-ic{width:22px;height:22px;border-radius:7px;display:grid;place-items:center;font-size:12px;background:linear-gradient(135deg,var(--ga),var(--gb));color:#fff}
+.smy-browse-all{border:none;background:none;cursor:pointer;font-family:var(--fh);font-weight:700;font-size:11px;color:var(--ga);display:inline-flex;align-items:center;gap:3px;padding:3px 7px;border-radius:7px}
+.smy-browse-all:hover{background:color-mix(in srgb,var(--ga) 10%,transparent)}
+.smy-modgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
+.smy-modgrid-all{max-height:232px;overflow-y:auto;padding:1px 3px 2px 1px;scrollbar-width:thin;scrollbar-color:rgba(140,140,170,.3) transparent}
+.smy-modgrid-all::-webkit-scrollbar{width:5px}
+.smy-modgrid-all::-webkit-scrollbar-thumb{background:rgba(140,140,170,.28);border-radius:999px}
+.smy-modcard{border:1.5px solid color-mix(in srgb,var(--ct,var(--brand)) 26%,var(--line));background:color-mix(in srgb,var(--ct,var(--brand)) 8%,var(--panel));border-radius:10px;padding:6px 8px;cursor:pointer;display:flex;flex-direction:row;align-items:center;gap:7px;min-height:0;transition:transform .12s,box-shadow .12s}
+.smy-modcard:hover{transform:translateY(-2px);box-shadow:0 7px 16px -10px color-mix(in srgb,var(--ct,var(--brand)) 80%,transparent)}
+.smy-modcard-ic{width:24px;height:24px;flex:0 0 auto;border-radius:7px;display:grid;place-items:center;font-size:12.5px;background:color-mix(in srgb,var(--ct,var(--brand)) 20%,var(--panel));box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--ct,var(--brand)) 32%,transparent)}
+.smy-modgrid-all .smy-modcard-ic{background:transparent;box-shadow:none}
+.smy-modcard-label{flex:1;min-width:0;font-family:var(--fh);font-weight:700;font-size:10px;line-height:1.15;color:var(--ink);text-align:left;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.smy-viewless{align-self:center;margin-top:1px;border:1.5px solid var(--line);background:var(--panel);cursor:pointer;font-family:var(--fh);font-weight:700;font-size:11px;color:var(--muted);padding:6px 16px;border-radius:999px;transition:color .12s,border-color .12s}
+.smy-viewless:hover{color:var(--ga);border-color:color-mix(in srgb,var(--ga) 40%,var(--line))}
+.smy-composer{flex:0 0 auto;padding:7px 12px;background:var(--panel);border-top:1px solid var(--line);display:flex;gap:8px;align-items:center}
+.smy-composer input{flex:1;min-width:0;border:1.5px solid var(--line);background:var(--app);color:var(--ink);border-radius:10px;padding:8px 14px;font-weight:700;font-size:13px;outline:none}
 .smy-composer input:focus{border-color:var(--brand)}
-.smy-send{border:none;cursor:pointer;width:44px;height:44px;border-radius:50%;flex:0 0 auto;background:linear-gradient(135deg,var(--ga),var(--gb));color:#fff;display:grid;place-items:center}
+.smy-send{border:none;cursor:pointer;width:38px;height:38px;border-radius:11px;flex:0 0 auto;background:linear-gradient(135deg,var(--ga),var(--gb));color:#fff;display:grid;place-items:center}
 .smy-send svg{width:20px;height:20px}
-.smy-foot{font-size:10.5px;color:var(--muted);text-align:center;font-weight:700;padding:0 14px 10px;background:var(--panel)}
+.smy-foot{font-size:9.5px;color:var(--muted);text-align:center;font-weight:700;padding:0 14px 10px;background:var(--panel)}
 .smy-iconbtn{border:1.5px solid var(--line);background:var(--panel);cursor:pointer;width:40px;height:40px;border-radius:50%;flex:0 0 auto;display:grid;place-items:center;font-size:16px;line-height:1}
 .smy-iconbtn.on{background:color-mix(in srgb,var(--brand) 12%,var(--panel));border-color:var(--brand)}
 .smy-iconbtn.live{background:#ffe4e4;border-color:#ff6b6b;animation:smyPulse 1s infinite}
 @keyframes smyPulse{0%,100%{box-shadow:0 0 0 0 rgba(255,107,107,.5)}60%{box-shadow:0 0 0 7px rgba(255,107,107,0)}}
+/* small "how to use" guide that lives with the Browse-by-module button */
+.smy-guide{display:flex;flex-direction:column;gap:3px;padding:3px 14px 7px;background:var(--panel)}
+.smy-guide-row{font-size:10px;line-height:1.5;color:var(--muted);font-weight:500;letter-spacing:-.005em;display:flex;gap:7px;align-items:baseline}
+.smy-guide-row b{color:var(--ink);font-weight:700}
+.smy-star{color:var(--ga);font-size:10px;flex:0 0 auto;transform:translateY(1px)}
+/* dynamic voice button: clean mic at rest, animated sound bars while listening */
+.smy-mic{border:1.5px solid var(--line);background:var(--panel);cursor:pointer;width:38px;height:38px;border-radius:11px;flex:0 0 auto;display:grid;place-items:center;color:var(--muted);transition:color .15s,border-color .15s,background .15s}
+.smy-mic:hover{color:var(--ga);border-color:color-mix(in srgb,var(--ga) 45%,var(--line))}
+.smy-mic svg{width:19px;height:19px}
+.smy-mic.live{background:linear-gradient(135deg,var(--ga),var(--gb));border-color:transparent;color:#fff;animation:smyMicPulse 1.4s ease-in-out infinite}
+@keyframes smyMicPulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--ga) 55%,transparent)}50%{box-shadow:0 0 0 8px transparent}}
+.smy-wave{display:flex;align-items:center;gap:2.5px;height:16px}
+.smy-wave i{width:2.5px;height:5px;background:#fff;border-radius:2px;animation:smyWave .9s ease-in-out infinite}
+.smy-wave i:nth-child(2){animation-delay:.15s}.smy-wave i:nth-child(3){animation-delay:.3s}.smy-wave i:nth-child(4){animation-delay:.45s}
+@keyframes smyWave{0%,100%{height:4px}50%{height:15px}}
 .smy-digest{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
-.smy-dpill{font-size:11.5px;font-weight:800;color:var(--ink);background:color-mix(in srgb,var(--ct,var(--brand)) 14%,var(--panel));border:1px solid color-mix(in srgb,var(--ct,var(--brand)) 36%,transparent);padding:4px 9px;border-radius:999px;display:inline-flex;align-items:center;gap:5px}
+.smy-dpill{font-size:10.5px;font-weight:800;color:var(--ink);background:color-mix(in srgb,var(--ct,var(--brand)) 14%,var(--panel));border:1px solid color-mix(in srgb,var(--ct,var(--brand)) 36%,transparent);padding:4px 9px;border-radius:7px;display:inline-flex;align-items:center;gap:5px}
 .smy-aibadge{display:inline-block;margin-left:6px;font-family:var(--fh);font-size:9px;font-weight:700;color:#fff;background:linear-gradient(135deg,var(--ga),var(--gb));padding:1px 7px;border-radius:999px;vertical-align:middle;letter-spacing:.3px}
 .smy-smbadge{display:inline-block;margin-left:6px;font-family:var(--fh);font-size:9px;font-weight:700;color:#fff;background:linear-gradient(135deg,var(--brand),var(--violet));padding:1px 7px;border-radius:999px;vertical-align:middle;letter-spacing:.3px}
 .smy-confetti{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:60}
 .smy-confetti span{position:absolute;top:-24px;animation:smyFall 1.6s ease-in forwards}
 @keyframes smyFall{0%{transform:translateY(0) rotate(0);opacity:1}100%{transform:translateY(680px) rotate(360deg);opacity:0}}
-.smy-toast{position:fixed;z-index:10000;left:50%;transform:translateX(-50%);bottom:26px;background:var(--ink);color:var(--app);font-family:var(--fh);font-weight:600;font-size:13.5px;padding:11px 18px;border-radius:999px;box-shadow:var(--sh)}
+.smy-toast{position:fixed;z-index:10000;left:50%;transform:translateX(-50%);bottom:26px;background:var(--ink);color:var(--app);font-family:var(--fh);font-weight:600;font-size:12.5px;padding:11px 18px;border-radius:11px;box-shadow:var(--sh)}
 .smy-rig{animation:smyBob 3.6s ease-in-out infinite;transform-origin:50% 95%}
 @keyframes smyBob{0%,100%{transform:translateY(0) rotate(0)}50%{transform:translateY(-2px) rotate(-1.2deg)}}
 .smy-eye{animation:smyWink 4.8s infinite;transform-origin:center;transform-box:fill-box}
@@ -1083,6 +1173,6 @@ const CSS = `
 @keyframes smyTalk{0%{transform:scaleY(1)}50%{transform:scaleY(1.7)}100%{transform:scaleY(1)}}
 .smy-happy .smy-rig{animation:smyHop .5s ease 2}@keyframes smyHop{0%,100%{transform:translateY(0)}40%{transform:translateY(-8px)}}
 .smy-happy .smy-smile{opacity:0}.smy-happy .smy-grin{opacity:1}
-@media (max-width:440px){.smy-panel{right:10px;left:10px;bottom:10px;width:auto;max-width:none;height:calc(100vh - 20px);border-radius:22px}}
+@media (max-width:440px){.smy-panel{right:10px;left:10px;bottom:10px;width:auto;max-width:none;height:calc(100vh - 20px);border-radius:14px}}
 @media (prefers-reduced-motion:reduce){.smy *{animation:none!important}}
 `;
