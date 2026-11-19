@@ -158,6 +158,7 @@ export default function Smarty({ onNavigate }) {
   const [msgs, setMsgs] = useState([]);
   const [chips, setChips] = useState([]);
   const [modAll, setModAll] = useState(false);     // module card grid: View all / View less
+  const [activeMod, setActiveMod] = useState(null); // drilled-in module id (question list), or null
   const [aliases, setAliases] = useState({});   // module_name -> alias (Menu Settings)
   const [input, setInput] = useState('');
   const [boot, setBoot] = useState(null);
@@ -745,6 +746,12 @@ export default function Smarty({ onNavigate }) {
   };
   // Browse-by-module cards show the first few, then View all / View less.
   const MOD_PREVIEW = 3;
+  // Questions tagged to one module (for the drill-in list).
+  const moduleQuestions = (mid) => {
+    const b = boot || {};
+    const pool = b._pool || buildPool(b);
+    return pool.filter(e => moduleOf(e) === mid);
+  };
 
   const navMenu = (target) => {
     const b = boot || {};
@@ -814,25 +821,42 @@ export default function Smarty({ onNavigate }) {
             {msgs.map(m => <Message key={m.k} m={m} onNav={navTo} />)}
           </div>
 
-          {/* Browse by Module — attractive card grid: 3 by default, View all / View less */}
+          {/* Browse by Module — card grid, or a single module's scrollable question list */}
           <div className="smy-browse-wrap">
-            <div className="smy-browse-head">
-              <span className="smy-browse-title"><span className="smy-browse-ic">📂</span>Browse by Module</span>
-              {!modAll && moduleIdList().length > MOD_PREVIEW && (
-                <button className="smy-browse-all" onClick={() => setModAll(true)}>View all →</button>
-              )}
-            </div>
-            <div className={`smy-modgrid ${modAll ? 'smy-modgrid-all' : ''}`}>
-              {(modAll ? moduleIdList() : moduleIdList().slice(0, MOD_PREVIEW)).map((id, i) => (
-                <button key={id} className="smy-modcard" style={{ '--ct': `var(${toneVar[MOD_TONES[i % MOD_TONES.length]]})` }}
-                  onClick={() => { pushMe(aliasLabel(id)); navMenu('mod:' + id); }}>
-                  <span className="smy-modcard-ic">{modIcon(id)}</span>
-                  <span className="smy-modcard-label">{aliasLabel(id)}</span>
-                </button>
-              ))}
-            </div>
-            {modAll && moduleIdList().length > MOD_PREVIEW && (
-              <button className="smy-viewless" onClick={() => setModAll(false)}>View less ▴</button>
+            {activeMod ? (
+              <>
+                <div className="smy-mod-head">
+                  <button className="smy-mod-back" onClick={() => setActiveMod(null)} aria-label="Back to modules">←</button>
+                  <span className="smy-mod-ic">{modIcon(activeMod)}</span>
+                  <span className="smy-mod-title">{aliasLabel(activeMod)}</span>
+                </div>
+                <div className="smy-mod-qs">
+                  {moduleQuestions(activeMod).map(e => (
+                    <button key={e.id} className="smy-qbtn"
+                      onClick={() => { pushMe(e.q); if (e.send) { askAI(e.send); } else if (e.ref) { respond(e.ref); } else { respond(e.id); } }}>
+                      <span className="smy-qic">{e.icon || '💬'}</span><span className="smy-qtxt">{e.q}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="smy-browse-head">
+                  <span className="smy-browse-title"><span className="smy-browse-ic">📂</span>Browse by Module</span>
+                  {moduleIdList().length > MOD_PREVIEW && (
+                    <button className="smy-browse-all" onClick={() => setModAll(v => !v)}>{modAll ? 'View less ▴' : 'View all →'}</button>
+                  )}
+                </div>
+                <div className={`smy-modgrid ${modAll ? 'smy-modgrid-all' : ''}`}>
+                  {(modAll ? moduleIdList() : moduleIdList().slice(0, MOD_PREVIEW)).map((id, i) => (
+                    <button key={id} className="smy-modcard" style={{ '--ct': `var(${toneVar[MOD_TONES[i % MOD_TONES.length]]})` }}
+                      onClick={() => { setChips([]); setActiveMod(id); }}>
+                      <span className="smy-modcard-ic">{modIcon(id)}</span>
+                      <span className="smy-modcard-label">{aliasLabel(id)}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
             )}
           </div>
 
@@ -1113,17 +1137,30 @@ const CSS = `
 .smy-browse-ic{width:22px;height:22px;border-radius:7px;display:grid;place-items:center;font-size:12px;background:linear-gradient(135deg,var(--ga),var(--gb));color:#fff}
 .smy-browse-all{border:none;background:none;cursor:pointer;font-family:var(--fh);font-weight:700;font-size:11px;color:var(--ga);display:inline-flex;align-items:center;gap:3px;padding:3px 7px;border-radius:7px}
 .smy-browse-all:hover{background:color-mix(in srgb,var(--ga) 10%,transparent)}
-.smy-modgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
-.smy-modgrid-all{max-height:232px;overflow-y:auto;padding:1px 3px 2px 1px;scrollbar-width:thin;scrollbar-color:rgba(140,140,170,.3) transparent}
-.smy-modgrid-all::-webkit-scrollbar{width:5px}
-.smy-modgrid-all::-webkit-scrollbar-thumb{background:rgba(140,140,170,.28);border-radius:999px}
-.smy-modcard{border:1.5px solid color-mix(in srgb,var(--ct,var(--brand)) 26%,var(--line));background:color-mix(in srgb,var(--ct,var(--brand)) 8%,var(--panel));border-radius:10px;padding:6px 8px;cursor:pointer;display:flex;flex-direction:row;align-items:center;gap:7px;min-height:0;transition:transform .12s,box-shadow .12s}
+.smy-modgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.smy-modgrid-all{max-height:230px;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;padding:2px 4px 2px 2px;scrollbar-width:thin;scrollbar-color:rgba(140,140,170,.5) transparent}
+.smy-modgrid-all::-webkit-scrollbar{width:6px}
+.smy-modgrid-all::-webkit-scrollbar-thumb{background:rgba(140,140,170,.45);border-radius:999px}
+.smy-modcard{border:1.5px solid color-mix(in srgb,var(--ct,var(--brand)) 26%,var(--line));background:color-mix(in srgb,var(--ct,var(--brand)) 8%,var(--panel));border-radius:7px;padding:9px 10px;cursor:pointer;display:flex;flex-direction:row;align-items:center;gap:9px;min-height:0;transition:transform .12s,box-shadow .12s}
 .smy-modcard:hover{transform:translateY(-2px);box-shadow:0 7px 16px -10px color-mix(in srgb,var(--ct,var(--brand)) 80%,transparent)}
-.smy-modcard-ic{width:24px;height:24px;flex:0 0 auto;border-radius:7px;display:grid;place-items:center;font-size:12.5px;background:color-mix(in srgb,var(--ct,var(--brand)) 20%,var(--panel));box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--ct,var(--brand)) 32%,transparent)}
+.smy-modcard-ic{width:28px;height:28px;flex:0 0 auto;border-radius:7px;display:grid;place-items:center;font-size:15px;background:color-mix(in srgb,var(--ct,var(--brand)) 20%,var(--panel));box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--ct,var(--brand)) 32%,transparent)}
 .smy-modgrid-all .smy-modcard-ic{background:transparent;box-shadow:none}
-.smy-modcard-label{flex:1;min-width:0;font-family:var(--fh);font-weight:700;font-size:10px;line-height:1.15;color:var(--ink);text-align:left;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.smy-modcard-label{flex:1;min-width:0;font-family:var(--fh);font-weight:700;font-size:11px;line-height:1.25;color:var(--ink);text-align:left;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .smy-viewless{align-self:center;margin-top:1px;border:1.5px solid var(--line);background:var(--panel);cursor:pointer;font-family:var(--fh);font-weight:700;font-size:11px;color:var(--muted);padding:6px 16px;border-radius:999px;transition:color .12s,border-color .12s}
 .smy-viewless:hover{color:var(--ga);border-color:color-mix(in srgb,var(--ga) 40%,var(--line))}
+/* module drill-in: heading with back button + scrollable question list */
+.smy-mod-head{display:flex;align-items:center;gap:8px}
+.smy-mod-back{flex:0 0 auto;width:26px;height:26px;border-radius:8px;border:1.5px solid var(--line);background:var(--panel);cursor:pointer;color:var(--muted);font-size:15px;font-weight:800;line-height:1;display:grid;place-items:center;transition:color .12s,border-color .12s,background .12s}
+.smy-mod-back:hover{color:var(--ga);border-color:color-mix(in srgb,var(--ga) 40%,var(--line));background:color-mix(in srgb,var(--ga) 7%,var(--panel))}
+.smy-mod-ic{flex:0 0 auto;width:26px;height:26px;border-radius:8px;display:grid;place-items:center;font-size:14px;background:color-mix(in srgb,var(--brand) 14%,var(--panel));box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--brand) 28%,transparent)}
+.smy-mod-title{font-family:var(--fh);font-weight:800;font-size:13px;color:var(--ink);letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.smy-mod-qs{margin-top:8px;display:flex;flex-direction:column;gap:6px;max-height:188px;overflow-y:auto;padding-right:3px;scrollbar-width:thin;scrollbar-color:rgba(140,140,170,.3) transparent}
+.smy-mod-qs::-webkit-scrollbar{width:5px}
+.smy-mod-qs::-webkit-scrollbar-thumb{background:rgba(140,140,170,.28);border-radius:999px}
+.smy-qbtn{display:flex;align-items:center;gap:8px;width:100%;text-align:left;border:1.5px solid var(--line);background:var(--panel);border-radius:9px;padding:7px 9px;cursor:pointer;color:var(--ink);font-family:var(--fb);font-weight:700;font-size:11px;line-height:1.25;transition:border-color .12s,background .12s,transform .12s}
+.smy-qbtn:hover{border-color:color-mix(in srgb,var(--brand) 38%,var(--line));background:color-mix(in srgb,var(--brand) 6%,var(--panel));transform:translateX(2px)}
+.smy-qic{flex:0 0 auto;width:20px;height:20px;border-radius:6px;display:grid;place-items:center;font-size:11px;background:color-mix(in srgb,var(--brand) 12%,var(--panel))}
+.smy-qtxt{flex:1;min-width:0}
 .smy-composer{flex:0 0 auto;padding:7px 12px;background:var(--panel);border-top:1px solid var(--line);display:flex;gap:8px;align-items:center}
 .smy-composer input{flex:1;min-width:0;border:1.5px solid var(--line);background:var(--app);color:var(--ink);border-radius:10px;padding:8px 14px;font-weight:700;font-size:13px;outline:none}
 .smy-composer input:focus{border-color:var(--brand)}
@@ -1139,6 +1176,8 @@ const CSS = `
 .smy-guide-row{font-size:10px;line-height:1.5;color:var(--muted);font-weight:500;letter-spacing:-.005em;display:flex;gap:7px;align-items:baseline}
 .smy-guide-row b{color:var(--ink);font-weight:700}
 .smy-star{color:var(--ga);font-size:10px;flex:0 0 auto;transform:translateY(1px)}
+.smy-big .smy-guide{flex-direction:row;flex-wrap:wrap;gap:5px 26px}
+.smy-big .smy-guide-row{white-space:nowrap}
 /* dynamic voice button: clean mic at rest, animated sound bars while listening */
 .smy-mic{border:1.5px solid var(--line);background:var(--panel);cursor:pointer;width:38px;height:38px;border-radius:11px;flex:0 0 auto;display:grid;place-items:center;color:var(--muted);transition:color .15s,border-color .15s,background .15s}
 .smy-mic:hover{color:var(--ga);border-color:color-mix(in srgb,var(--ga) 45%,var(--line))}
