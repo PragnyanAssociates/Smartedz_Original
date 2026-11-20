@@ -18172,10 +18172,29 @@ app.post('/api/smarty/ask', async (req, res) => {
     // "Full Document" or "Index" tell the reader nothing, so we drop them and
     // let the UI fall back to a plain "from your textbook".
     const _junkTitle = /^(full document|document|untitled.*|index|contents?|table of contents|cover|page\s*\d+|chapter\s*\d*)$/i;
-    const sources = ctx.length
+    // Readable "from your book" credit: Class · Subject · chapter title(s)
+    const _titles = ctx.length
       ? Array.from(new Set(ctx.map(c => String(c.title || '').trim())
           .filter(t => t && !_junkTitle.test(t)))).slice(0, 3).join('; ')
       : '';
+    let sources = _titles;
+    if (ctx.length) {
+      try {
+        const _clsId = (ctx.find(c => c.class_id) || {}).class_id || null;
+        const _subId = (ctx.find(c => c.subject_id) || {}).subject_id || null;
+        const _parts = [];
+        if (_clsId) {
+          const [cr] = await db.execute('SELECT className, section FROM classes WHERE id = ? LIMIT 1', [_clsId]);
+          if (cr.length) _parts.push(`${cr[0].className}${cr[0].section ? ' - ' + cr[0].section : ''}`);
+        }
+        if (_subId) {
+          const [sr] = await db.execute('SELECT name FROM subjects WHERE id = ? LIMIT 1', [_subId]);
+          if (sr.length && sr[0].name) _parts.push(sr[0].name);
+        }
+        if (_titles) _parts.push(_titles);
+        if (_parts.length) sources = _parts.join(' · ');
+      } catch (_) {}
+    }
 
     // A retrieved passage counts only when it's genuinely about the question.
     const relevant = _smartyRelevant(question, ctx);
@@ -18751,7 +18770,7 @@ async function _smartyRetrieve(institutionId, question, scope) {
   try {
     const params = [q, institutionId, ...classParam, q];
     const [rows] = await db.execute(
-      `SELECT title, content, source_type,
+      `SELECT title, content, source_type, class_id, subject_id,
               MATCH(title, content) AGAINST (? IN NATURAL LANGUAGE MODE) AS score
          FROM smarty_doc_chunks
         WHERE institutionId = ?${classClause}
@@ -18766,7 +18785,7 @@ async function _smartyRetrieve(institutionId, question, scope) {
       const expr = words.join(' ');   // space = OR in BOOLEAN MODE
       const params = [expr, institutionId, ...classParam, expr];
       const [rows] = await db.execute(
-        `SELECT title, content, source_type,
+        `SELECT title, content, source_type, class_id, subject_id,
                 MATCH(title, content) AGAINST (? IN BOOLEAN MODE) AS score
            FROM smarty_doc_chunks
           WHERE institutionId = ?${classClause}
@@ -18784,7 +18803,7 @@ async function _smartyRetrieve(institutionId, question, scope) {
       const scoreVals = [], likeVals = [];
       words.forEach(w => { const p = '%' + w + '%'; scoreVals.push(p, p); likeVals.push(p, p); });
       const sql =
-        `SELECT title, content, source_type, (${cond.join(' + ')}) AS score
+        `SELECT title, content, source_type, class_id, subject_id, (${cond.join(' + ')}) AS score
            FROM smarty_doc_chunks
           WHERE institutionId = ?${classClause}
             AND (${cond.join(' OR ')})

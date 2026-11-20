@@ -1137,15 +1137,15 @@ const CSS = `
 .smy-browse-ic{width:22px;height:22px;border-radius:7px;display:grid;place-items:center;font-size:12px;background:linear-gradient(135deg,var(--ga),var(--gb));color:#fff}
 .smy-browse-all{border:none;background:none;cursor:pointer;font-family:var(--fh);font-weight:700;font-size:11px;color:var(--ga);display:inline-flex;align-items:center;gap:3px;padding:3px 7px;border-radius:7px}
 .smy-browse-all:hover{background:color-mix(in srgb,var(--ga) 10%,transparent)}
-.smy-modgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
-.smy-modgrid-all{max-height:230px;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;padding:2px 4px 2px 2px;scrollbar-width:thin;scrollbar-color:rgba(140,140,170,.5) transparent}
+.smy-modgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}
+.smy-modgrid-all{max-height:250px;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;padding:2px 4px 2px 2px;scrollbar-width:thin;scrollbar-color:rgba(140,140,170,.5) transparent}
 .smy-modgrid-all::-webkit-scrollbar{width:6px}
 .smy-modgrid-all::-webkit-scrollbar-thumb{background:rgba(140,140,170,.45);border-radius:999px}
-.smy-modcard{border:1.5px solid color-mix(in srgb,var(--ct,var(--brand)) 26%,var(--line));background:color-mix(in srgb,var(--ct,var(--brand)) 8%,var(--panel));border-radius:7px;padding:9px 10px;cursor:pointer;display:flex;flex-direction:row;align-items:center;gap:9px;min-height:0;transition:transform .12s,box-shadow .12s}
+.smy-modcard{border:1.5px solid color-mix(in srgb,var(--ct,var(--brand)) 26%,var(--line));background:color-mix(in srgb,var(--ct,var(--brand)) 8%,var(--panel));border-radius:7px;padding:7px 8px;cursor:pointer;display:flex;flex-direction:row;align-items:center;gap:6px;min-height:44px;transition:transform .12s,box-shadow .12s}
 .smy-modcard:hover{transform:translateY(-2px);box-shadow:0 7px 16px -10px color-mix(in srgb,var(--ct,var(--brand)) 80%,transparent)}
-.smy-modcard-ic{width:28px;height:28px;flex:0 0 auto;border-radius:7px;display:grid;place-items:center;font-size:15px;background:color-mix(in srgb,var(--ct,var(--brand)) 20%,var(--panel));box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--ct,var(--brand)) 32%,transparent)}
+.smy-modcard-ic{width:24px;height:24px;flex:0 0 auto;border-radius:7px;display:grid;place-items:center;font-size:13px;background:color-mix(in srgb,var(--ct,var(--brand)) 20%,var(--panel));box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--ct,var(--brand)) 32%,transparent)}
 .smy-modgrid-all .smy-modcard-ic{background:transparent;box-shadow:none}
-.smy-modcard-label{flex:1;min-width:0;font-family:var(--fh);font-weight:700;font-size:11px;line-height:1.25;color:var(--ink);text-align:left;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.smy-modcard-label{flex:1;min-width:0;font-family:var(--fh);font-weight:700;font-size:9.5px;line-height:1.25;color:var(--ink);text-align:left;word-break:normal;overflow-wrap:normal;hyphens:none;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .smy-viewless{align-self:center;margin-top:1px;border:1.5px solid var(--line);background:var(--panel);cursor:pointer;font-family:var(--fh);font-weight:700;font-size:11px;color:var(--muted);padding:6px 16px;border-radius:999px;transition:color .12s,border-color .12s}
 .smy-viewless:hover{color:var(--ga);border-color:color-mix(in srgb,var(--ga) 40%,var(--line))}
 /* module drill-in: heading with back button + scrollable question list */
