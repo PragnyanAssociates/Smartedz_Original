@@ -214,7 +214,7 @@ export default function Overview() {
   const distinctClasses = new Set(entries.map(e => e.class_id).filter(Boolean)).size;
 
   const VALUES = {
-    total_users:    { value: users.length, sub: 'Active + Inactive users',
+    total_users:    { value: users.length, sub: 'Active + Inactive',
                       breakdown: countBoth(() => true) },
     students:       { value: users.filter(isStudent).length, sub: 'Enrolled',
                       breakdown: countBoth(isStudent) },
@@ -254,15 +254,15 @@ export default function Overview() {
   };
 
   return (
-    <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12">
+    <div className="w-full py-5 sm:py-6 lg:py-8 px-3 sm:px-6 lg:px-8 xl:px-10 2xl:px-12">
 
       <header className="mb-6 lg:mb-8 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-        <div className="flex flex-col gap-2">
-          <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Welcome back, {user?.name?.split(' ')[0] || 'User'}</h1>
-          <p className="text-sm text-zinc-500 max-w-[56ch]">Here is what is happening at {admin.institution?.name || 'your institution'} today.</p>
+        <div className="flex flex-col gap-1.5 sm:gap-2 min-w-0">
+          <h1 className="text-lg sm:text-xl font-semibold text-zinc-900 tracking-tight">Welcome back, {user?.name?.split(' ')[0] || 'User'}</h1>
+          <p className="text-[13px] sm:text-sm text-zinc-500 max-w-[56ch]">Here is what is happening at {admin.institution?.name || 'your institution'} today.</p>
         </div>
         {isSuperAdmin && (
-          <div className="flex flex-wrap items-center gap-2 self-start shrink-0">
+          <div className="flex flex-wrap items-center gap-2 self-stretch sm:self-start shrink-0">
             <span className="inline-flex items-center gap-2 h-9 px-3 rounded-md bg-emerald-50 ring-1 ring-emerald-200 text-emerald-700 text-xs font-semibold whitespace-nowrap">
               <span className="relative flex size-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
@@ -271,11 +271,11 @@ export default function Overview() {
               Users Online: <span className="tabular-nums">{onlineCount == null ? '\u2014' : onlineCount}</span>
             </span>
             <button onClick={() => setHelpOpen(true)}
-              className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors">
+              className="inline-flex items-center justify-center gap-1.5 h-9 sm:h-auto text-[11px] font-medium text-zinc-500 hover:text-primary ring-1 ring-zinc-200 px-2.5 py-1.5 rounded-md hover:bg-zinc-50 transition-colors">
               <HelpCircle className="size-3.5" /> User Guide
             </button>
             <button onClick={() => setSettingsOpen(true)}
-              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-white border border-zinc-200 text-zinc-700 text-xs font-semibold hover:bg-zinc-50 transition-colors">
+              className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md bg-white border border-zinc-200 text-zinc-700 text-xs font-semibold hover:bg-zinc-50 transition-colors">
               <Settings className="size-3.5" /> Settings
             </button>
           </div>
@@ -283,7 +283,7 @@ export default function Overview() {
       </header>
 
       {kpiIds.length > 0 && (
-        <div className={`grid grid-cols-2 md:grid-cols-3 ${COLS_LG[cols]} auto-rows-fr gap-3 sm:gap-4 mb-6 lg:mb-8 items-stretch`}>
+        <div className={`grid grid-cols-1 min-[420px]:grid-cols-2 md:grid-cols-3 ${COLS_LG[cols]} auto-rows-fr gap-3 sm:gap-4 mb-6 lg:mb-8 items-stretch`}>
           {kpiIds.map(renderKpi)}
         </div>
       )}
@@ -554,21 +554,21 @@ function PerformanceAnalytics({ perf, className = '' }) {
     ? performers.map(p => ({ key: `${p.class_id}-${p.roll_no}`, pct: p.pct, name: p.student_name, sub: `Roll: ${p.roll_no ?? '-'}`, badge: p.class_group, marks: `${p.obtained}/${p.possible}` }))
     : classes.map(c => ({ key: c.class_id, pct: c.pct, name: (c.class_group || '').toUpperCase(), sub: 'Class Overall', marks: `${c.obtained}/${c.possible}` }));
   return (
-    <div className={`ring-1 ring-black/5 rounded-lg bg-white p-5 sm:p-6 ${className}`}>
-      <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-4 mb-5">
+    <div className={`ring-1 ring-black/5 rounded-lg bg-white p-4 sm:p-6 ${className}`}>
+      <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 mb-5">
         <div className="min-w-0">
           <h2 className="text-base font-semibold text-zinc-900 tracking-tight">Performance Analytics</h2>
-          <p className="text-sm text-zinc-500 mt-0.5">Visual breakdown of top achievers and overall Exam based class performance</p>
+          <p className="text-[13px] sm:text-sm text-zinc-500 mt-0.5">Visual breakdown of top achievers and overall Exam based class performance</p>
           <p className="text-[11px] italic text-primary mt-1">For more details view the "Performance Reports" screen.</p>
         </div>
-        <div className="flex flex-wrap items-center gap-3 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3 shrink-0">
           <div className="inline-flex items-center bg-zinc-100/80 p-1 rounded-md">
             {[{ id: 'performers', label: 'Top Performers' }, { id: 'classes', label: 'Class wise' }].map(t => (
               <button key={t.id} onClick={() => setView(t.id)}
                 className={`px-3 h-7 rounded text-[11px] font-semibold transition-colors whitespace-nowrap ${view === t.id ? 'bg-white text-primary shadow-sm ring-1 ring-black/5' : 'text-zinc-500 hover:text-zinc-700'}`}>{t.label}</button>
             ))}
           </div>
-          <div className="flex items-center gap-3 bg-zinc-50 ring-1 ring-black/5 rounded-md px-3 h-7">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 bg-zinc-50 ring-1 ring-black/5 rounded-md px-3 py-1.5">
             <Dot color="#22c55e" text="Above 80%" /><Dot color="#3b82f6" text="50-80%" /><Dot color="#ef4444" text="Below 50%" />
           </div>
         </div>
