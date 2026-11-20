@@ -957,10 +957,26 @@ function smyMath(s) {
   return t;
 }
 // Escape → unicode-cleanup → bold, for the prose BETWEEN math spans.
+function _esc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function _safeUrl(u) { return /^(https?:|mailto:|data:image\/)/i.test(u) ? u.replace(/"/g, '%22') : ''; }
+// Inline formatting on ONE raw fragment: escape, math-cleanup, then inline
+// Markdown (code, images, links, bold, italic, strikethrough).
 function _fmtText(s) {
-  return smyMath(
-    String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-  ).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+  let str = smyMath(_esc(String(s || '')));
+  const code = [];
+  str = str.replace(/`([^`]+?)`/g, (_m, c) => { code.push(c); return '\u0001' + (code.length - 1) + '\u0001'; });
+  str = str
+    .replace(/!\[([^\]]*)\]\(([^)\s]+)[^)]*\)/g, (m, alt, url) => { const u = _safeUrl(url); return u ? '<img class="smy-img" src="' + u + '" alt="' + alt + '" loading="lazy" />' : m; })
+    .replace(/\[([^\]]+)\]\(([^)\s]+)[^)]*\)/g, (m, txt, url) => { const u = _safeUrl(url); return u ? '<a href="' + u + '" target="_blank" rel="noopener noreferrer">' + txt + '</a>' : m; })
+    .replace(/\*\*([^*]+?)\*\*/g, '<b>$1</b>')
+    .replace(/__([^_]+?)__/g, '<b>$1</b>')
+    .replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\w)/g, '$1<i>$2</i>')
+    .replace(/(^|[^_\w])_([^_\s][^_]*?)_(?!\w)/g, '$1<i>$2</i>')
+    .replace(/~~([^~]+?)~~/g, '<s>$1</s>');
+  str = str.replace(/\u0001(\d+)\u0001/g, (_m, i) => '<code>' + code[+i] + '</code>');
+  return str;
 }
 // Render one LaTeX span with KaTeX; fall back to the plain-text cleanup if it
 // can't parse (so a stray formula degrades gracefully instead of throwing).
@@ -974,20 +990,48 @@ function _tex(src, display) {
 // Split the answer into math spans ($$…$$, \[…\], $…$, \(…\)) and prose, then
 // render each part appropriately and stitch the HTML back together.
 const _MATH_RE = /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|\$([^$\n]+?)\$/g;
-function fmt(s) {
-  const src = String(s || '');
-  let out = '', last = 0, m;
-  _MATH_RE.lastIndex = 0;
-  while ((m = _MATH_RE.exec(src)) !== null) {
-    out += _fmtText(src.slice(last, m.index));
-    if (m[1] != null)      out += _tex(m[1], true);    // $$…$$
-    else if (m[2] != null) out += _tex(m[2], true);    // \[…\]
-    else if (m[3] != null) out += _tex(m[3], false);   // \(…\)
-    else                   out += _tex(m[4], false);   // $…$
-    last = _MATH_RE.lastIndex;
+// Block-level Markdown: headings, bullet/numbered lists, tables (GFM),
+// blockquotes, code fences, horizontal rules, and paragraphs with line breaks.
+function _mdBlocks(text) {
+  const lines = String(text).split('\n');
+  let html = '', i = 0, para = [];
+  const flush = () => { if (para.length) { html += '<p>' + para.map(_fmtText).join('<br>') + '</p>'; para = []; } };
+  const cells = (r) => r.replace(/^\s*\|?/, '').replace(/\|?\s*$/, '').split('|').map(c => c.trim());
+  while (i < lines.length) {
+    const line = lines[i];
+    let m;
+    if (/^\s*```/.test(line)) {
+      flush(); const buf = []; i++;
+      while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) { buf.push(lines[i]); i++; }
+      i++; html += '<pre class="smy-pre"><code>' + _esc(buf.join('\n')) + '</code></pre>'; continue;
+    }
+    if (/^\s*$/.test(line)) { flush(); i++; continue; }
+    if ((m = line.match(/^\s*(#{1,6})\s+(.+?)\s*#*\s*$/))) { flush(); const l = m[1].length; html += '<h' + l + '>' + _fmtText(m[2]) + '</h' + l + '>'; i++; continue; }
+    if (/^\s*([-*_])\s*(\1\s*){2,}$/.test(line)) { flush(); html += '<hr class="smy-hr" />'; i++; continue; }
+    if (/\|/.test(line) && i + 1 < lines.length && /-{2,}/.test(lines[i + 1]) && /^\s*\|?[\s:|-]+$/.test(lines[i + 1])) {
+      flush(); const heads = cells(line); i += 2;
+      let t = '<div class="smy-tablewrap"><table class="smy-table"><thead><tr>' + heads.map(c => '<th>' + _fmtText(c) + '</th>').join('') + '</tr></thead><tbody>';
+      while (i < lines.length && /\|/.test(lines[i]) && lines[i].trim()) { t += '<tr>' + cells(lines[i]).map(c => '<td>' + _fmtText(c) + '</td>').join('') + '</tr>'; i++; }
+      html += t + '</tbody></table></div>'; continue;
+    }
+    if (/^\s*>\s?/.test(line)) { flush(); const q = []; while (i < lines.length && /^\s*>\s?/.test(lines[i])) { q.push(lines[i].replace(/^\s*>\s?/, '')); i++; } html += '<blockquote class="smy-quote">' + q.map(_fmtText).join('<br>') + '</blockquote>'; continue; }
+    if (/^\s*[-*+]\s+/.test(line)) { flush(); let it = ''; while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) { it += '<li>' + _fmtText(lines[i].replace(/^\s*[-*+]\s+/, '')) + '</li>'; i++; } html += '<ul class="smy-ul">' + it + '</ul>'; continue; }
+    if (/^\s*\d+[.)]\s+/.test(line)) { flush(); let it = ''; while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i])) { it += '<li>' + _fmtText(lines[i].replace(/^\s*\d+[.)]\s+/, '')) + '</li>'; i++; } html += '<ol class="smy-ol">' + it + '</ol>'; continue; }
+    para.push(line); i++;
   }
-  out += _fmtText(src.slice(last));
-  return out;
+  flush();
+  return html;
+}
+
+// Entry point: pull math spans out (rendered via KaTeX), run Markdown on the
+// rest, then drop the math back in.
+function fmt(s) {
+  const math = [];
+  const text = String(s || '').replace(_MATH_RE, (mm, a, b, c, d) => {
+    math.push(_tex(a != null ? a : b != null ? b : c != null ? c : d, a != null || b != null));
+    return '\u0000MATH' + (math.length - 1) + '\u0000';
+  });
+  return _mdBlocks(text).replace(/\u0000MATH(\d+)\u0000/g, (_m, i) => math[+i]);
 }
 
 function Defs() {
@@ -1104,6 +1148,25 @@ const CSS = `
 .smy-bot .smy-plain{background:var(--panel);border-color:var(--line)}
 .smy-me{flex-direction:row-reverse}.smy-me .smy-bubble{background:linear-gradient(135deg,var(--ga),var(--me));color:#fff;border-bottom-right-radius:4px;box-shadow:0 5px 14px -7px rgba(91,87,230,.7)}
 .smy-bubble b{font-weight:800}
+.smy-bubble i{font-style:italic}.smy-bubble s{opacity:.7}
+.smy-bubble p{margin:0 0 7px}.smy-bubble p:last-child{margin-bottom:0}
+.smy-bubble h1,.smy-bubble h2,.smy-bubble h3,.smy-bubble h4,.smy-bubble h5,.smy-bubble h6{margin:10px 0 5px;font-family:var(--fh);font-weight:800;line-height:1.25;color:var(--ink)}
+.smy-bubble>h1:first-child,.smy-bubble>h2:first-child,.smy-bubble>h3:first-child{margin-top:0}
+.smy-bubble h1{font-size:15px}.smy-bubble h2{font-size:14px}.smy-bubble h3{font-size:13px}.smy-bubble h4,.smy-bubble h5,.smy-bubble h6{font-size:12px}
+.smy-bubble ul,.smy-bubble ol{margin:5px 0 7px;padding-left:18px}.smy-bubble li{margin:2px 0}
+.smy-bubble li::marker{color:var(--tone,var(--brand))}
+.smy-bubble a{color:var(--ga);font-weight:700;text-decoration:underline;text-underline-offset:2px;word-break:break-word}
+.smy-bubble code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em;background:color-mix(in srgb,var(--ink) 8%,transparent);padding:1px 5px;border-radius:5px}
+.smy-pre{margin:7px 0;background:#1f2430;color:#e7e9ee;border-radius:9px;padding:10px 12px;overflow-x:auto}
+.smy-pre code{background:none;padding:0;color:inherit;font-size:11px;line-height:1.5;white-space:pre}
+.smy-hr{border:none;border-top:1.5px solid color-mix(in srgb,var(--ink) 14%,transparent);margin:9px 0}
+.smy-quote{margin:7px 0;padding:4px 0 4px 11px;border-left:3px solid color-mix(in srgb,var(--tone,var(--brand)) 45%,transparent);color:var(--muted)}
+.smy-tablewrap{overflow-x:auto;margin:8px 0;border-radius:8px;border:1px solid var(--line)}
+.smy-table{border-collapse:collapse;width:100%;font-size:11px}
+.smy-table th,.smy-table td{border:1px solid var(--line);padding:5px 8px;text-align:left;vertical-align:top}
+.smy-table th{background:color-mix(in srgb,var(--tone,var(--brand)) 12%,var(--panel));font-weight:800}
+.smy-table tr:nth-child(even) td{background:color-mix(in srgb,var(--ink) 3%,transparent)}
+.smy-img{max-width:100%;height:auto;border-radius:9px;margin:6px 0;display:block}
 .smy-steps{margin:9px 0 0;padding:0;list-style:none;display:grid;gap:7px}
 .smy-steps li{display:flex;gap:9px;align-items:flex-start;font-weight:700;font-size:12.5px}
 .smy-n{width:20px;height:20px;border-radius:50%;background:var(--tone,var(--brand));color:#fff;font-family:var(--fh);font-size:11px;display:grid;place-items:center;flex:0 0 auto;margin-top:1px}

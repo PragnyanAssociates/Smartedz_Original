@@ -18173,8 +18173,13 @@ app.post('/api/smarty/ask', async (req, res) => {
     // let the UI fall back to a plain "from your textbook".
     const _junkTitle = /^(full document|document|untitled.*|index|contents?|table of contents|cover|page\s*\d+|chapter\s*\d*)$/i;
     // Readable "from your book" credit: Class · Subject · chapter title(s)
+    // Clean up unit numbers into proper ordinals, e.g. "2. st Unit" -> "2nd Unit".
+    const _ord = (n) => { n = parseInt(n, 10); const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); };
+    const _ordify = (t) => String(t)
+      .replace(/\b(\d+)\s*\.?\s*(?:st|nd|rd|th)?\s*(units?|chapters?|lessons?)\b/gi, (_m, n, w) => `${_ord(n)} ${w}`)
+      .replace(/\b(\d+)\s*\.?\s*(?:st|nd|rd|th)\b/gi, (_m, n) => _ord(n));
     const _titles = ctx.length
-      ? Array.from(new Set(ctx.map(c => String(c.title || '').trim())
+      ? Array.from(new Set(ctx.map(c => _ordify(String(c.title || '').trim()))
           .filter(t => t && !_junkTitle.test(t)))).slice(0, 3).join('; ')
       : '';
     let sources = _titles;
