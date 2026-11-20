@@ -192,22 +192,38 @@ export default function Smarty({ onNavigate }) {
     // Retire the old shared key that made every user on a device inherit the
     // same position.
     try { localStorage.removeItem('smy_fab_pos'); } catch (_) {}
-    if (!fabKey) return;
-    try {
-      const s = localStorage.getItem(fabKey);
-      if (s) {
-        const p = JSON.parse(s);
-        if (p && typeof p.left === 'number') {
-          const left = Math.max(4, Math.min(window.innerWidth - 110, p.left));
-          const top = Math.max(4, Math.min(window.innerHeight - 130, p.top));
-          setFabPos({ left, top }); posRef.current = { left, top };
-          return;
-        }
+    // Place the launcher — and KEEP it on-screen on every resize / rotation /
+    // device-mode change, so it can never end up off a small viewport (which is
+    // why Smarty appeared to vanish on mobile and tablet).
+    const place = () => {
+      // Phones: always pin to the default bottom-right corner. Dragging is a
+      // desktop affordance, and a saved desktop spot can land off a narrow screen.
+      if (typeof window === 'undefined' || window.innerWidth < 640) {
+        setFabPos(null); posRef.current = null; return;
       }
-      // No saved spot for THIS user on this device → fall back to the default
-      // corner (so a new user never starts on the previous user's position).
+      try {
+        const s = fabKey ? localStorage.getItem(fabKey) : null;
+        if (s) {
+          const p = JSON.parse(s);
+          if (p && typeof p.left === 'number') {
+            // clamp so the whole 132x152 launcher stays inside the viewport
+            const left = Math.max(4, Math.min(window.innerWidth - 136, p.left));
+            const top = Math.max(4, Math.min(window.innerHeight - 160, p.top));
+            setFabPos({ left, top }); posRef.current = { left, top };
+            return;
+          }
+        }
+      } catch (_) {}
+      // No saved spot → default corner.
       setFabPos(null); posRef.current = null;
-    } catch (_) {}
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('orientationchange', place);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('orientationchange', place);
+    };
   }, [fabKey]);
 
   const onFabDown = (e) => {
