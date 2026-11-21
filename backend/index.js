@@ -19011,7 +19011,7 @@ function _liveMatchSubject(q, subjects) {
 async function _smartyLiveAnswer(institutionId, question, asker) {
   const q = ' ' + String(question || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim() + ' ';
 
-  if (/\bactive users\b|\bregistered users\b|\bhow many users\b|\bstudents enrolled\b|\bhow many students\b|\bhow many teachers\b|\bteachers and staff\b|\bstaff members\b|\bacademic year\b|\bdashboard summary\b|\bschool dashboard\b|\bdashboard information\b|\boverall (?:academic )?performance\b|\bperformance summary\b|\btop performing students\b|\btop performers\b|\bhighest and lowest\b|\bperformance distribution\b|\bperformance range\b|\bhow many students fall\b|\bneeding (?:academic )?support\b|\bacademic support\b/.test(q)) {
+    if (/\bactive users\b|\bregistered users\b|\bhow many users\b|\bstudents enrolled\b|\bhow many students\b|\bhow many teachers\b|\bteachers and staff\b|\bstaff members\b|\bacademic year\b|\bdashboard summary\b|\bschool dashboard\b|\bdashboard information\b|\boverall (?:academic )?performance\b|\bperformance summary\b|\btop performing students\b|\btop performers\b|\bhighest and lowest\b|\bperformance distribution\b|\bperformance range\b|\bhow many students fall\b|\bneeding (?:academic )?support\b|\bacademic support\b|\bclass toppers?\b|\bclass wise performance\b|\bcompare classes?\b|\bhighest[- ]scoring\b/.test(q)) {
     const ov = await _liveOverview(institutionId, q, asker);
     if (ov) return ov;
   }
@@ -19135,7 +19135,7 @@ async function _overviewPerf(institutionId) {
     .map(c => ({ class_id: c.class_id, label: c.label, pct: r1((c.obtained / c.possible) * 100), top: c.top }))
     .sort((a, b) => b.pct - a.pct);
   studentList.sort((a, b) => b.pct - a.pct);
-  return { examsCompleted: examTypes.filter(t => completed.has(Number(t.id))).map(t => t.name), students: studentList, classes: classList };
+  return { examsCompleted: [...new Set(examTypes.filter(t => completed.has(Number(t.id))).map(t => t.name))], students: studentList, classes: classList };
 }
 
 async function _liveOverview(institutionId, q, asker) {
@@ -19172,14 +19172,36 @@ async function _liveOverview(institutionId, q, asker) {
     const [[y]] = await db.execute('SELECT name FROM academic_years WHERE institutionId = ? AND isActive = 1 LIMIT 1', [institutionId]);
     return { answer: `**School summary**${y && y.name ? ` · ${y.name}` : ''}:\n\n• **${u.n}** active users\n• **${s.n}** students\n• **${Number(u.n) - Number(s.n)}** teachers & staff\n• **${c.n}** classes\n\n_Open **Overview** for the full dashboard._` };
   }
-  if (/\boverall (?:academic )?performance\b|\bperformance summary\b|\btop performing students\b|\btop performers\b|\bhighest and lowest\b|\bperformance distribution\b|\bdistribution across\b|\bperformance range\b|\bhow many students fall\b|\bneeding (?:academic )?support\b|\bacademic support\b/.test(q)) {
+   if (/\boverall (?:academic )?performance\b|\bperformance summary\b|\btop performing students\b|\btop performers\b|\bhighest and lowest\b|\bperformance distribution\b|\bdistribution across\b|\bperformance range\b|\bhow many students fall\b|\bneeding (?:academic )?support\b|\bacademic support\b|\bclass toppers?\b|\bclass wise performance\b|\bcompare classes?\b|\bhighest[- ]scoring\b/.test(q)) {
     if (!staff) return null;
     const perf = await _overviewPerf(institutionId);
     if (!perf.students.length) return { answer: "No exam marks have been entered yet, so there's no performance data. Add marks in **Reports → Marks Entry**." };
     const exams = perf.examsCompleted.join(', ') || 'exams';
+
+    // Top student in EACH class (no class name needed — lists them all).
+    if (/\bclass toppers?\b|\bhighest[- ]scoring\b|\btopper in each\b/.test(q)) {
+      const withTop = perf.classes.filter(c => c.top);
+      if (!withTop.length) return { answer: "No class has marks yet, so there's no topper to show. Add marks in **Reports → Marks Entry**." };
+      const lines = withTop.map(c => `• **${c.label}** — ${c.top.name}${c.top.roll_no ? ` (Roll ${c.top.roll_no})` : ''} · ${c.top.pct}%`).join('\n');
+      return { answer: `**Top student in each class** (${exams}):\n\n${lines}\n\n_Open **Performance Reports** for the full rankings._` };
+    }
+
+    // Compare classes — every class ranked by overall %.
+    if (/\bcompare classes?\b|\bclass vs\b/.test(q)) {
+      const lines = perf.classes.map((c, i) => `${i + 1}. **${c.label}** — ${c.pct}%`).join('\n');
+      const top = perf.classes[0], low = perf.classes[perf.classes.length - 1];
+      return { answer: `**Classes ranked by overall %** (${exams}):\n\n${lines}\n\nBest: **${top.label}** (${top.pct}%)${low && low !== top ? ` · Lowest: **${low.label}** (${low.pct}%)` : ''}. Open **Performance Reports → Class wise** for the chart.` };
+    }
+
+    // Class-wise summary — each class's % with its topper.
+    if (/\bclass wise performance\b|\bper[- ]class\b|\bsummary (?:for|of) (?:each|every|a) class\b|\beach class\b/.test(q)) {
+      const lines = perf.classes.map(c => `• **${c.label}** — ${c.pct}%${c.top ? ` · 🥇 ${c.top.name} (${c.top.pct}%)` : ''}`).join('\n');
+      return { answer: `**Class-wise performance summary** (${exams}):\n\n${lines}\n\n_Open **Performance Reports → Class wise** for detail._` };
+    }
+
     if (/\bdistribution\b|\bhighest and lowest\b/.test(q)) {
       const top = perf.classes[0], low = perf.classes[perf.classes.length - 1];
-      const lines = perf.classes.slice(0, 8).map(c => `• ${c.label}: ${c.pct}%`).join('\n');
+      const lines = perf.classes.map(c => `• ${c.label}: ${c.pct}%`).join('\n');
       return { answer: `**Class performance** (${exams}):\n\n${lines}\n\nHighest: **${top.label}** (${top.pct}%)${low && low !== top ? ` · Lowest: **${low.label}** (${low.pct}%)` : ''}. Open **Performance Reports** for detail.` };
     }
     if (/\bperformance range\b|\bhow many students fall\b/.test(q)) {
@@ -19187,10 +19209,12 @@ async function _liveOverview(institutionId, q, asker) {
       return { answer: `Across **${perf.students.length}** students with results:\n\n• **${hi}** above 80%\n• **${mid}** between 50–80%\n• **${lo}** below 50%\n\n_Open **Performance Reports** to drill in._` };
     }
     if (/\bneeding (?:academic )?support\b|\bacademic support\b/.test(q)) {
-      const need = perf.students.filter(s => s.pct < 50).slice(0, 10);
-      if (!need.length) return { answer: `No student is below 50% right now — the lowest is **${perf.students[perf.students.length - 1].pct}%**. 🎉` };
-      const lines = need.map(s => `• ${s.name}${s.roll_no ? ` (Roll ${s.roll_no})` : ''} — ${s.pct}%`).join('\n');
-      return { answer: `**${need.length}** student${need.length == 1 ? '' : 's'} below 50% may need support (by recorded results):\n\n${lines}\n\n_Open **Performance Reports** for more._` };
+      const below = perf.students.filter(s => s.pct < 50);
+      if (!below.length) return { answer: `No student is below 50% right now — the lowest is **${perf.students[perf.students.length - 1].pct}%**. 🎉` };
+      const SHOW = 20;
+      const lines = below.slice(0, SHOW).map(s => `• ${s.name}${s.roll_no ? ` (Roll ${s.roll_no})` : ''} — ${s.pct}%`).join('\n');
+      const more = below.length > SHOW ? `\n\n…and **${below.length - SHOW}** more below 50%. ` : '\n\n';
+      return { answer: `**${below.length}** student${below.length == 1 ? '' : 's'} below 50% may need support (by recorded results):\n\n${lines}${more}_Open **Performance Reports** for the full list._` };
     }
     if (/\btop performing students\b|\btop performers\b/.test(q)) {
       const lines = perf.students.slice(0, 5).map((s, i) => `${i + 1}. **${s.name}**${s.roll_no ? ` (Roll ${s.roll_no})` : ''} — ${s.pct}% (${s.obtained}/${s.possible})`).join('\n');
