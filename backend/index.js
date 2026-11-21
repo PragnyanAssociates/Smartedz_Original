@@ -12217,7 +12217,7 @@ app.post('/api/admin/alumni', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 23.5 Promote a batch of students to Alumni ---------------------
+// --- 23.5 Promote a batch of students to Alumni (MOVE, not copy) -----
 app.post('/api/admin/alumni/promote', async (req, res) => {
     const institutionId = req.auth.institutionId;
     const created_by = req.auth.userId;
@@ -12242,9 +12242,7 @@ app.post('/api/admin/alumni/promote', async (req, res) => {
             if (!u.length) continue;
             const s = u[0];
 
-            // Only promote students that belong to THIS institution. Stops a
-            // crafted id from importing another school's student and from
-            // flipping their account to 'alumni'.
+            // Only promote students that belong to THIS institution.
             if (!sameTenant(req, s.institutionId)) continue;
 
             const [exists] = await conn.execute(
@@ -12253,19 +12251,27 @@ app.post('/api/admin/alumni/promote', async (req, res) => {
             );
             if (exists.length) continue;
 
+            // Snapshot the full academic history BEFORE the move — deleting the
+            // users row cascade-removes student_marks, so this must happen first.
+            const history = await computeAcademicHistory(conn, institutionId, sid);
+
             await conn.execute(
                 `INSERT INTO alumni
                    (institutionId, user_id, academic_year_id, passout_year, final_class,
                     name, email, phone, gender, dob, address, profile_pic,
-                    roll_no, admission_no, created_by)
-                 VALUES (?,?,?,?,?, ?,?,?,?,?,?,?, ?,?, ?)`,
+                    roll_no, admission_no, academic_history, created_by)
+                 VALUES (?,?,?,?,?, ?,?,?,?,?,?,?, ?,?, ?, ?)`,
                 [institutionId, sid, yearId, yearName, final_class ?? null,
                  s.name ?? null, s.email ?? null, s.phone ?? null, s.gender ?? null,
                  s.dob ?? null, s.address ?? null, s.profile_pic ?? null,
-                 s.roll_no ?? null, s.admission_no ?? null, created_by ?? null]
+                 s.roll_no ?? null, s.admission_no ?? null,
+                 JSON.stringify(history), created_by ?? null]
             );
-            await conn.execute(
-                "UPDATE users SET status = 'alumni' WHERE id = ?", [sid]);
+
+            // THE MOVE: remove the student from `users`. FK cascades clear their
+            // live data (attendance, fees, marks, submissions); the SET NULL on
+            // alumni.user_id just unlinks — the alumni row + its snapshot stay.
+            await conn.execute('DELETE FROM users WHERE id = ?', [sid]);
             added++;
         }
         await conn.commit();
@@ -12345,6 +12351,97 @@ app.put('/api/admin/alumni/:id/pic', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
+// Year-by-year academic % for a student, computed from the marks they
+// earned (student_marks by user_id). ENTERED exams only; conducted-only
+// (a mark AND a configured max); overall = pooled obtained / possible.
+async function computeAcademicHistory(conn, instId, studentId) {
+    const empty = { years: [], overall: { obtained: 0, possible: 0, percentage: null } };
+    if (!studentId) return empty;
+
+    const [marks] = await conn.execute(
+        `SELECT academic_year_id, class_id, subject_id, exam_type_id, marks_obtained
+           FROM student_marks
+          WHERE student_id = ? AND marks_obtained IS NOT NULL`,
+        [studentId]
+    );
+    if (marks.length === 0) return empty;
+
+    const [etypes] = await conn.execute(
+        "SELECT id FROM exam_types WHERE institutionId = ? AND kind <> 'derived'", [instId]);
+    const enteredOk = new Set(etypes.map(r => r.id));
+
+    const [maxRows] = await conn.execute(
+        `SELECT m.class_id, m.exam_type_id, m.subject_id, m.max_marks
+           FROM exam_max_marks m JOIN exam_types t ON t.id = m.exam_type_id
+          WHERE t.institutionId = ?`, [instId]);
+    const maxByClass = {};
+    maxRows.forEach(r => {
+        const cm = (maxByClass[r.class_id] = maxByClass[r.class_id] || {});
+        const em = (cm[r.exam_type_id] = cm[r.exam_type_id] || { default: null, bySubject: {} });
+        if (Number(r.subject_id) === 0) em.default = r.max_marks;
+        else em.bySubject[r.subject_id] = r.max_marks;
+    });
+    const maxFor = (cid, etId, subId) => {
+        const em = maxByClass[cid]?.[etId];
+        if (!em) return undefined;
+        const sp = em.bySubject ? em.bySubject[subId] : undefined;
+        if (sp !== undefined && sp !== null) return Number(sp);
+        if (em.default !== undefined && em.default !== null) return Number(em.default);
+        return undefined;
+    };
+
+    const [years] = await conn.execute(
+        'SELECT id, name, startDate FROM academic_years WHERE institutionId = ?', [instId]);
+    const yearMeta = {}; years.forEach(y => { yearMeta[y.id] = { name: y.name, start: y.startDate || '' }; });
+    const [classes] = await conn.execute(
+        'SELECT id, className, section FROM classes WHERE institutionId = ?', [instId]);
+    const classLabel = {}; classes.forEach(c => { classLabel[c.id] = `${c.className}${c.section ? ' - ' + c.section : ''}`; });
+
+    const acc = {};
+    for (const m of marks) {
+        if (!enteredOk.has(m.exam_type_id)) continue;
+        const mx = maxFor(m.class_id, m.exam_type_id, m.subject_id);
+        if (mx === undefined || mx === null || mx <= 0) continue;
+        const val = parseFloat(m.marks_obtained);
+        if (isNaN(val)) continue;
+        const yk = m.academic_year_id == null ? 'null' : String(m.academic_year_id);
+        const a = (acc[yk] = acc[yk] || { obtained: 0, possible: 0, classCounts: {} });
+        a.obtained += val; a.possible += mx;
+        a.classCounts[m.class_id] = (a.classCounts[m.class_id] || 0) + 1;
+    }
+
+    const r1 = (n) => Math.round(n * 10) / 10;
+    const yearsOut = Object.keys(acc).map(yk => {
+        const a = acc[yk];
+        let cid = null, best = -1;
+        Object.keys(a.classCounts).forEach(c => { if (a.classCounts[c] > best) { best = a.classCounts[c]; cid = c; } });
+        return {
+            academic_year_id: yk === 'null' ? null : Number(yk),
+            year_name: yearMeta[yk]?.name || (yk === 'null' ? 'Unassigned' : String(yk)),
+            class_label: classLabel[cid] || '',
+            obtained: r1(a.obtained),
+            possible: r1(a.possible),
+            percentage: a.possible > 0 ? r1((a.obtained / a.possible) * 100) : null,
+            _start: yearMeta[yk]?.start || ''
+        };
+    })
+    .sort((x, y) => String(y._start).localeCompare(String(x._start)))   // newest first
+    .map(({ _start, ...y }) => y);
+
+    const totObt = yearsOut.reduce((s, y) => s + y.obtained, 0);
+    const totPos = yearsOut.reduce((s, y) => s + y.possible, 0);
+
+    return {
+        years: yearsOut,
+        overall: {
+            obtained: r1(totObt),
+            possible: r1(totPos),
+            percentage: totPos > 0 ? r1((totObt / totPos) * 100) : null
+        }
+    };
+}
+
 // --- 23.11 Academic history (year-by-year %) for one alumni ----------
 //   Year-by-year academic percentage from the marks this person earned as
 //   a student (student_marks keyed by their user_id), plus a pooled overall.
@@ -12363,107 +12460,63 @@ app.put('/api/admin/alumni/:id/pic', async (req, res) => {
 app.get('/api/admin/alumni/academic-history/:id', async (req, res) => {
     try {
         const [al] = await db.execute(
-            'SELECT id, user_id, institutionId FROM alumni WHERE id = ?', [req.params.id]);
+            'SELECT id, user_id, institutionId, academic_history FROM alumni WHERE id = ?',
+            [req.params.id]);
         if (al.length === 0) return res.status(404).json({ error: 'Alumni not found' });
         if (!sameTenant(req, al[0].institutionId)) return res.status(403).json({ error: 'This record belongs to another institution.' });
 
-        const instId = al[0].institutionId;
-        const studentId = al[0].user_id;
-        const empty = { years: [], overall: { obtained: 0, possible: 0, percentage: null } };
-        // Manually-added alumni with no linked user have no marks history.
-        if (!studentId) return res.json(empty);
-
-        // The student's marks across every year (only rows with a value).
-        const [marks] = await db.execute(
-            `SELECT academic_year_id, class_id, subject_id, exam_type_id, marks_obtained
-               FROM student_marks
-              WHERE student_id = ? AND marks_obtained IS NOT NULL`,
-            [studentId]
-        );
-        if (marks.length === 0) return res.json(empty);
-
-        // Entered exam types only (exclude derived).
-        const [etypes] = await db.execute(
-            "SELECT id FROM exam_types WHERE institutionId = ? AND kind <> 'derived'", [instId]);
-        const enteredOk = new Set(etypes.map(r => r.id));
-
-        // Max marks, nested [class_id][exam_type_id] = { default, bySubject }.
-        const [maxRows] = await db.execute(
-            `SELECT m.class_id, m.exam_type_id, m.subject_id, m.max_marks
-               FROM exam_max_marks m JOIN exam_types t ON t.id = m.exam_type_id
-              WHERE t.institutionId = ?`, [instId]);
-        const maxByClass = {};
-        maxRows.forEach(r => {
-            const cm = (maxByClass[r.class_id] = maxByClass[r.class_id] || {});
-            const em = (cm[r.exam_type_id] = cm[r.exam_type_id] || { default: null, bySubject: {} });
-            if (Number(r.subject_id) === 0) em.default = r.max_marks;
-            else em.bySubject[r.subject_id] = r.max_marks;
-        });
-        const maxFor = (cid, etId, subId) => {
-            const em = maxByClass[cid]?.[etId];
-            if (!em) return undefined;
-            const sp = em.bySubject ? em.bySubject[subId] : undefined;
-            if (sp !== undefined && sp !== null) return Number(sp);
-            if (em.default !== undefined && em.default !== null) return Number(em.default);
-            return undefined;
-        };
-
-        // Year names + ordering, and class labels.
-        const [years] = await db.execute(
-            'SELECT id, name, startDate FROM academic_years WHERE institutionId = ?', [instId]);
-        const yearMeta = {}; years.forEach(y => { yearMeta[y.id] = { name: y.name, start: y.startDate || '' }; });
-        const [classes] = await db.execute(
-            'SELECT id, className, section FROM classes WHERE institutionId = ?', [instId]);
-        const classLabel = {}; classes.forEach(c => { classLabel[c.id] = `${c.className}${c.section ? ' - ' + c.section : ''}`; });
-
-        // Accumulate obtained / possible per year, tracking the class most of
-        // the year's marks were under (for the label).
-        const acc = {};   // yearId -> { obtained, possible, classCounts }
-        for (const m of marks) {
-            if (!enteredOk.has(m.exam_type_id)) continue;
-            const mx = maxFor(m.class_id, m.exam_type_id, m.subject_id);
-            if (mx === undefined || mx === null || mx <= 0) continue;
-            const val = parseFloat(m.marks_obtained);
-            if (isNaN(val)) continue;
-            const yk = m.academic_year_id == null ? 'null' : String(m.academic_year_id);
-            const a = (acc[yk] = acc[yk] || { obtained: 0, possible: 0, classCounts: {} });
-            a.obtained += val; a.possible += mx;
-            a.classCounts[m.class_id] = (a.classCounts[m.class_id] || 0) + 1;
+        // Prefer the snapshot captured at promotion — it survives the user-row
+        // move (after which user_id is NULL and the marks are gone).
+        if (al[0].academic_history) {
+            try {
+                const snap = JSON.parse(al[0].academic_history);
+                if (snap && Array.isArray(snap.years)) return res.json(snap);
+            } catch (e) { /* fall through to live compute */ }
         }
 
-        const r1 = (n) => Math.round(n * 10) / 10;
-        const yearsOut = Object.keys(acc).map(yk => {
-            const a = acc[yk];
-            let cid = null, best = -1;
-            Object.keys(a.classCounts).forEach(c => { if (a.classCounts[c] > best) { best = a.classCounts[c]; cid = c; } });
-            return {
-                academic_year_id: yk === 'null' ? null : Number(yk),
-                year_name: yearMeta[yk]?.name || (yk === 'null' ? 'Unassigned' : String(yk)),
-                class_label: classLabel[cid] || '',
-                obtained: r1(a.obtained),
-                possible: r1(a.possible),
-                percentage: a.possible > 0 ? r1((a.obtained / a.possible) * 100) : null,
-                _start: yearMeta[yk]?.start || ''
-            };
-        })
-        .sort((x, y) => String(y._start).localeCompare(String(x._start)))   // newest first
-        .map(({ _start, ...y }) => y);
-
-        const totObt = yearsOut.reduce((s, y) => s + y.obtained, 0);
-        const totPos = yearsOut.reduce((s, y) => s + y.possible, 0);
-
-        res.json({
-            years: yearsOut,
-            overall: {
-                obtained: r1(totObt),
-                possible: r1(totPos),
-                percentage: totPos > 0 ? r1((totObt / totPos) * 100) : null
-            }
-        });
+        // Fallback: alumni promoted before snapshots existed (user_id still set).
+        const hist = await computeAcademicHistory(db, al[0].institutionId, al[0].user_id);
+        res.json(hist);
     } catch (err) {
         console.error('[alumni academic-history]', err);
         res.status(500).json({ error: err.message });
     }
+});
+
+app.post('/api/admin/alumni/_migrate-move', async (req, res) => {
+    if (!['Super Admin', 'Developer'].includes(req.auth.role)) {
+        return res.status(403).json({ error: 'Not allowed.' });
+    }
+    const institutionId = req.auth.institutionId;
+    const conn = await db.getConnection();
+    let archived = 0, removedUsers = 0;
+    try {
+        await conn.beginTransaction();
+        const [als] = await conn.execute(
+            'SELECT id, user_id FROM alumni WHERE institutionId = ? AND user_id IS NOT NULL',
+            [institutionId]
+        );
+        for (const a of als) {
+            // 1) snapshot the history while the user + marks still exist
+            const history = await computeAcademicHistory(conn, institutionId, a.user_id);
+            await conn.execute(
+                'UPDATE alumni SET academic_history = ? WHERE id = ?',
+                [JSON.stringify(history), a.id]
+            );
+            archived++;
+            // 2) remove the stranded users row (only if it's an alumni-status row)
+            const [del] = await conn.execute(
+                "DELETE FROM users WHERE id = ? AND institutionId = ? AND LOWER(status) = 'alumni'",
+                [a.user_id, institutionId]
+            );
+            removedUsers += (del.affectedRows || 0);
+        }
+        await conn.commit();
+        res.json({ success: true, archived, removedUsers });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally { conn.release(); }
 });
 
 
