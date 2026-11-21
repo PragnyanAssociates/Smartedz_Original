@@ -2497,23 +2497,84 @@ app.post('/api/admin/class-sort', async (req, res) => {
 
 
 // =====================================================================
-// === 9. STUDENT PROMOTION ============================================
+// === 9. STUDENT PROMOTION  (roll-unique within the destination class) =
+//   REPLACE your whole Section 9 /api/admin/promote with this.
+//
+//   Moves the selected students into the target class. Roll numbers must
+//   stay unique inside a class (two students sharing a roll made one of
+//   them disappear from Performance / the roster). So as each student is
+//   moved in, if their roll is already taken in the destination class we
+//   give them the next FREE roll automatically. The response returns a
+//   `renumbered` list [{ id, name, from, to }] so the UI can show exactly
+//   who was changed. Runs in a transaction so a failure changes nothing.
 // =====================================================================
 app.post('/api/admin/promote', async (req, res) => {
     const instId = req.auth.institutionId;
     const { studentIds, targetClassId, targetSection } = req.body;
     if (!Array.isArray(studentIds) || studentIds.length === 0) return res.status(400).json({ error: 'No students supplied' });
+
+    const conn = await db.getConnection();
     try {
-        const [cls] = await db.execute('SELECT id FROM classes WHERE id = ? AND institutionId = ?', [targetClassId, instId]);
-        if (cls.length === 0) return res.status(403).json({ error: 'That class is not in your institution.' });
- 
+        await conn.beginTransaction();
+
+        const [cls] = await conn.execute('SELECT id FROM classes WHERE id = ? AND institutionId = ?', [targetClassId, instId]);
+        if (cls.length === 0) { await conn.rollback(); return res.status(403).json({ error: 'That class is not in your institution.' }); }
+
         const placeholders = studentIds.map(() => '?').join(',');
-        const [r] = await db.execute(
-            `UPDATE users SET class_id = ?, section = ? WHERE id IN (${placeholders}) AND institutionId = ?`,
-            [targetClassId, targetSection || null, ...studentIds, instId]
+
+        // The students we're moving. Process order is by current roll so the
+        // lowest rolls keep their number and any later clash is the one moved.
+        const [movers] = await conn.execute(
+            `SELECT id, name, roll_no FROM users
+              WHERE id IN (${placeholders}) AND institutionId = ?
+                AND LOWER(TRIM(role)) = 'student'`,
+            [...studentIds, instId]
         );
-        res.json({ success: true, moved: r.affectedRows });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+        if (movers.length === 0) { await conn.rollback(); return res.json({ success: true, moved: 0, renumbered: [] }); }
+
+        // Rolls already occupied in the destination class by students who are
+        // NOT part of this promotion (active, non-alumni). These are fixed.
+        const [occupants] = await conn.execute(
+            `SELECT roll_no FROM users
+              WHERE class_id = ? AND institutionId = ?
+                AND LOWER(TRIM(role)) = 'student'
+                AND (status IS NULL OR LOWER(TRIM(status)) <> 'alumni')
+                AND id NOT IN (${placeholders})`,
+            [targetClassId, instId, ...studentIds]
+        );
+
+        // Track taken roll numbers as integers; find the lowest free one.
+        const takenInts = new Set();
+        occupants.forEach(o => { const n = parseInt(o.roll_no, 10); if (!isNaN(n)) takenInts.add(n); });
+        const nextFree = () => { let n = 1; while (takenInts.has(n)) n++; takenInts.add(n); return n; };
+
+        const rollInt = (s) => { const n = parseInt(s.roll_no, 10); return isNaN(n) ? Number.POSITIVE_INFINITY : n; };
+        movers.sort((a, b) => rollInt(a) - rollInt(b) || String(a.name || '').localeCompare(String(b.name || '')));
+
+        const renumbered = [];
+        for (const s of movers) {
+            const want = parseInt(s.roll_no, 10);
+            let finalRoll;
+            if (!isNaN(want) && !takenInts.has(want)) {
+                takenInts.add(want);
+                finalRoll = s.roll_no;                      // free → keep their exact roll string
+            } else {
+                const n = nextFree();
+                finalRoll = String(n).padStart(2, '0');      // clash/blank → next free, "01, 02…" style
+                renumbered.push({ id: s.id, name: s.name, from: s.roll_no || '—', to: finalRoll });
+            }
+            await conn.execute(
+                'UPDATE users SET class_id = ?, section = ?, roll_no = ? WHERE id = ? AND institutionId = ?',
+                [targetClassId, targetSection || null, finalRoll, s.id, instId]
+            );
+        }
+
+        await conn.commit();
+        res.json({ success: true, moved: movers.length, renumbered });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally { conn.release(); }
 });
 
 

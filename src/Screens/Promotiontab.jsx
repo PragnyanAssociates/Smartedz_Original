@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Users, CircleArrowUp, Search, GraduationCap, ChevronDown } from 'lucide-react';
+import { Users, CircleArrowUp, Search, GraduationCap, ChevronDown, CheckCircle2, X } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
 import { useAuth } from '../context/AuthContext';
 
@@ -12,6 +12,7 @@ export default function PromotionTab({ data, fetchData }) {
   const [target, setTarget]                     = useState({ classId: '', section: '' });
   const [selectedStudents, setSelectedStudents] = useState([]);
   const [search, setSearch]                     = useState('');
+  const [promoResult, setPromoResult]           = useState(null);   // { moved, renumbered:[{id,name,from,to}] }
 
   // No more "All Classes" option - each class promotes to a different
   // target, so a single real class must always be the source. We default
@@ -94,7 +95,12 @@ export default function PromotionTab({ data, fetchData }) {
   const classLabel = (c) => `${c.className}${c.section ? ` - ${c.section}` : ''}`;
 
   // --- Normal class promotion -------------------------------------
+  //  The backend keeps roll numbers unique within the destination class:
+  //  if a promoted student's roll is already taken there, it assigns the
+  //  next free roll and reports it back in `renumbered`, which we surface
+  //  so the admin can see exactly what changed.
   const promoteToClass = async () => {
+    setPromoResult(null);
     const res = await fetch(`${API_BASE_URL}/admin/promote`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -104,12 +110,16 @@ export default function PromotionTab({ data, fetchData }) {
         targetSection: target.section || null
       })
     });
-    if (res.ok) {
-      alert('Students promoted successfully.');
+    const d = await res.json().catch(() => ({}));
+    if (res.ok && d.success) {
+      setPromoResult({
+        moved: d.moved ?? selectedStudents.length,
+        renumbered: Array.isArray(d.renumbered) ? d.renumbered : []
+      });
       setSelectedStudents([]);
       fetchData();
     } else {
-      alert('Failed to promote students.');
+      alert(d.error || 'Failed to promote students.');
     }
   };
 
@@ -163,6 +173,8 @@ export default function PromotionTab({ data, fetchData }) {
     const warningMsg =
       `Warning: Once promoted, the student will NOT come back to the same class. ` +
       `This action is final and cannot be undone.\n\n` +
+      `If a roll number is already taken in the destination class, that student ` +
+      `will automatically get the next free roll.\n\n` +
       `Are you sure you want to promote ${selectedStudents.length} student(s) to the selected class?`;
 
     if (!window.confirm(warningMsg)) return;
@@ -173,7 +185,7 @@ export default function PromotionTab({ data, fetchData }) {
     <div className="space-y-6">
       <div>
         <h3 className="text-lg font-semibold text-zinc-900 tracking-tight">Student Promotion Engine</h3>
-        <p className="text-[11px] text-zinc-500 max-w-3xl mt-1 leading-relaxed">
+        <p className="text-[11px] text-zinc-500 mt-1 leading-relaxed">
           Filter by source class, tick the students who passed (or use Select All), pick the destination
           class and section, then execute. Students who failed simply stay unchecked - they remain in their current class.
           To graduate a final-year class, pick <strong className="text-zinc-700 font-semibold">Alumni (Passout)</strong> as the destination.
@@ -181,12 +193,54 @@ export default function PromotionTab({ data, fetchData }) {
         {/* Ordering note: switch/activate the new academic year FIRST, then
             promote - so the promotion lands in the new year and the previous
             year keeps its own classes instead of overlapping. */}
-        <div className="mt-3 rounded-md ring-1 ring-inset ring-blue-500/15 bg-blue-50/60 px-3 py-2 max-w-3xl">
+        <div className="mt-3 rounded-md ring-1 ring-inset ring-blue-500/15 bg-blue-50/60 px-3 py-2.5 space-y-1.5">
           <p className="text-[11px] text-blue-800 leading-relaxed">
             <span className="font-semibold">Important:</span> Change and set the next <strong>Academic Year</strong> active <strong>first</strong>, then promote the students - only then does it work correctly. If you promote before switching the year, the previous year and the new year can end up showing the same classes.
           </p>
+          <p className="text-[11px] text-blue-800 leading-relaxed">
+            <span className="font-semibold">Roll numbers may change:</span> if a promoted student's roll number is already used in the destination class, they are automatically given the next free roll (so no two students in a class ever share a roll). After promoting, review and align the roll numbers in the <strong>Users</strong> tab if you want specific ones.
+          </p>
         </div>
       </div>
+
+      {/* Result of the last class promotion: how many moved + any auto-renumbering. */}
+      {promoResult && (
+        <div className="rounded-lg ring-1 ring-inset ring-emerald-500/20 bg-emerald-50/60 p-4 relative">
+          <button onClick={() => setPromoResult(null)} aria-label="Dismiss"
+            className="absolute top-3 right-3 text-zinc-400 hover:text-zinc-700 transition-colors">
+            <X className="size-4" />
+          </button>
+          <div className="flex items-start gap-2.5 pr-6">
+            <CheckCircle2 className="size-5 text-emerald-600 shrink-0 mt-0.5" />
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-emerald-800">
+                {promoResult.moved} student{promoResult.moved === 1 ? '' : 's'} promoted successfully.
+              </p>
+              {promoResult.renumbered.length > 0 ? (
+                <div className="mt-2">
+                  <p className="text-[11px] font-semibold text-amber-700">
+                    {promoResult.renumbered.length} student{promoResult.renumbered.length === 1 ? ' was' : 's were'} given a new roll number to avoid a clash in the destination class:
+                  </p>
+                  <ul className="mt-1.5 space-y-1">
+                    {promoResult.renumbered.map(rn => (
+                      <li key={rn.id} className="text-[11px] text-zinc-600">
+                        <span className="font-semibold text-zinc-800">{rn.name}</span>
+                        {' '}— Roll {rn.from} <span className="text-zinc-400">→</span>{' '}
+                        <span className="font-semibold text-emerald-700">{rn.to}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-2 text-[10px] text-zinc-500 italic">
+                    Review these in the Users tab and adjust if you want specific roll numbers.
+                  </p>
+                </div>
+              ) : (
+                <p className="text-[11px] text-zinc-500 mt-0.5">All roll numbers carried over — no clashes in the destination class.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
@@ -316,7 +370,7 @@ export default function PromotionTab({ data, fetchData }) {
             {!isAlumniTarget && (
               <p className="text-[11px] font-medium text-red-600 leading-relaxed">
                 <span className="font-semibold uppercase tracking-wider">Note:</span>{' '}
-               Once promoted, the student will NOT come back to the same class.This action is final and cannot be undone. 
+               Once promoted, the student will NOT come back to the same class. This action is final and cannot be undone. If their roll is already taken in the destination class, they'll be given the next free roll.
               </p>
             )}
 
