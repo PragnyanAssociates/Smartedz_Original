@@ -8020,6 +8020,8 @@ app.put('/api/admin/homework/grade/:submissionId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
+
 // =====================================================================
 //  BACKEND — Section 20: MEALS  +  Section 21: KITCHEN / STORE
 //            + Kitchen Staff activity tracking
@@ -19145,6 +19147,917 @@ async function _liveStudyMaterials(institutionId, q, asker) {
     return reply(`${head} — ${rows.length} material${rows.length === 1 ? '' : 's'}:\n${lines.join('\n')}${more}`);
 }
 
+// =====================================================================
+//  [NEW DRILL-DOWN]  _liveOnlineClasses  — picker-style answers for the
+//  Online Classes cards (oc-find / oc-recorded / oc-details).
+//  Gated on the one-word token "onlineclasses" so it NEVER collides with
+//  the old free-text/flat resolver (renamed _liveOnlineClassesAsk), which
+//  still answers "show my online classes" / "upcoming live classes".
+//    onlineclasses find      → Class → Subject → live+recorded classes
+//    onlineclasses recorded  → Subject → recorded classes for that subject
+//    onlineclasses details   → pick a live class → its full details
+// =====================================================================
+async function _liveOnlineClasses(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, _MOD_OC))) return null;
+  const text = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+  let intent = (text.match(/\bonlineclasses (find|recorded|details)\b/) || [])[1] || null;
+  if (!intent) {
+    if (/find classes? for|classes? for a class/.test(text)) intent = 'find';
+    else if (/recorded classes? for/.test(text)) intent = 'recorded';
+    else if (/live class.?s? detail|class.?s? detail/.test(text)) intent = 'details';
+  }
+  if (!intent) return null;
+
+  const LINK = { link: 'OnlineClasses', linkLabel: 'Open Online Classes' };
+  const reply = (answer, options) => ({ ok: true, source: 'smarty', live: true, answer, ...(options ? { options } : {}), ...LINK });
+  const base = (extra) => `onlineclasses ${intent}${extra || ''}`;
+  const classLabel = (c) => `${c.className || ''}${c.section ? ' - ' + c.section : ''}`.trim();
+  const fmtDT = (d) => { if (!d) return ''; const x = new Date(String(d).replace(' ', 'T')); if (isNaN(x)) return String(d); const p = n => String(n).padStart(2, '0'); let h = x.getHours(); const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12; return `${p(x.getDate())}/${p(x.getMonth() + 1)}/${x.getFullYear()} ${p(h)}:${p(x.getMinutes())} ${ap}`; };
+
+  // Role scope — mirror what the asker actually sees on the Online Classes screen.
+  const role = (asker.role || '').toLowerCase();
+  const isStudentParent = role.includes('student') || role.includes('parent');
+  const isPriv = role === 'developer' || role === 'super admin';
+  let scopeSql = 'o.institutionId = ?'; const scopeParams = [institutionId];
+  if (isStudentParent) {
+    if (!asker.class_id) return reply("I can only look up classes for your own class, which isn't set yet.");
+    scopeSql += ' AND (o.class_id = ? OR o.class_id IS NULL)'; scopeParams.push(asker.class_id);
+  } else if (!isPriv) {
+    scopeSql += ' AND o.created_by = ?'; scopeParams.push(asker.userId || 0);
+  }
+
+  const classId = (text.match(/classid(\d+)/) || [])[1];
+  const subjectId = (text.match(/subjectid(\d+)/) || [])[1];
+  const ocId = (text.match(/ocid(\d+)/) || [])[1];
+
+  // ---- DETAILS: pick a live class → its full details ----------------
+  if (intent === 'details') {
+    if (!ocId) {
+      const [list] = await db.query(
+        `SELECT o.id, o.title, o.class_datetime FROM ${_T_OC} o
+          WHERE ${scopeSql} AND o.class_type = 'live'
+          ORDER BY o.class_datetime DESC LIMIT 20`, scopeParams);
+      if (!list.length) return reply('There are no live classes to show details for.');
+      return reply('Which live class?', list.map(r => ({
+        label: `${r.title}${r.class_datetime ? ' · ' + fmtDT(r.class_datetime) : ''}`.slice(0, 80),
+        send: base(` ocid${r.id}`)
+      })));
+    }
+    const [rows] = await db.query(
+      `SELECT o.title, o.class_type, o.class_datetime, o.topic, o.meet_link,
+              o.description, c.className, c.section,
+              s.name AS subject_name, t.name AS teacher_name
+         FROM ${_T_OC} o
+         LEFT JOIN classes c ON c.id = o.class_id
+         LEFT JOIN subjects s ON s.id = o.subject_id
+         LEFT JOIN users t ON t.id = o.teacher_id
+        WHERE ${scopeSql} AND o.id = ? LIMIT 1`, [...scopeParams, ocId]);
+    if (!rows.length) return reply("I couldn't find that class.");
+    const r = rows[0];
+    const audience = r.className ? `${r.className}${r.section ? ' - ' + r.section : ''}` : 'All Classes';
+    const lines = [
+      `**${r.title}** (${r.class_type})`,
+      `• When: ${r.class_datetime ? fmtDT(r.class_datetime) : '—'}`,
+      `• Subject: ${r.subject_name || '—'}`,
+      `• Audience: ${audience}`,
+      `• Teacher: ${r.teacher_name || '—'}`,
+      r.topic ? `• Topic: ${r.topic}` : null,
+      `• ${r.class_type === 'live' ? (r.meet_link ? 'Has a meeting link' : 'No meeting link set') : (r.meet_link ? 'External video link' : 'Uploaded video')}`,
+      r.description ? `• ${r.description}` : null
+    ].filter(Boolean);
+    return reply(lines.join('\n'));
+  }
+
+  // ---- RECORDED: Subject → recorded classes for that subject --------
+  if (intent === 'recorded') {
+    if (!subjectId) {
+      const [subs] = await db.query(
+        `SELECT DISTINCT s.id, s.name FROM ${_T_OC} o JOIN subjects s ON s.id = o.subject_id
+          WHERE ${scopeSql} AND o.class_type = 'recorded'
+          ORDER BY s.name`, scopeParams);
+      if (!subs.length) return reply('No recorded classes have been uploaded yet.');
+      return reply('Which subject?', subs.map(s => ({ label: s.name, send: base(` subjectid${s.id}`) })));
+    }
+    const [sr] = await db.query('SELECT name FROM subjects WHERE id = ?', [subjectId]);
+    const subName = sr.length ? sr[0].name : `Subject ${subjectId}`;
+    const [rows] = await db.query(
+      `SELECT o.title, o.class_datetime, c.className, c.section, t.name AS teacher_name
+         FROM ${_T_OC} o
+         LEFT JOIN classes c ON c.id = o.class_id
+         LEFT JOIN users t ON t.id = o.teacher_id
+        WHERE ${scopeSql} AND o.class_type = 'recorded' AND o.subject_id = ?
+        ORDER BY o.class_datetime DESC LIMIT 30`, [...scopeParams, subjectId]);
+    if (!rows.length) return reply(`No recorded classes for ${subName} yet.`);
+    const lines = rows.map((r, i) => {
+      const grp = r.className ? `${r.className}${r.section ? ' - ' + r.section : ''}` : 'All Classes';
+      return `${i + 1}. ${r.title} — ${grp}${r.teacher_name ? ' · ' + r.teacher_name : ''}${r.class_datetime ? ' · ' + fmtDT(r.class_datetime) : ''}`;
+    });
+    return reply(`${subName} — ${rows.length} recorded class${rows.length === 1 ? '' : 'es'}:\n${lines.join('\n')}`);
+  }
+
+  // ---- FIND: Class → Subject → live + recorded classes --------------
+  if (!classId) {
+    const [classes] = await db.query(
+      `SELECT DISTINCT c.id, c.className, c.section
+         FROM ${_T_OC} o JOIN classes c ON c.id = o.class_id
+        WHERE ${scopeSql} AND o.class_id IS NOT NULL
+        ORDER BY c.className, c.section`, scopeParams);
+    if (!classes.length) return reply('No online classes are scheduled for a specific class yet.');
+    classes.sort((a, b) => classLabel(a).localeCompare(classLabel(b), undefined, { numeric: true }));
+    return reply('Which class?', classes.map(c => ({ label: classLabel(c), send: base(` classid${c.id}`) })));
+  }
+  if (!subjectId) {
+    const [subs] = await db.query(
+      `SELECT DISTINCT s.id, s.name FROM ${_T_OC} o JOIN subjects s ON s.id = o.subject_id
+        WHERE ${scopeSql} AND (o.class_id = ? OR o.class_id IS NULL)
+        ORDER BY s.name`, [...scopeParams, classId]);
+    const [cl] = await db.query('SELECT className, section FROM classes WHERE id = ?', [classId]);
+    const clName = cl.length ? classLabel(cl[0]) : `Class ${classId}`;
+    if (!subs.length) return reply(`No online classes for ${clName} yet.`);
+    return reply(`${clName} — pick a subject:`, subs.map(s => ({ label: s.name, send: base(` classid${classId} subjectid${s.id}`) })));
+  }
+  const [cl] = await db.query('SELECT className, section FROM classes WHERE id = ?', [classId]);
+  const clName = cl.length ? classLabel(cl[0]) : `Class ${classId}`;
+  const [sr] = await db.query('SELECT name FROM subjects WHERE id = ?', [subjectId]);
+  const subName = sr.length ? sr[0].name : `Subject ${subjectId}`;
+  const [rows] = await db.query(
+    `SELECT o.title, o.class_type, o.class_datetime, t.name AS teacher_name
+       FROM ${_T_OC} o
+       LEFT JOIN users t ON t.id = o.teacher_id
+      WHERE ${scopeSql} AND (o.class_id = ? OR o.class_id IS NULL) AND o.subject_id = ?
+      ORDER BY o.class_datetime DESC LIMIT 30`, [...scopeParams, classId, subjectId]);
+  const head = `${subName} · ${clName}`;
+  if (!rows.length) return reply(`No online classes for ${head} yet.`);
+  const lines = rows.map((r, i) => `${i + 1}. ${r.title} (${r.class_type})${r.teacher_name ? ' · ' + r.teacher_name : ''}${r.class_datetime ? ' · ' + fmtDT(r.class_datetime) : ''}`);
+  return reply(`${head} — ${rows.length} class${rows.length === 1 ? '' : 'es'}:\n${lines.join('\n')}`);
+}
+
+// =====================================================================
+//  [NEW DRILL-DOWN]  _liveLabs  — picker-style answers for the Digital
+//  Labs cards (dl-find / dl-details / dl-resources).
+//  Gated on the one-word token "digitallabs"; NEVER collides with the old
+//  flat resolver (renamed _liveLabsAsk), which still answers "show my
+//  digital labs".
+//    digitallabs find       → Class → Subject → labs
+//    digitallabs details    → pick a lab → class / subject / description
+//    digitallabs resources  → pick a lab → resources grouped by type
+// =====================================================================
+async function _liveLabs(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, _MOD_LAB))) return null;
+  const text = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+  let intent = (text.match(/\bdigitallabs (find|details|resources)\b/) || [])[1] || null;
+  if (!intent) {
+    if (/find labs? for|labs? for a class/.test(text)) intent = 'find';
+    else if (/lab.?s? resources?|resources? (?:in|of|for) (?:a|the) lab/.test(text)) intent = 'resources';
+    else if (/lab.?s? detail/.test(text)) intent = 'details';
+  }
+  if (!intent) return null;
+
+  const LINK = { link: 'DigitalLabs', linkLabel: 'Open Digital Labs' };
+  const reply = (answer, options) => ({ ok: true, source: 'smarty', live: true, answer, ...(options ? { options } : {}), ...LINK });
+  const base = (extra) => `digitallabs ${intent}${extra || ''}`;
+  const classLabel = (c) => `${c.className || ''}${c.section ? ' - ' + c.section : ''}`.trim();
+
+  const role = (asker.role || '').toLowerCase();
+  const isStudentParent = role.includes('student') || role.includes('parent');
+  const isPriv = role === 'developer' || role === 'super admin';
+  let scopeSql = 'l.institutionId = ?'; const scopeParams = [institutionId];
+  if (isStudentParent) {
+    if (!asker.class_id) return reply("I can only look up labs for your own class, which isn't set yet.");
+    scopeSql += ' AND l.class_id = ?'; scopeParams.push(asker.class_id);
+  } else if (!isPriv) {
+    scopeSql += ' AND l.created_by = ?'; scopeParams.push(asker.userId || 0);
+  }
+
+  const classId = (text.match(/classid(\d+)/) || [])[1];
+  const subjectId = (text.match(/subjectid(\d+)/) || [])[1];   // '0' = no subject
+  const labId = (text.match(/labid(\d+)/) || [])[1];
+
+  // ---- DETAILS / RESOURCES: pick a lab first ------------------------
+  if (intent === 'details' || intent === 'resources') {
+    if (!labId) {
+      const [labs] = await db.query(
+        `SELECT l.id, l.title, c.className, c.section
+           FROM ${_T_LAB} l LEFT JOIN classes c ON c.id = l.class_id
+          WHERE ${scopeSql} ORDER BY l.id DESC LIMIT 20`, scopeParams);
+      if (!labs.length) return reply('There are no digital labs to show yet.');
+      return reply('Which lab?', labs.map(l => ({
+        label: `${l.title}${l.className ? ' · ' + l.className + (l.section ? ' - ' + l.section : '') : ''}`.slice(0, 80),
+        send: base(` labid${l.id}`)
+      })));
+    }
+    const [rows] = await db.query(
+      `SELECT l.title, l.description, c.className, c.section,
+              s.name AS subject_name, u.name AS created_by_name
+         FROM ${_T_LAB} l
+         LEFT JOIN classes c ON c.id = l.class_id
+         LEFT JOIN subjects s ON s.id = l.subject_id
+         LEFT JOIN users u ON u.id = l.created_by
+        WHERE ${scopeSql} AND l.id = ? LIMIT 1`, [...scopeParams, labId]);
+    if (!rows.length) return reply("I couldn't find that lab.");
+    const lab = rows[0];
+    const grp = lab.className ? `${lab.className}${lab.section ? ' - ' + lab.section : ''}` : '—';
+
+    if (intent === 'details') {
+      const lines = [
+        `**${lab.title}**`,
+        `• Class: ${grp}`,
+        `• Subject: ${lab.subject_name || 'General'}`,
+        lab.created_by_name ? `• Created by: ${lab.created_by_name}` : null,
+        lab.description ? `• ${lab.description}` : '• No description.'
+      ].filter(Boolean);
+      return reply(lines.join('\n'));
+    }
+
+    // resources grouped by type
+    const [res] = await db.query(
+      `SELECT resource_type, title FROM lab_resources
+        WHERE lab_id = ? ORDER BY resource_order ASC`, [labId]);
+    if (!res.length) return reply(`**${lab.title}** has no resources yet.`);
+    const LABELS = { live: 'Live Classes', video: 'Videos', pdf: 'PDFs', link: 'Web Links' };
+    const order = ['live', 'video', 'pdf', 'link'];
+    const groups = {};
+    res.forEach(r => { const t = r.resource_type || 'link'; (groups[t] = groups[t] || []).push(r.title); });
+    const blocks = order.filter(t => groups[t]).concat(Object.keys(groups).filter(t => !order.includes(t)));
+    const body = blocks.map(t => `${LABELS[t] || t} (${groups[t].length}): ${groups[t].join(', ')}`).join('\n');
+    return reply(`**${lab.title}** — ${res.length} resource${res.length === 1 ? '' : 's'}:\n${body}`);
+  }
+
+  // ---- FIND: Class → Subject → labs ---------------------------------
+  if (!classId) {
+    const [classes] = await db.query(
+      `SELECT DISTINCT c.id, c.className, c.section
+         FROM ${_T_LAB} l JOIN classes c ON c.id = l.class_id
+        WHERE ${scopeSql} ORDER BY c.className, c.section`, scopeParams);
+    if (!classes.length) return reply('No digital labs have been created yet.');
+    classes.sort((a, b) => classLabel(a).localeCompare(classLabel(b), undefined, { numeric: true }));
+    return reply('Which class?', classes.map(c => ({ label: classLabel(c), send: base(` classid${c.id}`) })));
+  }
+  if (!subjectId) {
+    const [subs] = await db.query(
+      `SELECT l.subject_id, s.name FROM ${_T_LAB} l LEFT JOIN subjects s ON s.id = l.subject_id
+        WHERE ${scopeSql} AND l.class_id = ?
+        GROUP BY l.subject_id, s.name
+        ORDER BY (l.subject_id IS NULL), s.name`, [...scopeParams, classId]);
+    const [cl] = await db.query('SELECT className, section FROM classes WHERE id = ?', [classId]);
+    const clName = cl.length ? classLabel(cl[0]) : `Class ${classId}`;
+    if (!subs.length) return reply(`No labs for ${clName} yet.`);
+    return reply(`${clName} — pick a subject:`, subs.map(s => ({
+      label: s.name || 'General', send: base(` classid${classId} subjectid${s.subject_id || 0}`)
+    })));
+  }
+  const [cl] = await db.query('SELECT className, section FROM classes WHERE id = ?', [classId]);
+  const clName = cl.length ? classLabel(cl[0]) : `Class ${classId}`;
+  const noSubject = subjectId === '0';
+  let subName = 'General';
+  if (!noSubject) { const [sr] = await db.query('SELECT name FROM subjects WHERE id = ?', [subjectId]); subName = sr.length ? sr[0].name : `Subject ${subjectId}`; }
+  const [rows] = await db.query(
+    `SELECT l.title, (SELECT COUNT(*) FROM lab_resources r WHERE r.lab_id = l.id) AS rc
+       FROM ${_T_LAB} l
+      WHERE ${scopeSql} AND l.class_id = ? AND ${noSubject ? 'l.subject_id IS NULL' : 'l.subject_id = ?'}
+      ORDER BY l.id DESC LIMIT 30`,
+    noSubject ? [...scopeParams, classId] : [...scopeParams, classId, subjectId]);
+  const head = `${subName} · ${clName}`;
+  if (!rows.length) return reply(`No labs for ${head} yet.`);
+  const lines = rows.map((r, i) => `${i + 1}. ${r.title} (${r.rc} resource${r.rc === 1 ? '' : 's'})`);
+  return reply(`${head} — ${rows.length} lab${rows.length === 1 ? '' : 's'}:\n${lines.join('\n')}`);
+}
+
+// =====================================================================
+//  [NEW DRILL-DOWN]  _liveHomework  — picker-style answers for the
+//  Homework cards (hw-find / hw-due / hw-status / hw-not-submitted /
+//  hw-sub-details). Gated on the one-word token "hwlookup" so it can
+//  NEVER collide with the flat "\bhomework\b" gate (which stays the
+//  fallback, renamed _liveHomeworkAsk, for "show my homework" etc.).
+//    hwlookup find        → Class → Subject → homework (title · due)
+//    hwlookup due         → every homework with class · subject · due date
+//    hwlookup status      → pick homework → submitted / pending roster
+//    hwlookup pending     → pick homework → who hasn't submitted
+//    hwlookup submission  → pick homework → pick student → their answer
+// =====================================================================
+async function _liveHomework(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, _MOD_HW))) return null;
+  const text = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+  let intent = (text.match(/\bhwlookup (find|due|status|pending|submission)\b/) || [])[1] || null;
+  if (!intent) {
+    if (/who (?:has |have )?not submitted|pending submission/.test(text)) intent = 'pending';
+    else if (/submission status|who submitted/.test(text)) intent = 'status';
+    else if (/student.?s? submission|a submission/.test(text)) intent = 'submission';
+    else if (/homework and due|due dates?/.test(text)) intent = 'due';
+    else if (/find homework|homework for a class/.test(text)) intent = 'find';
+  }
+  if (!intent) return null;
+
+  const LINK = { link: 'Homework', linkLabel: 'Open Homework' };
+  const reply = (answer, options) => ({ ok: true, source: 'smarty', live: true, answer, ...(options ? { options } : {}), ...LINK });
+  const base = (extra) => `hwlookup ${intent}${extra || ''}`;
+  const classLabel = (c) => `${c.className || ''}${c.section ? ' - ' + c.section : ''}`.trim();
+  const dmy = (d) => { if (!d) return ''; const x = new Date(String(d).replace(' ', 'T')); if (isNaN(x)) return String(d); const p = n => String(n).padStart(2, '0'); return `${p(x.getDate())}/${p(x.getMonth() + 1)}/${x.getFullYear()}`; };
+
+  const role = (asker.role || '').toLowerCase();
+  const isStudentParent = role.includes('student') || role.includes('parent');
+  const isPriv = role === 'developer' || role === 'super admin';
+  let scopeSql = 'h.institutionId = ?'; const scopeParams = [institutionId];
+  if (isStudentParent) {
+    if (!asker.class_id) return reply("I can only look up homework for your own class, which isn't set on your account yet.");
+    scopeSql += ' AND h.class_id = ?'; scopeParams.push(asker.class_id);
+  } else if (!isPriv) {
+    scopeSql += ' AND h.created_by = ?'; scopeParams.push(asker.userId || 0);
+  }
+
+  const classId = (text.match(/classid(\d+)/) || [])[1];
+  const subjectId = (text.match(/subjectid(\d+)/) || [])[1];   // '0' = no subject
+  const hwId = (text.match(/hwid(\d+)/) || [])[1];
+  const stuId = (text.match(/stuid(\d+)/) || [])[1];
+
+  // ---- DUE: every homework with class · subject · due date ----------
+  if (intent === 'due') {
+    const [rows] = await db.query(
+      `SELECT h.title, h.due_date, c.className, c.section, s.name AS subject_name
+         FROM ${_T_HW} h
+         LEFT JOIN classes c ON c.id = h.class_id
+         LEFT JOIN subjects s ON s.id = h.subject_id
+        WHERE ${scopeSql}
+        ORDER BY h.due_date DESC LIMIT 40`, scopeParams);
+    if (!rows.length) return reply('No homework has been assigned yet.');
+    const SHOW = 30;
+    const lines = rows.slice(0, SHOW).map((r, i) => {
+      const grp = r.className ? `${r.className}${r.section ? ' - ' + r.section : ''}` : '—';
+      return `${i + 1}. ${r.title} — ${grp}${r.subject_name ? ' · ' + r.subject_name : ''}${r.due_date ? ' · due ' + dmy(r.due_date) : ''}`;
+    });
+    const more = rows.length > SHOW ? `\n…and ${rows.length - SHOW} more.` : '';
+    return reply(`${rows.length} homework assignment${rows.length === 1 ? '' : 's'}:\n${lines.join('\n')}${more}`);
+  }
+
+  // ---- STATUS / PENDING / SUBMISSION: pick a homework first ---------
+  if (intent === 'status' || intent === 'pending' || intent === 'submission') {
+    if (!hwId) {
+      const [hws] = await db.query(
+        `SELECT h.id, h.title, c.className, c.section
+           FROM ${_T_HW} h LEFT JOIN classes c ON c.id = h.class_id
+          WHERE ${scopeSql} ORDER BY h.due_date DESC LIMIT 20`, scopeParams);
+      if (!hws.length) return reply('There is no homework to look at yet.');
+      return reply('Which homework?', hws.map(h => ({
+        label: `${h.title}${h.className ? ' · ' + h.className + (h.section ? ' - ' + h.section : '') : ''}`.slice(0, 80),
+        send: base(` hwid${h.id}`)
+      })));
+    }
+    // resolve the homework (respecting scope) + its class
+    const [hwRows] = await db.query(
+      `SELECT h.id, h.title, h.class_id FROM ${_T_HW} h WHERE ${scopeSql} AND h.id = ? LIMIT 1`, [...scopeParams, hwId]);
+    if (!hwRows.length) return reply("I couldn't find that homework.");
+    const hw = hwRows[0];
+
+    // roster = active students of the homework's class, with submission state
+    const [roster] = await db.query(
+      `SELECT u.id, u.name, u.roll_no, s.id AS submission_id, s.submitted_at, s.grade
+         FROM users u
+         LEFT JOIN ${_T_HWSUB} s ON s.student_id = u.id AND s.homework_id = ?
+        WHERE u.class_id = ? AND LOWER(TRIM(u.role)) = 'student'
+          AND (u.status IS NULL OR LOWER(TRIM(u.status)) = 'active')`,
+      [hw.id, hw.class_id]);
+    const rollVal = (v) => { const n = parseInt(v, 10); return isNaN(n) ? Infinity : n; };
+    roster.sort((a, b) => (rollVal(a.roll_no) - rollVal(b.roll_no)) || String(a.name || '').localeCompare(String(b.name || '')));
+    const submitted = roster.filter(r => r.submission_id);
+    const pending = roster.filter(r => !r.submission_id);
+
+    if (intent === 'pending') {
+      if (!roster.length) return reply(`**${hw.title}** — no active students in this class.`);
+      if (!pending.length) return reply(`Everyone has submitted **${hw.title}** 🎉 (${submitted.length}/${roster.length}).`);
+      const lines = pending.map((r, i) => `${i + 1}. ${r.roll_no ? `(${r.roll_no}) ` : ''}${r.name}`);
+      return reply(`**${hw.title}** — ${pending.length} of ${roster.length} haven't submitted:\n${lines.join('\n')}`);
+    }
+
+    if (intent === 'status') {
+      if (!roster.length) return reply(`**${hw.title}** — no active students in this class.`);
+      const SHOW = 40;
+      const lines = roster.slice(0, SHOW).map(r => `• ${r.roll_no ? `(${r.roll_no}) ` : ''}${r.name} — ${r.submission_id ? (r.grade ? `Graded (${r.grade})` : 'Submitted') : 'Pending'}`);
+      const more = roster.length > SHOW ? `\n…and ${roster.length - SHOW} more.` : '';
+      return reply(`**${hw.title}** — ${submitted.length}/${roster.length} submitted:\n${lines.join('\n')}${more}`);
+    }
+
+    // submission: pick a student who submitted, then show their work
+    if (!stuId) {
+      if (!submitted.length) return reply(`No one has submitted **${hw.title}** yet.`);
+      return reply(`Whose submission? (${submitted.length} submitted)`, submitted.map(r => ({
+        label: `${r.roll_no ? `(${r.roll_no}) ` : ''}${r.name}`.slice(0, 80),
+        send: base(` hwid${hw.id} stuid${r.id}`)
+      })));
+    }
+    const [subRows] = await db.query(
+      `SELECT u.name, u.roll_no, s.written_answer, s.files, s.submitted_at, s.grade, s.remarks
+         FROM ${_T_HWSUB} s JOIN users u ON u.id = s.student_id
+        WHERE s.homework_id = ? AND s.student_id = ? LIMIT 1`, [hw.id, stuId]);
+    if (!subRows.length) return reply("That student hasn't submitted this homework.");
+    const sub = subRows[0];
+    let files = [];
+    try { files = Array.isArray(sub.files) ? sub.files : JSON.parse(sub.files || '[]'); } catch (_) { files = []; }
+    const lines = [
+      `**${hw.title}** — ${sub.roll_no ? `(${sub.roll_no}) ` : ''}${sub.name}`,
+      sub.submitted_at ? `• Submitted: ${dmy(sub.submitted_at)}` : null,
+      sub.grade ? `• Grade: ${sub.grade}` : '• Not graded yet',
+      sub.remarks ? `• Remarks: ${sub.remarks}` : null,
+      sub.written_answer ? `• Answer: ${String(sub.written_answer).slice(0, 400)}${String(sub.written_answer).length > 400 ? '…' : ''}` : null,
+      files.length ? `• Files: ${files.map(f => f.name || 'file').join(', ')}` : null,
+      (!sub.written_answer && !files.length) ? '• No submission content.' : null
+    ].filter(Boolean);
+    return reply(lines.join('\n'));
+  }
+
+  // ---- FIND: Class → Subject → homework -----------------------------
+  if (!classId) {
+    const [classes] = await db.query(
+      `SELECT DISTINCT c.id, c.className, c.section
+         FROM ${_T_HW} h JOIN classes c ON c.id = h.class_id
+        WHERE ${scopeSql} ORDER BY c.className, c.section`, scopeParams);
+    if (!classes.length) return reply('No homework has been assigned yet.');
+    classes.sort((a, b) => classLabel(a).localeCompare(classLabel(b), undefined, { numeric: true }));
+    return reply('Which class?', classes.map(c => ({ label: classLabel(c), send: base(` classid${c.id}`) })));
+  }
+  if (!subjectId) {
+    const [subs] = await db.query(
+      `SELECT h.subject_id, s.name FROM ${_T_HW} h LEFT JOIN subjects s ON s.id = h.subject_id
+        WHERE ${scopeSql} AND h.class_id = ?
+        GROUP BY h.subject_id, s.name
+        ORDER BY (h.subject_id IS NULL), s.name`, [...scopeParams, classId]);
+    const [cl] = await db.query('SELECT className, section FROM classes WHERE id = ?', [classId]);
+    const clName = cl.length ? classLabel(cl[0]) : `Class ${classId}`;
+    if (!subs.length) return reply(`No homework for ${clName} yet.`);
+    return reply(`${clName} — pick a subject:`, subs.map(s => ({
+      label: s.name || 'No subject', send: base(` classid${classId} subjectid${s.subject_id || 0}`)
+    })));
+  }
+  const [cl] = await db.query('SELECT className, section FROM classes WHERE id = ?', [classId]);
+  const clName = cl.length ? classLabel(cl[0]) : `Class ${classId}`;
+  const noSubject = subjectId === '0';
+  let subName = 'No subject';
+  if (!noSubject) { const [sr] = await db.query('SELECT name FROM subjects WHERE id = ?', [subjectId]); subName = sr.length ? sr[0].name : `Subject ${subjectId}`; }
+  const [rows] = await db.query(
+    `SELECT h.title, h.homework_type, h.due_date FROM ${_T_HW} h
+      WHERE ${scopeSql} AND h.class_id = ? AND ${noSubject ? 'h.subject_id IS NULL' : 'h.subject_id = ?'}
+      ORDER BY h.due_date DESC LIMIT 30`,
+    noSubject ? [...scopeParams, classId] : [...scopeParams, classId, subjectId]);
+  const head = `${subName} · ${clName}`;
+  if (!rows.length) return reply(`No homework for ${head} yet.`);
+  const lines = rows.map((r, i) => `${i + 1}. ${r.title}${r.homework_type ? ` (${r.homework_type})` : ''}${r.due_date ? ' · due ' + dmy(r.due_date) : ''}`);
+  return reply(`${head} — ${rows.length} homework:\n${lines.join('\n')}`);
+}
+
+// =====================================================================
+//  [NEW DRILL-DOWN]  _liveExams  — picker-style answers for the Exams
+//  cards (ex-sched-detail / ex-online-find / ex-online-detail). Gated on
+//  the one-word token "examlookup"; NEVER collides with the flat
+//  "\bexams?\b" gate (renamed _liveExamsAsk — "show the exam timetables",
+//  "show my online exams", "show my exam results").
+//    examlookup scheduledetail → pick a schedule → its rows
+//    examlookup onlinefind     → Class → Subject → online exams
+//    examlookup onlinedetail   → pick an exam → questions, marks, time
+// =====================================================================
+async function _liveExams(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, _MOD_EXAM))) return null;
+  const text = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+  let intent = (text.match(/\bexamlookup (scheduledetail|onlinefind|onlinedetail)\b/) || [])[1] || null;
+  if (!intent) {
+    if (/subjects,? dates? (?:and|&) timings?|schedule rows?/.test(text)) intent = 'scheduledetail';
+    else if (/questions? and (?:total )?marks?|total marks/.test(text)) intent = 'onlinedetail';
+    else if (/online exams? for a class|exams? for a class/.test(text)) intent = 'onlinefind';
+  }
+  if (!intent) return null;
+
+  const LINK = { link: 'Exams', linkLabel: 'Open Exams' };
+  const reply = (answer, options) => ({ ok: true, source: 'smarty', live: true, answer, ...(options ? { options } : {}), ...LINK });
+  const base = (extra) => `examlookup ${intent}${extra || ''}`;
+  const classLabel = (c) => `${c.className || ''}${c.section ? ' - ' + c.section : ''}`.trim();
+  const safeArr = (v) => { if (Array.isArray(v)) return v; if (v && typeof v === 'object') return v; try { return JSON.parse(v || '[]'); } catch (_) { return []; } };
+
+  const role = (asker.role || '').toLowerCase();
+  const isStudentParent = role.includes('student') || role.includes('parent');
+  const isPriv = role === 'developer' || role === 'super admin' || role === 'admin';
+
+  const classId = (text.match(/classid(\d+)/) || [])[1];
+  const subjectId = (text.match(/subjectid(\d+)/) || [])[1];   // '0' = no subject
+  const schId = (text.match(/schid(\d+)/) || [])[1];
+  const exId = (text.match(/exid(\d+)/) || [])[1];
+
+  // ===== SCHEDULE DETAIL: pick a schedule → its rows ================
+  if (intent === 'scheduledetail') {
+    let scopeSql = 'es.institutionId = ?'; const scopeParams = [institutionId];
+    if (isStudentParent) {
+      if (!asker.class_id) return reply("I can only look up the exam timetable for your own class, which isn't set yet.");
+      scopeSql += ' AND (es.class_id = ? OR es.class_id IS NULL)'; scopeParams.push(asker.class_id);
+    }
+    if (!schId) {
+      const [schs] = await db.query(
+        `SELECT es.id, es.title, es.exam_type, c.className, c.section
+           FROM ${_T_EXAMSCH} es LEFT JOIN classes c ON c.id = es.class_id
+          WHERE ${scopeSql} ORDER BY es.created_at DESC LIMIT 20`, scopeParams);
+      if (!schs.length) return reply('No exam timetables have been published yet.');
+      return reply('Which exam schedule?', schs.map(s => ({
+        label: `${s.title}${s.className ? ' · ' + s.className + (s.section ? ' - ' + s.section : '') : ''} (${s.exam_type === 'External' ? 'Govt' : 'School'})`.slice(0, 80),
+        send: base(` schid${s.id}`)
+      })));
+    }
+    const [rows] = await db.query(
+      `SELECT es.title, es.exam_type, es.schedule_data, c.className, c.section
+         FROM ${_T_EXAMSCH} es LEFT JOIN classes c ON c.id = es.class_id
+        WHERE ${scopeSql} AND es.id = ? LIMIT 1`, [...scopeParams, schId]);
+    if (!rows.length) return reply("I couldn't find that schedule.");
+    const sch = rows[0];
+    const data = safeArr(sch.schedule_data);
+    const grp = sch.className ? `${sch.className}${sch.section ? ' - ' + sch.section : ''}` : 'All classes';
+    if (!data.length) return reply(`**${sch.title}** (${grp}) has no rows yet.`);
+    const isExternal = sch.exam_type === 'External';
+    const lines = data.map((r) => {
+      if (r.type === 'special') return `• ${r.mainText || ''}${r.subText ? ` (${r.subText})` : ''}`;
+      if (isExternal) return `• ${r.examName || ''} — ${r.fromDate || '?'}${r.toDate && r.toDate !== r.fromDate ? ' → ' + r.toDate : ''}`;
+      return `• ${r.subject || ''} — ${r.date || '?'}${r.time ? ' · ' + r.time : ''}${(r.room || r.block) ? ' · Room ' + (r.room || r.block) : ''}`;
+    });
+    return reply(`**${sch.title}** — ${grp}:\n${lines.join('\n')}`);
+  }
+
+  // ===== ONLINE EXAM DETAIL: pick an exam → Qs / marks / time ======
+  if (intent === 'onlinedetail') {
+    let scopeSql = "e.institutionId = ? AND e.status = 'published'"; const scopeParams = [institutionId];
+    if (isStudentParent) {
+      if (!asker.class_id) return reply("I can only look up exams for your own class, which isn't set yet.");
+      scopeSql += ' AND e.class_id = ? AND (e.section IS NULL OR e.section = ?)'; scopeParams.push(asker.class_id, asker.section || '');
+    } else if (!isPriv) {
+      scopeSql = 'e.institutionId = ? AND e.created_by = ?'; scopeParams.length = 1; scopeParams.push(asker.userId || 0);
+    }
+    if (!exId) {
+      const [exs] = await db.query(
+        `SELECT e.id, e.title, c.className, c.section FROM ${_T_EXAM} e
+           LEFT JOIN classes c ON c.id = e.class_id
+          WHERE ${scopeSql} ORDER BY e.created_at DESC LIMIT 20`, scopeParams);
+      if (!exs.length) return reply('There are no online exams to show yet.');
+      return reply('Which online exam?', exs.map(e => ({
+        label: `${e.title}${e.className ? ' · ' + e.className + (e.section ? ' - ' + e.section : '') : ''}`.slice(0, 80),
+        send: base(` exid${e.id}`)
+      })));
+    }
+    const [rows] = await db.query(
+      `SELECT e.title, e.total_marks, e.time_limit_mins, c.className, c.section,
+              s.name AS subject_name,
+              (SELECT COUNT(*) FROM online_exam_questions q WHERE q.exam_id = e.id) AS qcount
+         FROM ${_T_EXAM} e
+         LEFT JOIN classes c ON c.id = e.class_id
+         LEFT JOIN subjects s ON s.id = e.subject_id
+        WHERE ${scopeSql} AND e.id = ? LIMIT 1`, [...scopeParams, exId]);
+    if (!rows.length) return reply("I couldn't find that exam.");
+    const e = rows[0];
+    const grp = e.className ? `${e.className}${e.section ? ' - ' + e.section : ''}` : '—';
+    const lines = [
+      `**${e.title}**`,
+      `• Class: ${grp}`,
+      `• Subject: ${e.subject_name || '—'}`,
+      `• Questions: ${e.qcount}`,
+      `• Total marks: ${e.total_marks}`,
+      `• Time limit: ${e.time_limit_mins > 0 ? e.time_limit_mins + ' min' : 'No limit'}`
+    ];
+    return reply(lines.join('\n'));
+  }
+
+  // ===== ONLINE FIND: Class → Subject → online exams ===============
+  let scopeSql = "e.institutionId = ? AND e.status = 'published'"; const scopeParams = [institutionId];
+  if (isStudentParent) {
+    if (!asker.class_id) return reply("I can only look up exams for your own class, which isn't set yet.");
+    scopeSql += ' AND e.class_id = ? AND (e.section IS NULL OR e.section = ?)'; scopeParams.push(asker.class_id, asker.section || '');
+  } else if (!isPriv) {
+    scopeSql = 'e.institutionId = ? AND e.created_by = ?'; scopeParams.length = 1; scopeParams.push(asker.userId || 0);
+  }
+  if (!classId) {
+    const [classes] = await db.query(
+      `SELECT DISTINCT c.id, c.className, c.section FROM ${_T_EXAM} e JOIN classes c ON c.id = e.class_id
+        WHERE ${scopeSql} ORDER BY c.className, c.section`, scopeParams);
+    if (!classes.length) return reply('No online exams have been published yet.');
+    classes.sort((a, b) => classLabel(a).localeCompare(classLabel(b), undefined, { numeric: true }));
+    return reply('Which class?', classes.map(c => ({ label: classLabel(c), send: base(` classid${c.id}`) })));
+  }
+  if (!subjectId) {
+    const [subs] = await db.query(
+      `SELECT e.subject_id, s.name FROM ${_T_EXAM} e LEFT JOIN subjects s ON s.id = e.subject_id
+        WHERE ${scopeSql} AND e.class_id = ?
+        GROUP BY e.subject_id, s.name
+        ORDER BY (e.subject_id IS NULL), s.name`, [...scopeParams, classId]);
+    const [cl] = await db.query('SELECT className, section FROM classes WHERE id = ?', [classId]);
+    const clName = cl.length ? classLabel(cl[0]) : `Class ${classId}`;
+    if (!subs.length) return reply(`No online exams for ${clName} yet.`);
+    return reply(`${clName} — pick a subject:`, subs.map(s => ({
+      label: s.name || 'No subject', send: base(` classid${classId} subjectid${s.subject_id || 0}`)
+    })));
+  }
+  const [cl] = await db.query('SELECT className, section FROM classes WHERE id = ?', [classId]);
+  const clName = cl.length ? classLabel(cl[0]) : `Class ${classId}`;
+  const noSubject = subjectId === '0';
+  let subName = 'No subject';
+  if (!noSubject) { const [sr] = await db.query('SELECT name FROM subjects WHERE id = ?', [subjectId]); subName = sr.length ? sr[0].name : `Subject ${subjectId}`; }
+  const [rows] = await db.query(
+    `SELECT e.title, e.total_marks,
+            (SELECT COUNT(*) FROM online_exam_questions q WHERE q.exam_id = e.id) AS qcount
+       FROM ${_T_EXAM} e
+      WHERE ${scopeSql} AND e.class_id = ? AND ${noSubject ? 'e.subject_id IS NULL' : 'e.subject_id = ?'}
+      ORDER BY e.created_at DESC LIMIT 30`,
+    noSubject ? [...scopeParams, classId] : [...scopeParams, classId, subjectId]);
+  const head = `${subName} · ${clName}`;
+  if (!rows.length) return reply(`No online exams for ${head} yet.`);
+  const lines = rows.map((r, i) => `${i + 1}. ${r.title} — ${r.qcount} Q${r.qcount === 1 ? '' : 's'} · ${_liveFmtMarks(r.total_marks)} marks`);
+  return reply(`${head} — ${rows.length} online exam${rows.length === 1 ? '' : 's'}:\n${lines.join('\n')}`);
+}
+
+// ---------------------------------------------------------------------
+//  Shared perf helpers for the drill-down resolvers below.
+//  Percentages are computed from exam_max_marks for ENTERED exams only
+//  (derived exams are excluded — they are computed, not entered), exactly
+//  per student: obtained / sum(max of the subjects they were marked in).
+// ---------------------------------------------------------------------
+async function _smartyPerfRows(institutionId, classId, yearId, examIds) {
+  let ids = examIds;
+  if (!ids) {
+    const [et] = await db.query(`SELECT id FROM ${_T_EXTYPES} WHERE class_id = ? AND (kind IS NULL OR kind <> 'derived')`, [classId]);
+    ids = et.map(r => r.id);
+  }
+  if (!ids.length) return [];
+  const ph = ids.map(() => '?').join(',');
+  const [marks] = await db.query(
+    `SELECT sm.student_id, sm.subject_id, sm.exam_type_id, sm.marks_obtained, u.name, u.roll_no
+       FROM ${_T_MARKS} sm JOIN users u ON u.id = sm.student_id
+      WHERE sm.institutionId = ? AND sm.class_id = ? AND sm.academic_year_id = ? AND sm.exam_type_id IN (${ph})`,
+    [institutionId, classId, yearId, ...ids]);
+  const [mx] = await db.query(
+    `SELECT exam_type_id, subject_id, max_marks FROM ${_T_EXMAX} WHERE class_id = ? AND exam_type_id IN (${ph})`,
+    [classId, ...ids]);
+  const maxMap = {};
+  mx.forEach(r => { const e = maxMap[r.exam_type_id] || (maxMap[r.exam_type_id] = { def: null, by: {} }); if (Number(r.subject_id) === 0) e.def = r.max_marks; else e.by[r.subject_id] = r.max_marks; });
+  const resolveMax = (eid, sid) => { const e = maxMap[eid]; if (!e) return undefined; const v = e.by[sid]; if (v !== undefined && v !== null) return Number(v); if (e.def !== undefined && e.def !== null) return Number(e.def); return undefined; };
+  const byStu = {};
+  marks.forEach(r => {
+    if (r.marks_obtained == null) return;
+    const s = byStu[r.student_id] || (byStu[r.student_id] = { student_id: r.student_id, name: r.name, roll_no: r.roll_no, obtained: 0, max: 0 });
+    s.obtained += Number(r.marks_obtained);
+    const mm = resolveMax(r.exam_type_id, r.subject_id);
+    if (mm !== undefined) s.max += mm;
+  });
+  const rows = Object.values(byStu).map(s => ({ ...s, pct: s.max > 0 ? Math.round((s.obtained / s.max) * 1000) / 10 : null }));
+  const rollN = (v) => { const n = parseInt(v, 10); return isNaN(n) ? Infinity : n; };
+  rows.sort((a, b) => (b.obtained - a.obtained) || (rollN(a.roll_no) - rollN(b.roll_no)));
+  return rows;
+}
+
+async function _smartyTeacherPerf(institutionId, yearId, examName) {
+  const [asg] = await db.query(
+    `SELECT stm.class_id, stm.subject_id, stm.teacher_id, u.name AS tname, c.className, c.section, s.name AS sname
+       FROM ${_T_STM} stm JOIN classes c ON c.id = stm.class_id JOIN users u ON u.id = stm.teacher_id
+       LEFT JOIN subjects s ON s.id = stm.subject_id WHERE c.institutionId = ?`, [institutionId]);
+  if (!asg.length) return [];
+  const [marks] = await db.query(
+    `SELECT class_id, subject_id, exam_type_id, SUM(marks_obtained) AS obt, COUNT(DISTINCT student_id) AS n
+       FROM ${_T_MARKS} WHERE institutionId = ? AND academic_year_id = ?
+      GROUP BY class_id, subject_id, exam_type_id`, [institutionId, yearId]);
+  const [mx] = await db.query(
+    `SELECT em.class_id, em.exam_type_id, em.subject_id, em.max_marks FROM ${_T_EXMAX} em
+       JOIN classes c ON c.id = em.class_id WHERE c.institutionId = ?`, [institutionId]);
+  const [ets] = await db.query(
+    `SELECT et.id, et.name FROM ${_T_EXTYPES} et JOIN classes c ON c.id = et.class_id WHERE c.institutionId = ?`, [institutionId]);
+  const nameById = {}; ets.forEach(e => { nameById[e.id] = e.name; });
+  const maxMap = {};
+  mx.forEach(r => { const k = r.class_id + ':' + r.exam_type_id; const e = maxMap[k] || (maxMap[k] = { def: null, by: {} }); if (Number(r.subject_id) === 0) e.def = r.max_marks; else e.by[r.subject_id] = r.max_marks; });
+  const rMax = (cid, eid, sid) => { const e = maxMap[cid + ':' + eid]; if (!e) return undefined; const v = e.by[sid]; if (v !== undefined && v !== null) return Number(v); if (e.def !== undefined && e.def !== null) return Number(e.def); return undefined; };
+  const cs = {};
+  marks.forEach(r => {
+    if (examName && examName !== 'all' && (nameById[r.exam_type_id] || '') !== examName) return;
+    const mm = rMax(r.class_id, r.exam_type_id, r.subject_id);
+    if (mm === undefined) return;
+    const k = r.class_id + ':' + r.subject_id;
+    const o = cs[k] || (cs[k] = { obtained: 0, possible: 0 });
+    o.obtained += Number(r.obt || 0);
+    o.possible += Number(mm) * Number(r.n || 0);
+  });
+  const teachers = {};
+  asg.forEach(a => {
+    const agg = cs[a.class_id + ':' + a.subject_id];
+    if (!agg || agg.possible <= 0) return;
+    const t = teachers[a.teacher_id] || (teachers[a.teacher_id] = { teacher_id: a.teacher_id, name: a.tname, obtained: 0, possible: 0, breakdown: [] });
+    t.obtained += agg.obtained; t.possible += agg.possible;
+    t.breakdown.push({ class_group: `${a.className || ''}${a.section ? ' - ' + a.section : ''}`.trim(), subject_name: a.sname || '—', obtained: agg.obtained, possible: agg.possible, pct: agg.possible > 0 ? Math.round((agg.obtained / agg.possible) * 1000) / 10 : 0 });
+  });
+  const list = Object.values(teachers).map(t => ({ ...t, pct: t.possible > 0 ? Math.round((t.obtained / t.possible) * 1000) / 10 : 0 }));
+  list.sort((a, b) => b.pct - a.pct);
+  return list;
+}
+
+// =====================================================================
+//  [NEW DRILL-DOWN]  _livePerformance  — picker answers for the
+//  Performance cards. Gated on one-word token "perflookup"; the flat
+//  "\bperformance\b|topper|rank" resolver (renamed _livePerformanceAsk)
+//  stays the fallback for "topper in Class 5" / "show my performance".
+//    perflookup summary|overall|ranking|compare  → class → ranked students
+//    perflookup marks       → class → exam → per-student marks & %
+//    perflookup teachers    → teachers ranked by their students' result
+//    perflookup teachercs   → pick teacher → per class & subject
+//    perflookup teachercompare → pick exam → teachers ranked for it
+// =====================================================================
+async function _livePerformance(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, _MOD_PERF))) return null;
+  const text = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  let intent = (text.match(/\bperflookup (summary|overall|ranking|compare|marks|teachercompare|teachercs|teachers)\b/) || [])[1] || null;
+  if (!intent) return null;
+
+  const LINK = { link: 'Performance', linkLabel: 'Open Performance' };
+  const reply = (answer, options) => ({ ok: true, source: 'smarty', live: true, answer, ...(options ? { options } : {}), ...LINK });
+  const base = (extra) => `perflookup ${intent}${extra || ''}`;
+  const classLabel = (c) => `${c.className || ''}${c.section ? ' - ' + c.section : ''}`.trim();
+  const pctStr = (p) => (p == null ? '' : ` · ${p}%`);
+
+  const role = (asker.role || '').toLowerCase();
+  const isStudentParent = role.includes('student') || role.includes('parent');
+  const isPriv = role === 'developer' || role === 'super admin' || role === 'admin';
+  const isTeacher = role.includes('teacher');
+  if (isStudentParent) return reply('Open **Performance** to see your own standing — ask me *“show my performance”* for a quick summary.');
+
+  const yearId = await resolveYearId(institutionId);
+  const classId = (text.match(/classid(\d+)/) || [])[1];
+  const examId = (text.match(/examid(\d+)/) || [])[1];
+  const teacherId = (text.match(/teacherid(\d+)/) || [])[1];
+  const enIdx = (text.match(/\ben(\d+)\b/) || [])[1];
+
+  // taught-class gate for non-privileged teachers
+  let taught = null;
+  if (isTeacher && !isPriv) {
+    const [tc] = await db.query(`SELECT DISTINCT class_id FROM ${_T_STM} WHERE teacher_id = ?`, [asker.userId || 0]);
+    taught = new Set(tc.map(r => Number(r.class_id)));
+  }
+
+  // ===== TEACHER INTENTS =====
+  if (intent === 'teachers' || intent === 'teachercs' || intent === 'teachercompare') {
+    if (!isPriv) return reply('The full teacher performance report is available to admins. Open **Performance → Teacher Performance**.');
+
+    if (intent === 'teachercompare') {
+      const [ets] = await db.query(
+        `SELECT DISTINCT et.name FROM ${_T_EXTYPES} et JOIN classes c ON c.id = et.class_id
+          WHERE c.institutionId = ? AND (et.kind IS NULL OR et.kind <> 'derived') ORDER BY et.name`, [institutionId]);
+      const names = ets.map(r => r.name).filter(Boolean);
+      if (enIdx === undefined) {
+        if (!names.length) return reply('No exams are set up yet.');
+        return reply('Which exam?', names.map((n, i) => ({ label: n, send: base(` en${i}`) })));
+      }
+      const examName = names[Number(enIdx)];
+      if (!examName) return reply("I couldn't find that exam.");
+      const list = await _smartyTeacherPerf(institutionId, yearId, examName);
+      if (!list.length) return reply(`No teacher performance to compare for **${examName}** yet.`);
+      const lines = list.map((t, i) => `${i + 1}. ${t.name} — ${t.pct}% (${Math.round(t.obtained)}/${Math.round(t.possible)})`);
+      return reply(`Teacher performance for **${examName}** (best first):\n${lines.join('\n')}`);
+    }
+
+    const list = await _smartyTeacherPerf(institutionId, yearId, 'all');
+    if (!list.length) return reply('No teacher performance yet — enter marks in Reports first.');
+
+    if (intent === 'teachercs') {
+      if (!teacherId) {
+        return reply('Which teacher?', list.slice(0, 20).map(t => ({ label: `${t.name} (${t.pct}%)`.slice(0, 80), send: base(` teacherid${t.teacher_id}`) })));
+      }
+      const t = list.find(x => String(x.teacher_id) === String(teacherId));
+      if (!t) return reply("I couldn't find that teacher's performance.");
+      const lines = t.breakdown
+        .sort((a, b) => b.pct - a.pct)
+        .map((d, i) => `${i + 1}. ${d.class_group} · ${d.subject_name} — ${d.pct}% (${Math.round(d.obtained)}/${Math.round(d.possible)})`);
+      return reply(`**${t.name}** — ${t.pct}% overall across ${t.breakdown.length} class-subject${t.breakdown.length === 1 ? '' : 's'}:\n${lines.join('\n')}`);
+    }
+
+    // teachers (ranked report)
+    const lines = list.map((t, i) => `${i + 1}. ${t.name} — ${t.pct}% (${Math.round(t.obtained)}/${Math.round(t.possible)})`);
+    return reply(`Teacher performance, best first:\n${lines.join('\n')}`);
+  }
+
+  // ===== CLASS INTENTS: pick a class first =====
+  if (!classId) {
+    const [classes] = await db.query(
+      `SELECT DISTINCT c.id, c.className, c.section FROM ${_T_MARKS} sm JOIN classes c ON c.id = sm.class_id
+        WHERE sm.institutionId = ? AND sm.academic_year_id = ? ORDER BY c.className, c.section`, [institutionId, yearId]);
+    let list = classes;
+    if (taught) list = list.filter(c => taught.has(Number(c.id)));
+    if (!list.length) return reply('No exam marks have been entered yet this year.');
+    list.sort((a, b) => classLabel(a).localeCompare(classLabel(b), undefined, { numeric: true }));
+    return reply('Which class?', list.map(c => ({ label: classLabel(c), send: base(` classid${c.id}`) })));
+  }
+  if (taught && !taught.has(Number(classId))) return reply("You can only see performance for the classes you teach.");
+  const [cl] = await db.query('SELECT className, section FROM classes WHERE id = ?', [classId]);
+  const clName = cl.length ? classLabel(cl[0]) : `Class ${classId}`;
+
+  // marks: needs an exam pick
+  if (intent === 'marks') {
+    if (!examId) {
+      const [ets] = await db.query(
+        `SELECT id, name FROM ${_T_EXTYPES} WHERE class_id = ? AND (kind IS NULL OR kind <> 'derived') ORDER BY exam_order, id`, [classId]);
+      if (!ets.length) return reply(`No exams are set up for ${clName} yet.`);
+      return reply(`${clName} — which exam?`, ets.map(e => ({ label: e.name, send: base(` classid${classId} examid${e.id}`) })));
+    }
+    const [er] = await db.query('SELECT name FROM ' + _T_EXTYPES + ' WHERE id = ?', [examId]);
+    const exName = er.length ? er[0].name : `Exam ${examId}`;
+    const rows = await _smartyPerfRows(institutionId, classId, yearId, [Number(examId)]);
+    if (!rows.length) return reply(`No marks entered for **${exName}** in ${clName} yet.`);
+    const SHOW = 30;
+    const lines = rows.slice(0, SHOW).map((r, i) => `${i + 1}. ${r.roll_no ? `(${r.roll_no}) ` : ''}${r.name} — ${_liveFmtMarks(r.obtained)}${r.max ? '/' + _liveFmtMarks(r.max) : ''}${pctStr(r.pct)}`);
+    const more = rows.length > SHOW ? `\n…and ${rows.length - SHOW} more.` : '';
+    return reply(`**${exName}** · ${clName} — marks & % (best first):\n${lines.join('\n')}${more}`);
+  }
+
+  // summary / overall / ranking / compare → ranked by total marks
+  const rows = await _smartyPerfRows(institutionId, classId, yearId, null);
+  if (!rows.length) return reply(`No exam marks have been entered yet for **${clName}** this year.`);
+
+  if (intent === 'summary') {
+    const topper = rows[0];
+    let top = 0, avg = 0, low = 0;
+    rows.forEach(r => { if (r.pct == null) return; if (r.pct >= 80) top++; else if (r.pct >= 50) avg++; else low++; });
+    const bandLine = (top + avg + low) ? `\nBands — 80%+: **${top}**, 50–80%: **${avg}**, below 50%: **${low}**.` : '';
+    return reply(`**${clName}** — ${rows.length} student${rows.length === 1 ? '' : 's'} with marks.\nTopper: **${topper.name}**${topper.roll_no ? ` (Roll ${topper.roll_no})` : ''} — ${_liveFmtMarks(topper.obtained)}${topper.max ? '/' + _liveFmtMarks(topper.max) : ''}${pctStr(topper.pct)}.${bandLine}`);
+  }
+
+  const SHOW = 30;
+  const lines = rows.slice(0, SHOW).map((r, i) => `${i + 1}. ${r.roll_no ? `(${r.roll_no}) ` : ''}${r.name} — ${_liveFmtMarks(r.obtained)}${r.max ? '/' + _liveFmtMarks(r.max) : ''}${pctStr(r.pct)}`);
+  const more = rows.length > SHOW ? `\n…and ${rows.length - SHOW} more.` : '';
+  const head = intent === 'compare' ? `${clName} — students compared (best first)` : `${clName} — ranked (best first)`;
+  return reply(`${head}:\n${lines.join('\n')}${more}`);
+}
+
+// =====================================================================
+//  [NEW DRILL-DOWN]  _liveReports  — picker answers for the Reports
+//  cards. Gated on one-word token "reportlookup"; the flat
+//  "\breport card\b" resolver (renamed _liveReportsAsk) stays the
+//  fallback for "show my report card" / "report cards for Class 5".
+//    reportlookup cards      → class → students, marks-entered status
+//    reportlookup classexams → class → ranked students (exam performance)
+// =====================================================================
+async function _liveReports(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, _MOD_REPORTS))) return null;
+  const text = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  let intent = (text.match(/\breportlookup (cards|classexams)\b/) || [])[1] || null;
+  if (!intent) return null;
+
+  const LINK = { link: 'reports', linkLabel: 'Open Reports' };
+  const reply = (answer, options) => ({ ok: true, source: 'smarty', live: true, answer, ...(options ? { options } : {}), ...LINK });
+  const base = (extra) => `reportlookup ${intent}${extra || ''}`;
+  const classLabel = (c) => `${c.className || ''}${c.section ? ' - ' + c.section : ''}`.trim();
+
+  const role = (asker.role || '').toLowerCase();
+  const isStudentParent = role.includes('student') || role.includes('parent');
+  const isPriv = role === 'developer' || role === 'super admin' || role === 'admin';
+  const isTeacher = role.includes('teacher');
+  if (isStudentParent) return reply('Open **My Report Card** to view or print yours — ask me *“show my report card”* for a quick summary.');
+
+  const yearId = await resolveYearId(institutionId);
+  const classId = (text.match(/classid(\d+)/) || [])[1];
+
+  let taught = null;
+  if (isTeacher && !isPriv) {
+    const [tc] = await db.query(`SELECT DISTINCT class_id FROM ${_T_STM} WHERE teacher_id = ?`, [asker.userId || 0]);
+    taught = new Set(tc.map(r => Number(r.class_id)));
+  }
+
+  if (!classId) {
+    const [classes] = await db.query('SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section', [institutionId]);
+    let list = classes;
+    if (taught) list = list.filter(c => taught.has(Number(c.id)));
+    if (!list.length) return reply('No classes found.');
+    list.sort((a, b) => classLabel(a).localeCompare(classLabel(b), undefined, { numeric: true }));
+    return reply('Which class?', list.map(c => ({ label: classLabel(c), send: base(` classid${c.id}`) })));
+  }
+  if (taught && !taught.has(Number(classId))) return reply("You can only see report cards for the classes you teach.");
+  const [cl] = await db.query('SELECT className, section FROM classes WHERE id = ?', [classId]);
+  const clName = cl.length ? classLabel(cl[0]) : `Class ${classId}`;
+
+  // classexams → ranked students by total marks (exam performance)
+  if (intent === 'classexams') {
+    const rows = await _smartyPerfRows(institutionId, classId, yearId, null);
+    if (!rows.length) return reply(`No exam marks have been entered yet for **${clName}** this year.`);
+    const SHOW = 30;
+    const lines = rows.slice(0, SHOW).map((r, i) => `${i + 1}. ${r.roll_no ? `(${r.roll_no}) ` : ''}${r.name} — ${_liveFmtMarks(r.obtained)}${r.max ? '/' + _liveFmtMarks(r.max) : ''}${r.pct == null ? '' : ` · ${r.pct}%`}`);
+    const more = rows.length > SHOW ? `\n…and ${rows.length - SHOW} more.` : '';
+    return reply(`**${clName}** — exam performance this year (best first):\n${lines.join('\n')}${more}`);
+  }
+
+  // cards → roster with marks-entered status
+  const [students] = await db.query(
+    `SELECT id, name, roll_no FROM users
+      WHERE institutionId = ? AND class_id = ? AND LOWER(TRIM(role)) = 'student'
+        AND (status IS NULL OR LOWER(TRIM(status)) = 'active')`, [institutionId, classId]);
+  if (!students.length) return reply(`No active students in ${clName}.`);
+  const [graded] = await db.query(
+    `SELECT DISTINCT student_id FROM ${_T_MARKS} WHERE institutionId = ? AND class_id = ? AND academic_year_id = ?`,
+    [institutionId, classId, yearId]);
+  const gset = new Set(graded.map(r => Number(r.student_id)));
+  const rollN = (v) => { const n = parseInt(v, 10); return isNaN(n) ? Infinity : n; };
+  students.sort((a, b) => (rollN(a.roll_no) - rollN(b.roll_no)) || String(a.name || '').localeCompare(String(b.name || '')));
+  const SHOW = 40;
+  const lines = students.slice(0, SHOW).map(s => `• ${s.roll_no ? `(${s.roll_no}) ` : ''}${s.name} — ${gset.has(Number(s.id)) ? 'marks entered' : 'pending'}`);
+  const more = students.length > SHOW ? `\n…and ${students.length - SHOW} more.` : '';
+  return reply(`**${clName}** report cards (this year) — ${gset.size}/${students.length} with marks entered:\n${lines.join('\n')}${more}\n\n_Open Reports → Report Cards to view or print each card._`);
+}
+
 async function _smartyLiveAnswer(institutionId, question, asker) {
   const q = ' ' + String(question || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim() + ' ';
 
@@ -19202,14 +20115,33 @@ async function _smartyLiveAnswer(institutionId, question, asker) {
   if (/\battendance\b|\bpresent\b|\babsent\b/.test(q)) {
     return _liveAttendanceAsk(institutionId, q, asker); // [FIX] fallback = old count/free-text resolver (renamed from _liveAttendance)
   }
+  // [NEW] Homework drill-down (find / due / status / pending / submission).
+  // One-word "hwlookup" token → can't match the flat gate below.
+  if (/\bhwlookup\b/.test(q)) {
+    const hw = await _liveHomework(institutionId, q, asker);
+    if (hw) return hw;
+  }
   if (/\bhomework\b|\bassignments?\b/.test(q)) {
-    return _liveHomework(institutionId, q, asker);
+    return _liveHomeworkAsk(institutionId, q, asker); // [FIX] fallback = old flat resolver (renamed from _liveHomework)
+  }
+  // [NEW] Online Classes drill-down (find / recorded / details). The one-word
+  // "onlineclasses" token can't match the flat gate below, so this runs first
+  // and the flat resolver stays the fallback for "show my online classes" etc.
+  if (/\bonlineclasses\b/.test(q)) {
+    const oc = await _liveOnlineClasses(institutionId, q, asker);
+    if (oc) return oc;
   }
   if (/\bonline class(?:es)?\b|\blive class(?:es)?\b|\brecorded class(?:es)?\b|\brecordings?\b|\blectures?\b/.test(q)) {
-    return _liveOnlineClasses(institutionId, q, asker);
+    return _liveOnlineClassesAsk(institutionId, q, asker); // [FIX] fallback = old flat resolver (renamed from _liveOnlineClasses)
+  }
+  // [NEW] Digital Labs drill-down (find / details / resources). One-word
+  // "digitallabs" token → never collides with the flat gate below.
+  if (/\bdigitallabs\b/.test(q)) {
+    const dl = await _liveLabs(institutionId, q, asker);
+    if (dl) return dl;
   }
   if (/\bdigital labs?\b|\blabs?\b/.test(q)) {
-    return _liveLabs(institutionId, q, asker);
+    return _liveLabsAsk(institutionId, q, asker); // [FIX] fallback = old flat resolver (renamed from _liveLabs)
   }
   if (/\bbus(?:es)?\b|\btransport\b|\bmy route\b|\bbus route\b|\bbus driver\b|\bvehicles?\b|\bpickup point\b|\bdrop point\b/.test(q)
       || (/\broutes?\b|\bdrivers?\b|\bassistants?\b/.test(q) && /\bbus\b|\btransport\b|\broute\b|\bhow many\b|\bmy\b/.test(q))) {
@@ -19238,15 +20170,33 @@ async function _smartyLiveAnswer(institutionId, question, asker) {
   if (/\bfood menu\b|\bmeals?\b|\blunch\b|\bbreakfast\b|\bdinner\b|\bsupper\b|\bsnacks?\b|\bdining\b|\bmenu\b/.test(q)) {
     return _liveMeals(institutionId, q, asker);
   }
+  // [NEW] Reports drill-down (cards / classexams). One-word "reportlookup"
+  // token can't match the flat gate below.
+  if (/\breportlookup\b/.test(q)) {
+    const rp = await _liveReports(institutionId, q, asker);
+    if (rp) return rp;
+  }
   if (/\breport card\b|\breport cards\b|\bprogress card\b|\bmarks card\b|\bgrade card\b/.test(q)) {
-    return _liveReports(institutionId, q, asker);
+    return _liveReportsAsk(institutionId, q, asker); // [FIX] fallback = old flat resolver (renamed from _liveReports)
+  }
+  // [NEW] Performance drill-down. One-word "perflookup" token can't match the
+  // flat gate below, so "topper in Class 5" / "my rank" still hit the fallback.
+  if (/\bperflookup\b/.test(q)) {
+    const pf = await _livePerformance(institutionId, q, asker);
+    if (pf) return pf;
   }
   if (/\bperformance\b|\btopper\b|\btop\s+\d+\b|\btop (?:student|students|performer|three|five|ten)\b|\bbest student\b|\bwho topped\b|\bclass rank\b|\bmy rank\b|\brank\b/.test(q)) {
-    return _livePerformance(institutionId, q, asker);
+    return _livePerformanceAsk(institutionId, q, asker); // [FIX] fallback = old flat resolver (renamed from _livePerformance)
+  }
+  // [NEW] Exams drill-down (schedule detail / online find / online detail).
+  // One-word "examlookup" token → can't match the flat gate below.
+  if (/\bexamlookup\b/.test(q)) {
+    const ex = await _liveExams(institutionId, q, asker);
+    if (ex) return ex;
   }
   if (/\bexams?\b|\bdatesheet\b|\bdate sheet\b/.test(q)
       || (/\b(results?|marks?|scores?)\b/.test(q) && /\bexam\b|\bmy\b/.test(q))) {
-    return _liveExams(institutionId, q, asker);
+    return _liveExamsAsk(institutionId, q, asker); // [FIX] fallback = old flat resolver (renamed from _liveExams)
   }
   // A named student's marks (subject-wise, by exam) — only engages when a
   // student name actually resolves within the asker's permitted scope, so it
@@ -20438,7 +21388,13 @@ const _LIVE_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Sat
 // ===== HOMEWORK =====
 //  Student/parent: their class (with a pending count that excludes what they
 //  submitted). Teacher/staff: their OWN homework. Super Admin: everything.
-async function _liveHomework(institutionId, q, asker) {
+// =====================================================================
+//  [FIX - DUPLICATE NAME RESOLVED]  Renamed  _liveHomework -> _liveHomeworkAsk
+//  Original flat/count resolver ("show my homework", "show homework
+//  assignments"). The NEW drill-down resolver higher up is now canonical;
+//  this stays the fallback for the flat phrases.
+// =====================================================================
+async function _liveHomeworkAsk(institutionId, q, asker) {
   if (!(await _smartyCan(asker, institutionId, _MOD_HW))) return null;
   const role = (asker.role || '').toLowerCase();
   const isStudentParent = role.includes('student') || role.includes('parent');
@@ -20488,7 +21444,14 @@ async function _liveHomework(institutionId, q, asker) {
 // ===== ONLINE CLASSES =====
 //  Student/parent: their class (+ All-Classes sessions). Teacher/staff: their
 //  OWN sessions. Super Admin: everything. Live / recorded / upcoming filters.
-async function _liveOnlineClasses(institutionId, q, asker) {
+// =====================================================================
+//  [FIX - DUPLICATE NAME RESOLVED]  Renamed  _liveOnlineClasses -> _liveOnlineClassesAsk
+//  This is the ORIGINAL flat/free-text resolver ("show my online classes",
+//  "upcoming live classes"). It used to share the name _liveOnlineClasses
+//  with the NEW drill-down resolver defined higher up, which silently
+//  overrode it. It is now the FALLBACK, called only after the drill-down.
+// =====================================================================
+async function _liveOnlineClassesAsk(institutionId, q, asker) {
   if (!(await _smartyCan(asker, institutionId, _MOD_OC))) return null;
   const role = (asker.role || '').toLowerCase();
   const isStudentParent = role.includes('student') || role.includes('parent');
@@ -20524,9 +21487,12 @@ async function _liveOnlineClasses(institutionId, q, asker) {
   return { answer: `There ${rows.length === 1 ? 'is' : 'are'} **${rows.length}** ${kind}online class${rows.length === 1 ? '' : 'es'} for ${scope}${wantUpcoming ? ' coming up' : ''}. Open **Online Classes** to join or watch.` };
 }
 
-// ===== DIGITAL LABS =====
+// ===== DIGITAL LABS (flat fallback) =====
+//  [FIX - DUPLICATE NAME RESOLVED]  Renamed  _liveLabs -> _liveLabsAsk
+//  Original flat resolver ("show my digital labs"). The NEW drill-down
+//  resolver higher up is now canonical; this is the fallback.
 //  Student/parent: their class. Teacher/staff: their OWN labs. Super Admin: all.
-async function _liveLabs(institutionId, q, asker) {
+async function _liveLabsAsk(institutionId, q, asker) {
   if (!(await _smartyCan(asker, institutionId, _MOD_LAB))) return null;
   const role = (asker.role || '').toLowerCase();
   const isStudentParent = role.includes('student') || role.includes('parent');
@@ -20833,7 +21799,13 @@ async function _liveAttendanceAsk(institutionId, q, asker) {
 //  Teacher / staff: only the exams they created. Super Admin / Admin: all.
 //  "timetable"/"schedule"/"datesheet" → exam_schedules; "my result/marks" →
 //  the student's graded attempts; otherwise a count of online exams.
-async function _liveExams(institutionId, q, asker) {
+// =====================================================================
+//  [FIX - DUPLICATE NAME RESOLVED]  Renamed  _liveExams -> _liveExamsAsk
+//  Original flat/count resolver ("show the exam timetables", "show my
+//  online exams", "show my exam results"). The NEW drill-down resolver
+//  higher up is now canonical; this stays the fallback.
+// =====================================================================
+async function _liveExamsAsk(institutionId, q, asker) {
   if (!(await _smartyCan(asker, institutionId, _MOD_EXAM))) return null;
   const role = (asker.role || '').toLowerCase();
   const isStudentParent = role.includes('student') || role.includes('parent');
@@ -20993,7 +21965,12 @@ async function _liveClassTotals(institutionId, classId, yearId) {
 //  Student/parent: a summary of THEIR OWN report card (total marks, exams,
 //  subjects) + a pointer to the card. Teacher/staff/Super Admin: a class's
 //  report-card readiness (students, how many have marks). Gated by Reports.
-async function _liveReports(institutionId, q, asker) {
+// =====================================================================
+//  [FIX - DUPLICATE NAME RESOLVED]  Renamed  _liveReports -> _liveReportsAsk
+//  Original flat resolver ("show my report card", "report cards for Class 5").
+//  The NEW drill-down resolver higher up is now canonical; this is the fallback.
+// =====================================================================
+async function _liveReportsAsk(institutionId, q, asker) {
   if (!(await _smartyCan(asker, institutionId, _MOD_REPORTS))) return null;
   const role = (asker.role || '').toLowerCase();
   const isStudentParent = role.includes('student') || role.includes('parent');
@@ -21026,7 +22003,12 @@ async function _liveReports(institutionId, q, asker) {
 //  Student/parent: THEIR OWN rank in their class + the topper (locked to their
 //  class). Teacher: only the classes they're assigned to. Super Admin / Admin:
 //  any class. Ranked by total marks for the active year. Gated by Performance.
-async function _livePerformance(institutionId, q, asker) {
+// =====================================================================
+//  [FIX - DUPLICATE NAME RESOLVED]  Renamed  _livePerformance -> _livePerformanceAsk
+//  Original flat resolver ("topper in Class 5", "my rank", "top students").
+//  The NEW drill-down resolver higher up is now canonical; this is the fallback.
+// =====================================================================
+async function _livePerformanceAsk(institutionId, q, asker) {
   if (!(await _smartyCan(asker, institutionId, _MOD_PERF))) return null;
   const role = (asker.role || '').toLowerCase();
   const isStudentParent = role.includes('student') || role.includes('parent');
