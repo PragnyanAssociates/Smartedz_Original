@@ -17680,12 +17680,13 @@ app.get('/api/admin/online-count/:instId', async (req, res) => {
 
 
 
+// SMARTY — backend block. Paste into index.js after db, sameTenant,
+// resolveYearId, createNotifications exist (near the Notifications section).
+//
 //  ---------------------------------------------------------------------
 //  RUN ONCE (MySQL). Browse-by-module adds live_query to smarty_questions:
 //    ALTER TABLE smarty_questions ADD COLUMN live_query VARCHAR(255) NULL;
 //  ---------------------------------------------------------------------
-// SMARTY — backend block. Paste into index.js after db, sameTenant,
-// resolveYearId, createNotifications exist (near the Notifications section).
 //  CREATE TABLE IF NOT EXISTS smarty_questions (
 //    id INT AUTO_INCREMENT PRIMARY KEY, institutionId INT NOT NULL,
 //    category VARCHAR(80), question VARCHAR(255) NOT NULL, answer TEXT NOT NULL,
@@ -17699,6 +17700,21 @@ app.get('/api/admin/online-count/:instId', async (req, res) => {
 //    title VARCHAR(160) NOT NULL, body TEXT NOT NULL, link VARCHAR(80),
 //    roles VARCHAR(120) DEFAULT 'all', is_active TINYINT(1) DEFAULT 1,
 //    created_by INT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP );
+//
+//  CREATE TABLE IF NOT EXISTS smarty_update_reads (
+//    update_id INT NOT NULL, user_id INT NOT NULL,
+//    PRIMARY KEY (update_id, user_id) );
+//
+//  CREATE TABLE IF NOT EXISTS smarty_ai_config (
+//    institutionId INT PRIMARY KEY, provider VARCHAR(40) DEFAULT 'gemini',
+//    api_key TEXT, model VARCHAR(80), enabled TINYINT(1) DEFAULT 0,
+//    updated_by INT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP );
+//
+//  CREATE TABLE IF NOT EXISTS smarty_ai_cache (
+//    id INT AUTO_INCREMENT PRIMARY KEY, institutionId INT NOT NULL,
+//    q_hash CHAR(64) NOT NULL, question TEXT, answer MEDIUMTEXT,
+//    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+//    UNIQUE KEY uq_inst_q (institutionId, q_hash) );
 // =====================================================================
 
 const _smartyCrypto = require('crypto');
@@ -18419,6 +18435,61 @@ app.post('/api/smarty/ask', async (req, res) => {
 //  (it reuses db, sameTenant, _smartyIsAdmin from there). It needs the
 //  Syllabus tables (syllabus, syllabus_chapters, syllabus_keywords,
 //  syllabus_library_folders, syllabus_library_files) that already exist.
+//
+//  WHAT IT DOES
+//    • Extracts text from every uploaded textbook chapter (PDF), every
+//      keyword, and every Library file (PDF / Word / Excel) and stores it
+//      in smarty_doc_chunks, tagged with syllabus type + class + subject.
+//    • SCANNED books (image-only PDFs, e.g. SCERT) have NO text layer, so
+//      those pages are run through LOCAL OCR (Tesseract, no AI, no quota)
+//      to turn the pictures into searchable text. OCR text is cached in
+//      smarty_ocr_text so it only runs ONCE per chapter.
+//    • /smarty/ask (in the main block) then searches those chunks, scoped
+//      to the asker's role/class. WITHOUT AI it answers straight from the
+//      book; WITH AI it grounds the AI answer in them.
+//
+//  RUN ONCE (MySQL):
+//    CREATE TABLE IF NOT EXISTS smarty_doc_chunks (
+//      id INT AUTO_INCREMENT PRIMARY KEY,
+//      institutionId INT NOT NULL,
+//      source_type VARCHAR(20) NOT NULL,      -- 'chapter' | 'keyword' | 'library'
+//      source_id INT NOT NULL,
+//      syllabus_type_id INT NULL,
+//      class_id INT NULL,
+//      subject_id INT NULL,
+//      title VARCHAR(300),
+//      content MEDIUMTEXT,
+//      page_from INT NULL, page_to INT NULL,
+//      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+//      KEY idx_scope (institutionId, class_id, subject_id, syllabus_type_id),
+//      FULLTEXT KEY ft_content (title, content)
+//    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+//
+//    CREATE TABLE IF NOT EXISTS smarty_ocr_text (
+//      source_type VARCHAR(20) NOT NULL,      -- 'chapter' | 'library'
+//      source_id INT NOT NULL,
+//      institutionId INT NOT NULL,
+//      pages INT DEFAULT 0,
+//      text LONGTEXT,
+//      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+//      PRIMARY KEY (source_type, source_id)
+//    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+//
+//  INSTALL — OCR for scanned books (no AI). TWO engines, native preferred:
+//    BEST (native, fast, reliable): install the system programs
+//        tesseract-ocr  +  poppler-utils
+//      On Railway (Nixpacks): drop the included  nixpacks.toml  in the backend
+//      root and redeploy. On a Dockerfile:  RUN apt-get update && apt-get
+//      install -y tesseract-ocr poppler-utils.
+//    FALLBACK (pure WASM, no system packages, slower/heavier):
+//        npm install mupdf tesseract.js --save
+//    Word/Excel library files (optional):  npm install mammoth xlsx --save
+//
+//    Smarty auto-detects: it uses native if present, else WASM, else text-only.
+//    Check  /api/smarty/rag/status  -> "ocrEngine": "native" | "wasm" | "none".
+//    Env knobs:  SMARTY_OCR_LANG (default "eng", e.g. "eng+tel"),
+//                SMARTY_OCR_DPI  (default 200).
+//
 //  AFTER PASTING: as Super Admin, POST /api/smarty/rag/reindex once to index
 //  everything already uploaded. It runs in the BACKGROUND — poll
 //  /api/smarty/rag/status to watch progress (OCR of a big scanned book takes
@@ -18966,6 +19037,114 @@ function _liveMatchSubject(q, subjects) {
 //  role-scoped handler. Each handler returns { answer } or null (fall through).
 //  Order matters: Study Materials & Attendance are checked before Syllabus so
 //  "materials"/"attendance" don't get mistaken for a syllabus "lesson".
+// =====================================================================
+//  _liveStudyMaterials — dynamic drill-down for the Study Materials module
+//  Same pattern as the other _live* resolvers.
+//
+//  Uses the one-word token "studymaterials" in its sends so it never
+//  collides with the existing _liveMaterials resolver (which answers the
+//  "show the study materials available to me" / "recently uploaded" cards
+//  on the two-word phrase "study materials").
+//
+//  Three intents (one per static button):
+//    browse    "Find materials for a class and subject"  → Class → Subject → list
+//    bytype    "Show notes, videos and presentations…"   → Class → Subject → grouped by type
+//    uploader  "Who uploaded a material?"                 → Class → Subject → who + when
+//
+//  Table (Section 24): study_materials (class_id, subject_id, material_type,
+//  title, uploaded_by, created_at), classes, subjects, users.
+// =====================================================================
+async function _liveStudyMaterials(institutionId, q, asker) {
+    const text = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+    let intent = (text.match(/\bstudymaterials (browse|bytype|uploader)\b/) || [])[1] || null;
+    if (!intent) {
+        if (/who uploaded|uploaded a material|uploader/.test(text)) intent = 'uploader';
+        else if (/notes,? videos|by type|material types?|notes.*presentations/.test(text)) intent = 'bytype';
+        else if (/materials? for a class|materials? for .* subject|find materials?/.test(text)) intent = 'browse';
+    }
+    if (!intent) return null;
+
+    const LINK = { link: 'StudyMaterials', linkLabel: 'Open Study Materials' };
+    const reply = (answer, options) => ({ ok: true, source: 'smarty', live: true, answer, ...(options ? { options } : {}), ...LINK });
+    const base = (extra) => `studymaterials ${intent}${extra}`;
+    const classLabel = (c) => `${c.className || ''}${c.section ? ' - ' + c.section : ''}`.trim();
+    const dmy = (d) => { if (!d) return ''; const x = new Date(String(d).includes('T') || String(d).includes(' ') ? d : d); if (isNaN(x)) return ''; const p = n => String(n).padStart(2, '0'); return `${p(x.getDate())}/${p(x.getMonth() + 1)}/${x.getFullYear()}`; };
+
+    const classId = (text.match(/classid(\d+)/) || [])[1];
+    const subjectId = (text.match(/subjectid(\d+)/) || [])[1];   // '0' means "no subject"
+
+    // ---- STEP 1: pick a Class -----------------------------------------
+    if (!classId) {
+        const [classes] = await db.query(
+            `SELECT DISTINCT c.id, c.className, c.section
+               FROM study_materials m JOIN classes c ON c.id = m.class_id
+              WHERE m.institutionId = ?
+              ORDER BY c.className, c.section`, [institutionId]);
+        if (!classes.length) return reply('No study materials have been uploaded yet.');
+        classes.sort((a, b) => classLabel(a).localeCompare(classLabel(b), undefined, { numeric: true }));
+        return reply('Which class?', classes.map(c => ({ label: classLabel(c), send: base(` classid${c.id}`) })));
+    }
+
+    // ---- STEP 2: pick a Subject ---------------------------------------
+    if (!subjectId) {
+        const [subs] = await db.query(
+            `SELECT m.subject_id, s.name
+               FROM study_materials m LEFT JOIN subjects s ON s.id = m.subject_id
+              WHERE m.institutionId = ? AND m.class_id = ?
+              GROUP BY m.subject_id, s.name
+              ORDER BY (m.subject_id IS NULL), s.name`, [institutionId, classId]);
+        const [cl] = await db.query('SELECT className, section FROM classes WHERE id = ?', [classId]);
+        const clName = cl.length ? classLabel(cl[0]) : `Class ${classId}`;
+        if (!subs.length) return reply(`No materials for ${clName} yet.`);
+        const options = subs.map(s => ({
+            label: s.name || 'No subject',
+            send: base(` classid${classId} subjectid${s.subject_id || 0}`)
+        }));
+        return reply(`${clName} — pick a subject:`, options);
+    }
+
+    // resolve names + the materials
+    const [cl] = await db.query('SELECT className, section FROM classes WHERE id = ?', [classId]);
+    const clName = cl.length ? classLabel(cl[0]) : `Class ${classId}`;
+    const noSubject = subjectId === '0';
+    let subName = 'No subject';
+    if (!noSubject) { const [sr] = await db.query('SELECT name FROM subjects WHERE id = ?', [subjectId]); subName = sr.length ? sr[0].name : `Subject ${subjectId}`; }
+
+    const [rows] = await db.query(
+        `SELECT m.title, m.material_type, m.created_at, u.name AS uploaded_by_name
+           FROM study_materials m
+           LEFT JOIN users u ON u.id = m.uploaded_by
+          WHERE m.institutionId = ? AND m.class_id = ? AND ${noSubject ? 'm.subject_id IS NULL' : 'm.subject_id = ?'}
+          ORDER BY m.created_at DESC`,
+        noSubject ? [institutionId, classId] : [institutionId, classId, subjectId]);
+    const head = `${subName} · ${clName}`;
+    if (!rows.length) return reply(`No materials for ${head}.`);
+
+    // ---- BY TYPE: group by material_type ------------------------------
+    if (intent === 'bytype') {
+        const groups = {};
+        rows.forEach(r => { const t = r.material_type || 'Other'; (groups[t] = groups[t] || []).push(r.title); });
+        const lines = Object.keys(groups).sort().map(t => `${t} (${groups[t].length}): ${groups[t].join(', ')}`);
+        return reply(`${head} — materials by type:\n${lines.join('\n')}`);
+    }
+
+    // ---- UPLOADER: who uploaded + when --------------------------------
+    if (intent === 'uploader') {
+        const SHOW = 30;
+        const lines = rows.slice(0, SHOW).map((r, i) =>
+            `${i + 1}. ${r.title}${r.material_type ? ` (${r.material_type})` : ''} — by ${r.uploaded_by_name || 'Unknown'}${r.created_at ? ' · ' + dmy(r.created_at) : ''}`);
+        const more = rows.length > SHOW ? `\n…and ${rows.length - SHOW} more.` : '';
+        return reply(`${head} — ${rows.length} material${rows.length === 1 ? '' : 's'}, who uploaded each:\n${lines.join('\n')}${more}`);
+    }
+
+    // ---- BROWSE (default): list title + type --------------------------
+    const SHOW = 30;
+    const lines = rows.slice(0, SHOW).map((r, i) => `${i + 1}. ${r.title}${r.material_type ? ` (${r.material_type})` : ''}`);
+    const more = rows.length > SHOW ? `\n…and ${rows.length - SHOW} more.` : '';
+    return reply(`${head} — ${rows.length} material${rows.length === 1 ? '' : 's'}:\n${lines.join('\n')}${more}`);
+}
+
 async function _smartyLiveAnswer(institutionId, question, asker) {
   const q = ' ' + String(question || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim() + ' ';
 
@@ -19008,6 +19187,13 @@ async function _smartyLiveAnswer(institutionId, question, asker) {
   if (/\bworking days?\b/.test(q) || ((/\bperiods?\b|\bbreaks?\b/.test(q)) && /\btimetable\b|\btimings?\b|\bbreak\b/.test(q))) {
     const tt = await _liveTimetableAsk(institutionId, q, asker); // [FIX] fallback = old count/free-text resolver (renamed from _liveTimetable)
     if (tt) return tt;
+  }
+  // [NEW] Study Materials drill-down (Class -> Subject -> list). Uses the
+  // one-word "studymaterials" token so it never collides with _liveMaterials
+  // below; returns null for everything else so those cards still work.
+  if (/\bstudymaterials\b/.test(q)) {
+    const stm = await _liveStudyMaterials(institutionId, q, asker);
+    if (stm) return stm;
   }
   if (/\b(study material|study materials|materials?|worksheets?|notes|presentations?|video lectures?)\b/.test(q)
       && !/\blesson plan\b/.test(q)) {
@@ -21658,6 +21844,15 @@ app.post('/api/smarty/cache/clear', async (req, res) => {
 //  AUTO-INDEX HOOKS (optional — keeps the index fresh without a rebuild)
 //  Add these ONE-LINERS inside your existing Section 22 syllabus routes,
 //  right before each `res.json({ success: true ... })`:
+//
+//    • After a textbook upload (PUT /syllabus/:id/book), once chapters are
+//      inserted, loop the new chapter ids (OCR runs in the background):
+//        const [chs] = await db.execute('SELECT id FROM syllabus_chapters WHERE syllabus_id = ?', [syllabusId]);
+//        for (const c of chs) { ragIndexChapter(c.id).catch(()=>{}); }
+//    • After create/edit chapter:         ragIndexChapter(id).catch(()=>{});
+//    • After add/delete keyword:          ragIndexChapterKeywords(chapterId).catch(()=>{});
+//    • After a library file upload:       ragIndexLibraryFile(fileId).catch(()=>{});
+//
 //  They're safe to call fire-and-forget. If you skip them, just press
 //  "Rebuild book index" in Smarty → Smarty AI after adding material.
 // =====================================================================
