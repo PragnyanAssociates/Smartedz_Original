@@ -19063,6 +19063,10 @@ async function _smartyLiveAnswer(institutionId, question, asker) {
       const syl = await _liveSyllabus(institutionId, q, asker);
       if (syl) return syl;
     }
+        if (/\blibrary\b|online book|issue.?return|issued books?|copies of a book|borrower history/.test(q)) {
+      const lib = await _liveLibrary(institutionId, q, asker);
+      if (lib) return lib;
+    }
   if (/\bworking days?\b/.test(q) || ((/\bperiods?\b|\bbreaks?\b/.test(q)) && /\btimetable\b|\btimings?\b|\bbreak\b/.test(q))) {
     const tt = await _liveTimetable(institutionId, q, asker);
     if (tt) return tt;
@@ -19775,6 +19779,155 @@ async function _liveSyllabus(institutionId, q, asker) {
     }
 
     return null;
+}
+// =====================================================================
+//  _liveLibrary — dynamic drill-down for the Library module
+//  Same pattern as _liveDirectory / _liveAdmissions / _liveSyllabus.
+async function _liveLibrary(institutionId, q, asker) {
+    const text = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+    // Leave the Syllabus Library (folders) to _liveSyllabus, and counts to the
+    // existing live/AI resolver.
+    if (/syllabus|\bfolder/.test(text)) return null;
+    if (/\b(how many|count|total|number of|no\.? of)\b/.test(text)) return null;
+
+    const role = (typeof asker === 'string' ? asker : (asker && (asker.role || asker.roleName)) || '').toLowerCase();
+
+    // ---- which intent? ----
+    let intent = (text.match(/\blibrary (online|copies|issues)\b/) || [])[1] || null;
+    if (!intent) {
+        if (/issue.?return|issue history|return history|issued books? history|borrower history/.test(text)) intent = 'issues';
+        else if (/copies of a book|available and issued|copy counts?|issued copies|available copies/.test(text)) intent = 'copies';
+        else if (/online book|find an? online|digital book|find a book|search (the )?library/.test(text)) intent = 'online';
+    }
+    if (!intent) return null;
+
+    // copies + issues are staff-only; online browsing is for everyone.
+    if ((intent === 'copies' || intent === 'issues') && (role === 'student' || role === 'parent')) return null;
+
+    const LINK = { link: 'Library', linkLabel: 'Open Library' };
+    const reply = (answer, options) => ({ ok: true, source: 'smarty', live: true, answer, ...(options ? { options } : {}), ...LINK });
+    const base = (extra) => `library ${intent}${extra}`;
+    const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+    const dmy = (d) => { if (!d) return ''; const x = new Date(String(d).length <= 10 ? d + 'T00:00:00' : d); if (isNaN(x)) return String(d).slice(0, 10); const p = n => String(n).padStart(2, '0'); return `${p(x.getDate())}/${p(x.getMonth() + 1)}/${x.getFullYear()}`; };
+
+    const bookId = (text.match(/bookid(\d+)/) || [])[1];
+    const status = (text.match(/\bstatus (issued|returned)\b/) || [])[1];
+    // category: original casing, taken from the raw query after stripping bookid
+    const rawNoBook = String(q || '').replace(/\s+/g, ' ').trim().replace(/\s*bookid\d+\s*$/i, '');
+    const cat = (rawNoBook.match(/\bcat (.+)$/i) || [])[1] || null;
+    const UNCAT = 'Uncategorised';
+
+    // ---- ISSUES: Status → records -------------------------------------
+    if (intent === 'issues') {
+        if (!status) {
+            const [counts] = await db.query(
+                `SELECT status, COUNT(*) AS n FROM library_issues WHERE institutionId = ? GROUP BY status`, [institutionId]);
+            const nOf = (s) => { const r = counts.find(x => x.status === s); return r ? Number(r.n) : 0; };
+            const opts = ['issued', 'returned'].filter(s => nOf(s) > 0)
+                .map(s => ({ label: `${cap(s)} (${nOf(s)})`, send: base(` status ${s}`) }));
+            if (!opts.length) return reply('No issue or return records yet.');
+            return reply('Which do you want to see — issued or returned books?', opts);
+        }
+        const [rows] = await db.query(
+            `SELECT b.title AS book_title, COALESCE(i.borrower_name, u.name) AS borrower,
+                    i.issue_date, i.due_date, i.return_date, i.status
+               FROM library_issues i
+               LEFT JOIN library_books b ON b.id = i.book_id
+               LEFT JOIN users u ON u.id = i.member_user_id
+              WHERE i.institutionId = ? AND i.status = ?
+              ORDER BY i.issue_date DESC, i.id DESC
+              LIMIT 50`, [institutionId, status]);
+        if (!rows.length) return reply(`No ${status} records.`);
+        const today = new Date().toISOString().slice(0, 10);
+        const SHOW = 30;
+        const lines = rows.slice(0, SHOW).map((r, i) => {
+            const who = r.borrower || 'Unknown';
+            if (r.status === 'returned') return `${i + 1}. ${r.book_title || '—'} · ${who} — returned ${dmy(r.return_date)}`;
+            const overdue = r.due_date && String(r.due_date).slice(0, 10) < today ? ' · OVERDUE' : '';
+            return `${i + 1}. ${r.book_title || '—'} · ${who} — issued ${dmy(r.issue_date)}, due ${dmy(r.due_date) || '—'}${overdue}`;
+        });
+        const more = rows.length > SHOW ? `\n…and ${rows.length - SHOW} more.` : '';
+        return reply(`${cap(status)} books (${rows.length}):\n${lines.join('\n')}${more}`);
+    }
+
+    // ---- FIND (online): title / author search -------------------------
+    if (intent === 'online' && /\b(find|search)\b/.test(text) && !cat && !bookId) {
+        const term = text
+            .replace(/\b(find|search|an?|the|online|book|digital|library|by|title|author|category|for)\b/g, '')
+            .replace(/\s+/g, ' ').trim();
+        if (term.length >= 2) {
+            const like = `%${term}%`;
+            const [rows] = await db.query(
+                `SELECT id, title, author, category FROM library_online_books
+                  WHERE institutionId = ? AND (title LIKE ? OR author LIKE ? OR category LIKE ?)
+                  ORDER BY title LIMIT 25`, [institutionId, like, like, like]);
+            if (!rows.length) return reply(`No online book matches "${term}".`);
+            const opts = rows.map(b => ({
+                label: `${b.title}${b.author ? ' — ' + b.author : ''}`,
+                send: `library online bookid${b.id}`
+            }));
+            return reply(`${rows.length} online book${rows.length === 1 ? '' : 's'} match "${term}" — pick one for its details:`, opts);
+        }
+        // fall through to the category picker if no usable term
+    }
+
+    const TABLE = intent === 'copies' ? 'library_books' : 'library_online_books';
+
+    // ---- BOOK leaf -----------------------------------------------------
+    if (bookId) {
+        if (intent === 'copies') {
+            const [r] = await db.query(
+                `SELECT title, author, total_copies, available_copies FROM library_books WHERE id = ? AND institutionId = ?`,
+                [bookId, institutionId]);
+            if (!r.length) return reply('That book was not found.');
+            const b = r[0], total = Number(b.total_copies) || 0, avail = Number(b.available_copies) || 0;
+            return reply(`${b.title}${b.author ? ' by ' + b.author : ''}: ${avail} of ${total} available, ${total - avail} issued.`);
+        }
+        const [r] = await db.query(
+            `SELECT title, author, category, description, (doc_data IS NOT NULL) AS has_doc
+               FROM library_online_books WHERE id = ? AND institutionId = ?`, [bookId, institutionId]);
+        if (!r.length) return reply('That book was not found.');
+        const b = r[0];
+        const bits = [
+            `${b.title}${b.author ? ' by ' + b.author : ''}`,
+            b.category ? `Category: ${b.category}` : null,
+            b.description ? b.description : null,
+            b.has_doc ? 'PDF available to read/download.' : 'No PDF attached.'
+        ].filter(Boolean);
+        return reply(bits.join('\n'));
+    }
+
+    // ---- BOOKS in a chosen category -----------------------------------
+    if (cat) {
+        const isUncat = cat.trim().toLowerCase() === UNCAT.toLowerCase();
+        const [rows] = await db.query(
+            isUncat
+                ? `SELECT id, title, author FROM ${TABLE}
+                     WHERE institutionId = ? AND (category IS NULL OR TRIM(category) = '')
+                     ORDER BY title`
+                : `SELECT id, title, author FROM ${TABLE}
+                     WHERE institutionId = ? AND LOWER(TRIM(category)) = LOWER(?)
+                     ORDER BY title`,
+            isUncat ? [institutionId] : [institutionId, cat.trim()]);
+        if (!rows.length) return reply(`No books in ${cat}.`);
+        const verb = intent === 'copies' ? 'see its copies' : 'see its details';
+        const opts = rows.map(b => ({
+            label: `${b.title}${b.author ? ' — ' + b.author : ''}`,
+            send: base(` cat ${cat} bookid${b.id}`)
+        }));
+        return reply(`${cat} (${rows.length}) — pick a book to ${verb}:`, opts);
+    }
+
+    // ---- ENTRY: Category picker ----------------------------------------
+    const [cats] = await db.query(
+        `SELECT COALESCE(NULLIF(TRIM(category), ''), '${UNCAT}') AS cat, COUNT(*) AS n
+           FROM ${TABLE} WHERE institutionId = ?
+          GROUP BY cat ORDER BY n DESC, cat ASC`, [institutionId]);
+    if (!cats.length) return reply(intent === 'copies' ? 'No books in the catalogue yet.' : 'No online books yet.');
+    const opts = cats.map(c => ({ label: `${c.cat} (${c.n})`, send: base(` cat ${c.cat}`) }));
+    const lead = intent === 'copies' ? 'Which category of book?' : 'Which category would you like to browse?';
+    return reply(lead, opts);
 }
 
 
