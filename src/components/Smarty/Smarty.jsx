@@ -837,19 +837,37 @@ export default function Smarty({ onNavigate }) {
             {msgs.map(m => <Message key={m.k} m={m} onNav={navTo} />)}
           </div>
 
-          {/* Browse by Module — card grid, or a single module's scrollable question list */}
+          {/* Drill-down picker (role / class / status chips) OR Browse by Module.
+              Only ONE shows at a time, each capped + scrollable, so the chat
+              stays visible. The picker clears on back / another question. */}
           <div className="smy-browse-wrap">
-            {activeMod ? (
+            {chips.length > 0 ? (
               <>
                 <div className="smy-mod-head">
-                  <button className="smy-mod-back" onClick={() => setActiveMod(null)} aria-label="Back to modules">←</button>
+                  <button className="smy-mod-back" onClick={() => setChips([])} aria-label="Back">←</button>
+                  <span className="smy-mod-ic">✨</span>
+                  <span className="smy-mod-title">Choose an option</span>
+                </div>
+                <div className="smy-picker">
+                  {chips.map(c => (
+                    <button key={c.id} className="smy-chip" style={{ '--ct': `var(${toneVar[c.tone] || '--brand'})` }}
+                      onClick={() => { if (c.nav) { pushMe(c.label); navMenu(c.nav); } else if (c.send) { pushMe(c.label); askAI(c.send); } else if (c.ref) { pushMe(c.label); respond(c.ref); } else { pushMe(c.label); respond(c.id); } }}>
+                      <span className="smy-ic" style={{ background: `var(${toneVar[c.tone] || '--brand'})` }}>{c.icon}</span>{c.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : activeMod ? (
+              <>
+                <div className="smy-mod-head">
+                  <button className="smy-mod-back" onClick={() => { setActiveMod(null); setChips([]); }} aria-label="Back to modules">←</button>
                   <span className="smy-mod-ic">{modIcon(activeMod)}</span>
                   <span className="smy-mod-title">{aliasLabel(activeMod)}</span>
                 </div>
                 <div className="smy-mod-qs">
                   {moduleQuestions(activeMod).map(e => (
                     <button key={e.id} className="smy-qbtn"
-                      onClick={() => { pushMe(e.q); if (e.send) { askAI(e.send); } else if (e.ref) { respond(e.ref); } else { respond(e.id); } }}>
+                      onClick={() => { setChips([]); pushMe(e.q); if (e.send) { askAI(e.send); } else if (e.ref) { respond(e.ref); } else { respond(e.id); } }}>
                       <span className="smy-qic">{e.icon || '💬'}</span><span className="smy-qtxt">{e.q}</span>
                     </button>
                   ))}
@@ -875,16 +893,6 @@ export default function Smarty({ onNavigate }) {
               </>
             )}
           </div>
-
-          {chips.length > 0 && (
-            <div className="smy-chips">
-              {chips.map(c => (
-                <button key={c.id} className="smy-chip" style={{ '--ct': `var(${toneVar[c.tone] || '--brand'})` }} onClick={() => { if (c.nav) { pushMe(c.label); navMenu(c.nav); } else if (c.send) { pushMe(c.label); askAI(c.send); } else if (c.ref) { pushMe(c.label); respond(c.ref); } else { pushMe(c.label); respond(c.id); } }}>
-                  <span className="smy-ic" style={{ background: `var(${toneVar[c.tone] || '--brand'})` }}>{c.icon}</span>{c.label}
-                </button>
-              ))}
-            </div>
-          )}
 
           <div className="smy-guide">
             <span className="smy-guide-row"><span className="smy-star">✦</span><span><b>Tap a module</b> &mdash; for anything about your school data.</span></span>
@@ -1204,6 +1212,12 @@ const CSS = `
 .smy-chips{display:flex;flex-wrap:wrap;gap:8px;padding:8px 14px 4px;background:var(--panel)}
 .smy-chip{border:1.5px solid color-mix(in srgb,var(--ct,var(--brand)) 32%,var(--line));background:color-mix(in srgb,var(--ct,var(--brand)) 9%,var(--panel));cursor:pointer;font-weight:700;font-size:11.5px;color:var(--ink);padding:8px 12px;border-radius:9px;display:inline-flex;align-items:center;gap:7px;transition:transform .12s,box-shadow .12s}
 .smy-chip:hover{transform:translateY(-2px)}
+/* drill-down picker: capped + scrollable so the chat always stays visible */
+.smy-picker{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;max-height:132px;overflow-y:auto;overscroll-behavior:contain;padding:2px 4px 2px 2px;scrollbar-width:thin;scrollbar-color:rgba(140,140,170,.3) transparent}
+.smy-picker::-webkit-scrollbar{width:5px}
+.smy-picker::-webkit-scrollbar-thumb{background:rgba(140,140,170,.28);border-radius:999px}
+.smy-picker .smy-chip{font-size:11px;padding:6px 10px;gap:6px}
+.smy-picker .smy-ic{width:17px;height:17px}
 /* permanent Browse-by-module button — solid so it reads as the primary action */
 .smy-browse{background:linear-gradient(135deg,var(--ga),var(--gb));border-color:transparent;color:#fff;box-shadow:0 7px 16px -8px color-mix(in srgb,var(--ga) 80%,transparent)}
 .smy-browse .smy-ic{background:rgba(255,255,255,.22)!important}

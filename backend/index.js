@@ -19059,6 +19059,10 @@ async function _smartyLiveAnswer(institutionId, question, asker) {
       const adm = await _liveAdmissions(institutionId, q, asker);
       if (adm) return adm;
     }
+    if (/\bsyllabus|syllabuses|\bchapters?\b|\bkeywords?\b|period allocation|lesson periods?|library folder|\btextbook\b/.test(q)) {
+      const syl = await _liveSyllabus(institutionId, q, asker);
+      if (syl) return syl;
+    }
   if (/\bworking days?\b/.test(q) || ((/\bperiods?\b|\bbreaks?\b/.test(q)) && /\btimetable\b|\btimings?\b|\bbreak\b/.test(q))) {
     const tt = await _liveTimetable(institutionId, q, asker);
     if (tt) return tt;
@@ -19583,6 +19587,194 @@ async function _liveAdmissions(institutionId, q, asker) {
     return { ok: true, source: 'smarty', live: true,
         answer: `Which academic year's applicants would you like to see?`,
         options, link: 'PreAdmissions', linkLabel: 'Open Pre-Admissions' };
+}
+// =====================================================================
+//  _liveSyllabus — dynamic drill-down for the Syllabus module
+//  Same pattern as _liveDirectory / _liveAdmissions. ADD next to them.
+async function _liveSyllabus(institutionId, q, asker) {
+    const text = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+    // Count questions ("how many chapters in Class 5 Science") stay with the
+    // existing live/AI resolver — don't hijack them into a drill-down.
+    if (/\b(how many|count|total|number of|no\.? of)\b/.test(text)) return null;
+
+    // ---- which intent? explicit "syllabus <intent>" token wins; else phrase ----
+    let intent = (text.match(/\bsyllabus (list|chapters|pages|keywords|periods|library)\b/) || [])[1] || null;
+    if (!intent) {
+        if (/library folder|syllabus library/.test(text)) intent = 'library';
+        else if (/keywords? (for|of) (a )?chapter|chapter keywords/.test(text)) intent = 'keywords';
+        else if (/period allocation|lesson periods?|periods? per lesson/.test(text)) intent = 'periods';
+        else if (/page ranges?|chapter names and page/.test(text)) intent = 'pages';
+        else if (/chapters? in (a |the )?textbook|show the chapters|list chapters/.test(text)) intent = 'chapters';
+        else if (/syllabuses? for|show syllabuses?|list syllabuses?/.test(text)) intent = 'list';
+    }
+    if (!intent) return null;
+
+    const typeId    = (text.match(/typeid(\d+)/) || [])[1];
+    const classId   = (text.match(/classid(\d+)/) || [])[1];
+    const subjectId = (text.match(/subjectid(\d+)/) || [])[1];
+    const chapterId = (text.match(/chapterid(\d+)/) || [])[1];
+
+    const LINK = { link: 'Syllabus', linkLabel: 'Open Syllabus' };
+    const reply = (answer, options) => ({ ok: true, source: 'smarty', live: true, answer, ...(options ? { options } : {}), ...LINK });
+    const base = (extra) => `syllabus ${intent}${extra}`;       // rebuild the sent phrase
+    const classLabel = (r) => `${r.className || ''}${r.section ? ' - ' + r.section : ''}`.trim();
+
+    // name helpers (for the leaf headers)
+    const nameOf = async (table, id) => {
+        const [r] = await db.execute(`SELECT name FROM ${table} WHERE id = ?`, [id]);
+        return r.length ? r[0].name : '';
+    };
+    const classNameOf = async (id) => {
+        const [r] = await db.execute('SELECT className, section FROM classes WHERE id = ?', [id]);
+        return r.length ? classLabel(r[0]) : `Class ${id}`;
+    };
+
+    // ---- STEP 1: pick a Syllabus Type ----------------------------------
+    if (!typeId) {
+        const [types] = await db.query(
+            `SELECT t.id, t.name,
+                    (SELECT COUNT(*) FROM syllabus s WHERE s.syllabus_type_id = t.id) AS n
+               FROM syllabus_types t
+              WHERE t.institutionId = ?
+              ORDER BY t.sort_order ASC, t.name ASC`, [institutionId]);
+        if (!types.length) return reply('No syllabus types are set up yet.');
+        const options = types.map(t => ({ label: `${t.name}${Number(t.n) ? ` (${t.n})` : ''}`, send: base(` typeid${t.id}`) }));
+        return reply('Which syllabus type would you like to look in?', options);
+    }
+
+    // ---- STEP 2: pick a Class ------------------------------------------
+    if (!classId) {
+        const fromLib = intent === 'library';
+        const [classes] = await db.query(
+            fromLib
+                ? `SELECT DISTINCT c.id, c.className, c.section
+                     FROM syllabus_library_folders f JOIN classes c ON c.id = f.class_id
+                    WHERE f.institutionId = ? AND f.syllabus_type_id = ?
+                    ORDER BY c.className, c.section`
+                : `SELECT DISTINCT c.id, c.className, c.section
+                     FROM syllabus s JOIN classes c ON c.id = s.class_id
+                    WHERE s.institutionId = ? AND s.syllabus_type_id = ?
+                    ORDER BY c.className, c.section`,
+            [institutionId, typeId]);
+        const tn = await nameOf('syllabus_types', typeId);
+        if (!classes.length) return reply(`No ${fromLib ? 'library folders' : 'syllabuses'} under ${tn} yet.`);
+        // natural order Class 1..10
+        classes.sort((a, b) => classLabel(a).localeCompare(classLabel(b), undefined, { numeric: true }));
+        const options = classes.map(c => ({ label: classLabel(c), send: base(` typeid${typeId} classid${c.id}`) }));
+        return reply(`${tn} — pick a class:`, options);
+    }
+
+    // ---- LIBRARY leaf: folders for type + class (grouped by subject) ----
+    if (intent === 'library') {
+        const [folders] = await db.query(
+            `SELECT f.name, sub.name AS subject_name,
+                    (SELECT COUNT(*) FROM syllabus_library_files lf WHERE lf.folder_id = f.id) AS files
+               FROM syllabus_library_folders f
+               LEFT JOIN subjects sub ON sub.id = f.subject_id
+              WHERE f.institutionId = ? AND f.syllabus_type_id = ? AND f.class_id = ?
+              ORDER BY sub.name, f.name`, [institutionId, typeId, classId]);
+        const cl = await classNameOf(classId), tn = await nameOf('syllabus_types', typeId);
+        if (!folders.length) return reply(`No library folders for ${cl} under ${tn}.`);
+        const lines = folders.map((f, i) =>
+            `${i + 1}. ${f.subject_name ? f.subject_name + ' · ' : ''}${f.name} (${f.files} file${f.files === 1 ? '' : 's'})`);
+        return reply(`Library folders — ${cl}, ${tn} (${folders.length}):\n${lines.join('\n')}`);
+    }
+
+    // ---- STEP 3: pick a Subject ----------------------------------------
+    if (!subjectId) {
+        const [subs] = await db.query(
+            `SELECT DISTINCT sub.id, sub.name
+               FROM syllabus s JOIN subjects sub ON sub.id = s.subject_id
+              WHERE s.institutionId = ? AND s.syllabus_type_id = ? AND s.class_id = ?
+              ORDER BY sub.name`, [institutionId, typeId, classId]);
+        const cl = await classNameOf(classId);
+        if (!subs.length) return reply(`No syllabuses for ${cl} yet.`);
+        const options = subs.map(s => ({ label: s.name, send: base(` typeid${typeId} classid${classId} subjectid${s.id}`) }));
+        return reply(`${cl} — pick a subject:`, options);
+    }
+
+    // resolve the one syllabus for (type, class, subject)
+    const [syl] = await db.query(
+        `SELECT s.id, t.name AS teacher_name,
+                (SELECT COUNT(*) FROM syllabus_chapters ch WHERE ch.syllabus_id = s.id) AS lessons,
+                (s.doc_data IS NOT NULL) AS has_book, s.doc_pages
+           FROM syllabus s LEFT JOIN users t ON t.id = s.teacher_id
+          WHERE s.institutionId = ? AND s.syllabus_type_id = ? AND s.class_id = ? AND s.subject_id = ?
+          LIMIT 1`, [institutionId, typeId, classId, subjectId]);
+    const cl = await classNameOf(classId);
+    const subName = await nameOf('subjects', subjectId);
+    if (!syl.length) return reply(`No syllabus found for ${subName}, ${cl}.`);
+    const S = syl[0];
+    const head = `${subName} · ${cl}`;
+
+    // ---- LIST leaf -----------------------------------------------------
+    if (intent === 'list') {
+        const book = S.has_book ? `textbook uploaded${S.doc_pages ? ` (${S.doc_pages} pages)` : ''}` : 'no textbook uploaded';
+        return reply(`${head}: ${S.lessons} lesson${S.lessons === 1 ? '' : 's'}, teacher ${S.teacher_name || 'Unassigned'}, ${book}.`);
+    }
+
+    // ---- CHAPTERS / PAGES leaf -----------------------------------------
+    if (intent === 'chapters' || intent === 'pages') {
+        const [chs] = await db.query(
+            `SELECT title, page_from, page_to FROM syllabus_chapters
+              WHERE syllabus_id = ?
+              ORDER BY (page_from IS NULL), page_from, chapter_order, id`, [S.id]);
+        if (!chs.length) return reply(`No chapters yet for ${head}. Upload a textbook to detect them.`);
+        const lines = chs.map((c, i) => {
+            const range = c.page_from ? ` — pages ${c.page_from}${c.page_to && c.page_to !== c.page_from ? '–' + c.page_to : ''}` : '';
+            return `${i + 1}. ${c.title}${range}`;
+        });
+        return reply(`Chapters — ${head} (${chs.length}):\n${lines.join('\n')}`);
+    }
+
+    // ---- PERIODS leaf --------------------------------------------------
+    if (intent === 'periods') {
+        const [chs] = await db.query(
+            `SELECT title, periods, start_date, end_date FROM syllabus_chapters
+              WHERE syllabus_id = ?
+              ORDER BY (page_from IS NULL), page_from, chapter_order, id`, [S.id]);
+        if (!chs.length) return reply(`No lessons yet for ${head}.`);
+        const dt = (d) => { if (!d) return ''; const x = new Date(d); if (isNaN(x)) return String(d).slice(0, 10); const p = n => String(n).padStart(2, '0'); return `${p(x.getDate())}/${p(x.getMonth() + 1)}/${x.getFullYear()}`; };
+        let total = 0;
+        const lines = chs.map((c, i) => {
+            const p = Number(c.periods) || 0; total += p;
+            const span = (c.start_date || c.end_date) ? ` (${dt(c.start_date) || '?'}–${dt(c.end_date) || '?'})` : '';
+            return `${i + 1}. ${c.title} — ${p} period${p === 1 ? '' : 's'}${span}`;
+        });
+        return reply(`Lesson periods — ${head} (${total} total):\n${lines.join('\n')}`);
+    }
+
+    // ---- KEYWORDS: needs a chapter pick --------------------------------
+    if (intent === 'keywords') {
+        if (!chapterId) {
+            const [chs] = await db.query(
+                `SELECT c.id, c.title,
+                        (SELECT COUNT(*) FROM syllabus_keywords k WHERE k.chapter_id = c.id) AS kw
+                   FROM syllabus_chapters c
+                  WHERE c.syllabus_id = ?
+                  ORDER BY (c.page_from IS NULL), c.page_from, c.chapter_order, c.id`, [S.id]);
+            if (!chs.length) return reply(`No chapters yet for ${head}.`);
+            const options = chs.map(c => ({
+                label: `${c.title}${Number(c.kw) ? ` (${c.kw})` : ''}`,
+                send: base(` typeid${typeId} classid${classId} subjectid${subjectId} chapterid${c.id}`)
+            }));
+            return reply(`${head} — pick a chapter to see its keywords:`, options);
+        }
+        const [kws] = await db.query(
+            `SELECT k.term, k.definition
+               FROM syllabus_keywords k
+               JOIN syllabus_chapters c ON c.id = k.chapter_id
+               JOIN syllabus s ON s.id = c.syllabus_id
+              WHERE k.chapter_id = ? AND s.institutionId = ?
+              ORDER BY k.term`, [chapterId, institutionId]);
+        const chTitle = (await db.query('SELECT title FROM syllabus_chapters WHERE id = ?', [chapterId]))[0][0]?.title || 'chapter';
+        if (!kws.length) return reply(`No keywords added for ${chTitle} yet.`);
+        const lines = kws.map((k, i) => `${i + 1}. ${k.term}${k.definition ? ` — ${k.definition}` : ''}`);
+        return reply(`Keywords — ${chTitle} (${kws.length}):\n${lines.join('\n')}`);
+    }
+
+    return null;
 }
 
 
