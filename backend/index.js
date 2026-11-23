@@ -17679,13 +17679,13 @@ app.get('/api/admin/online-count/:instId', async (req, res) => {
 
 
 
-// SMARTY — backend block. Paste into index.js after db, sameTenant,
-// resolveYearId, createNotifications exist (near the Notifications section).
-//
+
 //  ---------------------------------------------------------------------
 //  RUN ONCE (MySQL). Browse-by-module adds live_query to smarty_questions:
 //    ALTER TABLE smarty_questions ADD COLUMN live_query VARCHAR(255) NULL;
 //  ---------------------------------------------------------------------
+// SMARTY — backend block. Paste into index.js after db, sameTenant,
+// resolveYearId, createNotifications exist (near the Notifications section).
 //  CREATE TABLE IF NOT EXISTS smarty_questions (
 //    id INT AUTO_INCREMENT PRIMARY KEY, institutionId INT NOT NULL,
 //    category VARCHAR(80), question VARCHAR(255) NOT NULL, answer TEXT NOT NULL,
@@ -17699,21 +17699,6 @@ app.get('/api/admin/online-count/:instId', async (req, res) => {
 //    title VARCHAR(160) NOT NULL, body TEXT NOT NULL, link VARCHAR(80),
 //    roles VARCHAR(120) DEFAULT 'all', is_active TINYINT(1) DEFAULT 1,
 //    created_by INT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP );
-//
-//  CREATE TABLE IF NOT EXISTS smarty_update_reads (
-//    update_id INT NOT NULL, user_id INT NOT NULL,
-//    PRIMARY KEY (update_id, user_id) );
-//
-//  CREATE TABLE IF NOT EXISTS smarty_ai_config (
-//    institutionId INT PRIMARY KEY, provider VARCHAR(40) DEFAULT 'gemini',
-//    api_key TEXT, model VARCHAR(80), enabled TINYINT(1) DEFAULT 0,
-//    updated_by INT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP );
-//
-//  CREATE TABLE IF NOT EXISTS smarty_ai_cache (
-//    id INT AUTO_INCREMENT PRIMARY KEY, institutionId INT NOT NULL,
-//    q_hash CHAR(64) NOT NULL, question TEXT, answer MEDIUMTEXT,
-//    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-//    UNIQUE KEY uq_inst_q (institutionId, q_hash) );
 // =====================================================================
 
 const _smartyCrypto = require('crypto');
@@ -18434,61 +18419,6 @@ app.post('/api/smarty/ask', async (req, res) => {
 //  (it reuses db, sameTenant, _smartyIsAdmin from there). It needs the
 //  Syllabus tables (syllabus, syllabus_chapters, syllabus_keywords,
 //  syllabus_library_folders, syllabus_library_files) that already exist.
-//
-//  WHAT IT DOES
-//    • Extracts text from every uploaded textbook chapter (PDF), every
-//      keyword, and every Library file (PDF / Word / Excel) and stores it
-//      in smarty_doc_chunks, tagged with syllabus type + class + subject.
-//    • SCANNED books (image-only PDFs, e.g. SCERT) have NO text layer, so
-//      those pages are run through LOCAL OCR (Tesseract, no AI, no quota)
-//      to turn the pictures into searchable text. OCR text is cached in
-//      smarty_ocr_text so it only runs ONCE per chapter.
-//    • /smarty/ask (in the main block) then searches those chunks, scoped
-//      to the asker's role/class. WITHOUT AI it answers straight from the
-//      book; WITH AI it grounds the AI answer in them.
-//
-//  RUN ONCE (MySQL):
-//    CREATE TABLE IF NOT EXISTS smarty_doc_chunks (
-//      id INT AUTO_INCREMENT PRIMARY KEY,
-//      institutionId INT NOT NULL,
-//      source_type VARCHAR(20) NOT NULL,      -- 'chapter' | 'keyword' | 'library'
-//      source_id INT NOT NULL,
-//      syllabus_type_id INT NULL,
-//      class_id INT NULL,
-//      subject_id INT NULL,
-//      title VARCHAR(300),
-//      content MEDIUMTEXT,
-//      page_from INT NULL, page_to INT NULL,
-//      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-//      KEY idx_scope (institutionId, class_id, subject_id, syllabus_type_id),
-//      FULLTEXT KEY ft_content (title, content)
-//    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-//
-//    CREATE TABLE IF NOT EXISTS smarty_ocr_text (
-//      source_type VARCHAR(20) NOT NULL,      -- 'chapter' | 'library'
-//      source_id INT NOT NULL,
-//      institutionId INT NOT NULL,
-//      pages INT DEFAULT 0,
-//      text LONGTEXT,
-//      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-//      PRIMARY KEY (source_type, source_id)
-//    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-//
-//  INSTALL — OCR for scanned books (no AI). TWO engines, native preferred:
-//    BEST (native, fast, reliable): install the system programs
-//        tesseract-ocr  +  poppler-utils
-//      On Railway (Nixpacks): drop the included  nixpacks.toml  in the backend
-//      root and redeploy. On a Dockerfile:  RUN apt-get update && apt-get
-//      install -y tesseract-ocr poppler-utils.
-//    FALLBACK (pure WASM, no system packages, slower/heavier):
-//        npm install mupdf tesseract.js --save
-//    Word/Excel library files (optional):  npm install mammoth xlsx --save
-//
-//    Smarty auto-detects: it uses native if present, else WASM, else text-only.
-//    Check  /api/smarty/rag/status  -> "ocrEngine": "native" | "wasm" | "none".
-//    Env knobs:  SMARTY_OCR_LANG (default "eng", e.g. "eng+tel"),
-//                SMARTY_OCR_DPI  (default 200).
-//
 //  AFTER PASTING: as Super Admin, POST /api/smarty/rag/reindex once to index
 //  everything already uploaded. It runs in the BACKGROUND — poll
 //  /api/smarty/rag/status to watch progress (OCR of a big scanned book takes
@@ -19067,8 +18997,16 @@ async function _smartyLiveAnswer(institutionId, question, asker) {
       const lib = await _liveLibrary(institutionId, q, asker);
       if (lib) return lib;
     }
+        if (/\btimetable\b|which subject.*(day|period)/.test(q)) {
+      const tt = await _liveTimetable(institutionId, q, asker);
+      if (tt) return tt;
+    }
+        if (/\battendance\b|present.*absent|\bunmarked\b|below .*(50|threshold)|roles enabled for attendance/.test(q)) {
+      const att = await _liveAttendance(institutionId, q, asker);
+      if (att) return att;
+    }
   if (/\bworking days?\b/.test(q) || ((/\bperiods?\b|\bbreaks?\b/.test(q)) && /\btimetable\b|\btimings?\b|\bbreak\b/.test(q))) {
-    const tt = await _liveTimetable(institutionId, q, asker);
+    const tt = await _liveTimetableAsk(institutionId, q, asker); // [FIX] fallback = old count/free-text resolver (renamed from _liveTimetable)
     if (tt) return tt;
   }
   if (/\b(study material|study materials|materials?|worksheets?|notes|presentations?|video lectures?)\b/.test(q)
@@ -19076,7 +19014,7 @@ async function _smartyLiveAnswer(institutionId, question, asker) {
     return _liveMaterials(institutionId, q, asker);
   }
   if (/\battendance\b|\bpresent\b|\babsent\b/.test(q)) {
-    return _liveAttendance(institutionId, q, asker);
+    return _liveAttendanceAsk(institutionId, q, asker); // [FIX] fallback = old count/free-text resolver (renamed from _liveAttendance)
   }
   if (/\bhomework\b|\bassignments?\b/.test(q)) {
     return _liveHomework(institutionId, q, asker);
@@ -19132,11 +19070,11 @@ async function _smartyLiveAnswer(institutionId, question, asker) {
     if (sm) return sm;
   }
   if (/\blibrary\b/.test(q) && /\bonline\b|\bphysical\b|\boffline\b|\boverdue\b|\bbooks?\b|\bhow many\b|\bissued\b|\bcatalogue?\b|\bdigital\b|\be[- ]?books?\b/.test(q)) {
-    const lib = await _liveLibrary(institutionId, q, asker);
+    const lib = await _liveLibraryAsk(institutionId, q, asker); // [FIX] fallback = old count/free-text resolver (renamed from _liveLibrary)
     if (lib) return lib;
   }
   if (/\bchapters?\b|\blessons?\b|\bperiods?\b|\bsubjects?\b/.test(q) && !/\blesson plan\b/.test(q)) {
-    return _liveSyllabus(institutionId, q, asker);
+    return _liveSyllabusAsk(institutionId, q, asker); // [FIX] fallback = old count/free-text resolver (renamed from _liveSyllabus)
   }
   return null;
 }
@@ -19930,6 +19868,315 @@ async function _liveLibrary(institutionId, q, asker) {
     return reply(lead, opts);
 }
 
+// =====================================================================
+//  _liveTimetable — dynamic drill-down for the Timetable module
+//  Same pattern as the other _live* resolvers. Scoped to the ACTIVE year.
+async function _ttActiveYear(institutionId) {
+    const [r] = await db.execute(
+        'SELECT id, name FROM academic_years WHERE institutionId = ? AND isActive = 1 LIMIT 1', [institutionId]);
+    return r.length ? r[0] : null;
+}
+
+async function _liveTimetable(institutionId, q, asker) {
+    const text = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    if (/\b(how many|count|total|number of)\b/.test(text)) return null;
+
+    let intent = (text.match(/\btimetable (class|teacher|cell)\b/) || [])[1] || null;
+    if (!intent) {
+        if (/which subject|subject .*(day|period)|teacher for (a )?period|on a day and period/.test(text)) intent = 'cell';
+        else if (/teacher'?s timetable|timetable for a teacher|teacher timetable/.test(text)) intent = 'teacher';
+        else if (/timetable for a class|class timetable|weekly timetable|timetable for the class/.test(text)) intent = 'class';
+    }
+    if (!intent) return null;
+
+    const yr = await _ttActiveYear(institutionId);
+    const LINK = { link: 'timetable', linkLabel: 'Open Timetable' };
+    const reply = (answer, options) => ({ ok: true, source: 'smarty', live: true, answer, ...(options ? { options } : {}), ...LINK });
+    if (!yr) return reply('No active academic year, so the timetable is empty. Set one active under System Configuration → Academics Year.');
+
+    const base = (extra) => `timetable ${intent}${extra}`;
+    const classLabel = (c) => `${c.className || ''}${c.section ? ' - ' + c.section : ''}`.trim();
+    const fmtTime = (t) => { if (!t) return ''; const [h, m] = String(t).split(':'); const hh = parseInt(h, 10); if (isNaN(hh)) return ''; const ap = hh >= 12 ? 'PM' : 'AM'; const h12 = ((hh + 11) % 12) + 1; return `${h12}:${m || '00'} ${ap}`; };
+
+    const classId   = (text.match(/classid(\d+)/) || [])[1];
+    const teacherId = (text.match(/teacherid(\d+)/) || [])[1];
+    const dayId     = (text.match(/dayid(\d+)/) || [])[1];
+    const periodId  = (text.match(/periodid(\d+)/) || [])[1];
+
+    // shared loads
+    const loadDays = async () => {
+        const [d] = await db.query(
+            'SELECT id, day_name, day_index FROM timetable_days WHERE institutionId = ? AND academic_year_id = ? AND is_working = 1 ORDER BY day_index',
+            [institutionId, yr.id]);
+        return d;
+    };
+    const loadPeriods = async () => {
+        const [p] = await db.query(
+            'SELECT id, name, period_index, is_break, start_time, end_time FROM timetable_periods WHERE institutionId = ? AND academic_year_id = ? ORDER BY period_index',
+            [institutionId, yr.id]);
+        return p;
+    };
+
+    // ---- CLASS: pick a class → weekly grid -----------------------------
+    if (intent === 'class') {
+        if (!classId) {
+            const [classes] = await db.query('SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section', [institutionId]);
+            if (!classes.length) return reply('No classes created yet.');
+            classes.sort((a, b) => classLabel(a).localeCompare(classLabel(b), undefined, { numeric: true }));
+            return reply(`Which class's timetable? (${yr.name})`, classes.map(c => ({ label: classLabel(c), send: base(` classid${c.id}`) })));
+        }
+        const days = await loadDays(), periods = await loadPeriods();
+        if (!days.length || !periods.length) return reply('The bell schedule is not set up yet (Days & Periods).');
+        const [rows] = await db.query(
+            `SELECT e.day_id, e.period_id, s.name AS subject, t.name AS teacher, e.room_no
+               FROM timetable_entries e
+               LEFT JOIN subjects s ON s.id = e.subject_id
+               LEFT JOIN users t ON t.id = e.teacher_id
+              WHERE e.institutionId = ? AND e.academic_year_id = ? AND e.class_id = ?`,
+            [institutionId, yr.id, classId]);
+        const map = {}; rows.forEach(r => { map[`${r.day_id}-${r.period_id}`] = r; });
+        const [cl] = await db.query('SELECT className, section FROM classes WHERE id = ?', [classId]);
+        const name = cl.length ? classLabel(cl[0]) : `Class ${classId}`;
+        const lines = days.map(d => {
+            const cells = periods.map(p => {
+                if (p.is_break) return `${p.name}: break`;
+                const c = map[`${d.id}-${p.id}`];
+                if (!c || (!c.subject && !c.teacher)) return `${p.name}: —`;
+                return `${p.name}: ${c.subject || '—'}${c.teacher ? ' (' + c.teacher + ')' : ''}${c.room_no ? ' [Rm ' + c.room_no + ']' : ''}`;
+            });
+            return `${d.day_name} — ${cells.join(' · ')}`;
+        });
+        return reply(`Timetable for ${name} (${yr.name}):\n${lines.join('\n')}`);
+    }
+
+    // ---- TEACHER: pick a teacher → their weekly grid -------------------
+    if (intent === 'teacher') {
+        if (!teacherId) {
+            const [teachers] = await db.query(
+                "SELECT id, name FROM users WHERE institutionId = ? AND LOWER(role) LIKE '%teacher%' AND LOWER(COALESCE(status,'active')) = 'active' ORDER BY name",
+                [institutionId]);
+            if (!teachers.length) return reply('No teachers found.');
+            return reply(`Which teacher's timetable? (${yr.name})`, teachers.slice(0, 60).map(t => ({ label: t.name, send: base(` teacherid${t.id}`) })));
+        }
+        const days = await loadDays(), periods = await loadPeriods();
+        if (!days.length || !periods.length) return reply('The bell schedule is not set up yet (Days & Periods).');
+        const [rows] = await db.query(
+            `SELECT e.day_id, e.period_id, s.name AS subject, e.room_no,
+                    c.className, c.section
+               FROM timetable_entries e
+               LEFT JOIN subjects s ON s.id = e.subject_id
+               LEFT JOIN classes c ON c.id = e.class_id
+              WHERE e.institutionId = ? AND e.academic_year_id = ? AND e.teacher_id = ?`,
+            [institutionId, yr.id, teacherId]);
+        const map = {}; rows.forEach(r => { map[`${r.day_id}-${r.period_id}`] = r; });
+        const [tn] = await db.query('SELECT name FROM users WHERE id = ?', [teacherId]);
+        const name = tn.length ? tn[0].name : `Teacher ${teacherId}`;
+        const lines = days.map(d => {
+            const cells = periods.filter(p => !p.is_break).map(p => {
+                const c = map[`${d.id}-${p.id}`];
+                if (!c) return `${p.name}: free`;
+                const cls = c.className ? `${c.className}${c.section ? ' - ' + c.section : ''}` : '—';
+                return `${p.name}: ${cls}${c.subject ? ' (' + c.subject + ')' : ''}${c.room_no ? ' [Rm ' + c.room_no + ']' : ''}`;
+            });
+            return `${d.day_name} — ${cells.join(' · ')}`;
+        });
+        return reply(`${name}'s timetable (${yr.name}):\n${lines.join('\n')}`);
+    }
+
+    // ---- CELL: Class → Day → Period → the one slot ---------------------
+    if (intent === 'cell') {
+        if (!classId) {
+            const [classes] = await db.query('SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section', [institutionId]);
+            if (!classes.length) return reply('No classes created yet.');
+            classes.sort((a, b) => classLabel(a).localeCompare(classLabel(b), undefined, { numeric: true }));
+            return reply('Pick a class:', classes.map(c => ({ label: classLabel(c), send: base(` classid${c.id}`) })));
+        }
+        if (!dayId) {
+            const days = await loadDays();
+            if (!days.length) return reply('No working days are set up yet.');
+            return reply('Pick a day:', days.map(d => ({ label: d.day_name, send: base(` classid${classId} dayid${d.id}`) })));
+        }
+        if (!periodId) {
+            const periods = await loadPeriods();
+            const teaching = periods.filter(p => !p.is_break);
+            if (!teaching.length) return reply('No periods are set up yet.');
+            return reply('Pick a period:', teaching.map(p => ({ label: `${p.name} (${fmtTime(p.start_time)}–${fmtTime(p.end_time)})`, send: base(` classid${classId} dayid${dayId} periodid${p.id}`) })));
+        }
+        const [rows] = await db.query(
+            `SELECT s.name AS subject, t.name AS teacher, e.room_no
+               FROM timetable_entries e
+               LEFT JOIN subjects s ON s.id = e.subject_id
+               LEFT JOIN users t ON t.id = e.teacher_id
+              WHERE e.institutionId = ? AND e.academic_year_id = ? AND e.class_id = ? AND e.day_id = ? AND e.period_id = ?
+              LIMIT 1`,
+            [institutionId, yr.id, classId, dayId, periodId]);
+        const [cl] = await db.query('SELECT className, section FROM classes WHERE id = ?', [classId]);
+        const [dn] = await db.query('SELECT day_name FROM timetable_days WHERE id = ?', [dayId]);
+        const [pn] = await db.query('SELECT name FROM timetable_periods WHERE id = ?', [periodId]);
+        const where = `${cl.length ? classLabel(cl[0]) : 'that class'} · ${dn.length ? dn[0].day_name : 'that day'} · ${pn.length ? pn[0].name : 'that period'}`;
+        if (!rows.length || (!rows[0].subject && !rows[0].teacher)) return reply(`${where}: nothing scheduled (free period).`);
+        const c = rows[0];
+        return reply(`${where}: ${c.subject || '—'}${c.teacher ? ' — ' + c.teacher : ''}${c.room_no ? ' · Room ' + c.room_no : ''}.`);
+    }
+
+    return null;
+}
+
+// =====================================================================
+//  _liveAttendance — dynamic drill-down for the Attendance module
+//  Same pattern as the other _live* resolvers. Scoped to the ACTIVE year.
+async function _attActiveYear(institutionId) {
+    const [r] = await db.execute(
+        'SELECT id, name FROM academic_years WHERE institutionId = ? AND isActive = 1 LIMIT 1', [institutionId]);
+    return r.length ? r[0] : null;
+}
+
+async function _liveAttendance(institutionId, q, asker) {
+    const text = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+    // staff only
+    const role = (typeof asker === 'string' ? asker : (asker && (asker.role || asker.roleName)) || '').toLowerCase();
+    if (role === 'student' || role === 'parent') return null;
+
+    // Direct count questions ("how many present in Class 5 today") are answered
+    // by the existing live resolver — don't hijack them into a drill-down.
+    if (/\b(how many|count|number of|no\.? of)\b/.test(text)) return null;
+
+    let intent = (text.match(/\battendance (today|monthly|yearly|range|threshold|roles)\b/) || [])[1] || null;
+    if (!intent) {
+        if (/roles? (are )?enabled|enabled roles?|which roles/.test(text)) intent = 'roles';
+        else if (/below .*(threshold|50)|low attendance|attendance below/.test(text)) intent = 'threshold';
+        else if (/date range|date-range|custom range|for a range/.test(text)) intent = 'range';
+        else if (/yearly|for a year|whole year/.test(text)) intent = 'yearly';
+        else if (/monthly|for a month|this month/.test(text)) intent = 'monthly';
+        else if (/present,? absent|unmarked|attendance for a class|daily history|class and date|present in/.test(text)) intent = 'today';
+    }
+    if (!intent) return null;
+
+    const LINK = { link: 'attendance', linkLabel: 'Open Attendance' };
+    const reply = (answer, options) => ({ ok: true, source: 'smarty', live: true, answer, ...(options ? { options } : {}), ...LINK });
+
+    // ---- ROLES: direct answer, no drill -------------------------------
+    if (intent === 'roles') {
+        const [rows] = await db.query(
+            `SELECT r.role_name, COALESCE(ars.eligible, 1) AS eligible
+               FROM roles r
+               LEFT JOIN attendance_role_settings ars ON ars.role_id = r.id AND ars.institutionId = r.institutionId
+              WHERE r.institutionId = ?
+                AND LOWER(TRIM(r.role_name)) <> 'student'
+                AND LOWER(TRIM(r.role_name)) NOT LIKE '%teacher%'
+              ORDER BY r.role_name`, [institutionId]);
+        const on = rows.filter(r => Number(r.eligible) === 1).map(r => r.role_name);
+        const off = rows.filter(r => Number(r.eligible) !== 1).map(r => r.role_name);
+        let ans = 'Attendance is always taken for **Students** and **Teachers**.';
+        if (on.length) ans += `\nAlso enabled: ${on.join(', ')}.`;
+        if (off.length) ans += `\nNot enabled: ${off.join(', ')}.`;
+        if (!on.length && !off.length) ans += '\nNo other roles are configured.';
+        return reply(ans);
+    }
+
+    const yr = await _attActiveYear(institutionId);
+    if (!yr) return reply('No active academic year. Set one active under System Configuration → Academics Year.');
+
+    const classLabel = (c) => `${c.className || ''}${c.section ? ' - ' + c.section : ''}`.trim();
+    const classId = (text.match(/classid(\d+)/) || [])[1];
+
+    // every remaining intent drills to a class first
+    if (!classId) {
+        const [classes] = await db.query('SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section', [institutionId]);
+        if (!classes.length) return reply('No classes created yet.');
+        classes.sort((a, b) => classLabel(a).localeCompare(classLabel(b), undefined, { numeric: true }));
+        const lead = {
+            today: "Which class's attendance today?",
+            monthly: 'Which class — this month?',
+            yearly: `Which class — ${yr.name}?`,
+            range: 'Which class — last 30 days?',
+            threshold: 'Which class to check for low attendance?'
+        }[intent] || 'Pick a class:';
+        return reply(lead, classes.map(c => ({ label: classLabel(c), send: `attendance ${intent} classid${c.id}` })));
+    }
+
+    // active students of this class
+    const [students] = await db.query(
+        `SELECT id, name, roll_no FROM users
+          WHERE institutionId = ? AND LOWER(TRIM(role)) = 'student' AND class_id = ?
+            AND (status IS NULL OR LOWER(TRIM(status)) = 'active')`, [institutionId, classId]);
+    const [cl] = await db.query('SELECT className, section FROM classes WHERE id = ?', [classId]);
+    const clName = cl.length ? classLabel(cl[0]) : `Class ${classId}`;
+    if (!students.length) return reply(`No active students in ${clName}.`);
+    const ids = students.map(s => s.id);
+    const ph = ids.map(() => '?').join(',');
+    const dmy = (d) => { const x = new Date(d); const p = n => String(n).padStart(2, '0'); return `${p(x.getDate())}/${p(x.getMonth() + 1)}/${x.getFullYear()}`; };
+
+    // ---- TODAY: present / absent / unmarked ---------------------------
+    if (intent === 'today') {
+        const today = new Date().toISOString().slice(0, 10);
+        const [t] = await db.query(
+            `SELECT SUM(status='P') AS p, SUM(status='A') AS a, COUNT(*) AS t
+               FROM attendance
+              WHERE academic_year_id = ? AND attendance_date = ? AND user_id IN (${ph})`,
+            [yr.id, today, ...ids]);
+        const p = Number(t[0]?.p || 0), a = Number(t[0]?.a || 0), marked = Number(t[0]?.t || 0);
+        const unmarked = students.length - marked;
+        if (marked === 0) return reply(`${clName} — today (${dmy(today)}): not marked yet. ${students.length} students.`);
+        return reply(`${clName} — today (${dmy(today)}): ${p} present, ${a} absent, ${unmarked} unmarked (${students.length} students).`);
+    }
+
+    // helper: summary over a date window (or whole year when from/to null)
+    const windowSummary = async (from, to) => {
+        let where = `academic_year_id = ? AND user_id IN (${ph})`;
+        const params = [yr.id, ...ids];
+        if (from && to) { where += ' AND attendance_date BETWEEN ? AND ?'; params.push(from, to); }
+        const [wd] = await db.query(`SELECT COUNT(DISTINCT attendance_date) AS d FROM attendance WHERE ${where}`, params);
+        const [tot] = await db.query(`SELECT SUM(status='P') AS p, COUNT(*) AS t FROM attendance WHERE ${where}`, params);
+        const days = Number(wd[0]?.d || 0), present = Number(tot[0]?.p || 0), marks = Number(tot[0]?.t || 0);
+        const pct = marks > 0 ? Math.round((present / marks) * 1000) / 10 : 0;
+        return { days, present, marks, pct };
+    };
+
+    if (intent === 'monthly' || intent === 'yearly' || intent === 'range') {
+        let from = null, to = null, label = yr.name;
+        if (intent === 'monthly') {
+            const now = new Date(); const y = now.getFullYear(), m = now.getMonth();
+            const last = new Date(y, m + 1, 0).getDate();
+            from = `${y}-${String(m + 1).padStart(2, '0')}-01`;
+            to = `${y}-${String(m + 1).padStart(2, '0')}-${String(last).padStart(2, '0')}`;
+            label = now.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+        } else if (intent === 'range') {
+            const end = new Date(); const start = new Date(); start.setDate(start.getDate() - 30);
+            from = start.toISOString().slice(0, 10); to = end.toISOString().slice(0, 10);
+            label = `${dmy(from)} – ${dmy(to)}`;
+        }
+        const s = await windowSummary(from, to);
+        if (!s.marks) return reply(`${clName} — ${label}: no attendance recorded yet.`);
+        return reply(`${clName} — ${label}: ${s.pct}% average attendance, ${s.days} day${s.days === 1 ? '' : 's'} marked (${s.present} present of ${s.marks} marks across ${students.length} students).`);
+    }
+
+    // ---- THRESHOLD: students below 50% over the active year -----------
+    if (intent === 'threshold') {
+        const [wd] = await db.query(
+            `SELECT COUNT(DISTINCT attendance_date) AS d FROM attendance WHERE academic_year_id = ? AND user_id IN (${ph})`,
+            [yr.id, ...ids]);
+        const workingDays = Number(wd[0]?.d || 0);
+        if (!workingDays) return reply(`${clName}: no attendance recorded yet this year.`);
+        const [pu] = await db.query(
+            `SELECT user_id, SUM(status='P') AS p FROM attendance WHERE academic_year_id = ? AND user_id IN (${ph}) GROUP BY user_id`,
+            [yr.id, ...ids]);
+        const presentBy = {}; pu.forEach(r => { presentBy[r.user_id] = Number(r.p || 0); });
+        const low = students.map(s => {
+            const present = presentBy[s.id] || 0;
+            return { name: s.name, roll: s.roll_no, pct: workingDays > 0 ? Math.round((present / workingDays) * 1000) / 10 : 0 };
+        }).filter(s => s.pct < 50).sort((a, b) => a.pct - b.pct);
+        if (!low.length) return reply(`${clName}: every student is at 50% or above over ${workingDays} marked days. 🎉`);
+        const SHOW = 30;
+        const lines = low.slice(0, SHOW).map((s, i) => `${i + 1}. ${s.name}${s.roll ? ` (Roll ${s.roll})` : ''} — ${s.pct}%`);
+        const more = low.length > SHOW ? `\n…and ${low.length - SHOW} more.` : '';
+        return reply(`${clName} — ${low.length} student${low.length === 1 ? '' : 's'} below 50% (of ${workingDays} marked days):\n${lines.join('\n')}${more}`);
+    }
+
+    return null;
+}
+
 
 // -------------------------------------------------------------------
 //  Module names are CONFIRMED against Modules.js (permissions match).
@@ -20127,7 +20374,15 @@ async function _liveLabs(institutionId, q, asker) {
 }
 
 // ===== SYLLABUS (chapters / periods / subjects for a class + subject) =====
-async function _liveSyllabus(institutionId, q, asker) {
+// =====================================================================
+//  [FIX - DUPLICATE NAME RESOLVED]  Renamed  _liveSyllabus  ->  _liveSyllabusAsk
+//  This is the ORIGINAL free-text / COUNT resolver (e.g. "how many chapters in Class 5 Science").
+//  It used to share the name _liveSyllabus with the NEW drill-down resolver
+//  defined higher up in this file, which silently overrode it. It is now
+//  renamed to _liveSyllabusAsk and the dispatcher calls it only as a FALLBACK
+//  (after the drill-down returns null for count-style questions).
+// =====================================================================
+async function _liveSyllabusAsk(institutionId, q, asker) {
   if (!(await _smartyCan(asker, institutionId, 'Syllabus'))) return null;
   const wantChapters = /\bchapters?\b|\blessons?\b/.test(q);
   const wantPeriods  = /\bperiods?\b/.test(q);
@@ -20185,7 +20440,15 @@ async function _liveSyllabus(institutionId, q, asker) {
 //  Online book count/list: admin + students (Library read). Physical stock
 //  and overdue loans: privileged only. Book-level and issue/return actions
 //  stay on the Library screen.
-async function _liveLibrary(institutionId, q, asker) {
+// =====================================================================
+//  [FIX - DUPLICATE NAME RESOLVED]  Renamed  _liveLibrary  ->  _liveLibraryAsk
+//  This is the ORIGINAL free-text / COUNT resolver (e.g. "how many books in the online library").
+//  It used to share the name _liveLibrary with the NEW drill-down resolver
+//  defined higher up in this file, which silently overrode it. It is now
+//  renamed to _liveLibraryAsk and the dispatcher calls it only as a FALLBACK
+//  (after the drill-down returns null for count-style questions).
+// =====================================================================
+async function _liveLibraryAsk(institutionId, q, asker) {
   if (!(await _smartyCan(asker, institutionId, 'Library'))) return null;
   const role = (asker.role || '').toLowerCase();
   const isPriv = role === 'developer' || role === 'super admin' || role.includes('admin');
@@ -20228,7 +20491,15 @@ async function _liveLibrary(institutionId, q, asker) {
 //  Working days and the period/break grid are institution + active-year
 //  settings (no selection needed), so Smarty answers them directly. Class-
 //  and teacher-specific timetables stay on the Timetable screen.
-async function _liveTimetable(institutionId, q, asker) {
+// =====================================================================
+//  [FIX - DUPLICATE NAME RESOLVED]  Renamed  _liveTimetable  ->  _liveTimetableAsk
+//  This is the ORIGINAL free-text / COUNT resolver (e.g. "show the configured working days").
+//  It used to share the name _liveTimetable with the NEW drill-down resolver
+//  defined higher up in this file, which silently overrode it. It is now
+//  renamed to _liveTimetableAsk and the dispatcher calls it only as a FALLBACK
+//  (after the drill-down returns null for count-style questions).
+// =====================================================================
+async function _liveTimetableAsk(institutionId, q, asker) {
   if (!(await _smartyCan(asker, institutionId, 'Timetable'))) return null;
   const yearId = await resolveYearId(institutionId);
   if (!yearId) return { answer: 'No active academic year is set yet, so the timetable configuration is not available.' };
@@ -20315,7 +20586,15 @@ async function _liveMaterials(institutionId, q, asker) {
 //  Students & parents get NOTHING about others here (their own stays on the
 //  live attendance card). Teachers → only the classes they teach. Any class
 //  needs Super Admin / Developer, or a role with Attendance EDIT.
-async function _liveAttendance(institutionId, q, asker) {
+// =====================================================================
+//  [FIX - DUPLICATE NAME RESOLVED]  Renamed  _liveAttendance  ->  _liveAttendanceAsk
+//  This is the ORIGINAL free-text / COUNT resolver (e.g. "how many present in Class 5 today").
+//  It used to share the name _liveAttendance with the NEW drill-down resolver
+//  defined higher up in this file, which silently overrode it. It is now
+//  renamed to _liveAttendanceAsk and the dispatcher calls it only as a FALLBACK
+//  (after the drill-down returns null for count-style questions).
+// =====================================================================
+async function _liveAttendanceAsk(institutionId, q, asker) {
   const role = (asker.role || '').toLowerCase();
   const isPriv = role === 'developer' || role === 'super admin';
   const isTeacher = role.includes('teacher');
@@ -21379,15 +21658,6 @@ app.post('/api/smarty/cache/clear', async (req, res) => {
 //  AUTO-INDEX HOOKS (optional — keeps the index fresh without a rebuild)
 //  Add these ONE-LINERS inside your existing Section 22 syllabus routes,
 //  right before each `res.json({ success: true ... })`:
-//
-//    • After a textbook upload (PUT /syllabus/:id/book), once chapters are
-//      inserted, loop the new chapter ids (OCR runs in the background):
-//        const [chs] = await db.execute('SELECT id FROM syllabus_chapters WHERE syllabus_id = ?', [syllabusId]);
-//        for (const c of chs) { ragIndexChapter(c.id).catch(()=>{}); }
-//    • After create/edit chapter:         ragIndexChapter(id).catch(()=>{});
-//    • After add/delete keyword:          ragIndexChapterKeywords(chapterId).catch(()=>{});
-//    • After a library file upload:       ragIndexLibraryFile(fileId).catch(()=>{});
-//
 //  They're safe to call fire-and-forget. If you skip them, just press
 //  "Rebuild book index" in Smarty → Smarty AI after adding material.
 // =====================================================================
