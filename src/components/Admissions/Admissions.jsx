@@ -91,7 +91,7 @@ export default function AdmissionsScreen() {
       const params = new URLSearchParams();
       if (searchText) params.append('search', searchText);
       if (filterStatus) params.append('status', filterStatus);
-      if (filterYear && filterYear !== 'all') params.append('year', filterYear);
+      if (filterYear && filterYear !== 'all') params.append('academic_year_id', filterYear);
       const res = await fetch(`${API_BASE_URL}/admin/admissions/${user.institutionId}?${params.toString()}`);
       const records = await res.json();
       if (seq === reqSeq.current) setData(Array.isArray(records) ? records : []);
@@ -108,10 +108,10 @@ export default function AdmissionsScreen() {
       setClasses(d.classes || []);
     } catch (e) { console.error('meta load:', e); }
     // distinct calendar years present in admissions
-    try {
+        try {
       const res2 = await fetch(`${API_BASE_URL}/admin/admissions/${user.institutionId}/years`);
       const yr = await res2.json();
-      setYears(Array.isArray(yr) ? yr.map(String).filter(Boolean) : []);
+      setYears(Array.isArray(yr) ? yr : []);
     } catch (e) { console.error('years load:', e); }
   }, [user]);
 
@@ -122,17 +122,13 @@ export default function AdmissionsScreen() {
   // if there's nothing this year but earlier years have records, show the
   // most recent one.
   useEffect(() => {
-    if (filterYear) return;
-    if (years.includes(currentYear) || years.length === 0) setFilterYear(currentYear);
-    else setFilterYear(years[0]);
-  }, [years, filterYear, currentYear]);
+    if (filterYear || !years.length) return;
+    const active = years.find(y => y.isActive) || years[0];
+    if (active) setFilterYear(String(active.id));
+  }, [years, filterYear]);
 
   // Year dropdown: every year present, plus the current year, newest first.
-  const yearOptions = useMemo(() => {
-    const set = new Set(years);
-    set.add(currentYear);
-    return Array.from(set).sort((a, b) => Number(b) - Number(a));
-  }, [years, currentYear]);
+   const selYearName = (years.find(y => String(y.id) === String(filterYear)) || {}).name || '';
 
   // Keep the order /admin/data returns — it already follows the school-wide
   // class sort direction (ascending / descending), same as Pre-Admissions.
@@ -156,7 +152,7 @@ export default function AdmissionsScreen() {
     setDownloading(true);
     try {
       const params = new URLSearchParams();
-      params.set('year', filterYear || 'all');
+      params.set('academic_year_id', filterYear || 'all');
       if (filterStatus) params.set('status', filterStatus);
       const res = await fetch(`${API_BASE_URL}/admin/admissions/${user.institutionId}/export?${params.toString()}`);
       if (!res.ok) throw new Error('Could not generate the Excel file.');
@@ -164,7 +160,7 @@ export default function AdmissionsScreen() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `Admissions_${(filterYear === 'all' || !filterYear) ? 'AllYears' : filterYear}.xlsx`;
+            a.download = `Admissions_${(filterYear === 'all' || !selYearName) ? 'AllYears' : selYearName.replace(/[^a-z0-9\-]/gi, '_')}.xlsx`;
       document.body.appendChild(a); a.click(); a.remove();
       URL.revokeObjectURL(url);
     } catch (e) { alert(e.message || 'Download failed.'); }
@@ -265,9 +261,9 @@ export default function AdmissionsScreen() {
                   className="h-9 w-full bg-zinc-50/50 border border-transparent rounded-md pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:bg-white transition-colors placeholder:text-zinc-400" />
               </div>
               <div className="relative shrink-0">
-                <select value={filterYear} onChange={e => { setFilterYear(e.target.value); setSelectedItem(null); }}
-                  className="h-9 bg-zinc-50/50 border border-transparent rounded-md pl-3 pr-8 text-sm font-semibold text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer appearance-none max-w-[150px]">
-                  {yearOptions.map(y => (<option key={y} value={y}>{y}</option>))}
+                  <select value={filterYear} onChange={e => { setFilterYear(e.target.value); setSelectedItem(null); }}
+                  className="h-9 bg-zinc-50/50 border border-transparent rounded-md pl-3 pr-8 text-sm font-semibold text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer appearance-none max-w-[170px]">
+                  {years.map(y => (<option key={y.id} value={String(y.id)}>{y.name}{y.isActive ? ' (current)' : ''}</option>))}
                   <option value="all">All Years</option>
                 </select>
                 <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />

@@ -9302,40 +9302,43 @@ app.delete('/api/admin/labs/:id', async (req, res) => {
 
 
 // =====================================================================
-// === 23. PRE-ADMISSIONS  →  ADMISSIONS  (TENANT-SCOPED) ==============
-//
-//   One table (pre_admissions); `status` decides the module:
-//     • Pending            → Pre-Admissions module
-//     • Approved/Rejected  → Admissions module
-//
-//   Approve/Reject stamps the record and moves it to Admissions:
-//     status, verified_by, verified_at, and admission_year = the plain
-//     CALENDAR YEAR of the decision (e.g. 2026). admission_year is a plain
-//     number, NOT linked to the academic_years table, so deleting an
-//     academic year never affects these records.
+// === 23. PRE-ADMISSIONS → ADMISSIONS  (now keyed by ACADEMIC YEAR) ====
 //
 //   REPLACE YOUR WHOLE SECTION 23 WITH THIS.
 //
-//   >>> SQL — run once <<<
-//     ALTER TABLE `pre_admissions` DROP COLUMN `academic_year`;   -- if you added it
-//     ALTER TABLE `pre_admissions` ADD COLUMN `admission_year` INT DEFAULT NULL;
+//   What changed vs the old (calendar-year) version:
+//     • Records now carry `academic_year_id` (FK → academic_years), set to
+//       the institution's ACTIVE academic year on create and on decide.
+//     • The year dropdowns and all year filters use academic years
+//       (e.g. "2026-2027"), not plain calendar years.
+//     • `admission_year` (the old INT calendar year) is still written for
+//       backward compatibility, but it is no longer what filtering uses.
 //
-//   Uses sameTenant(). created_by/verified_by/updated_by are audit columns.
+//   >>> SQL — run ONCE, before deploying (see the patch doc). <<<
+//     ALTER TABLE pre_admissions ADD COLUMN academic_year_id INT DEFAULT NULL;
+//     UPDATE pre_admissions pa
+//       JOIN academic_years ay ON ay.institutionId = pa.institutionId AND ay.isActive = 1
+//        SET pa.academic_year_id = ay.id;
 // =====================================================================
 
+// Active academic year id for an institution (or null).
+async function _admActiveYearId(instId) {
+    const [r] = await db.execute(
+        'SELECT id FROM academic_years WHERE institutionId = ? AND isActive = 1 LIMIT 1', [instId]);
+    return r.length ? r[0].id : null;
+}
 
-// --- 23.0 Distinct submission years (Pre-Admissions year dropdown) ---
+// --- 23.0 Academic years for the dropdown (newest first, active flagged) ---
 app.get('/api/admin/preadmissions/:instId/years', async (req, res) => {
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     try {
         const [rows] = await db.query(
-            `SELECT DISTINCT YEAR(submission_date) AS yr
-               FROM pre_admissions
-              WHERE institutionId = ? AND submission_date IS NOT NULL
-              ORDER BY yr DESC`, [instId]);
-        res.status(200).json(rows.map(r => r.yr).filter(Boolean));
+            `SELECT id, name, isActive FROM academic_years
+              WHERE institutionId = ?
+              ORDER BY isActive DESC, startDate DESC, id DESC`, [instId]);
+        res.status(200).json(rows);
     } catch (error) {
-        res.status(500).json({ message: "Failed to fetch submission years." });
+        res.status(500).json({ message: "Failed to fetch academic years." });
     }
 });
 
@@ -9343,7 +9346,8 @@ app.get('/api/admin/preadmissions/:instId/years', async (req, res) => {
 // --- 23.1 Pre-Admissions list — PENDING only ------------------------
 app.get('/api/admin/preadmissions/:instId', async (req, res) => {
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
-    const { search, year } = req.query;
+    const { search } = req.query;
+    const yearId = req.query.academic_year_id;
     const roleName = req.auth.role;
     try {
         const isSystemAdmin = (roleName === 'Super Admin' || roleName === 'Developer');
@@ -9357,15 +9361,17 @@ app.get('/api/admin/preadmissions/:instId', async (req, res) => {
 
         const whereClauses = ["pa.institutionId = ?", "pa.status = 'Pending'"];
         const queryParams = [instId];
-        const yr = parseInt(year, 10);
-        if (year && year !== 'all' && !isNaN(yr)) { whereClauses.push("YEAR(pa.submission_date) = ?"); queryParams.push(yr); }
+        const yid = parseInt(yearId, 10);
+        if (yearId && yearId !== 'all' && !isNaN(yid)) { whereClauses.push("pa.academic_year_id = ?"); queryParams.push(yid); }
         if (search) {
             whereClauses.push("(pa.student_name LIKE ? OR pa.admission_no LIKE ? OR pa.previous_institute LIKE ?)");
             const t = `%${search}%`; queryParams.push(t, t, t);
         }
         const [records] = await db.query(`
-            SELECT pa.*, cu.name AS created_by_name, vu.name AS verified_by_name, uu.name AS updated_by_name
+            SELECT pa.*, ay.name AS academic_year_name,
+                   cu.name AS created_by_name, vu.name AS verified_by_name, uu.name AS updated_by_name
               FROM pre_admissions pa
+              LEFT JOIN academic_years ay ON ay.id = pa.academic_year_id
               LEFT JOIN users cu ON cu.id = pa.created_by
               LEFT JOIN users vu ON vu.id = pa.verified_by
               LEFT JOIN users uu ON uu.id = pa.updated_by
@@ -9392,14 +9398,16 @@ app.post('/api/admin/preadmissions', async (req, res) => {
     const verified_by = decided ? created_by : null;
     const verified_at = decided ? new Date() : null;
     const admission_year = decided ? new Date().getFullYear() : null;
+    const academic_year_id = await _admActiveYearId(fields.institutionId);   // stamp active year
 
     const query = `
         INSERT INTO pre_admissions (
             institutionId, admission_no, student_name, photo_url, dob, pen_no, phone_no, aadhar_no,
             parent_name, parent_phone, previous_institute, previous_grade, joining_grade,
             school_joined_date, school_joined_grade, school_outgoing_date, school_outgoing_grade,
-            tc_issued_date, tc_number, address, status, created_by, verified_by, verified_at, admission_year
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+            tc_issued_date, tc_number, address, status, created_by, verified_by, verified_at,
+            admission_year, academic_year_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
     const v = (val) => (val === '' || val === 'null' || val === undefined ? null : val);
     const params = [
         fields.institutionId, fields.admission_no, fields.student_name, fields.photo_url || null,
@@ -9407,7 +9415,8 @@ app.post('/api/admin/preadmissions', async (req, res) => {
         v(fields.parent_name), v(fields.parent_phone), v(fields.previous_institute), v(fields.previous_grade),
         fields.joining_grade, v(fields.school_joined_date), v(fields.school_joined_grade),
         v(fields.school_outgoing_date), v(fields.school_outgoing_grade), v(fields.tc_issued_date),
-        v(fields.tc_number), v(fields.address), startStatus, created_by, verified_by, verified_at, admission_year
+        v(fields.tc_number), v(fields.address), startStatus, created_by, verified_by, verified_at,
+        admission_year, academic_year_id
     ];
     try {
         await db.query(query, params);
@@ -9422,8 +9431,6 @@ app.post('/api/admin/preadmissions', async (req, res) => {
 
 
 // --- 23.3 Update a record (used by BOTH screens) --------------------
-//   Stamps the editor; keeps admission_year in sync with status
-//   (set on first move to decided; cleared when moved back to Pending).
 app.put('/api/admin/preadmissions/:id', async (req, res) => {
     const { id } = req.params;
     const fields = req.body;
@@ -9444,12 +9451,19 @@ app.put('/api/admin/preadmissions/:id', async (req, res) => {
     });
     try {
         const [own] = await db.execute(
-            'SELECT institutionId, status, created_by, admission_year FROM pre_admissions WHERE id = ?', [id]);
+            'SELECT institutionId, status, created_by, admission_year, academic_year_id FROM pre_admissions WHERE id = ?', [id]);
         if (own.length === 0) return res.status(404).json({ message: "Record not found." });
         if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ message: "This record belongs to another institution." });
 
         if (own[0].created_by === null || own[0].created_by === undefined) {
             setClauses.push('created_by = ?'); params.push(req.auth.userId);
+        }
+
+        // Make sure every record ends up with an academic year (back-fill on edit
+        // if it somehow has none).
+        if (own[0].academic_year_id == null) {
+            const yid = await _admActiveYearId(own[0].institutionId);
+            if (yid) { setClauses.push('academic_year_id = ?'); params.push(yid); }
         }
 
         if (fields.status !== undefined) {
@@ -9487,19 +9501,20 @@ app.patch('/api/admin/preadmissions/:id/decide', async (req, res) => {
         return res.status(400).json({ message: "status must be 'Approved' or 'Rejected'." });
     }
     try {
-        const [own] = await db.execute('SELECT institutionId, admission_year FROM pre_admissions WHERE id = ?', [id]);
+        const [own] = await db.execute('SELECT institutionId, admission_year, academic_year_id FROM pre_admissions WHERE id = ?', [id]);
         if (own.length === 0) return res.status(404).json({ message: "Record not found." });
         if (!sameTenant(req, own[0].institutionId)) return res.status(403).json({ message: "This record belongs to another institution." });
 
         const now = new Date();
         const yearVal = own[0].admission_year || now.getFullYear();
+        const academicYearId = own[0].academic_year_id || await _admActiveYearId(own[0].institutionId);
         await db.execute(
             `UPDATE pre_admissions
-                SET status = ?, verified_by = ?, verified_at = ?, admission_year = ?, updated_by = ?, updated_at = ?
+                SET status = ?, verified_by = ?, verified_at = ?, admission_year = ?, academic_year_id = ?, updated_by = ?, updated_at = ?
               WHERE id = ?`,
-            [status, req.auth.userId, now, yearVal, req.auth.userId, now, id]
+            [status, req.auth.userId, now, yearVal, academicYearId, req.auth.userId, now, id]
         );
-        res.status(200).json({ success: true, admission_year: yearVal });
+        res.status(200).json({ success: true, academic_year_id: academicYearId });
     } catch (error) {
         res.status(500).json({ message: "Failed to update the application." });
     }
@@ -9526,7 +9541,7 @@ app.get('/api/admin/preadmissions/:instId/export', async (req, res) => {
     const ExcelJS = require('exceljs');
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     const roleName = req.auth.role;
-    const { year } = req.query;
+    const yearId = req.query.academic_year_id;
     try {
         const isSystemAdmin = (roleName === 'Super Admin' || roleName === 'Developer');
         const [perms] = await db.execute(`
@@ -9539,28 +9554,31 @@ app.get('/api/admin/preadmissions/:instId/export', async (req, res) => {
 
         const whereClauses = ["pa.institutionId = ?", "pa.status = 'Pending'"];
         const queryParams = [instId];
-        const yr = parseInt(year, 10);
-        const singleYear = year && year !== 'all' && !isNaN(yr);
-        if (singleYear) { whereClauses.push("YEAR(pa.submission_date) = ?"); queryParams.push(yr); }
+        const yid = parseInt(yearId, 10);
+        const singleYear = yearId && yearId !== 'all' && !isNaN(yid);
+        if (singleYear) { whereClauses.push("pa.academic_year_id = ?"); queryParams.push(yid); }
         const [rows] = await db.query(`
-            SELECT pa.*, YEAR(pa.submission_date) AS cal_year, cu.name AS created_by_name, vu.name AS verified_by_name
+            SELECT pa.*, COALESCE(ay.name, '—') AS yr_name, cu.name AS created_by_name
               FROM pre_admissions pa
+              LEFT JOIN academic_years ay ON ay.id = pa.academic_year_id
               LEFT JOIN users cu ON cu.id = pa.created_by
-              LEFT JOIN users vu ON vu.id = pa.verified_by
              WHERE ${whereClauses.join(' AND ')}
-             ORDER BY YEAR(pa.submission_date) DESC, pa.student_name`, queryParams);
+             ORDER BY (pa.academic_year_id IS NULL), ay.startDate DESC, pa.student_name`, queryParams);
+
+        let scopeLabel = 'All Years';
+        if (singleYear) { const [y] = await db.execute('SELECT name FROM academic_years WHERE id = ?', [yid]); scopeLabel = y.length ? y[0].name : `Year ${yid}`; }
 
         const columns = [
             { header: 'Student Name', width: 24 }, { header: 'Admission No', width: 16 }, { header: 'Joining Grade', width: 14 },
-            { header: 'Date of Birth', width: 14 }, { header: 'Student Phone', width: 16 }, { header: 'Pen No', width: 14 },
-            { header: 'Aadhar No', width: 16 }, { header: 'Parent Name', width: 20 }, { header: 'Parent Phone', width: 16 },
+            { header: 'Academic Year', width: 16 }, { header: 'Date of Birth', width: 14 }, { header: 'Student Phone', width: 16 },
+            { header: 'Pen No', width: 14 }, { header: 'Aadhar No', width: 16 }, { header: 'Parent Name', width: 20 }, { header: 'Parent Phone', width: 16 },
             { header: 'Previous Institute', width: 26 }, { header: 'Previous Grade', width: 14 }, { header: 'School Joined Date', width: 16 },
             { header: 'TC Number', width: 14 }, { header: 'Address', width: 30 }, { header: 'Created At', width: 18 }, { header: 'Created By', width: 20 },
         ];
         const NCOLS = columns.length;
         const dmy = (d) => { if (!d) return ''; const x = new Date(d); if (isNaN(x)) return ''; const p = n => String(n).padStart(2, '0'); return `${p(x.getDate())}/${p(x.getMonth() + 1)}/${x.getFullYear()}`; };
         const istDT = (d) => { if (!d) return ''; const x = new Date(d); if (isNaN(x)) return ''; return x.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }); };
-        const rowValues = (r) => ([r.student_name || '', r.admission_no || '', r.joining_grade || '', dmy(r.dob), r.phone_no || '', r.pen_no || '', r.aadhar_no || '', r.parent_name || '', r.parent_phone || '', r.previous_institute || '', r.previous_grade || '', dmy(r.school_joined_date), r.tc_number || '', r.address || '', istDT(r.submission_date), r.created_by_name || '']);
+        const rowValues = (r) => ([r.student_name || '', r.admission_no || '', r.joining_grade || '', r.yr_name || '—', dmy(r.dob), r.phone_no || '', r.pen_no || '', r.aadhar_no || '', r.parent_name || '', r.parent_phone || '', r.previous_institute || '', r.previous_grade || '', dmy(r.school_joined_date), r.tc_number || '', r.address || '', istDT(r.submission_date), r.created_by_name || '']);
 
         const wb = new ExcelJS.Workbook(); wb.creator = 'SmartEdz'; wb.created = new Date();
         const ws = wb.addWorksheet('Pre-Admissions');
@@ -9572,19 +9590,20 @@ app.get('/api/admin/preadmissions/:instId/export', async (req, res) => {
         const colHead = () => { const row = ws.addRow(columns.map(c => c.header)); row.eachCell(c => { c.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: PRIMARY } }; }); row.height = 18; r++; };
         const dataRow = (x) => { const row = ws.addRow(rowValues(x)); row.eachCell(c => { c.font = { size: 10, color: { argb: 'FF27272A' } }; }); r++; };
 
-        titleRow(`Pre-Admissions (Pending) — ${singleYear ? 'Year ' + yr : 'All Years'}`);
+        titleRow(`Pre-Admissions (Pending) — ${scopeLabel}`);
         ws.addRow([]); r++;
         if (rows.length === 0) { const e = ws.addRow(['No pending applications for this selection.']); ws.mergeCells(r, 1, r, NCOLS); e.getCell(1).font = { italic: true, color: { argb: 'FF71717A' } }; r++; }
         else if (singleYear) { colHead(); rows.forEach(dataRow); }
         else {
             let cur = null, first = true;
             for (const x of rows) {
-                if (x.cal_year !== cur) { cur = x.cal_year; if (!first) { ws.addRow([]); r++; } first = false; const cnt = rows.filter(z => z.cal_year === cur).length; yearHead(`Year ${cur || '—'}  (${cnt})`); colHead(); }
+                const key = x.yr_name || '—';
+                if (key !== cur) { cur = key; if (!first) { ws.addRow([]); r++; } first = false; const cnt = rows.filter(z => (z.yr_name || '—') === key).length; yearHead(`${key}  (${cnt})`); colHead(); }
                 dataRow(x);
             }
         }
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        res.setHeader('Content-Disposition', `attachment; filename="PreAdmissions_${singleYear ? yr : 'AllYears'}.xlsx"`);
+        res.setHeader('Content-Disposition', `attachment; filename="PreAdmissions_${singleYear ? scopeLabel.replace(/[^a-z0-9\-]/gi, '_') : 'AllYears'}.xlsx"`);
         await wb.xlsx.write(res); res.end();
     } catch (error) {
         console.error('Pre-admissions export failed:', error);
@@ -9594,14 +9613,15 @@ app.get('/api/admin/preadmissions/:instId/export', async (req, res) => {
 
 
 // =====================================================================
-//  ADMISSIONS (Approved / Rejected), filtered by admission_year.
+//  ADMISSIONS (Approved / Rejected), filtered by ACADEMIC YEAR.
 // =====================================================================
 
 // --- 23.7 Admissions list -------------------------------------------
-//   Query: ?status=Approved|Rejected   ?year=<number|all>   ?search=
+//   Query: ?status=Approved|Rejected   ?academic_year_id=<id|all>   ?search=
 app.get('/api/admin/admissions/:instId', async (req, res) => {
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
-    const { search, status, year } = req.query;
+    const { search, status } = req.query;
+    const yearId = req.query.academic_year_id;
     const roleName = req.auth.role;
     try {
         const isSystemAdmin = (roleName === 'Super Admin' || roleName === 'Developer');
@@ -9616,15 +9636,17 @@ app.get('/api/admin/admissions/:instId', async (req, res) => {
         const whereClauses = ["pa.institutionId = ?", "pa.status IN ('Approved','Rejected')"];
         const queryParams = [instId];
         if (status === 'Approved' || status === 'Rejected') { whereClauses.push("pa.status = ?"); queryParams.push(status); }
-        const yr = parseInt(year, 10);
-        if (year && year !== 'all' && !isNaN(yr)) { whereClauses.push("pa.admission_year = ?"); queryParams.push(yr); }
+        const yid = parseInt(yearId, 10);
+        if (yearId && yearId !== 'all' && !isNaN(yid)) { whereClauses.push("pa.academic_year_id = ?"); queryParams.push(yid); }
         if (search) {
             whereClauses.push("(pa.student_name LIKE ? OR pa.admission_no LIKE ? OR pa.previous_institute LIKE ?)");
             const t = `%${search}%`; queryParams.push(t, t, t);
         }
         const [records] = await db.query(`
-            SELECT pa.*, cu.name AS created_by_name, vu.name AS verified_by_name, uu.name AS updated_by_name
+            SELECT pa.*, ay.name AS academic_year_name,
+                   cu.name AS created_by_name, vu.name AS verified_by_name, uu.name AS updated_by_name
               FROM pre_admissions pa
+              LEFT JOIN academic_years ay ON ay.id = pa.academic_year_id
               LEFT JOIN users cu ON cu.id = pa.created_by
               LEFT JOIN users vu ON vu.id = pa.verified_by
               LEFT JOIN users uu ON uu.id = pa.updated_by
@@ -9637,26 +9659,27 @@ app.get('/api/admin/admissions/:instId', async (req, res) => {
     }
 });
 
-// --- 23.8 Distinct admission years (Admissions year dropdown) -------
+// --- 23.8 Academic years for the Admissions dropdown ----------------
 app.get('/api/admin/admissions/:instId/years', async (req, res) => {
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     try {
         const [rows] = await db.query(
-            `SELECT DISTINCT admission_year FROM pre_admissions
-              WHERE institutionId = ? AND status IN ('Approved','Rejected') AND admission_year IS NOT NULL
-              ORDER BY admission_year DESC`, [instId]);
-        res.status(200).json(rows.map(r => r.admission_year).filter(Boolean));
+            `SELECT id, name, isActive FROM academic_years
+              WHERE institutionId = ?
+              ORDER BY isActive DESC, startDate DESC, id DESC`, [instId]);
+        res.status(200).json(rows);
     } catch (error) {
         res.status(500).json({ message: "Failed to fetch years." });
     }
 });
 
-// --- 23.9 Admissions export (Excel), scoped to year + status --------
+// --- 23.9 Admissions export (Excel), scoped to academic year + status --
 app.get('/api/admin/admissions/:instId/export', async (req, res) => {
     const ExcelJS = require('exceljs');
     const instId = req.auth.role === 'Developer' ? req.params.instId : req.auth.institutionId;
     const roleName = req.auth.role;
-    const { year, status } = req.query;
+    const { status } = req.query;
+    const yearId = req.query.academic_year_id;
     try {
         const isSystemAdmin = (roleName === 'Super Admin' || roleName === 'Developer');
         const [perms] = await db.execute(`
@@ -9670,24 +9693,29 @@ app.get('/api/admin/admissions/:instId/export', async (req, res) => {
         const whereClauses = ["pa.institutionId = ?", "pa.status IN ('Approved','Rejected')"];
         const queryParams = [instId];
         if (status === 'Approved' || status === 'Rejected') { whereClauses.push("pa.status = ?"); queryParams.push(status); }
-        const yr = parseInt(year, 10);
-        const oneYear = year && year !== 'all' && !isNaN(yr);
-        if (oneYear) { whereClauses.push("pa.admission_year = ?"); queryParams.push(yr); }
+        const yid = parseInt(yearId, 10);
+        const oneYear = yearId && yearId !== 'all' && !isNaN(yid);
+        if (oneYear) { whereClauses.push("pa.academic_year_id = ?"); queryParams.push(yid); }
 
         const [rows] = await db.query(`
-            SELECT pa.*, cu.name AS created_by_name, vu.name AS verified_by_name
+            SELECT pa.*, COALESCE(ay.name, '—') AS yr_name, ay.startDate AS yr_start,
+                   cu.name AS created_by_name, vu.name AS verified_by_name
               FROM pre_admissions pa
+              LEFT JOIN academic_years ay ON ay.id = pa.academic_year_id
               LEFT JOIN users cu ON cu.id = pa.created_by
               LEFT JOIN users vu ON vu.id = pa.verified_by
              WHERE ${whereClauses.join(' AND ')}
-             ORDER BY (pa.admission_year IS NULL), pa.admission_year DESC, pa.student_name`, queryParams);
+             ORDER BY (pa.academic_year_id IS NULL), ay.startDate DESC, pa.student_name`, queryParams);
+
+        let scopeLabel = 'All Years';
+        if (oneYear) { const [y] = await db.execute('SELECT name FROM academic_years WHERE id = ?', [yid]); scopeLabel = y.length ? y[0].name : `Year ${yid}`; }
 
         const [instRows] = await db.execute('SELECT name FROM institutions WHERE id = ?', [instId]);
         const instName = instRows[0]?.name || 'Institution';
         const dmy = (d) => { if (!d) return ''; const x = new Date(d); if (isNaN(x)) return ''; const p = n => String(n).padStart(2, '0'); return `${p(x.getDate())}/${p(x.getMonth() + 1)}/${x.getFullYear()}`; };
         const ist = (d) => { if (!d) return ''; const x = new Date(d); if (isNaN(x)) return ''; return x.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }); };
 
-        const HEAD = ['S.No', 'Student Name', 'Admission No', 'Joining Grade', 'Status', 'Year',
+        const HEAD = ['S.No', 'Student Name', 'Admission No', 'Joining Grade', 'Status', 'Academic Year',
             'DOB', 'Student Phone', 'Pen No', 'Aadhar No', 'Parent Name', 'Parent Phone',
             'Previous Institute', 'Previous Grade', 'Joined Date', 'TC Number', 'Address',
             'Created By', 'Decided By', 'Decided At'];
@@ -9695,26 +9723,26 @@ app.get('/api/admin/admissions/:instId/export', async (req, res) => {
         const PRIMARY = 'FF3284C7', ACCENT = 'FFF29132';
         const wb = new ExcelJS.Workbook(); wb.creator = 'SmartEdz'; wb.created = new Date();
         const ws = wb.addWorksheet('Admissions');
-        ws.columns = [6, 24, 16, 14, 11, 10, 13, 15, 13, 15, 20, 15, 24, 14, 14, 14, 28, 18, 18, 18].map(w => ({ width: w }));
+        ws.columns = [6, 24, 16, 14, 11, 16, 13, 15, 13, 15, 20, 15, 24, 14, 14, 14, 28, 18, 18, 18].map(w => ({ width: w }));
         let r = 1;
-        const title = ws.addRow([`${instName} — Admissions (${oneYear ? yr : 'All Years'}${status ? ' · ' + status : ''})`]);
+        const title = ws.addRow([`${instName} — Admissions (${scopeLabel}${status ? ' · ' + status : ''})`]);
         ws.mergeCells(r, 1, r, NCOLS); title.getCell(1).font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } }; title.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ACCENT } }; title.height = 24; r++; ws.addRow([]); r++;
         const yearHead = (txt) => { const row = ws.addRow([txt]); ws.mergeCells(r, 1, r, NCOLS); const c = row.getCell(1); c.font = { bold: true, size: 12, color: { argb: 'FF1F2937' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F1FA' } }; row.height = 20; r++; };
         const colHead = () => { const row = ws.addRow(HEAD); row.eachCell(c => { c.font = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } }; c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: PRIMARY } }; }); row.height = 18; r++; };
-        const dataRow = (x, n) => { ws.addRow([n, x.student_name || '', x.admission_no || '', x.joining_grade || '', x.status || '', x.admission_year || '—', dmy(x.dob), x.phone_no || '', x.pen_no || '', x.aadhar_no || '', x.parent_name || '', x.parent_phone || '', x.previous_institute || '', x.previous_grade || '', dmy(x.school_joined_date), x.tc_number || '', x.address || '', x.created_by_name || '', x.verified_by_name || '', ist(x.verified_at)]); r++; };
+        const dataRow = (x, n) => { ws.addRow([n, x.student_name || '', x.admission_no || '', x.joining_grade || '', x.status || '', x.yr_name || '—', dmy(x.dob), x.phone_no || '', x.pen_no || '', x.aadhar_no || '', x.parent_name || '', x.parent_phone || '', x.previous_institute || '', x.previous_grade || '', dmy(x.school_joined_date), x.tc_number || '', x.address || '', x.created_by_name || '', x.verified_by_name || '', ist(x.verified_at)]); r++; };
 
         if (rows.length === 0) { const e = ws.addRow(['No admissions found for this selection.']); ws.mergeCells(r, 1, r, NCOLS); e.getCell(1).font = { italic: true, color: { argb: 'FF71717A' } }; }
         else if (oneYear) { colHead(); rows.forEach((x, i) => dataRow(x, i + 1)); }
         else {
             let cur = Symbol('x'); let n = 0;
             for (const x of rows) {
-                const key = x.admission_year || '—';
-                if (key !== cur) { cur = key; n = 0; const cnt = rows.filter(z => (z.admission_year || '—') === key).length; yearHead(`${key}  (${cnt})`); colHead(); }
+                const key = x.yr_name || '—';
+                if (key !== cur) { cur = key; n = 0; const cnt = rows.filter(z => (z.yr_name || '—') === key).length; yearHead(`${key}  (${cnt})`); colHead(); }
                 dataRow(x, ++n);
             }
         }
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        res.setHeader('Content-Disposition', `attachment; filename="Admissions_${oneYear ? yr : 'AllYears'}.xlsx"`);
+        res.setHeader('Content-Disposition', `attachment; filename="Admissions_${oneYear ? scopeLabel.replace(/[^a-z0-9\-]/gi, '_') : 'AllYears'}.xlsx"`);
         await wb.xlsx.write(res); res.end();
     } catch (error) {
         console.error('Admissions export failed:', error);
@@ -19023,6 +19051,14 @@ async function _smartyLiveAnswer(institutionId, question, asker) {
     const pa = await _livePreAdmissions(institutionId, q, asker);
     if (pa) return pa;
   }
+       if (/\bdirectory\b/.test(q)) {
+      const dir = await _liveDirectory(institutionId, q, asker);
+      if (dir) return dir;
+    }
+        if (/admission|applicant/.test(q)) {
+      const adm = await _liveAdmissions(institutionId, q, asker);
+      if (adm) return adm;
+    }
   if (/\bworking days?\b/.test(q) || ((/\bperiods?\b|\bbreaks?\b/.test(q)) && /\btimetable\b|\btimings?\b|\bbreak\b/.test(q))) {
     const tt = await _liveTimetable(institutionId, q, asker);
     if (tt) return tt;
@@ -19317,6 +19353,238 @@ async function _livePreAdmissions(institutionId, q, asker) {
   }
   return null;
 }
+
+//  DIRECTORY — dynamic drill-down: role → (class →) member list.
+async function _liveDirectory(institutionId, q, asker) {
+  const role = (asker.role || '').toLowerCase();
+  const isPriv = role === 'developer' || role === 'super admin' || role.includes('admin') || role.includes('principal');
+  const isTeacher = role.includes('teacher');
+  const link = 'Directory', linkLabel = 'Open Directory';
+  if (!isPriv && !isTeacher) return { answer: 'The directory opens from the Directory screen.', link, linkLabel };
+  const notAlumni = "(u.status IS NULL OR LOWER(TRIM(u.status)) <> 'alumni')";
+
+  // STEP 3 — students of a chosen class (chip carries classid<ID>).
+  const cm = q.match(/classid(\d+)/);
+  if (cm) {
+    const cid = Number(cm[1]);
+    const [crow] = await db.execute('SELECT className, section FROM classes WHERE id = ? AND institutionId = ? LIMIT 1', [cid, institutionId]);
+    const label = crow.length ? `${crow[0].className}${crow[0].section ? ' - ' + crow[0].section : ''}` : 'that class';
+    const [rows] = await db.execute(
+      `SELECT u.name, u.roll_no FROM users u WHERE u.institutionId = ? AND u.class_id = ? AND LOWER(TRIM(u.role)) = 'student' AND ${notAlumni}
+        ORDER BY (CAST(u.roll_no AS UNSIGNED) = 0), CAST(u.roll_no AS UNSIGNED), u.name`, [institutionId, cid]);
+    if (!rows.length) return { answer: `No students in **${label}** yet.`, link, linkLabel };
+    const lines = rows.map(r => `• ${r.roll_no ? `**${r.roll_no}.** ` : ''}${r.name}`).join('\n');
+    return { answer: `**${label}** — ${rows.length} student${rows.length === 1 ? '' : 's'}:\n\n${lines}`, link, linkLabel };
+  }
+
+  // Roles present in the school (for matching + the role picker).
+  const [roleRows] = await db.execute(
+    `SELECT u.role, COUNT(*) AS n FROM users u WHERE u.institutionId = ? AND ${notAlumni} GROUP BY u.role ORDER BY n DESC`, [institutionId]);
+
+  // STEP 2 — a role was named (chip 'directory role <name>' or a typed role).
+  let picked = null;
+  roleRows.forEach(r => { const rn = String(r.role || '').toLowerCase().trim(); if (rn && q.includes(rn) && (!picked || rn.length > picked.length)) picked = rn; });
+  if (!picked && /\bstudents?\b/.test(q)) picked = (roleRows.find(r => /student/i.test(r.role))?.role || 'Student').toLowerCase();
+  if (!picked && /\bteachers?\b/.test(q)) picked = (roleRows.find(r => /teacher/i.test(r.role))?.role || 'Teacher').toLowerCase();
+
+  if (picked) {
+    if (/student/.test(picked)) {                       // → class picker
+      const [cls] = await db.execute(
+        `SELECT c.id, c.className, c.section,
+                (SELECT COUNT(*) FROM users u WHERE u.class_id = c.id AND LOWER(TRIM(u.role)) = 'student' AND ${notAlumni}) AS n
+           FROM classes c WHERE c.institutionId = ? ORDER BY c.className, c.section`, [institutionId]);
+      if (!cls.length) return { answer: 'No classes are set up yet.', link, linkLabel };
+      return { answer: "Which class's students would you like to see? 👇",
+        options: cls.map(c => ({ label: `${c.className}${c.section ? ' - ' + c.section : ''} (${c.n})`, send: `directory students classid${c.id}` })),
+        link, linkLabel };
+    }
+    const [rows] = await db.execute(                     // → list that role
+      `SELECT u.name FROM users u WHERE u.institutionId = ? AND LOWER(TRIM(u.role)) = ? AND ${notAlumni} ORDER BY u.name`, [institutionId, picked]);
+    if (!rows.length) return { answer: `No one has the **${picked}** role yet.`, link, linkLabel };
+    const lines = rows.map((r, i) => `${i + 1}. ${r.name}`).join('\n');
+    return { answer: `**${picked}** — ${rows.length} member${rows.length === 1 ? '' : 's'}:\n\n${lines}`, link, linkLabel };
+  }
+
+  // STEP 1 — entry: the role picker.
+  if (!roleRows.length) return { answer: 'No members in the directory yet.', link, linkLabel };
+  const total = roleRows.reduce((a, r) => a + Number(r.n), 0);
+  return { answer: `The directory has **${total}** active member${total === 1 ? '' : 's'}. Which role would you like to see? 👇`,
+    options: roleRows.map(r => ({ label: `${r.role} (${r.n})`, send: `directory role ${String(r.role).toLowerCase()}` })), link, linkLabel };
+}
+
+// =====================================================================
+//  _liveAdmissions — dynamic drill-down for Admissions / Pre-Admissions
+//  Same pattern as _liveDirectory (Part 1). ADD this function next to it.
+async function _liveAdmissions(institutionId, q, asker) {
+    const text = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+    // Only staff may browse applicant lists.
+    const role = (typeof asker === 'string' ? asker : (asker && (asker.role || asker.roleName)) || '').toLowerCase();
+    if (role === 'student' || role === 'parent' || role === 'alumni') return null;
+
+    // Let the counting resolver handle "how many / total / count" questions.
+    if (/\b(how many|count|total|number of|no\.? of)\b/.test(text)) return null;
+
+    const hasYear   = text.match(/yearid(\d+)/);
+    const hasStatus = text.match(/\bstatus (approved|rejected|pending)\b/);
+    const hasGrade  = text.match(/\bgrade (.+)$/);
+    const isFind    = /\b(find|search|lookup|locate)\b/.test(text);
+
+    // Entry intent: a chip/token flow, or an explicit "show/list/browse applicants".
+    const isEntry =
+        hasYear || hasStatus || hasGrade || isFind ||
+        /\b(show|list|browse|view|see|open)\b.*\b(admission|applicant)/.test(text) ||
+        /\b(admission|applicant)s?\b.*\b(list|directory|browse|members?)\b/.test(text) ||
+        /^(admissions?|applicants?)$/.test(text) ||
+        /\b(applicant list|admissions directory|find applicant|search applicant)\b/.test(text);
+    if (!isEntry) return null;
+
+    const statusModule = (s) => (s === 'pending' ? 'PreAdmissions' : 'Admissions');
+    const linkFor = (s) => ({ link: statusModule(s), linkLabel: `Open ${statusModule(s) === 'Admissions' ? 'Admissions' : 'Pre-Admissions'}` });
+    const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+    // Year name helper
+    async function yearName(id) {
+        const [r] = await db.execute('SELECT name FROM academic_years WHERE id = ? AND institutionId = ?', [id, institutionId]);
+        return r.length ? r[0].name : `Year ${id}`;
+    }
+
+    // ---- STEP 4: applicants of a specific year + status + grade ----------
+    if (hasYear && hasStatus && hasGrade) {
+        const yid = Number(hasYear[1]);
+        const st = hasStatus[1];                       // approved|rejected|pending
+        // keep the grade's original casing (e.g. "Class 2") from the untouched query
+        const rawMatch = String(q || '').replace(/\s+/g, ' ').trim().match(/\bgrade (.+)$/i);
+        const grade = (rawMatch ? rawMatch[1] : hasGrade[1]).trim();
+        const [rows] = await db.query(
+            `SELECT student_name, admission_no, parent_name, phone_no
+               FROM pre_admissions
+              WHERE institutionId = ? AND academic_year_id = ?
+                AND LOWER(status) = ? AND LOWER(TRIM(joining_grade)) = ?
+              ORDER BY student_name ASC`,
+            [institutionId, yid, st, grade.toLowerCase()]);
+        const yn = await yearName(yid);
+        if (!rows.length) {
+            return { ok: true, source: 'smarty', live: true,
+                answer: `No ${cap(st)} applicants found for ${grade} in ${yn}.`, ...linkFor(st) };
+        }
+        const SHOW = 30;
+        const lines = rows.slice(0, SHOW).map((r, i) =>
+            `${i + 1}. ${r.student_name}${r.admission_no ? ` (Adm# ${r.admission_no})` : ''}`);
+        const more = rows.length > SHOW ? `\n…and ${rows.length - SHOW} more.` : '';
+        return { ok: true, source: 'smarty', live: true,
+            answer: `${cap(st)} applicants — ${grade}, ${yn} (${rows.length}):\n${lines.join('\n')}${more}`,
+            ...linkFor(st) };
+    }
+
+    // ---- STEP 3: a year + status chosen → list Joining Grades w/ counts ---
+    if (hasYear && hasStatus) {
+        const yid = Number(hasYear[1]);
+        const st = hasStatus[1];
+        const [rows] = await db.query(
+            `SELECT COALESCE(NULLIF(TRIM(joining_grade), ''), 'Unspecified') AS grade, COUNT(*) AS n
+               FROM pre_admissions
+              WHERE institutionId = ? AND academic_year_id = ? AND LOWER(status) = ?
+              GROUP BY grade
+              ORDER BY n DESC, grade ASC`,
+            [institutionId, yid, st]);
+        const yn = await yearName(yid);
+        if (!rows.length) {
+            return { ok: true, source: 'smarty', live: true,
+                answer: `No ${cap(st)} applicants in ${yn}.`, ...linkFor(st) };
+        }
+        const total = rows.reduce((a, r) => a + Number(r.n), 0);
+        const options = rows.map(r => ({
+            label: `${r.grade} (${r.n})`,
+            send: `admissions yearid${yid} status ${st} grade ${r.grade}`
+        }));
+        return { ok: true, source: 'smarty', live: true,
+            answer: `${total} ${cap(st)} applicant${total === 1 ? '' : 's'} in ${yn}. Pick a class to see the names:`,
+            options, ...linkFor(st) };
+    }
+
+    // ---- STEP 2: a year chosen → ask Status (with counts) ----------------
+    if (hasYear) {
+        const yid = Number(hasYear[1]);
+        const [rows] = await db.query(
+            `SELECT LOWER(status) AS st, COUNT(*) AS n
+               FROM pre_admissions
+              WHERE institutionId = ? AND academic_year_id = ?
+                AND status IN ('Approved','Rejected','Pending')
+              GROUP BY LOWER(status)`,
+            [institutionId, yid]);
+        const yn = await yearName(yid);
+        const countOf = (s) => { const r = rows.find(x => x.st === s); return r ? Number(r.n) : 0; };
+        const order = ['approved', 'rejected', 'pending'];
+        const options = order
+            .filter(s => countOf(s) > 0)
+            .map(s => ({ label: `${cap(s)} (${countOf(s)})`, send: `admissions yearid${yid} status ${s}` }));
+        if (!options.length) {
+            return { ok: true, source: 'smarty', live: true,
+                answer: `No applicant records yet for ${yn}.`, link: 'PreAdmissions', linkLabel: 'Open Pre-Admissions' };
+        }
+        return { ok: true, source: 'smarty', live: true,
+            answer: `Applicants for ${yn}. Which status do you want to see?`,
+            options, link: 'PreAdmissions', linkLabel: 'Open Pre-Admissions' };
+    }
+
+    // ---- FIND: search by name / admission no across statuses -------------
+    if (isFind) {
+        // strip the command words to get the search term
+        const term = text
+            .replace(/\b(find|search|lookup|locate|applicant|admission|pre[- ]?admission|the|in|module|student|an?)\b/g, '')
+            .replace(/\s+/g, ' ').trim();
+        if (term.length < 2) {
+            return { ok: true, source: 'smarty', live: true,
+                answer: `Who do you want to find? Type a name or admission number, e.g. "find applicant Ravi".`,
+                link: 'PreAdmissions', linkLabel: 'Open Pre-Admissions' };
+        }
+        const like = `%${term}%`;
+        const [rows] = await db.query(
+            `SELECT pa.student_name, pa.admission_no, pa.status, pa.joining_grade, ay.name AS yr
+               FROM pre_admissions pa
+               LEFT JOIN academic_years ay ON ay.id = pa.academic_year_id
+              WHERE pa.institutionId = ?
+                AND (pa.student_name LIKE ? OR pa.admission_no LIKE ?)
+              ORDER BY pa.verified_at DESC, pa.submission_date DESC
+              LIMIT 25`,
+            [institutionId, like, like]);
+        if (!rows.length) {
+            return { ok: true, source: 'smarty', live: true,
+                answer: `No applicant matches "${term}".`, link: 'PreAdmissions', linkLabel: 'Open Pre-Admissions' };
+        }
+        const lines = rows.map((r, i) =>
+            `${i + 1}. ${r.student_name}${r.admission_no ? ` (Adm# ${r.admission_no})` : ''} — ${cap(String(r.status || '').toLowerCase())}${r.joining_grade ? `, ${r.joining_grade}` : ''}${r.yr ? `, ${r.yr}` : ''}`);
+        const anyApproved = rows.some(r => String(r.status).toLowerCase() !== 'pending');
+        return { ok: true, source: 'smarty', live: true,
+            answer: `${rows.length} match${rows.length === 1 ? '' : 'es'} for "${term}":\n${lines.join('\n')}`,
+            link: anyApproved ? 'Admissions' : 'PreAdmissions',
+            linkLabel: anyApproved ? 'Open Admissions' : 'Open Pre-Admissions' };
+    }
+
+    // ---- STEP 1: entry → pick an Academic Year ---------------------------
+    const [years] = await db.query(
+        `SELECT ay.id, ay.name, ay.isActive, COUNT(pa.id) AS n
+           FROM academic_years ay
+           LEFT JOIN pre_admissions pa
+             ON pa.academic_year_id = ay.id AND pa.institutionId = ay.institutionId
+          WHERE ay.institutionId = ?
+          GROUP BY ay.id, ay.name, ay.isActive
+          ORDER BY ay.isActive DESC, ay.startDate DESC, ay.id DESC`,
+        [institutionId]);
+    if (!years.length) {
+        return { ok: true, source: 'smarty', live: true,
+            answer: `No academic years are set up yet.`, link: 'PreAdmissions', linkLabel: 'Open Pre-Admissions' };
+    }
+    const options = years.map(y => ({
+        label: `${y.name}${y.isActive ? ' (current)' : ''}${Number(y.n) ? ` — ${y.n}` : ''}`,
+        send: `admissions yearid${y.id}`
+    }));
+    return { ok: true, source: 'smarty', live: true,
+        answer: `Which academic year's applicants would you like to see?`,
+        options, link: 'PreAdmissions', linkLabel: 'Open Pre-Admissions' };
+}
+
 
 // -------------------------------------------------------------------
 //  Module names are CONFIRMED against Modules.js (permissions match).

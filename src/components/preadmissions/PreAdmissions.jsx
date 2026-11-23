@@ -59,9 +59,8 @@ export default function PreAdmissionsScreen() {
 
   // Filters (status tabs removed — this module is Pending-only now)
   const [searchText, setSearchText] = useState('');
-  const currentYear = new Date().getFullYear();
-  const [availableYears, setAvailableYears] = useState([]);
-  const [filterYear, setFilterYear] = useState(String(currentYear));
+  const [years, setYears] = useState([]);              // [{id, name, isActive}]
+  const [filterYear, setFilterYear] = useState('');    // academic_year_id (string) or 'all'
   const [filterJoiningClass, setFilterJoiningClass] = useState('');
 
   const fetchData = useCallback(async () => {
@@ -71,7 +70,7 @@ export default function PreAdmissionsScreen() {
       const params = new URLSearchParams();
       params.append('userId', user.id);
       if (searchText) params.append('search', searchText);
-      if (filterYear && filterYear !== 'all') params.append('year', filterYear);
+            if (filterYear && filterYear !== 'all') params.append('academic_year_id', filterYear);
       const res = await fetch(`${API_BASE_URL}/admin/preadmissions/${user.institutionId}?${params.toString()}`);
       const records = await res.json();
       setData(Array.isArray(records) ? records : []);
@@ -89,17 +88,20 @@ export default function PreAdmissionsScreen() {
     try {
       const res2 = await fetch(`${API_BASE_URL}/admin/preadmissions/${user.institutionId}/years`);
       const yrs = await res2.json();
-      setAvailableYears(Array.isArray(yrs) ? yrs.map(Number).filter(Boolean) : []);
+      setYears(Array.isArray(yrs) ? yrs : []);
     } catch (e) { console.error('Load years error:', e); }
   }, [user]);
 
   useEffect(() => { loadFormData(); }, [loadFormData]);
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const yearOptions = useMemo(() => {
-    const set = new Set(availableYears); set.add(currentYear);
-    return Array.from(set).sort((a, b) => b - a);
-  }, [availableYears, currentYear]);
+    // Default the filter to the active academic year once the list loads.
+  useEffect(() => {
+    if (filterYear || !years.length) return;
+    const active = years.find(y => y.isActive) || years[0];
+    if (active) setFilterYear(String(active.id));
+  }, [years, filterYear]);
+  const selYearName = (years.find(y => String(y.id) === String(filterYear)) || {}).name || '';
 
   const classOptions = useMemo(
     () => Array.from(new Set((classes || []).map(c => c.className).filter(Boolean))), [classes]);
@@ -121,7 +123,7 @@ export default function PreAdmissionsScreen() {
     setDownloading(true);
     try {
       const params = new URLSearchParams();
-      params.set('year', filterYear);
+      params.set('academic_year_id', filterYear);
       params.set('scope', 'pending');
       const res = await fetch(`${API_BASE_URL}/admin/preadmissions/${user.institutionId}/export?${params.toString()}`);
       if (!res.ok) throw new Error('Could not generate the Excel file.');
@@ -129,7 +131,7 @@ export default function PreAdmissionsScreen() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = filterYear === 'all' ? 'PreAdmissions_AllYears.xlsx' : `PreAdmissions_${filterYear}.xlsx`;
+      a.download = (filterYear === 'all' || !selYearName) ? 'PreAdmissions_AllYears.xlsx' : `PreAdmissions_${selYearName.replace(/[^a-z0-9\-]/gi, '_')}.xlsx`;
       document.body.appendChild(a); a.click(); a.remove();
       URL.revokeObjectURL(url);
     } catch (e) { alert(e.message || 'Download failed.'); }
@@ -236,7 +238,7 @@ export default function PreAdmissionsScreen() {
           <button onClick={handleDownload} disabled={downloading}
             className="h-9 px-4 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors shrink-0">
             {downloading ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
-            {downloading ? 'Preparing...' : (filterYear === 'all' ? 'Download All (Excel)' : `Download ${filterYear} (Excel)`)}
+            {downloading ? 'Preparing...' : (filterYear === 'all' ? 'Download All (Excel)' : `Download ${selYearName || ''} (Excel)`)}
           </button>
         </div>
       </div>
@@ -253,9 +255,9 @@ export default function PreAdmissionsScreen() {
                   className="h-9 w-full bg-zinc-50/50 border border-transparent rounded-md pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:bg-white transition-colors placeholder:text-zinc-400" />
               </div>
               <div className="relative shrink-0">
-                <select value={filterYear} onChange={e => setFilterYear(e.target.value)}
+                  <select value={filterYear} onChange={e => setFilterYear(e.target.value)}
                   className="h-9 bg-zinc-50/50 border border-transparent rounded-md pl-3 pr-8 text-sm font-semibold text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer appearance-none">
-                  {yearOptions.map(y => (<option key={y} value={String(y)}>{y}</option>))}
+                  {years.map(y => (<option key={y.id} value={String(y.id)}>{y.name}{y.isActive ? ' (current)' : ''}</option>))}
                   <option value="all">All Years</option>
                 </select>
                 <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />

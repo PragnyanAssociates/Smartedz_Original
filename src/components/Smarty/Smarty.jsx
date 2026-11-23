@@ -589,11 +589,11 @@ export default function Smarty({ onNavigate }) {
       // "✨ Smarty". Grounded answers also show which chapter/term they came from.
       const fromAI = d.source === 'ai';
       const src = d.grounded ? (d.sources ? `\n\n📖 _From your book: ${d.sources}_` : '\n\n📖 _From your textbook_') : '';
-      pushBot({ tone: 'violet', text: d.answer + src, ai: fromAI, smarty: !fromAI });
+            pushBot({ tone: 'violet', text: d.answer + src, ai: fromAI, smarty: !fromAI, link: d.link || null, linkLabel: d.linkLabel || null });
       // Interactive follow-ups (e.g. pick a student / pick an exam): each chip
       // carries a prepared query that is re-sent straight to the resolver.
       if (Array.isArray(d.options) && d.options.length) {
-        setChips(d.options.slice(0, 8)
+                setChips(d.options.slice(0, 20)
           .filter(o => o && o.label && o.send)
           .map((o, i) => ({ id: 'opt-' + i, label: o.label, send: o.send, tone: 'violet', icon: '▸' })));
       }
