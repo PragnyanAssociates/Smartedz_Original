@@ -37,6 +37,12 @@ const _modId = (s) => {
 // Modules everyone can open regardless of the permission matrix (home, profile,
 // notifications are always reachable) — so Smarty never hides their shortcuts.
 const ALWAYS_VISIBLE = new Set(['overview', ...MODULES.filter(m => m.alwaysVisible).map(m => m.id)]);
+// Every module that has at least one authored Browse-by-Module card (any role).
+// The module GRID keys off this set + permission only, so a permitted module
+// still gets a tile even when the current role's own questions are filtered
+// out — it then falls back to the "Open <module>" shortcut.
+const MODULES_WITH_CARDS = new Set();
+BUILTINS.forEach(e => { if (e.module) MODULES_WITH_CARDS.add(_modId(e.module) || e.module); });
 const toneVar = { sky: '--sky', amber: '--amber', emerald: '--emerald', rose: '--rose', violet: '--violet', brand: '--brand' };
 // Browse-by-module cards: a relevant icon + a rotating accent colour per module.
 const MOD_ICON = { overview: '🏠', 'manage-login': '🔑', DailyExpenses: '🧾', FeeManagement: '💰', Transport: '🚌', timetable: '📅', 'academic-calendar': '🗓️', attendance: '✅', Exams: '📝', reports: '📄', Performance: '📈', Directory: '👥', Gallery: '🖼️', Homework: '📚', Meals: '🍽️', PTM: '🧑‍🏫', OnlineClasses: '💻', DigitalLabs: '🔬', PreAdmissions: '🗂️', Admissions: '🎓', StudyMaterials: '📖', Syllabus: '📘', GroupChat: '💬', Alumni: '🎓', InventoryAssets: '📦', Support: '🛟', Library: '📚', notifications: '🔔', profile: '👤' };
@@ -141,11 +147,31 @@ function roleBucket(role) {
   if (r.includes('admin') || r.includes('principal') || r.includes('account') || r.includes('developer') || r.includes('office') || r.includes('staff') || r.includes('clerk')) return 'admin';
   return 'default';
 }
+// The fixed SYSTEM roles are Super Admin, Student, Teacher and Driver &
+// Assistant. The only roles that are NOT admin-type staff are Student, Teacher,
+// Parent and the transport crew (Driver & Assistant). Everyone else — Super
+// Admin and every CUSTOM role a school creates (Principal, Accountant,
+// Coordinator, Librarian…) — is an admin-type staff role, so they qualify for
+// the 'admin' questions. This mirrors the backend: all roles beyond the system
+// ones are governed by the permission matrix and behave as staff.
+function isAdminTypeRole(role) {
+  const r = (role || '').trim().toLowerCase();
+  if (!r) return false;
+  if (r.includes('student')) return false;
+  if (r.includes('teacher')) return false;
+  if (r.includes('parent') || r.includes('guardian')) return false;
+  if (r.includes('driver')) return false;        // Driver & Assistant (crew)
+  return true;                                    // Super Admin + custom staff
+}
 function roleMatch(roles, role) {
   if (!roles || roles === 'all') return true;
   const r = (role || '').toLowerCase();
-  const list = Array.isArray(roles) ? roles : String(roles).split(',');
-  return list.map(x => x.trim().toLowerCase()).filter(Boolean).some(frag => r.includes(frag));
+  const list = (Array.isArray(roles) ? roles : String(roles).split(','))
+    .map(x => x.trim().toLowerCase()).filter(Boolean);
+  // Admin-type staff roles (Super Admin + any custom role) see 'admin' cards,
+  // even when the role name itself doesn't contain the word "admin".
+  if (list.includes('admin') && isAdminTypeRole(role)) return true;
+  return list.some(frag => r.includes(frag));
 }
 
 export default function Smarty({ onNavigate }) {
@@ -280,7 +306,16 @@ export default function Smarty({ onNavigate }) {
       // (openers, live cards, how-tos, small talk) stay role-scoped as before.
       const mid = e.module ? (_modId(e.module) || e.module) : null;
       if (mid) {
+        // Browse-by-Module question. It is kept only when BOTH hold:
+        //   (a) the role has PERMISSION for the module (canSeeLink) — this is
+        //       what makes module visibility follow the dashboard, and
+        //   (b) the role is APPROPRIATE for this question (roleMatch) — so an
+        //       admin-only "how to issue a book" never reaches a Student or
+        //       Teacher, while a custom staff role (admin-type) does see it.
+        // The module TILE itself is driven by permission alone (see
+        // moduleIdList); this filter only decides which questions appear.
         if (!canSeeLink(mid)) return;
+        if (!roleMatch(e.roles, role)) return;
       } else {
         if (!roleMatch(e.roles, role)) return;
         const linkId = e.answer?.link || LIVE_LINK[e.id] || null;
@@ -764,22 +799,41 @@ export default function Smarty({ onNavigate }) {
   // generic openers/how-tos, so each module's list stays clean and intentional.
   const moduleOf = (e) => e.module ? (_modId(e.module) || e.module) : null;
 
-  // Ordered, permission-filtered list of module ids for the browser.
+  // Ordered, PERMISSION-filtered list of module ids for the browser. The grid
+  // mirrors the dashboard sidebar: every module the role can see (and that has
+  // authored Smarty content) appears, and loses its tile the moment permission
+  // is revoked. It does NOT depend on the per-question role filter, so a
+  // permitted module still shows even if this role's own questions are all
+  // filtered out (it then offers the "Open <module>" shortcut).
   const moduleIdList = () => {
     const b = boot || {};
-    const pool = b._pool || buildPool(b);
     const ids = [], seen = new Set();
-    pool.forEach(e => { const mid = moduleOf(e); if (mid && canSeeLink(mid) && !seen.has(mid)) { seen.add(mid); ids.push(mid); } });
+    // Modules with authored content: the static pack, plus any the school's own
+    // custom questions attach to.
+    const dynamic = new Set();
+    (b?.questions || []).forEach(q => {
+      const m = _modId(q.category) || (q.link ? (_modId(q.link) || q.link) : null);
+      if (m) dynamic.add(m);
+    });
+    [...MODULES_WITH_CARDS, ...dynamic].forEach(mid => {
+      if (mid && canSeeLink(mid) && !seen.has(mid)) { seen.add(mid); ids.push(mid); }
+    });
     ids.sort((a, c) => MODULES.findIndex(m => m.id === a) - MODULES.findIndex(m => m.id === c));
     return ids;
   };
   // Browse-by-module cards show the first few, then View all / View less.
   const MOD_PREVIEW = 3;
-  // Questions tagged to one module (for the drill-in list).
+  // Questions tagged to one module (for the drill-in list) — role-filtered via
+  // the pool. If this role has no appropriate questions for a permitted module,
+  // fall back to the auto "Open <module>" shortcut so the tile is never a dead
+  // end (and admin-only questions still never appear for the wrong role).
   const moduleQuestions = (mid) => {
     const b = boot || {};
     const pool = b._pool || buildPool(b);
-    return pool.filter(e => moduleOf(e) === mid);
+    const qs = pool.filter(e => moduleOf(e) === mid);
+    if (qs.length) return qs;
+    const opener = pool.find(e => e.id === 'mod-' + mid);
+    return opener ? [opener] : [];
   };
 
   const navMenu = (target) => {
@@ -791,7 +845,8 @@ export default function Smarty({ onNavigate }) {
     }
     if (target.startsWith('mod:')) {
       const mid = target.slice(4);
-      const qs = pool.filter(e => moduleOf(e) === mid);
+      let qs = pool.filter(e => moduleOf(e) === mid);
+      if (!qs.length) { const op = pool.find(e => e.id === 'mod-' + mid); qs = op ? [op] : []; }
       deliver({ tone: 'brand', text: `Here’s what I can tell you about **${aliasLabel(mid)}** 👇` });
       const list = qs.slice(0, 40).map(e => e.send ? { id: e.id, label: e.q, send: e.send, icon: e.icon || '💬', tone: e.tone || 'brand' }
         : e.ref ? { id: e.id, label: e.q, ref: e.ref, icon: e.icon || '💬', tone: e.tone || 'brand' }
