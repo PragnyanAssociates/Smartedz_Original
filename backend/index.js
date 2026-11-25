@@ -21339,6 +21339,12 @@ async function _smartyLiveAnswer(institutionId, question, asker) {
     const as = await _liveAssets(institutionId, q, asker);
     if (as) return as;
   }
+  // [NEW] The logged-in student's OWN offline marks, subject-wise or exam-wise
+  // ("mymarks subjects" / "mymarks exams"). Unique token — no flat collision.
+  if (/\bmymarks\b/.test(q)) {
+    const mm = await _liveMyMarks(institutionId, q, asker);
+    if (mm) return mm;
+  }
   // [NEW] Reports drill-down (cards / classexams). One-word "reportlookup"
   // token can't match the flat gate below.
   if (/\breportlookup\b/.test(q)) {
@@ -23311,6 +23317,111 @@ async function _livePerformanceAsk(institutionId, q, asker) {
   }
   const topper = totals[0];
   return { answer: `The topper in **${_liveClassLabel(cls)}** is **${topper.name}**${topper.roll_no ? ` (Roll ${topper.roll_no})` : ''} with **${_liveFmtMarks(topper.total)}** total marks, out of **${totals.length}** student${totals.length === 1 ? '' : 's'} with marks. Open **Performance** for the full ranking.` };
+}
+
+// ===== MY MARKS (the logged-in student's own offline results) =====
+//  Powers the student "Progress Report" and "Performance" cards that used to
+//  just point at a screen:
+//    mymarks subjects → each subject's marks (sum across entered exams) + %
+//    mymarks exams    → each entered exam's total (sum across subjects) + %
+//  Student / parent only, locked to their OWN account and class. Reuses the
+//  report-card data model (student_marks + exam_max_marks). Derived exams are
+//  excluded (their max is computed by the report-card engine, not stored), so
+//  every % here is an exact obtained/possible over ENTERED exams — the same
+//  rule the report cards use. Gated by Reports OR Performance.
+// =====================================================================
+async function _liveMyMarks(institutionId, q, asker) {
+  const canR = await _smartyCan(asker, institutionId, _MOD_REPORTS);
+  const canP = await _smartyCan(asker, institutionId, _MOD_PERF);
+  if (!canR && !canP) return null;
+
+  const text = String(q || '').toLowerCase();
+  const intent = (text.match(/\bmymarks (subjects|exams)\b/) || [])[1] || 'subjects';
+  const reply = (answer) => ({ ok: true, source: 'smarty', live: true, answer });
+
+  const role = (asker.role || '').toLowerCase();
+  if (!(role.includes('student') || role.includes('parent')))
+    return reply('Ask me *“show my performance”* for your own standing, or open **Performance** to look up a class.');
+
+  const uid = asker.userId || 0;
+  const classId = asker.class_id;
+  if (!classId) return reply("Your class isn't set on your account yet, so I can't pull up your marks. Please check with your class teacher.");
+
+  const yearId = await resolveYearId(institutionId);
+
+  // Entered exams for the student's class (derived exams excluded).
+  const [exRows] = await db.query(
+    `SELECT id, name, exam_order FROM ${_T_EXTYPES}
+      WHERE institutionId = ? AND class_id = ? AND (kind IS NULL OR kind <> 'derived')
+      ORDER BY exam_order, id`, [institutionId, classId]);
+  if (!exRows.length) return reply("No exams are set up for your class yet, so there are no marks to show.");
+  const examName = {}; exRows.forEach(e => { examName[e.id] = e.name; });
+  const examIds = exRows.map(e => e.id);
+  const inExams = examIds.map(() => '?').join(',');
+
+  // The student's own marks for those exams this year.
+  const [marks] = await db.query(
+    `SELECT subject_id, exam_type_id, marks_obtained FROM ${_T_MARKS}
+      WHERE student_id = ? AND academic_year_id = ? AND marks_obtained IS NOT NULL
+        AND exam_type_id IN (${inExams})`,
+    [uid, yearId, ...examIds]);
+  if (!marks.length) return reply("No marks have been entered for you yet this year. They'll show here once your teachers add them.");
+
+  // Per-class max: a subject override, else the All-Subjects default (subject 0).
+  const [maxRows] = await db.query(
+    `SELECT exam_type_id, subject_id, max_marks FROM ${_T_EXMAX}
+      WHERE class_id = ? AND exam_type_id IN (${inExams})`,
+    [classId, ...examIds]);
+  const maxMap = {};
+  maxRows.forEach(r => { maxMap[`${r.exam_type_id}:${r.subject_id == null ? 0 : r.subject_id}`] = Number(r.max_marks); });
+  const maxFor = (etId, subjId) => {
+    const sp = maxMap[`${etId}:${subjId}`];
+    if (sp !== undefined && sp !== null) return sp;
+    const def = maxMap[`${etId}:0`];
+    return (def !== undefined && def !== null) ? def : undefined;
+  };
+
+  // Subject names for the subjects the student actually has marks in.
+  const subjIds = [...new Set(marks.map(m => m.subject_id))];
+  const subjName = {};
+  if (subjIds.length) {
+    const [subs] = await db.query(
+      `SELECT id, name FROM ${_T_SUBJECTS} WHERE id IN (${subjIds.map(() => '?').join(',')})`, subjIds);
+    subs.forEach(s => { subjName[s.id] = s.name; });
+  }
+
+  const pct = (o, p) => (p > 0 ? Math.round((o / p) * 1000) / 10 : null);
+  const cell = (o, p) => `${_liveFmtMarks(o)}${p > 0 ? ` / ${_liveFmtMarks(p)} (${pct(o, p)}%)` : ' marks'}`;
+
+  if (intent === 'exams') {
+    const agg = {};
+    marks.forEach(m => {
+      const a = agg[m.exam_type_id] || (agg[m.exam_type_id] = { o: 0, p: 0 });
+      a.o += Number(m.marks_obtained) || 0;
+      const mx = maxFor(m.exam_type_id, m.subject_id);
+      if (mx !== undefined) a.p += mx;
+    });
+    const lines = exRows.filter(e => agg[e.id]).map(e => `• **${examName[e.id]}** — ${cell(agg[e.id].o, agg[e.id].p)}`);
+    let to = 0, tp = 0; Object.values(agg).forEach(a => { to += a.o; tp += a.p; });
+    const overall = tp > 0 ? `\n\n**Overall: ${cell(to, tp)}**` : '';
+    return reply(`Here are your marks exam by exam this year 📊\n\n${lines.join('\n')}${overall}\n\nOpen **Performance → Analysis** for the exam-by-exam chart.`);
+  }
+
+  // intent === 'subjects'
+  const agg = {};
+  marks.forEach(m => {
+    const a = agg[m.subject_id] || (agg[m.subject_id] = { o: 0, p: 0 });
+    a.o += Number(m.marks_obtained) || 0;
+    const mx = maxFor(m.exam_type_id, m.subject_id);
+    if (mx !== undefined) a.p += mx;
+  });
+  const rows = Object.keys(agg)
+    .map(sid => ({ name: subjName[sid] || `Subject ${sid}`, o: agg[sid].o, p: agg[sid].p, pc: pct(agg[sid].o, agg[sid].p) }))
+    .sort((a, b) => (b.pc ?? -1) - (a.pc ?? -1) || b.o - a.o);
+  const lines = rows.map(r => `• **${r.name}** — ${cell(r.o, r.p)}`);
+  let to = 0, tp = 0; rows.forEach(r => { to += r.o; tp += r.p; });
+  const overall = tp > 0 ? `\n\n**Overall: ${cell(to, tp)}**` : '';
+  return reply(`Here's your subject-wise performance this year 📚\n\n${lines.join('\n')}${overall}\n\nOpen your **Report Card** or **Performance** for the full breakdown.`);
 }
 
 // ===== STUDENT MARKS LOOKUP (by name → exam → subject-wise) =====
