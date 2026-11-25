@@ -270,9 +270,22 @@ export default function Smarty({ onNavigate }) {
   const buildPool = useCallback((b) => {
     const pool = [];
     BUILTINS.forEach(e => {
-      if (!roleMatch(e.roles, role)) return;
-      const linkId = e.answer?.link || LIVE_LINK[e.id] || null;
-      if (linkId && !canSeeLink(linkId)) return;
+      // A card tagged to a module (`module: '...'`) is a Browse-by-Module card,
+      // and its module tile must follow the SAME rule as the dashboard sidebar:
+      // it shows only when the logged-in role has permission for that module.
+      // So we gate these on the permission matrix (canSeeLink → isVisible), NOT
+      // on the card's hardcoded `roles`. Grant a module in Manage Logins →
+      // Permissions and it appears in Smarty too; revoke it and it disappears —
+      // exactly like adding/removing it from the dashboard. Non-module cards
+      // (openers, live cards, how-tos, small talk) stay role-scoped as before.
+      const mid = e.module ? (_modId(e.module) || e.module) : null;
+      if (mid) {
+        if (!canSeeLink(mid)) return;
+      } else {
+        if (!roleMatch(e.roles, role)) return;
+        const linkId = e.answer?.link || LIVE_LINK[e.id] || null;
+        if (linkId && !canSeeLink(linkId)) return;
+      }
       pool.push(e);
     });
     (b?.questions || []).forEach(q => {
