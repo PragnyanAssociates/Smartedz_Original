@@ -20058,6 +20058,1093 @@ async function _liveReports(institutionId, q, asker) {
   return reply(`**${clName}** report cards (this year) — ${gset.size}/${students.length} with marks entered:\n${lines.join('\n')}${more}\n\n_Open Reports → Report Cards to view or print each card._`);
 }
 
+// =====================================================================
+//  [NEW DRILL-DOWN]  _livePTM  — picker answers for the PTM cards
+//  (ptm-range / ptm-details / ptm-who). Gated on one-word token
+//  "ptmlookup"; the flat "\bptm\b" resolver (renamed _livePTMAsk) stays
+//  the fallback for "upcoming parent-teacher meetings".
+//    ptmlookup range    → meetings listed newest first (focus · teacher · class · when · status)
+//    ptmlookup details  → pick a meeting → full details
+//    ptmlookup who      → pick a meeting → teacher, class, focus, join link
+// =====================================================================
+async function _livePTM(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, _MOD_PTM))) return null;
+  const text = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  let intent = (text.match(/\bptmlookup (range|details|who)\b/) || [])[1] || null;
+  if (!intent) return null;
+
+  const LINK = { link: 'PTM', linkLabel: 'Open PTM Schedule' };
+  const reply = (answer, options) => ({ ok: true, source: 'smarty', live: true, answer, ...(options ? { options } : {}), ...LINK });
+  const base = (extra) => `ptmlookup ${intent}${extra || ''}`;
+
+  const role = (asker.role || '').toLowerCase();
+  const isStudentParent = role.includes('student') || role.includes('parent');
+  const isPriv = role === 'developer' || role === 'super admin' || role === 'admin';
+  let where = 'p.institutionId = ?'; const params = [institutionId];
+  if (isStudentParent) {
+    if (!asker.class_id) return reply("I can only look up meetings for your own class, which isn't set on your account yet.");
+    where += ' AND (p.class_id IS NULL OR p.class_id = ?) AND (p.section IS NULL OR p.section = ?)';
+    params.push(asker.class_id, asker.section || '');
+  } else if (!isPriv) {
+    where += ' AND p.teacher_id = ?'; params.push(asker.userId || 0);
+  }
+
+  const meetingId = (text.match(/meetingid(\d+)/) || [])[1];
+  const nowExpired = (dt) => { const x = new Date(String(dt).replace(' ', 'T')); return !isNaN(x) && x < new Date(); };
+
+  // ---- RANGE: list meetings, newest first --------------------------
+  if (intent === 'range') {
+    const [rows] = await db.query(
+      `SELECT p.subject_focus, p.meeting_datetime, p.status, t.name AS teacher_name, c.className, p.section
+         FROM ${_T_PTM} p
+         LEFT JOIN users t ON t.id = p.teacher_id
+         LEFT JOIN classes c ON c.id = p.class_id
+        WHERE ${where} ORDER BY p.meeting_datetime DESC LIMIT 30`, params);
+    if (!rows.length) return reply('There are no parent-teacher meetings to show.');
+    const SHOW = 20;
+    const lines = rows.slice(0, SHOW).map((r, i) => {
+      const grp = r.className ? `${r.className}${r.section ? ' - ' + r.section : ''}` : 'All Classes';
+      const st = (r.status !== 'Completed' && nowExpired(r.meeting_datetime)) ? 'Expired' : r.status;
+      return `${i + 1}. ${r.subject_focus || 'PTM'} — ${r.teacher_name || '—'} · ${grp} · ${_liveFmtIST(r.meeting_datetime)} · ${st}`;
+    });
+    const more = rows.length > SHOW ? `\n…and ${rows.length - SHOW} more.` : '';
+    return reply(`${rows.length} parent-teacher meeting${rows.length === 1 ? '' : 's'} (newest first):\n${lines.join('\n')}${more}`);
+  }
+
+  // ---- DETAILS / WHO: pick a meeting first -------------------------
+  if (!meetingId) {
+    const [list] = await db.query(
+      `SELECT p.id, p.subject_focus, p.meeting_datetime FROM ${_T_PTM} p
+        WHERE ${where} ORDER BY p.meeting_datetime DESC LIMIT 20`, params);
+    if (!list.length) return reply('There are no parent-teacher meetings to show.');
+    return reply('Which meeting?', list.map(r => ({
+      label: `${r.subject_focus || 'PTM'} · ${_liveFmtIST(r.meeting_datetime)}`.slice(0, 80),
+      send: base(` meetingid${r.id}`)
+    })));
+  }
+  const [rows] = await db.query(
+    `SELECT p.subject_focus, p.meeting_datetime, p.status, p.notes, p.meeting_link,
+            t.name AS teacher_name, c.className, p.section
+       FROM ${_T_PTM} p
+       LEFT JOIN users t ON t.id = p.teacher_id
+       LEFT JOIN classes c ON c.id = p.class_id
+      WHERE ${where} AND p.id = ? LIMIT 1`, [...params, meetingId]);
+  if (!rows.length) return reply("I couldn't find that meeting.");
+  const m = rows[0];
+  const grp = m.className ? `${m.className}${m.section ? ' - ' + m.section : ''}` : 'All Classes';
+  const joinable = m.status === 'Scheduled' && m.meeting_link && !nowExpired(m.meeting_datetime);
+  const st = (m.status !== 'Completed' && nowExpired(m.meeting_datetime)) ? 'Expired' : m.status;
+
+  if (intent === 'who') {
+    const lines = [
+      `**${m.subject_focus || 'PTM'}**`,
+      `• Teacher: ${m.teacher_name || '—'}`,
+      `• Class: ${grp}`,
+      `• Join link: ${m.meeting_link ? (joinable ? m.meeting_link : 'set, but not joinable now (meeting not Scheduled or expired)') : 'none'}`
+    ];
+    return reply(lines.join('\n'));
+  }
+  // details
+  const lines = [
+    `**${m.subject_focus || 'PTM'}**`,
+    `• When: ${_liveFmtIST(m.meeting_datetime)}`,
+    `• Teacher: ${m.teacher_name || '—'}`,
+    `• Class: ${grp}`,
+    `• Status: ${st}`,
+    `• Join link: ${m.meeting_link ? (joinable ? 'available' : 'set (not joinable now)') : 'none'}`,
+    m.notes ? `• Notes: ${m.notes}` : null
+  ].filter(Boolean);
+  return reply(lines.join('\n'));
+}
+
+// =====================================================================
+//  [NEW DRILL-DOWN]  _liveFood  — picker answers for the Food Management
+//  cards. Gated on one-word token "foodlookup"; the flat weekly-menu
+//  resolver (renamed _liveMealsAsk) stays the fallback for "weekly menu"
+//  / "what's for lunch today".
+//    foodlookup day        → pick a day → that day's meals
+//    foodlookup slots      → meal slots with their timings
+//    foodlookup groceries  → kitchen stock, quantity left of total
+//    foodlookup replenish  → low / out-of-stock groceries
+//    foodlookup usage      → today's grocery usage
+//    foodlookup inventory  → permanent assets with their rack/room
+//    foodlookup staff      → kitchen staff + today's activity + presence
+// =====================================================================
+async function _liveFood(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, _MOD_MEALS))) return null;
+  const text = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  let intent = (text.match(/\bfoodlookup (day|slots|groceries|replenish|usage|inventory|staff)\b/) || [])[1] || null;
+  if (!intent) return null;
+
+  const LINK = { link: 'Meals', linkLabel: 'Open Food Management' };
+  const reply = (answer, options) => ({ ok: true, source: 'smarty', live: true, answer, ...(options ? { options } : {}), ...LINK });
+  const base = (extra) => `foodlookup ${intent}${extra || ''}`;
+  const num = (v) => { const n = Number(v); return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100); };
+  const fmtT = (t) => { if (!t) return ''; const [h, m] = String(t).split(':'); let hh = parseInt(h, 10); if (isNaN(hh)) return t; const ap = hh >= 12 ? 'PM' : 'AM'; hh = hh % 12 || 12; return `${hh}:${m || '00'} ${ap}`; };
+
+  const role = (asker.role || '').toLowerCase();
+  const isStudentParent = role.includes('student') || role.includes('parent');
+
+  // ---- DAY: pick a day → its meals (open to everyone) --------------
+  if (intent === 'day') {
+    const [slots] = await db.query(`SELECT id, name FROM ${_T_SLOTS} WHERE institutionId = ? ORDER BY slot_order, id`, [institutionId]);
+    if (!slots.length) return reply("The school hasn't set up its meal plan yet.");
+    const dayIdx = (text.match(/dayidx(\d+)/) || [])[1];
+    if (dayIdx === undefined) {
+      const istNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+      const todayIdx = (istNow.getDay() + 6) % 7;
+      const opts = _LIVE_DAYS.map((d, i) => ({ label: i === todayIdx ? `${d} (today)` : d, send: base(` dayidx${i}`) }));
+      return reply('Which day?', opts);
+    }
+    const di = Number(dayIdx);
+    const [menu] = await db.query(`SELECT slot_id, items FROM ${_T_MENU} WHERE institutionId = ? AND day_index = ?`, [institutionId, di]);
+    const parts = slots.map(s => { const m = menu.find(x => Number(x.slot_id) === Number(s.id)); const it = m && m.items ? String(m.items).trim() : ''; return it ? `**${s.name}**: ${it}` : null; }).filter(Boolean);
+    const dayName = _LIVE_DAYS[di] || 'that day';
+    if (!parts.length) return reply(`No menu is planned for ${dayName}.`);
+    return reply(`${dayName}'s menu:\n${parts.map(p => '• ' + p).join('\n')}`);
+  }
+
+  // ---- SLOTS: meal slots + timings (open to everyone) --------------
+  if (intent === 'slots') {
+    const [slots] = await db.query(`SELECT name, start_time, end_time FROM ${_T_SLOTS} WHERE institutionId = ? ORDER BY slot_order, id`, [institutionId]);
+    if (!slots.length) return reply("No meal slots have been set up yet.");
+    const lines = slots.map((s, i) => `${i + 1}. ${s.name}${s.start_time ? ` — ${fmtT(s.start_time)}${s.end_time ? ' to ' + fmtT(s.end_time) : ''}` : ''}`);
+    return reply(`Meal slots:\n${lines.join('\n')}`);
+  }
+
+  // The remaining intents expose kitchen/store/staff — staff only.
+  if (isStudentParent) return reply('Open **Food Management** to view this — the kitchen and inventory details are for staff.');
+
+  // ---- GROCERIES: kitchen stock remaining -------------------------
+  if (intent === 'groceries' || intent === 'replenish') {
+    const [rows] = await db.query(
+      `SELECT item_name, unit, total_quantity, quantity_remaining FROM kitchen_inventory
+        WHERE institutionId = ? ORDER BY item_name`, [institutionId]);
+    if (!rows.length) return reply('No kitchen provisions have been added yet.');
+    const band = (r) => { const t = Number(r.total_quantity) || 0, rem = Number(r.quantity_remaining) || 0; const pct = t > 0 ? (rem / t) * 100 : 0; if (rem <= 0) return 'OUT'; if (pct <= 15) return 'LOW'; return 'ok'; };
+    if (intent === 'replenish') {
+      const low = rows.filter(r => band(r) !== 'ok');
+      if (!low.length) return reply('All groceries are well stocked — nothing needs replenishing right now. 🎉');
+      const lines = low.map((r, i) => `${i + 1}. ${r.item_name} — ${band(r)} (${num(r.quantity_remaining)}/${num(r.total_quantity)} ${r.unit || ''})`);
+      return reply(`${low.length} grocery item${low.length === 1 ? '' : 's'} need restocking:\n${lines.join('\n')}`);
+    }
+    const SHOW = 30;
+    const lines = rows.slice(0, SHOW).map((r, i) => `${i + 1}. ${r.item_name} — ${num(r.quantity_remaining)} of ${num(r.total_quantity)} ${r.unit || ''} left${band(r) !== 'ok' ? ` · ${band(r)}` : ''}`);
+    const more = rows.length > SHOW ? `\n…and ${rows.length - SHOW} more.` : '';
+    return reply(`Kitchen groceries — ${rows.length} item${rows.length === 1 ? '' : 's'}:\n${lines.join('\n')}${more}`);
+  }
+
+  // ---- USAGE: today's grocery consumption -------------------------
+  if (intent === 'usage') {
+    const today = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
+    const [rows] = await db.query(
+      `SELECT u.quantity_used, i.item_name, i.unit, cu.name AS used_by_name
+         FROM kitchen_usage u JOIN kitchen_inventory i ON i.id = u.inventory_id
+         LEFT JOIN users cu ON cu.id = u.created_by
+        WHERE u.institutionId = ? AND u.usage_date = ? ORDER BY u.created_at DESC`, [institutionId, today]);
+    if (!rows.length) return reply('Nothing has been logged as used today.');
+    const lines = rows.map((r, i) => `${i + 1}. ${r.item_name} — ${num(r.quantity_used)} ${r.unit || ''}${r.used_by_name ? ' · by ' + r.used_by_name : ''}`);
+    return reply(`Today's grocery usage — ${rows.length} entr${rows.length === 1 ? 'y' : 'ies'}:\n${lines.join('\n')}`);
+  }
+
+  // ---- INVENTORY: permanent assets + locations --------------------
+  if (intent === 'inventory') {
+    const [rows] = await db.query(
+      `SELECT item_name, quantity, rack FROM store_assets WHERE institutionId = ? ORDER BY item_name`, [institutionId]);
+    if (!rows.length) return reply('No inventory assets have been added yet.');
+    const SHOW = 30;
+    const lines = rows.slice(0, SHOW).map((r, i) => `${i + 1}. ${r.item_name} — ${num(r.quantity)} ${Number(r.quantity) === 1 ? 'unit' : 'units'}${r.rack ? ' · ' + r.rack : ' · (no location)'}`);
+    const more = rows.length > SHOW ? `\n…and ${rows.length - SHOW} more.` : '';
+    return reply(`Kitchen inventory — ${rows.length} asset${rows.length === 1 ? '' : 's'}:\n${lines.join('\n')}${more}`);
+  }
+
+  // ---- STAFF: kitchen staff + today's activity + presence ---------
+  const today = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
+  const [staff] = await db.query(
+    `SELECT u.id, u.name, u.role FROM kitchen_staff ks JOIN users u ON u.id = ks.user_id
+      WHERE ks.institutionId = ? ORDER BY u.name`, [institutionId]);
+  if (!staff.length) return reply('No kitchen staff have been added yet.');
+  const ids = staff.map(s => s.id);
+  const ph = ids.map(() => '?').join(',');
+  const [acts] = await db.query(
+    `SELECT user_id, COUNT(*) AS n FROM kitchen_activity_log
+      WHERE institutionId = ? AND activity_date = ? AND user_id IN (${ph}) GROUP BY user_id`, [institutionId, today, ...ids]);
+  const actBy = {}; acts.forEach(a => { actBy[a.user_id] = a.n; });
+  let presBy = {};
+  try {
+    const [att] = await db.query(
+      `SELECT user_id, status FROM attendance WHERE institutionId = ? AND attendance_date = ? AND user_id IN (${ph})`, [institutionId, today, ...ids]);
+    att.forEach(a => { presBy[a.user_id] = a.status === 'P'; });
+  } catch (_) { presBy = {}; }
+  const lines = staff.map((s, i) => {
+    const pres = (s.id in presBy) ? (presBy[s.id] ? 'Present' : 'Absent') : '—';
+    const n = actBy[s.id] || 0;
+    return `${i + 1}. ${s.name}${s.role ? ` (${s.role})` : ''} — ${pres} · ${n} action${n === 1 ? '' : 's'} today`;
+  });
+  return reply(`Kitchen staff — ${staff.length} member${staff.length === 1 ? '' : 's'} (today):\n${lines.join('\n')}`);
+}
+
+// =====================================================================
+//  [NEW DRILL-DOWN]  _liveExpenses  — picker answers for the Daily
+//  Expenses (Account Assistant) cards. Gated on one-word "expenselookup".
+//    expenselookup summary   → total spent, vouchers, avg, this month
+//    expenselookup byhead    → spend per Head of Account (amount · count)
+//    expenselookup bymethod  → spend per payment method
+//    expenselookup range     → recent vouchers (newest first)
+//    expenselookup ondate    → today's vouchers
+//  Scoped to the active academic year (except "ondate", which is a day).
+// =====================================================================
+async function _liveExpenses(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, 'DailyExpenses'))) return null;
+  const text = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  let intent = (text.match(/\bexpenselookup (summary|byhead|bymethod|range|ondate)\b/) || [])[1] || null;
+  if (!intent) return null;
+
+  const LINK = { link: 'DailyExpenses', linkLabel: 'Open Daily Expenses' };
+  const reply = (answer, options) => ({ ok: true, source: 'smarty', live: true, answer, ...(options ? { options } : {}), ...LINK });
+  const inr = (n) => 'INR ' + new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(Number(n) || 0);
+  const dmy = (v) => { if (!v) return ''; const s = String(v).slice(0, 10); const [y, m, d] = s.split('-'); return (d && m && y) ? `${d}/${m}/${y}` : s; };
+  const yearId = await resolveYearId(institutionId);
+
+  if (intent === 'summary') {
+    const [[tot]] = await db.query(
+      `SELECT COUNT(*) AS c, COALESCE(SUM(total_amount), 0) AS t FROM ${_T_EXPV}
+        WHERE institutionId = ? AND academic_year_id = ?`, [institutionId, yearId]);
+    if (!tot.c) return reply('No expense vouchers have been recorded this year yet.');
+    const curYm = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 7);
+    const [[mm]] = await db.query(
+      `SELECT COALESCE(SUM(total_amount), 0) AS tm FROM ${_T_EXPV}
+        WHERE institutionId = ? AND academic_year_id = ? AND voucher_date LIKE ?`, [institutionId, yearId, curYm + '%']);
+    const avg = tot.c ? Number(tot.t) / tot.c : 0;
+    return reply([
+      `**Expense summary** (this academic year):`,
+      `• Total spent: ${inr(tot.t)}`,
+      `• Vouchers: ${tot.c}`,
+      `• Avg per voucher: ${inr(avg)}`,
+      `• This month: ${inr(mm.tm)}`
+    ].join('\n'));
+  }
+
+  if (intent === 'byhead') {
+    const [rows] = await db.query(
+      `SELECT head_of_account AS head, COALESCE(SUM(total_amount), 0) AS amt, COUNT(*) AS n FROM ${_T_EXPV}
+        WHERE institutionId = ? AND academic_year_id = ? GROUP BY head_of_account ORDER BY amt DESC`, [institutionId, yearId]);
+    if (!rows.length) return reply('No expenses have been recorded this year yet.');
+    const lines = rows.map((r, i) => `${i + 1}. ${r.head || 'Other'} — ${inr(r.amt)} · ${r.n} voucher${Number(r.n) === 1 ? '' : 's'}`);
+    return reply(`Spending by Head of Account (this year):\n${lines.join('\n')}`);
+  }
+
+  if (intent === 'bymethod') {
+    const [rows] = await db.query(
+      `SELECT COALESCE(account_type, 'Others') AS method, COALESCE(SUM(total_amount), 0) AS amt FROM ${_T_EXPV}
+        WHERE institutionId = ? AND academic_year_id = ? GROUP BY account_type ORDER BY amt DESC`, [institutionId, yearId]);
+    if (!rows.length) return reply('No expenses have been recorded this year yet.');
+    const lines = rows.map((r, i) => `${i + 1}. ${r.method} — ${inr(r.amt)}`);
+    return reply(`Spending by payment method (this year):\n${lines.join('\n')}`);
+  }
+
+  if (intent === 'range') {
+    const [rows] = await db.query(
+      `SELECT voucher_no, voucher_date, head_of_account, name_title, total_amount FROM ${_T_EXPV}
+        WHERE institutionId = ? AND academic_year_id = ? ORDER BY seq DESC LIMIT 20`, [institutionId, yearId]);
+    if (!rows.length) return reply('No expense vouchers have been recorded this year yet.');
+    const lines = rows.map((r, i) => `${i + 1}. ${r.voucher_no} · ${dmy(r.voucher_date)} — ${r.head_of_account || '—'}${r.name_title ? ' · ' + r.name_title : ''} · ${inr(r.total_amount)}`);
+    return reply(`Latest vouchers this year (newest first):\n${lines.join('\n')}`);
+  }
+
+  // ondate → today's vouchers
+  const today = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
+  const [rows] = await db.query(
+    `SELECT voucher_no, head_of_account, name_title, total_amount FROM ${_T_EXPV}
+      WHERE institutionId = ? AND voucher_date = ? ORDER BY seq DESC`, [institutionId, today]);
+  if (!rows.length) return reply(`No expense vouchers were recorded today (${dmy(today)}).`);
+  const total = rows.reduce((s, r) => s + Number(r.total_amount || 0), 0);
+  const lines = rows.map((r, i) => `${i + 1}. ${r.voucher_no} — ${r.head_of_account || '—'}${r.name_title ? ' · ' + r.name_title : ''} · ${inr(r.total_amount)}`);
+  return reply(`Today's vouchers (${dmy(today)}) — ${rows.length}, ${inr(total)} total:\n${lines.join('\n')}`);
+}
+
+// =====================================================================
+//  [NEW DRILL-DOWN]  _liveAssets  — picker answers for the Inventory &
+//  Assets cards. Gated on one-word "assetlookup".
+//    assetlookup list    → summary + the register (item · head · qty · room · status)
+//    assetlookup byhead  → heads with counts → pick head → its assets
+//    assetlookup status  → statuses with counts → pick status → its assets
+//    assetlookup find    → the register (same list as "list")
+// =====================================================================
+async function _liveAssets(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, 'InventoryAssets'))) return null;
+  const text = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  let intent = (text.match(/\bassetlookup (list|byhead|status|find)\b/) || [])[1] || null;
+  if (!intent) return null;
+  if (intent === 'find') intent = 'list';
+
+  const LINK = { link: 'InventoryAssets', linkLabel: 'Open Inventory & Assets' };
+  const reply = (answer, options) => ({ ok: true, source: 'smarty', live: true, answer, ...(options ? { options } : {}), ...LINK });
+  const base = (tok, extra) => `assetlookup ${tok}${extra || ''}`;
+  const STATUSES = ['In Use', 'In Store', 'Under Repair', 'Damaged', 'Disposed'];
+  const assetLine = (r, i) => `${i + 1}. ${r.item_name} — ${r.head_name || 'Unassigned'} · ${r.quantity} ${r.unit || ''}${r.room_no ? ' · ' + r.room_no : ''} · ${r.status}`;
+
+  const headId = (text.match(/headid(\d+)/) || [])[1];
+  const statusIdx = (text.match(/statusidx(\d+)/) || [])[1];
+
+  // ---- BYHEAD: heads with counts → pick → assets ------------------
+  if (intent === 'byhead') {
+    if (headId === undefined) {
+      const [rows] = await db.query(
+        `SELECT h.id, h.name, COUNT(a.id) AS n, COALESCE(SUM(a.quantity), 0) AS qty
+           FROM ${_T_ASSET_HEADS} h LEFT JOIN ${_T_ASSETS} a ON a.head_id = h.id
+          WHERE h.institutionId = ? GROUP BY h.id, h.name HAVING n > 0 ORDER BY n DESC`, [institutionId]);
+      if (!rows.length) return reply('No assets have been registered yet.');
+      return reply('Which head of account?', rows.map(r => ({ label: `${r.name} (${r.n})`.slice(0, 80), send: base('byhead', ` headid${r.id}`) })));
+    }
+    const [hr] = await db.query(`SELECT name FROM ${_T_ASSET_HEADS} WHERE id = ?`, [headId]);
+    const hName = hr.length ? hr[0].name : `Head ${headId}`;
+    const [rows] = await db.query(
+      `SELECT a.item_name, a.quantity, a.unit, a.room_no, a.status, h.name AS head_name
+         FROM ${_T_ASSETS} a LEFT JOIN ${_T_ASSET_HEADS} h ON h.id = a.head_id
+        WHERE a.institutionId = ? AND a.head_id = ? ORDER BY a.item_name LIMIT 40`, [institutionId, headId]);
+    if (!rows.length) return reply(`No assets under **${hName}**.`);
+    const SHOW = 30; const lines = rows.slice(0, SHOW).map(assetLine);
+    const more = rows.length > SHOW ? `\n…and ${rows.length - SHOW} more.` : '';
+    return reply(`**${hName}** — ${rows.length} asset${rows.length === 1 ? '' : 's'}:\n${lines.join('\n')}${more}`);
+  }
+
+  // ---- STATUS: statuses with counts → pick → assets ---------------
+  if (intent === 'status') {
+    if (statusIdx === undefined) {
+      const [rows] = await db.query(
+        `SELECT status, COUNT(*) AS n FROM ${_T_ASSETS} WHERE institutionId = ? GROUP BY status`, [institutionId]);
+      if (!rows.length) return reply('No assets have been registered yet.');
+      const cnt = {}; rows.forEach(r => { cnt[r.status] = r.n; });
+      const opts = STATUSES.filter(s => cnt[s]).map((s, _i) => ({ label: `${s} (${cnt[s]})`, send: base('status', ` statusidx${STATUSES.indexOf(s)}`) }));
+      if (!opts.length) return reply('No assets have been registered yet.');
+      return reply('Which status?', opts);
+    }
+    const st = STATUSES[Number(statusIdx)];
+    if (!st) return reply("I couldn't find that status.");
+    const [rows] = await db.query(
+      `SELECT a.item_name, a.quantity, a.unit, a.room_no, a.status, h.name AS head_name
+         FROM ${_T_ASSETS} a LEFT JOIN ${_T_ASSET_HEADS} h ON h.id = a.head_id
+        WHERE a.institutionId = ? AND a.status = ? ORDER BY a.item_name LIMIT 40`, [institutionId, st]);
+    if (!rows.length) return reply(`No assets are marked **${st}**.`);
+    const SHOW = 30; const lines = rows.slice(0, SHOW).map(assetLine);
+    const more = rows.length > SHOW ? `\n…and ${rows.length - SHOW} more.` : '';
+    return reply(`**${st}** — ${rows.length} asset${rows.length === 1 ? '' : 's'}:\n${lines.join('\n')}${more}`);
+  }
+
+  // ---- LIST / FIND: summary + the register ------------------------
+  const [[sum]] = await db.query(
+    `SELECT COUNT(*) AS items, COALESCE(SUM(quantity), 0) AS qty,
+            COALESCE(SUM(CASE WHEN status IN ('Under Repair','Damaged') THEN 1 ELSE 0 END), 0) AS attention
+       FROM ${_T_ASSETS} WHERE institutionId = ?`, [institutionId]);
+  if (!sum.items) return reply('No assets have been registered yet.');
+  const [rows] = await db.query(
+    `SELECT a.item_name, a.quantity, a.unit, a.room_no, a.status, h.name AS head_name
+       FROM ${_T_ASSETS} a LEFT JOIN ${_T_ASSET_HEADS} h ON h.id = a.head_id
+      WHERE a.institutionId = ? ORDER BY h.name, a.item_name LIMIT 40`, [institutionId]);
+  const SHOW = 30; const lines = rows.slice(0, SHOW).map(assetLine);
+  const more = rows.length > SHOW ? `\n…and ${rows.length - SHOW} more.` : '';
+  const head = `Asset register — ${sum.items} line item${Number(sum.items) === 1 ? '' : 's'} · ${sum.qty} total qty · ${sum.attention} need attention`;
+  return reply(`${head}:\n${lines.join('\n')}${more}`);
+}
+
+// =====================================================================
+//  [NEW DRILL-DOWN]  _liveTransport  — picker answers for the Transport
+//  cards. Gated on one-word "transportlookup"; the flat free-text resolver
+//  (renamed _liveTransportAsk) still handles "how many routes", "my bus", etc.
+//    transportlookup routes        → every route (bus · driver · N students)
+//    transportlookup stops         → pick route → its pickup & drop points
+//    transportlookup students      → pick route → the riders assigned to it
+//    transportlookup nostop        → pick route → riders missing a pickup/drop
+//    transportlookup vehicles      → the registered fleet
+//    transportlookup routevehicle  → pick route → the bus on it
+//    transportlookup crew          → pick route → its driver & assistant
+//    transportlookup logs          → latest vehicle log entries (fleet-wide)
+//    transportlookup service       → pick vehicle → its service / repair records
+//  Admin-only (the cards are admin-scoped); a non-admin is gently redirected.
+// =====================================================================
+async function _liveTransport(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, _MOD_TRANSPORT))) return null;
+  const text = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const intent = (text.match(/\btransportlookup (routes|stops|students|nostop|vehicles|routevehicle|crew|logs|service)\b/) || [])[1] || null;
+  if (!intent) return null;
+
+  const role = (asker.role || '').toLowerCase();
+  const isPriv = role === 'developer' || role === 'super admin' || role === 'admin';
+  const LINK = { link: 'Transport', linkLabel: 'Open Transport' };
+  const reply = (answer, options) => ({ ok: true, source: 'smarty', live: true, answer, ...(options ? { options } : {}), ...LINK });
+  if (!isPriv) return reply("That view is for administrators. Open **Transport** to see your own bus route and stops.");
+
+  const inr = (n) => 'INR ' + new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(Number(n) || 0);
+  const dmy = (v) => { if (!v) return ''; const s = String(v).slice(0, 10); const [y, m, d] = s.split('-'); return (d && m && y) ? `${d}/${m}/${y}` : s; };
+  const routeId = (text.match(/routeid(\d+)/) || [])[1];
+  const vehId   = (text.match(/vehicleid(\d+)/) || [])[1];
+
+  const routeChips = async (intentTok) => {
+    const [rs] = await db.execute(
+      `SELECT id, route_name, route_code FROM ${_TT_ROUTES} WHERE institutionId = ? ORDER BY route_name`, [institutionId]);
+    if (!rs.length) return reply('No bus routes have been set up yet.');
+    return reply('Which route?', rs.map(r => ({ label: `${r.route_name}${r.route_code ? ` (${r.route_code})` : ''}`.slice(0, 80), send: `transportlookup ${intentTok} routeid${r.id}` })));
+  };
+  const routeLabel = async (id) => {
+    const [r] = await db.execute(`SELECT route_name, route_code FROM ${_TT_ROUTES} WHERE id = ? LIMIT 1`, [id]);
+    return r.length ? `${r[0].route_name}${r[0].route_code ? ` (${r[0].route_code})` : ''}` : `Route ${id}`;
+  };
+
+  // ---- ROUTES: every route ----------------------------------------
+  if (intent === 'routes') {
+    const [rows] = await db.execute(
+      `SELECT r.id, r.route_name, r.route_code, v.vehicle_no, d.name AS driver_name,
+              (SELECT COUNT(*) FROM ${_TT_RS} s WHERE s.route_id = r.id) AS students
+         FROM ${_TT_ROUTES} r
+         LEFT JOIN ${_TT_VEH} v ON v.id = r.vehicle_id
+         LEFT JOIN users d ON d.id = r.driver_id
+        WHERE r.institutionId = ? ORDER BY r.route_name`, [institutionId]);
+    if (!rows.length) return reply('No bus routes have been set up yet.');
+    const lines = rows.map((r, i) => `${i + 1}. ${r.route_name}${r.route_code ? ` (${r.route_code})` : ''} — ${r.vehicle_no ? 'bus ' + r.vehicle_no : 'no bus'}${r.driver_name ? ' · ' + r.driver_name : ''} · ${r.students} student${Number(r.students) === 1 ? '' : 's'}`);
+    return reply(`Bus routes (${rows.length}):\n${lines.join('\n')}`);
+  }
+
+  // ---- STOPS: a route's pickup & drop points ----------------------
+  if (intent === 'stops') {
+    if (routeId === undefined) return routeChips('stops');
+    const nm = await routeLabel(routeId);
+    const [pts] = await db.execute(
+      `SELECT point_type, title, arrival_time FROM transport_route_points
+        WHERE route_id = ? ORDER BY point_type, seq_order, id`, [routeId]);
+    if (!pts.length) return reply(`**${nm}** has no pickup or drop points set yet.`);
+    const fmt = (p) => `${p.title}${p.arrival_time ? ` (${p.arrival_time})` : ''}`;
+    const pick = pts.filter(p => p.point_type === 'pickup');
+    const drop = pts.filter(p => p.point_type === 'drop');
+    const parts = [`**${nm}** stops:`];
+    if (pick.length) parts.push(`Pickup — ${pick.map(fmt).join(' → ')}`);
+    if (drop.length) parts.push(`Drop — ${drop.map(fmt).join(' → ')}`);
+    return reply(parts.join('\n'));
+  }
+
+  // ---- STUDENTS / NOSTOP: riders on a route -----------------------
+  if (intent === 'students' || intent === 'nostop') {
+    if (routeId === undefined) return routeChips(intent);
+    const nm = await routeLabel(routeId);
+    const [rows] = await db.execute(
+      `SELECT u.name, u.roll_no, c.className, c.section, rs.pickup_point_id, rs.drop_point_id
+         FROM ${_TT_RS} rs JOIN users u ON u.id = rs.student_id
+         LEFT JOIN classes c ON c.id = u.class_id
+        WHERE rs.route_id = ?`, [routeId]);
+    if (!rows.length) return reply(`No students are assigned to **${nm}** yet.`);
+    rows.sort((a, b) => { const ra = parseInt(a.roll_no, 10), rb = parseInt(b.roll_no, 10); if (!isNaN(ra) && !isNaN(rb)) return ra - rb; return (a.name || '').localeCompare(b.name || ''); });
+    const cls = (r) => r.className ? `${r.className}${r.section ? ' ' + r.section : ''}` : '';
+    const [pts] = await db.execute(`SELECT id, title FROM transport_route_points WHERE route_id = ?`, [routeId]);
+    const pName = {}; pts.forEach(p => { pName[p.id] = p.title; });
+
+    if (intent === 'nostop') {
+      const miss = rows.filter(r => !r.pickup_point_id || !r.drop_point_id);
+      if (!miss.length) return reply(`Every student on **${nm}** has both a pickup and a drop point set. ✅`);
+      const lines = miss.map((r, i) => { const m = []; if (!r.pickup_point_id) m.push('pickup'); if (!r.drop_point_id) m.push('drop'); return `${i + 1}. ${r.name}${cls(r) ? ` (${cls(r)})` : ''} — no ${m.join(' & ')} point`; });
+      return reply(`**${nm}** — ${miss.length} student${miss.length === 1 ? '' : 's'} missing a stop:\n${lines.join('\n')}`);
+    }
+    const SHOW = 40; const lines = rows.slice(0, SHOW).map((r, i) => `${i + 1}. ${r.name}${cls(r) ? ` (${cls(r)})` : ''} — ${pName[r.pickup_point_id] || 'no pickup'} → ${pName[r.drop_point_id] || 'no drop'}`);
+    const more = rows.length > SHOW ? `\n…and ${rows.length - SHOW} more.` : '';
+    return reply(`**${nm}** — ${rows.length} student${rows.length === 1 ? '' : 's'}:\n${lines.join('\n')}${more}`);
+  }
+
+  // ---- VEHICLES: the fleet ----------------------------------------
+  if (intent === 'vehicles') {
+    const [rows] = await db.execute(
+      `SELECT vehicle_no, vehicle_code, vehicle_name, vehicle_type, capacity, is_active
+         FROM ${_TT_VEH} WHERE institutionId = ? ORDER BY vehicle_no`, [institutionId]);
+    if (!rows.length) return reply('No vehicles have been registered yet.');
+    const lines = rows.map((r, i) => `${i + 1}. ${r.vehicle_no}${r.vehicle_code ? ` (${r.vehicle_code})` : ''}${r.vehicle_name ? ' · ' + r.vehicle_name : ''}${r.vehicle_type ? ' · ' + r.vehicle_type : ''}${r.capacity ? ' · ' + r.capacity + ' seats' : ''} · ${r.is_active ? 'Active' : 'Inactive'}`);
+    return reply(`Registered vehicles (${rows.length}):\n${lines.join('\n')}`);
+  }
+
+  // ---- ROUTEVEHICLE: the bus on a route ---------------------------
+  if (intent === 'routevehicle') {
+    if (routeId === undefined) return routeChips('routevehicle');
+    const [r] = await db.execute(
+      `SELECT r.route_name, r.route_code, v.vehicle_no, v.vehicle_code, v.vehicle_name, v.vehicle_type, v.capacity
+         FROM ${_TT_ROUTES} r LEFT JOIN ${_TT_VEH} v ON v.id = r.vehicle_id WHERE r.id = ? LIMIT 1`, [routeId]);
+    if (!r.length) return reply("I couldn't find that route.");
+    const x = r[0]; const nm = `${x.route_name}${x.route_code ? ` (${x.route_code})` : ''}`;
+    if (!x.vehicle_no) return reply(`No vehicle is assigned to **${nm}** yet.`);
+    return reply(`**${nm}** runs on **${x.vehicle_no}**${x.vehicle_code ? ` (${x.vehicle_code})` : ''}${x.vehicle_name ? ` · ${x.vehicle_name}` : ''}${x.vehicle_type ? ` · ${x.vehicle_type}` : ''}${x.capacity ? ` · ${x.capacity} seats` : ''}.`);
+  }
+
+  // ---- CREW: driver & assistant -----------------------------------
+  if (intent === 'crew') {
+    if (routeId === undefined) return routeChips('crew');
+    const [r] = await db.execute(
+      `SELECT r.route_name, r.route_code, d.name AS driver_name, a.name AS assistant_name,
+              ds.phone AS driver_phone, cs.phone AS assistant_phone
+         FROM ${_TT_ROUTES} r
+         LEFT JOIN users d ON d.id = r.driver_id
+         LEFT JOIN users a ON a.id = r.assistant_id
+         LEFT JOIN ${_TT_STAFF} ds ON ds.user_id = r.driver_id    AND ds.staff_role = 'Driver'    AND ds.institutionId = r.institutionId
+         LEFT JOIN ${_TT_STAFF} cs ON cs.user_id = r.assistant_id AND cs.staff_role = 'Assistant' AND cs.institutionId = r.institutionId
+        WHERE r.id = ? LIMIT 1`, [routeId]);
+    if (!r.length) return reply("I couldn't find that route.");
+    const x = r[0]; const nm = `${x.route_name}${x.route_code ? ` (${x.route_code})` : ''}`;
+    const parts = [`**${nm}** crew:`];
+    parts.push(`Driver — ${x.driver_name ? `${x.driver_name}${x.driver_phone ? ` (${x.driver_phone})` : ''}` : 'not assigned'}`);
+    parts.push(`Assistant — ${x.assistant_name ? `${x.assistant_name}${x.assistant_phone ? ` (${x.assistant_phone})` : ''}` : 'not assigned'}`);
+    return reply(parts.join('\n'));
+  }
+
+  // ---- LOGS: latest vehicle log entries (fleet-wide) --------------
+  if (intent === 'logs') {
+    const [rows] = await db.execute(
+      `SELECT l.log_date, l.trips, l.distance_km, l.fuel_litres, v.vehicle_no
+         FROM transport_vehicle_logs l JOIN ${_TT_VEH} v ON v.id = l.vehicle_id
+        WHERE l.institutionId = ? ORDER BY l.log_date DESC, v.vehicle_no LIMIT 20`, [institutionId]);
+    if (!rows.length) return reply('No vehicle log entries have been recorded yet.');
+    const lines = rows.map((r, i) => `${i + 1}. ${dmy(r.log_date)} · ${r.vehicle_no} — ${Number(r.trips) || 0} trip${Number(r.trips) === 1 ? '' : 's'} · ${Number(r.distance_km) || 0} km · ${Number(r.fuel_litres) || 0} L`);
+    return reply(`Latest vehicle log entries (newest first):\n${lines.join('\n')}`);
+  }
+
+  // ---- SERVICE: records for a vehicle -----------------------------
+  if (vehId === undefined) {
+    const [vs] = await db.execute(
+      `SELECT id, vehicle_no, vehicle_code FROM ${_TT_VEH} WHERE institutionId = ? ORDER BY vehicle_no`, [institutionId]);
+    if (!vs.length) return reply('No vehicles have been registered yet.');
+    return reply('Which vehicle?', vs.map(v => ({ label: `${v.vehicle_no}${v.vehicle_code ? ` (${v.vehicle_code})` : ''}`.slice(0, 80), send: `transportlookup service vehicleid${v.id}` })));
+  }
+  const [vrow] = await db.execute(`SELECT vehicle_no FROM ${_TT_VEH} WHERE id = ? LIMIT 1`, [vehId]);
+  const vlabel = vrow.length ? vrow[0].vehicle_no : `Vehicle ${vehId}`;
+  const [srows] = await db.execute(
+    `SELECT service_date, service_type, cost, garage FROM transport_vehicle_service
+      WHERE institutionId = ? AND vehicle_id = ? ORDER BY service_date DESC LIMIT 20`, [institutionId, vehId]);
+  if (!srows.length) return reply(`No service or repair records for **${vlabel}**.`);
+  const total = srows.reduce((s, r) => s + Number(r.cost || 0), 0);
+  const lines = srows.map((r, i) => `${i + 1}. ${dmy(r.service_date)} · ${r.service_type || 'Service'} — ${inr(r.cost)}${r.garage ? ' · ' + r.garage : ''}`);
+  return reply(`**${vlabel}** — ${srows.length} record${srows.length === 1 ? '' : 's'}, ${inr(total)} total:\n${lines.join('\n')}`);
+}
+
+// =====================================================================
+//  [NEW DRILL-DOWN]  _liveGroupChat  — picker answers for the Group Chat
+//  cards. Gated on one-word "groupchatlookup"; the flat resolver (renamed
+//  _liveGroupChatAsk) still answers "my groups" / "unread messages".
+//    groupchatlookup members → pick group → its members (creator = Admin)
+//    groupchatlookup recent  → pick group → its latest messages
+//    groupchatlookup ondate  → pick group → today's messages
+//  Admins see every group; everyone else sees the groups they belong to.
+// =====================================================================
+async function _liveGroupChat(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, _MOD_GROUPCHAT))) return null;
+  const text = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const intent = (text.match(/\bgroupchatlookup (members|recent|ondate)\b/) || [])[1] || null;
+  if (!intent) return null;
+
+  const role = (asker.role || '').toLowerCase();
+  const isPriv = role === 'developer' || role === 'super admin' || role === 'admin';
+  const uid = asker.userId || 0;
+  const LINK = { link: 'GroupChat', linkLabel: 'Open Chat' };
+  const reply = (answer, options) => ({ ok: true, source: 'smarty', live: true, answer, ...(options ? { options } : {}), ...LINK });
+  const groupId = (text.match(/groupid(\d+)/) || [])[1];
+  const tfmt = (v) => { const d = new Date(v); if (isNaN(d.getTime())) return ''; return d.toLocaleString('en-GB', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true }).replace(',', ''); };
+  const mediaLabel = (t) => t === 'image' ? '📷 Photo' : t === 'video' ? '🎞 Video' : t === 'file' ? '📎 File' : '';
+  const body = (r) => { const t = r.message_text && String(r.message_text).trim() ? String(r.message_text).trim() : (mediaLabel(r.message_type) || '[message]'); return t.length > 80 ? t.slice(0, 80) + '…' : t; };
+
+  const groupChips = async (intentTok) => {
+    let rows;
+    if (isPriv) {
+      [rows] = await db.execute(`SELECT id, name FROM \`${_GC_GROUPS}\` WHERE institutionId = ? ORDER BY name`, [institutionId]);
+    } else {
+      [rows] = await db.execute(
+        `SELECT g.id, g.name FROM \`${_GC_GROUPS}\` g
+           JOIN ${_GC_MEMBERS} gm ON gm.group_id = g.id AND gm.user_id = ?
+          WHERE g.institutionId = ? ORDER BY g.name`, [uid, institutionId]);
+    }
+    if (!rows.length) return reply(isPriv ? 'There are no chat groups in the school yet.' : "You're not in any chat groups yet.");
+    return reply('Which group?', rows.slice(0, 24).map(g => ({ label: String(g.name).slice(0, 70), send: `groupchatlookup ${intentTok} groupid${g.id}` })));
+  };
+  const groupLabel = async (id) => {
+    const [r] = await db.execute(`SELECT name FROM \`${_GC_GROUPS}\` WHERE id = ? LIMIT 1`, [id]);
+    return r.length ? r[0].name : `Group ${id}`;
+  };
+
+  // ---- MEMBERS ----------------------------------------------------
+  if (intent === 'members') {
+    if (groupId === undefined) return groupChips('members');
+    const [g] = await db.execute(`SELECT name, created_by FROM \`${_GC_GROUPS}\` WHERE id = ? LIMIT 1`, [groupId]);
+    if (!g.length) return reply("I couldn't find that group.");
+    const [rows] = await db.execute(
+      `SELECT u.id, u.name, u.role FROM ${_GC_MEMBERS} gm JOIN users u ON u.id = gm.user_id
+        WHERE gm.group_id = ? ORDER BY u.name`, [groupId]);
+    if (!rows.length) return reply(`**${g[0].name}** has no members yet.`);
+    const lines = rows.map((r, i) => `${i + 1}. ${r.name}${r.role ? ` — ${r.role}` : ''}${String(r.id) === String(g[0].created_by) ? ' · Admin' : ''}`);
+    return reply(`**${g[0].name}** — ${rows.length} member${rows.length === 1 ? '' : 's'}:\n${lines.join('\n')}`);
+  }
+
+  // ---- RECENT -----------------------------------------------------
+  if (intent === 'recent') {
+    if (groupId === undefined) return groupChips('recent');
+    const nm = await groupLabel(groupId);
+    const [rows] = await db.execute(
+      `SELECT m.message_text, m.message_type, u.name, m.timestamp
+         FROM ${_GC_MSGS} m JOIN users u ON u.id = m.user_id
+        WHERE m.group_id = ? ORDER BY m.timestamp DESC LIMIT 8`, [groupId]);
+    if (!rows.length) return reply(`No messages in **${nm}** yet.`);
+    const lines = rows.reverse().map(r => `• ${r.name}${r.timestamp ? ` (${tfmt(r.timestamp)})` : ''}: ${body(r)}`);
+    return reply(`Recent messages in **${nm}**:\n${lines.join('\n')}`);
+  }
+
+  // ---- ONDATE: today's messages -----------------------------------
+  if (groupId === undefined) return groupChips('ondate');
+  const nm = await groupLabel(groupId);
+  const today = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
+  const [rows] = await db.execute(
+    `SELECT m.message_text, m.message_type, u.name, m.timestamp
+       FROM ${_GC_MSGS} m JOIN users u ON u.id = m.user_id
+      WHERE m.group_id = ? AND DATE(m.timestamp) = ? ORDER BY m.timestamp ASC LIMIT 30`, [groupId, today]);
+  if (!rows.length) return reply(`No messages were sent in **${nm}** today (${today.split('-').reverse().join('/')}).`);
+  const lines = rows.map(r => `• ${r.name} (${tfmt(r.timestamp)}): ${body(r)}`);
+  return reply(`Today's messages in **${nm}** (${rows.length}):\n${lines.join('\n')}`);
+}
+
+// =====================================================================
+//  [NEW DRILL-DOWN]  _liveGallery  — picker answers for the Gallery cards.
+//  Gated on one-word "gallerylookup"; the flat resolver (renamed
+//  _liveGalleryAsk) still answers "how many albums" / "latest album".
+//    gallerylookup find  → the albums, newest first (title · date · items)
+//    gallerylookup media → pick album → its photo / video breakdown
+//  (Chat can't render the images, so media reports the counts and the link.)
+// =====================================================================
+async function _liveGallery(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, _MOD_GALLERY))) return null;
+  const text = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const intent = (text.match(/\bgallerylookup (find|media)\b/) || [])[1] || null;
+  if (!intent) return null;
+
+  const LINK = { link: 'Gallery', linkLabel: 'Open Gallery' };
+  const reply = (answer, options) => ({ ok: true, source: 'smarty', live: true, answer, ...(options ? { options } : {}), ...LINK });
+
+  const [albums] = await db.execute(
+    `SELECT title, event_date, COUNT(*) AS n,
+            SUM(file_type = 'photo') AS photos, SUM(file_type = 'video') AS videos
+       FROM ${_GT_GAL} WHERE institutionId = ?
+      GROUP BY title, event_date ORDER BY event_date DESC, title`, [institutionId]);
+  if (!albums.length) return reply('There are no albums in the Gallery yet.');
+
+  if (intent === 'find') {
+    const SHOW = 25;
+    const lines = albums.slice(0, SHOW).map((a, i) => `${i + 1}. ${a.title} — ${_liveFmtDate(a.event_date)} · ${a.n} item${Number(a.n) === 1 ? '' : 's'}`);
+    const more = albums.length > SHOW ? `\n…and ${albums.length - SHOW} more.` : '';
+    return reply(`Gallery albums (${albums.length}), newest first:\n${lines.join('\n')}${more}`);
+  }
+
+  // media → pick album → its photo / video counts
+  const idx = (text.match(/albumidx(\d+)/) || [])[1];
+  if (idx === undefined) {
+    const SHOW = 24;
+    return reply('Which album?', albums.slice(0, SHOW).map((a, i) => ({ label: String(a.title).slice(0, 70), send: `gallerylookup media albumidx${i}` })));
+  }
+  const a = albums[Number(idx)];
+  if (!a) return reply("I couldn't find that album.");
+  const ph = Number(a.photos) || 0, vd = Number(a.videos) || 0;
+  return reply(`**${a.title}** (${_liveFmtDate(a.event_date)}) holds **${a.n}** item${Number(a.n) === 1 ? '' : 's'} — ${ph} photo${ph === 1 ? '' : 's'} and ${vd} video${vd === 1 ? '' : 's'}. Open **Gallery** to view them full-screen.`);
+}
+
+// =====================================================================
+//  [NEW DRILL-DOWN]  _liveAlumni  — picker answers for the Alumni cards.
+//  Gated on one-word "alumnilookup"; the flat resolver (renamed
+//  _liveAlumniAsk) still answers "how many alumni" / "class of 2024".
+//    alumnilookup records → every alumnus (name · passout year · class · status)
+//    alumnilookup find    → the same roster, to scan by name
+//    alumnilookup history → pick an alumnus → year-by-year % (+ overall)
+//    alumnilookup contact → pick an alumnus → contact + current information
+//  Admin-only (the cards are admin-scoped).
+// =====================================================================
+async function _liveAlumni(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, _MOD_ALUMNI))) return null;
+  const text = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const intent = (text.match(/\balumnilookup (records|find|history|contact)\b/) || [])[1] || null;
+  if (!intent) return null;
+
+  const LINK = { link: 'Alumni', linkLabel: 'Open Alumni' };
+  const reply = (answer, options) => ({ ok: true, source: 'smarty', live: true, answer, ...(options ? { options } : {}), ...LINK });
+  const alumnusId = (text.match(/alumnusid(\d+)/) || [])[1];
+
+  const alumniChips = async (intentTok) => {
+    const [rows] = await db.execute(
+      `SELECT id, name, passout_year FROM ${_AL_TBL} WHERE institutionId = ? ORDER BY name`, [institutionId]);
+    if (!rows.length) return reply('There are no alumni on record yet.');
+    return reply('Which alumnus?', rows.slice(0, 24).map(r => ({ label: `${r.name}${r.passout_year ? ` (${r.passout_year})` : ''}`.slice(0, 80), send: `alumnilookup ${intentTok} alumnusid${r.id}` })));
+  };
+
+  // ---- RECORDS / FIND: the roster ---------------------------------
+  if (intent === 'records' || intent === 'find') {
+    const [rows] = await db.execute(
+      `SELECT name, passout_year, final_class, current_status FROM ${_AL_TBL}
+        WHERE institutionId = ? ORDER BY passout_year DESC, name LIMIT 40`, [institutionId]);
+    if (!rows.length) return reply('There are no alumni on record yet.');
+    const lines = rows.map((r, i) => `${i + 1}. ${r.name}${r.passout_year ? ` — ${r.passout_year}` : ''}${r.final_class ? ` · ${r.final_class}` : ''}${r.current_status ? ` · ${r.current_status}` : ''}`);
+    const [[c]] = await db.execute(`SELECT COUNT(*) AS n FROM ${_AL_TBL} WHERE institutionId = ?`, [institutionId]);
+    const more = Number(c.n) > 40 ? `\n…and ${Number(c.n) - 40} more.` : '';
+    return reply(`Alumni on record (${c.n})${intent === 'find' ? ' — scan by name' : ''}:\n${lines.join('\n')}${more}`);
+  }
+
+  // ---- HISTORY: year-by-year academic % ---------------------------
+  if (intent === 'history') {
+    if (alumnusId === undefined) return alumniChips('history');
+    const [a] = await db.execute(`SELECT name, academic_history FROM ${_AL_TBL} WHERE id = ? LIMIT 1`, [alumnusId]);
+    if (!a.length) return reply("I couldn't find that alumnus.");
+    let hist = null;
+    try { hist = a[0].academic_history ? JSON.parse(a[0].academic_history) : null; } catch (_) { hist = null; }
+    if (!hist || !Array.isArray(hist.years) || !hist.years.length) {
+      return reply(`No academic marks were recorded for **${a[0].name}**.`);
+    }
+    const lines = hist.years.map(y => `• ${y.year_name}${y.class_label ? ` (${y.class_label})` : ''}: ${y.percentage != null ? y.percentage + '%' : '—'}${(y.obtained != null && y.possible != null) ? ` (${Math.round(y.obtained)}/${Math.round(y.possible)})` : ''}`);
+    const ov = hist.overall || {};
+    const head = `**${a[0].name}** — academic history:`;
+    const foot = ov.percentage != null ? `\nOverall (all years): **${ov.percentage}%**${(ov.obtained != null && ov.possible != null) ? ` (${Math.round(ov.obtained)}/${Math.round(ov.possible)})` : ''}` : '';
+    return reply(`${head}\n${lines.join('\n')}${foot}`);
+  }
+
+  // ---- CONTACT: contact + current information ----------------------
+  if (alumnusId === undefined) return alumniChips('contact');
+  const [a] = await db.execute(
+    `SELECT name, phone, email, location, linkedin, current_status, occupation, organization, higher_education
+       FROM ${_AL_TBL} WHERE id = ? LIMIT 1`, [alumnusId]);
+  if (!a.length) return reply("I couldn't find that alumnus.");
+  const x = a[0];
+  const line = (label, val) => `${label}: ${val && String(val).trim() ? val : '—'}`;
+  const parts = [
+    `**${x.name}** — contact & current information:`,
+    line('Phone', x.phone), line('Email', x.email), line('Location', x.location), line('LinkedIn', x.linkedin),
+    line('Current status', x.current_status), line('Occupation', x.occupation),
+    line('Organization', x.organization), line('Higher education', x.higher_education)
+  ];
+  return reply(parts.join('\n'));
+}
+
+// =====================================================================
+//  [NEW DRILL-DOWN]  _liveSupport  — picker answers for the Support cards.
+//  Gated on one-word "supportlookup"; the flat resolver (renamed
+//  _liveSupportAsk) still answers "how many open tickets" / "my tickets".
+//    supportlookup tickets → every ticket (subject · module · status · #id)
+//    supportlookup status  → tickets grouped Open vs Closed
+//    supportlookup find    → the same list, to scan by subject
+//    supportlookup thread  → pick a ticket → its conversation + status
+//  Institution-scoped; the cards are admin-scoped.
+// =====================================================================
+async function _liveSupport(institutionId, q, asker) {
+  if (!(await _smartyCan(asker, institutionId, _MOD_SUPPORT))) return null;
+  const text = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const intent = (text.match(/\bsupportlookup (tickets|status|find|thread)\b/) || [])[1] || null;
+  if (!intent) return null;
+
+  const LINK = { link: 'Support', linkLabel: 'Open Support' };
+  const reply = (answer, options) => ({ ok: true, source: 'smarty', live: true, answer, ...(options ? { options } : {}), ...LINK });
+  const STLABEL = { open: 'Waiting', assigned: 'Assigned', active: 'In progress', closed: 'Closed' };
+  const lbl = (s) => STLABEL[s] || s || '—';
+  const ticketId = (text.match(/ticketid(\d+)/) || [])[1];
+  const subjOf = (t) => (t.subject && String(t.subject).trim()) ? t.subject : (t.module || 'General');
+  const tfmt = (v) => { const d = new Date(v); if (isNaN(d.getTime())) return ''; return d.toLocaleString('en-GB', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true }).replace(',', ''); };
+
+  // ---- TICKETS / FIND: the list -----------------------------------
+  if (intent === 'tickets' || intent === 'find') {
+    const [rows] = await db.execute(
+      `SELECT id, subject, module, status FROM ${_ST_TICKETS}
+        WHERE institutionId = ? ORDER BY (status = 'closed') ASC, last_activity_at DESC LIMIT 30`, [institutionId]);
+    if (!rows.length) return reply('No support tickets have been raised yet.');
+    const lines = rows.map(t => `• #${t.id} ${subjOf(t)}${t.module ? ` (${t.module})` : ''} — ${lbl(t.status)}`);
+    return reply(`Support tickets (${rows.length})${intent === 'find' ? ' — scan by subject' : ''}:\n${lines.join('\n')}`);
+  }
+
+  // ---- STATUS: grouped Open vs Closed -----------------------------
+  if (intent === 'status') {
+    const [rows] = await db.execute(
+      `SELECT id, subject, module, status FROM ${_ST_TICKETS}
+        WHERE institutionId = ? ORDER BY last_activity_at DESC LIMIT 60`, [institutionId]);
+    if (!rows.length) return reply('No support tickets have been raised yet.');
+    const open = rows.filter(t => t.status !== 'closed');
+    const closed = rows.filter(t => t.status === 'closed');
+    const fmt = (t) => `• #${t.id} ${subjOf(t)} — ${lbl(t.status)}`;
+    const parts = [];
+    parts.push(`**Open (${open.length})**${open.length ? ':\n' + open.map(fmt).join('\n') : ' — none'}`);
+    parts.push(`**Closed (${closed.length})**${closed.length ? ':\n' + closed.map(fmt).join('\n') : ' — none'}`);
+    return reply(parts.join('\n\n'));
+  }
+
+  // ---- THREAD: a ticket's conversation ----------------------------
+  if (ticketId === undefined) {
+    const [rows] = await db.execute(
+      `SELECT id, subject, module FROM ${_ST_TICKETS}
+        WHERE institutionId = ? ORDER BY (status = 'closed') ASC, last_activity_at DESC LIMIT 24`, [institutionId]);
+    if (!rows.length) return reply('No support tickets have been raised yet.');
+    return reply('Which ticket?', rows.map(t => ({ label: `#${t.id} ${subjOf(t)}`.slice(0, 80), send: `supportlookup thread ticketid${t.id}` })));
+  }
+  const [tk] = await db.execute(`SELECT id, subject, module, status FROM ${_ST_TICKETS} WHERE id = ? AND institutionId = ? LIMIT 1`, [ticketId, institutionId]);
+  if (!tk.length) return reply("I couldn't find that ticket.");
+  const t = tk[0];
+  const [msgs] = await db.execute(
+    `SELECT m.sender_side, m.body, m.image, m.created_at, u.name
+       FROM support_messages m LEFT JOIN users u ON u.id = m.sender_id
+      WHERE m.ticket_id = ? ORDER BY m.id ASC LIMIT 15`, [ticketId]);
+  const head = `**#${t.id} ${subjOf(t)}**${t.module ? ` · ${t.module}` : ''} — status: **${lbl(t.status)}**`;
+  if (!msgs.length) return reply(`${head}\n_No messages yet._`);
+  const who = (m) => m.sender_side === 'developer' ? 'SmartEdz' : m.sender_side === 'system' ? 'System' : (m.name || 'School');
+  const lines = msgs.map(m => { const b = m.body && String(m.body).trim() ? String(m.body).trim() : (m.image ? '🖼 image' : ''); const bb = b.length > 80 ? b.slice(0, 80) + '…' : b; return m.sender_side === 'system' ? `— ${bb}` : `• ${who(m)}${m.created_at ? ` (${tfmt(m.created_at)})` : ''}: ${bb}`; });
+  return reply(`${head}\n${lines.join('\n')}`);
+}
+
+// =====================================================================
+//  [NEW DRILL-DOWN]  _liveManageLookup  — picker answers for the Manage
+//  Login (System Configuration) cards. Gated on one-word "managelookup".
+//  A NEW resolver (no rename) — the aggregate _liveManageLogins keeps
+//  answering its free-text counts (per role, roles, classes, subscription).
+//    managelookup users    → registered users across roles (name · role · class)
+//    managelookup find     → the same roster, to scan by name
+//    managelookup subjects → pick a class → the subjects assigned to it
+//  Admin-only, mirroring _liveManageLogins' own privilege check.
+// =====================================================================
+async function _liveManageLookup(institutionId, q, asker) {
+  const role = (asker.role || '').toLowerCase();
+  const isPriv = role === 'developer' || role === 'super admin' || role.includes('admin');
+  if (!isPriv) return null;
+  const text = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const intent = (text.match(/\bmanagelookup (users|find|subjects)\b/) || [])[1] || null;
+  if (!intent) return null;
+
+  const LINK = { link: 'manage-login', linkLabel: 'Open System Configuration' };
+  const reply = (answer, options) => ({ ok: true, source: 'smarty', live: true, answer, ...(options ? { options } : {}), ...LINK });
+  const liveOnly = "(u.status IS NULL OR LOWER(TRIM(u.status)) NOT IN ('alumni','inactive'))";
+
+  // ---- USERS / FIND: the roster across roles ----------------------
+  if (intent === 'users' || intent === 'find') {
+    const [rows] = await db.execute(
+      `SELECT u.name, u.role, u.roll_no, c.className, c.section
+         FROM users u LEFT JOIN classes c ON c.id = u.class_id
+        WHERE u.institutionId = ? AND ${liveOnly}
+        ORDER BY u.role, u.name LIMIT 50`, [institutionId]);
+    if (!rows.length) return reply('No users are registered yet.');
+    const cls = (r) => r.className ? `${r.className}${r.section ? ' - ' + r.section : ''}` : '';
+    const lines = rows.map((r, i) => `${i + 1}. ${r.name} — ${r.role || '—'}${cls(r) ? ` · ${cls(r)}` : ''}${(/student/i.test(r.role || '') && r.roll_no) ? ` · Roll ${r.roll_no}` : ''}`);
+    const [[c]] = await db.execute(`SELECT COUNT(*) AS n FROM users u WHERE u.institutionId = ? AND ${liveOnly}`, [institutionId]);
+    const more = Number(c.n) > 50 ? `\n…and ${Number(c.n) - 50} more.` : '';
+    return reply(`Registered users (${c.n})${intent === 'find' ? ' — scan by name' : ''}:\n${lines.join('\n')}${more}`);
+  }
+
+  // ---- SUBJECTS: pick a class → its subjects ----------------------
+  const classId = (text.match(/classid(\d+)/) || [])[1];
+  if (classId === undefined) {
+    const [cls] = await db.execute(`SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section`, [institutionId]);
+    if (!cls.length) return reply('No classes are configured yet.');
+    return reply('Which class?', cls.map(c => ({ label: `${c.className}${c.section ? ' - ' + c.section : ''}`.slice(0, 70), send: `managelookup subjects classid${c.id}` })));
+  }
+  const [crow] = await db.execute(`SELECT className, section FROM classes WHERE id = ? AND institutionId = ? LIMIT 1`, [classId, institutionId]);
+  const clabel = crow.length ? `${crow[0].className}${crow[0].section ? ' - ' + crow[0].section : ''}` : `class ${classId}`;
+  const scope = (t, r) => { const s = []; if (Number(t)) s.push('Timetable'); if (Number(r)) s.push('Report'); return s.length ? ` (${s.join(' + ')})` : ''; };
+  // Subjects explicitly linked to this class.
+  const [linked] = await db.execute(
+    `SELECT s.name, sc.in_timetable, sc.in_report FROM ${_T_SUBJECTS} s
+       JOIN subject_classes sc ON sc.subject_id = s.id
+      WHERE s.institutionId = ? AND sc.class_id = ? ORDER BY s.name`, [institutionId, classId]);
+  // Subjects with NO class links apply to every class.
+  const [universal] = await db.execute(
+    `SELECT s.name FROM ${_T_SUBJECTS} s
+      WHERE s.institutionId = ? AND NOT EXISTS (SELECT 1 FROM subject_classes sc WHERE sc.subject_id = s.id)
+      ORDER BY s.name`, [institutionId]);
+  const out = [];
+  linked.forEach(s => out.push(`• ${s.name}${scope(s.in_timetable, s.in_report)}`));
+  universal.forEach(s => out.push(`• ${s.name} (all classes)`));
+  if (!out.length) return reply(`No subjects are assigned to **${clabel}** yet.`);
+  return reply(`**${clabel}** — ${out.length} subject${out.length === 1 ? '' : 's'}:\n${out.join('\n')}`);
+}
+
+// =====================================================================
+//  Shared helpers for the Pre-Admissions / Admissions drill-downs.
+// =====================================================================
+function _admDMY(v) { if (!v) return ''; const s = String(v).slice(0, 10); const [y, m, d] = s.split('-'); return (d && m && y) ? `${d}/${m}/${y}` : s; }
+function _admIST(v) { if (!v) return ''; let d; if (typeof v === 'string' && !v.includes('T') && !/[zZ]$/.test(v)) d = new Date(v.replace(' ', 'T') + 'Z'); else d = new Date(v); if (isNaN(d.getTime())) return ''; return d.toLocaleString('en-GB', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }).replace(',', ''); }
+// Shared full-profile renderer (personal + parent + academic history).
+function _admProfile(x) {
+  const line = (label, val) => `${label}: ${val != null && String(val).trim() !== '' ? val : '—'}`;
+  return [
+    line('Admission No', x.admission_no), line('Joining grade', x.joining_grade),
+    line('Date of birth', _admDMY(x.dob)), line('Student phone', x.phone_no),
+    line('Parent', x.parent_name), line('Parent phone', x.parent_phone),
+    line('PEN No', x.pen_no), line('Aadhar No', x.aadhar_no), line('Address', x.address),
+    line('Previous institute', x.previous_institute), line('Previous grade', x.previous_grade),
+    line('Joined date', _admDMY(x.school_joined_date)), line('TC number', x.tc_number)
+  ];
+}
+
+// =====================================================================
+//  [NEW DRILL-DOWN]  _livePreAdmLookup  — picker answers for the Pre-
+//  Admissions cards. Gated on one-word "preadmlookup"; the aggregate
+//  _livePreAdmissions keeps answering its free-text counts.
+//    preadmlookup pending  → the pending applications (name · grade · ID)
+//    preadmlookup find     → the same list, to scan by name / ID
+//    preadmlookup details  → pick an applicant → full profile + created-by
+//    preadmlookup year     → pick an academic year → its pending applications
+//  Admin-only (the cards are admin-scoped).
+// =====================================================================
+async function _livePreAdmLookup(institutionId, q, asker) {
+  const role = (asker.role || '').toLowerCase();
+  const isPriv = role === 'developer' || role === 'super admin' || role.includes('admin');
+  if (!isPriv) return null;
+  const text = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const intent = (text.match(/\bpreadmlookup (pending|find|details|year)\b/) || [])[1] || null;
+  if (!intent) return null;
+
+  const LINK = { link: 'PreAdmissions', linkLabel: 'Open Pre-Admissions' };
+  const reply = (answer, options) => ({ ok: true, source: 'smarty', live: true, answer, ...(options ? { options } : {}), ...LINK });
+  const T = 'pre_admissions';
+
+  // ---- YEAR: pick an academic year → pending for it ----------------
+  if (intent === 'year') {
+    const yearId = (text.match(/yearid(\d+)/) || [])[1];
+    if (yearId === undefined) {
+      const [ys] = await db.execute(
+        `SELECT id, name, isActive FROM academic_years WHERE institutionId = ? ORDER BY isActive DESC, startDate DESC, id DESC`, [institutionId]);
+      if (!ys.length) return reply('No academic years are configured yet.');
+      return reply('Which year?', ys.map(y => ({ label: `${y.name}${y.isActive ? ' (current)' : ''}`.slice(0, 70), send: `preadmlookup year yearid${y.id}` })));
+    }
+    const [yr] = await db.execute(`SELECT name FROM academic_years WHERE id = ? LIMIT 1`, [yearId]);
+    const yname = yr.length ? yr[0].name : `year ${yearId}`;
+    const [rows] = await db.execute(
+      `SELECT student_name, joining_grade, admission_no FROM ${T}
+        WHERE institutionId = ? AND status = 'Pending' AND academic_year_id = ? ORDER BY submission_date DESC LIMIT 40`, [institutionId, yearId]);
+    if (!rows.length) return reply(`No pending applications for **${yname}**.`);
+    const lines = rows.map((r, i) => `${i + 1}. ${r.student_name} — ${r.joining_grade || '—'} · ID ${r.admission_no}`);
+    return reply(`**${yname}** — ${rows.length} pending application${rows.length === 1 ? '' : 's'}:\n${lines.join('\n')}`);
+  }
+
+  // ---- DETAILS: pick applicant → full profile ---------------------
+  if (intent === 'details') {
+    const paId = (text.match(/paid(\d+)/) || [])[1];
+    if (paId === undefined) {
+      const [rows] = await db.execute(
+        `SELECT id, student_name, admission_no FROM ${T}
+          WHERE institutionId = ? AND status = 'Pending' ORDER BY submission_date DESC LIMIT 24`, [institutionId]);
+      if (!rows.length) return reply('There are no pending applications right now.');
+      return reply('Which applicant?', rows.map(r => ({ label: `${r.student_name} (${r.admission_no})`.slice(0, 80), send: `preadmlookup details paid${r.id}` })));
+    }
+    const [a] = await db.execute(
+      `SELECT pa.*, cu.name AS created_by_name FROM ${T} pa
+         LEFT JOIN users cu ON cu.id = pa.created_by
+        WHERE pa.id = ? AND pa.institutionId = ? LIMIT 1`, [paId, institutionId]);
+    if (!a.length) return reply("I couldn't find that applicant.");
+    const x = a[0];
+    const audit = `Created by: ${x.created_by_name || '—'}${x.submission_date ? ` (${_admIST(x.submission_date)})` : ''}`;
+    return reply(`**${x.student_name}** — pending application:\n${_admProfile(x).join('\n')}\n${audit}`);
+  }
+
+  // ---- PENDING / FIND: the list -----------------------------------
+  const [rows] = await db.execute(
+    `SELECT student_name, joining_grade, admission_no FROM ${T}
+      WHERE institutionId = ? AND status = 'Pending' ORDER BY submission_date DESC LIMIT 40`, [institutionId]);
+  if (!rows.length) return reply('There are no pending applications right now.');
+  const lines = rows.map((r, i) => `${i + 1}. ${r.student_name} — ${r.joining_grade || '—'} · ID ${r.admission_no}`);
+  const [[c]] = await db.execute(`SELECT COUNT(*) AS n FROM ${T} WHERE institutionId = ? AND status = 'Pending'`, [institutionId]);
+  const more = Number(c.n) > 40 ? `\n…and ${Number(c.n) - 40} more.` : '';
+  return reply(`Pending applications (${c.n})${intent === 'find' ? ' — scan by name or ID' : ''}:\n${lines.join('\n')}${more}`);
+}
+
+// =====================================================================
+//  [NEW DRILL-DOWN]  _liveAdmLookup  — picker answers for the Admissions
+//  cards (Approved / Rejected records). Gated on one-word "admissionlookup".
+//    admissionlookup find    → admission records (name · grade · status · ID)
+//    admissionlookup details → pick a record → full profile + decision audit
+//    admissionlookup year    → pick an academic year → its admissions
+//    admissionlookup history → pick a record → created / decided / updated audit
+//  Admin-only.
+// =====================================================================
+async function _liveAdmLookup(institutionId, q, asker) {
+  const role = (asker.role || '').toLowerCase();
+  const isPriv = role === 'developer' || role === 'super admin' || role.includes('admin');
+  if (!isPriv) return null;
+  const text = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const intent = (text.match(/\badmissionlookup (find|details|year|history)\b/) || [])[1] || null;
+  if (!intent) return null;
+
+  const LINK = { link: 'Admissions', linkLabel: 'Open Admissions' };
+  const reply = (answer, options) => ({ ok: true, source: 'smarty', live: true, answer, ...(options ? { options } : {}), ...LINK });
+  const T = 'pre_admissions';
+  const DECIDED = "status IN ('Approved','Rejected')";
+
+  const recordChips = async (intentTok) => {
+    const [rows] = await db.execute(
+      `SELECT id, student_name, admission_no, status FROM ${T}
+        WHERE institutionId = ? AND ${DECIDED} ORDER BY verified_at DESC, submission_date DESC LIMIT 24`, [institutionId]);
+    if (!rows.length) return reply('There are no admission records yet.');
+    return reply('Which record?', rows.map(r => ({ label: `${r.student_name} (${r.admission_no})`.slice(0, 80), send: `admissionlookup ${intentTok} admid${r.id}` })));
+  };
+
+  // ---- YEAR: pick an academic year → its admissions ---------------
+  if (intent === 'year') {
+    const yearId = (text.match(/yearid(\d+)/) || [])[1];
+    if (yearId === undefined) {
+      const [ys] = await db.execute(
+        `SELECT id, name, isActive FROM academic_years WHERE institutionId = ? ORDER BY isActive DESC, startDate DESC, id DESC`, [institutionId]);
+      if (!ys.length) return reply('No academic years are configured yet.');
+      return reply('Which year?', ys.map(y => ({ label: `${y.name}${y.isActive ? ' (current)' : ''}`.slice(0, 70), send: `admissionlookup year yearid${y.id}` })));
+    }
+    const [yr] = await db.execute(`SELECT name FROM academic_years WHERE id = ? LIMIT 1`, [yearId]);
+    const yname = yr.length ? yr[0].name : `year ${yearId}`;
+    const [rows] = await db.execute(
+      `SELECT student_name, joining_grade, admission_no, status FROM ${T}
+        WHERE institutionId = ? AND ${DECIDED} AND academic_year_id = ? ORDER BY verified_at DESC LIMIT 40`, [institutionId, yearId]);
+    if (!rows.length) return reply(`No admission records for **${yname}**.`);
+    const lines = rows.map((r, i) => `${i + 1}. ${r.student_name} — ${r.joining_grade || '—'} · ${r.status} · ID ${r.admission_no}`);
+    return reply(`**${yname}** — ${rows.length} admission record${rows.length === 1 ? '' : 's'}:\n${lines.join('\n')}`);
+  }
+
+  // ---- DETAILS: pick record → full profile ------------------------
+  if (intent === 'details') {
+    const admId = (text.match(/admid(\d+)/) || [])[1];
+    if (admId === undefined) return recordChips('details');
+    const [a] = await db.execute(
+      `SELECT pa.*, cu.name AS created_by_name, vu.name AS verified_by_name, uu.name AS updated_by_name
+         FROM ${T} pa
+         LEFT JOIN users cu ON cu.id = pa.created_by
+         LEFT JOIN users vu ON vu.id = pa.verified_by
+         LEFT JOIN users uu ON uu.id = pa.updated_by
+        WHERE pa.id = ? AND pa.institutionId = ? LIMIT 1`, [admId, institutionId]);
+    if (!a.length) return reply("I couldn't find that record.");
+    const x = a[0];
+    const audit = [
+      `Created by: ${x.created_by_name || '—'}${x.submission_date ? ` (${_admIST(x.submission_date)})` : ''}`,
+      `${x.status || 'Decided'} by: ${x.verified_by_name || '—'}${x.verified_at ? ` (${_admIST(x.verified_at)})` : ''}`
+    ];
+    if (x.updated_by_name) audit.push(`Last updated by: ${x.updated_by_name}${x.updated_at ? ` (${_admIST(x.updated_at)})` : ''}`);
+    return reply(`**${x.student_name}** — ${x.status} admission:\n${_admProfile(x).join('\n')}\n${audit.join('\n')}`);
+  }
+
+  // ---- HISTORY: the decision audit --------------------------------
+  if (intent === 'history') {
+    const admId = (text.match(/admid(\d+)/) || [])[1];
+    if (admId === undefined) return recordChips('history');
+    const [a] = await db.execute(
+      `SELECT pa.student_name, pa.status, pa.submission_date, pa.verified_at, pa.updated_at,
+              cu.name AS created_by_name, vu.name AS verified_by_name, uu.name AS updated_by_name
+         FROM ${T} pa
+         LEFT JOIN users cu ON cu.id = pa.created_by
+         LEFT JOIN users vu ON vu.id = pa.verified_by
+         LEFT JOIN users uu ON uu.id = pa.updated_by
+        WHERE pa.id = ? AND pa.institutionId = ? LIMIT 1`, [admId, institutionId]);
+    if (!a.length) return reply("I couldn't find that record.");
+    const x = a[0];
+    const lines = [
+      `• Created by **${x.created_by_name || '—'}**${x.submission_date ? ` — ${_admIST(x.submission_date)}` : ''}`,
+      `• ${x.status || 'Decided'} by **${x.verified_by_name || '—'}**${x.verified_at ? ` — ${_admIST(x.verified_at)}` : ''}`
+    ];
+    if (x.updated_by_name) lines.push(`• Last updated by **${x.updated_by_name}**${x.updated_at ? ` — ${_admIST(x.updated_at)}` : ''}`);
+    return reply(`**${x.student_name}** — record history:\n${lines.join('\n')}`);
+  }
+
+  // ---- FIND: the list ---------------------------------------------
+  const [rows] = await db.execute(
+    `SELECT student_name, joining_grade, admission_no, status FROM ${T}
+      WHERE institutionId = ? AND ${DECIDED} ORDER BY verified_at DESC, submission_date DESC LIMIT 40`, [institutionId]);
+  if (!rows.length) return reply('There are no admission records yet.');
+  const lines = rows.map((r, i) => `${i + 1}. ${r.student_name} — ${r.joining_grade || '—'} · ${r.status} · ID ${r.admission_no}`);
+  const [[c]] = await db.execute(`SELECT COUNT(*) AS n FROM ${T} WHERE institutionId = ? AND ${DECIDED}`, [institutionId]);
+  const more = Number(c.n) > 40 ? `\n…and ${Number(c.n) - 40} more.` : '';
+  return reply(`Admission records (${c.n}) — scan by name or ID:\n${lines.join('\n')}${more}`);
+}
+
 async function _smartyLiveAnswer(institutionId, question, asker) {
   const q = ' ' + String(question || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim() + ' ';
 
@@ -20068,6 +21155,19 @@ async function _smartyLiveAnswer(institutionId, question, asker) {
   if (/\bper role\b|\beach role\b|\bassigned to each role\b|\broles configured\b|\bshow the roles\b|\blist the roles\b|\bclasses configured\b|\bshow the classes\b|\blist the classes\b|\binactive users\b|\bsubscription\b|\bwhich subscription\b|\bwhen does.*subscription\b/.test(q)) {
     const ml = await _liveManageLogins(institutionId, q, asker);
     if (ml) return ml;
+  }
+  // [NEW] Pre-Admissions drill-down (pending / find / details / year). New
+  // resolver _livePreAdmLookup, gated on one-word "preadmlookup"; the
+  // aggregate _livePreAdmissions keeps answering its free-text counts.
+  if (/\bpreadmlookup\b/.test(q)) {
+    const pk = await _livePreAdmLookup(institutionId, q, asker);
+    if (pk) return pk;
+  }
+  // [NEW] Admissions drill-down (find / details / year / history). New
+  // resolver _liveAdmLookup, gated on one-word "admissionlookup".
+  if (/\badmissionlookup\b/.test(q)) {
+    const ak = await _liveAdmLookup(institutionId, q, asker);
+    if (ak) return ak;
   }
   if ((/\bpre[- ]?admissions?\b|\badmissions?\b|\bapplications?\b/.test(q)) && /\bpending\b|\bapproved\b|\brejected\b|\bcounts?\b|\btotals?\b|\bcompare\b|\bgrouped\b|\bjoining class\b/.test(q)) {
     const pa = await _livePreAdmissions(institutionId, q, asker);
@@ -20143,32 +21243,91 @@ async function _smartyLiveAnswer(institutionId, question, asker) {
   if (/\bdigital labs?\b|\blabs?\b/.test(q)) {
     return _liveLabsAsk(institutionId, q, asker); // [FIX] fallback = old flat resolver (renamed from _liveLabs)
   }
+  // [NEW] Transport drill-down (routes / stops / students / nostop / vehicles /
+  // routevehicle / crew / logs / service). One-word "transportlookup" token.
+  if (/\btransportlookup\b/.test(q)) {
+    const tr = await _liveTransport(institutionId, q, asker);
+    if (tr) return tr;
+  }
   if (/\bbus(?:es)?\b|\btransport\b|\bmy route\b|\bbus route\b|\bbus driver\b|\bvehicles?\b|\bpickup point\b|\bdrop point\b/.test(q)
       || (/\broutes?\b|\bdrivers?\b|\bassistants?\b/.test(q) && /\bbus\b|\btransport\b|\broute\b|\bhow many\b|\bmy\b/.test(q))) {
-    return _liveTransport(institutionId, q, asker);
+    return _liveTransportAsk(institutionId, q, asker); // [FIX] fallback = old flat resolver (renamed from _liveTransport)
+  }
+  // [NEW] Group Chat drill-down (members / recent / ondate). One-word
+  // "groupchatlookup" token can't match the flat gate below.
+  if (/\bgroupchatlookup\b/.test(q)) {
+    const gc = await _liveGroupChat(institutionId, q, asker);
+    if (gc) return gc;
   }
   if (/\bgroup ?chats?\b|\bchat groups?\b|\bmy groups?\b|\bunread (?:messages?|chats?)\b/.test(q)
       || (/\bgroups?\b/.test(q) && /\bchat\b|\bmessages?\b|\bunread\b|\bmember\b|\bhow many\b|\bwhich\b|\blist\b/.test(q))) {
-    return _liveGroupChat(institutionId, q, asker);
+    return _liveGroupChatAsk(institutionId, q, asker); // [FIX] fallback = old flat resolver (renamed from _liveGroupChat)
+  }
+  // [NEW] Gallery drill-down (find / media). One-word "gallerylookup" token.
+  if (/\bgallerylookup\b/.test(q)) {
+    const gl = await _liveGallery(institutionId, q, asker);
+    if (gl) return gl;
   }
   if (/\bgallery\b|\balbums?\b|\bphotos?\b|\bpictures?\b/.test(q)
       || (/\bimages?\b|\bvideos?\b/.test(q) && /\bgallery\b|\balbums?\b|\bhow many\b/.test(q))) {
-    return _liveGallery(institutionId, q, asker);
+    return _liveGalleryAsk(institutionId, q, asker); // [FIX] fallback = old flat resolver (renamed from _liveGallery)
+  }
+  // [NEW] Alumni drill-down (records / find / history / contact). One-word
+  // "alumnilookup" token can't match the flat gate below.
+  if (/\balumnilookup\b/.test(q)) {
+    const al = await _liveAlumni(institutionId, q, asker);
+    if (al) return al;
   }
   if (/\balumni\b|\balumnus\b|\bpassout\b|\bpassed out\b|\bpass out\b|\bgraduates?\b|\bex[- ]students?\b|\bclass of \d{4}\b/.test(q)) {
-    return _liveAlumni(institutionId, q, asker);
+    return _liveAlumniAsk(institutionId, q, asker); // [FIX] fallback = old flat resolver (renamed from _liveAlumni)
+  }
+  // [NEW] Support drill-down (tickets / status / find / thread). One-word
+  // "supportlookup" token can't match the flat gate below.
+  if (/\bsupportlookup\b/.test(q)) {
+    const sp = await _liveSupport(institutionId, q, asker);
+    if (sp) return sp;
   }
   if (/\bsupport tickets?\b|\btickets?\b|\bhelp ?desk\b|\bmy tickets?\b|\braise a ticket\b|\bsupport request\b/.test(q)) {
-    return _liveSupport(institutionId, q, asker);
+    return _liveSupportAsk(institutionId, q, asker); // [FIX] fallback = old flat resolver (renamed from _liveSupport)
+  }
+  // [NEW] Manage Login (System Configuration) drill-down (users / find /
+  // subjects). New resolver _liveManageLookup, gated on "managelookup";
+  // the aggregate _liveManageLogins keeps answering its free-text counts.
+  if (/\bmanagelookup\b/.test(q)) {
+    const mk = await _liveManageLookup(institutionId, q, asker);
+    if (mk) return mk;
   }
   if (/\bfees?\b|\bbalance\b|\bhow much do i owe\b|\boutstanding\b|\bdues?\b|\bunpaid\b|\bcollection\b|\brazorpay\b|\bpay (?:my|the) fee\b|\bhow (?:do|can) i pay\b/.test(q)) {
     return _liveFees(institutionId, q, asker);
   }
+  // [NEW] PTM drill-down (range / details / who). One-word "ptmlookup" token
+  // can't match the flat gate below.
+  if (/\bptmlookup\b/.test(q)) {
+    const pt = await _livePTM(institutionId, q, asker);
+    if (pt) return pt;
+  }
   if (/\bptm\b|\bparent[- ]?teacher\b|\bparent meeting\b|\bpt meeting\b/.test(q)) {
-    return _livePTM(institutionId, q, asker);
+    return _livePTMAsk(institutionId, q, asker); // [FIX] fallback = old flat resolver (renamed from _livePTM)
+  }
+  // [NEW] Food Management drill-down (day/slots/groceries/replenish/usage/
+  // inventory/staff). One-word "foodlookup" token can't match the flat gate.
+  if (/\bfoodlookup\b/.test(q)) {
+    const fd = await _liveFood(institutionId, q, asker);
+    if (fd) return fd;
   }
   if (/\bfood menu\b|\bmeals?\b|\blunch\b|\bbreakfast\b|\bdinner\b|\bsupper\b|\bsnacks?\b|\bdining\b|\bmenu\b/.test(q)) {
-    return _liveMeals(institutionId, q, asker);
+    return _liveMealsAsk(institutionId, q, asker); // [FIX] fallback = old flat resolver (renamed from _liveMeals)
+  }
+  // [NEW] Daily Expenses (Account Assistant) drill-down. One-word
+  // "expenselookup" token; these modules had no prior flat resolver.
+  if (/\bexpenselookup\b/.test(q)) {
+    const ex = await _liveExpenses(institutionId, q, asker);
+    if (ex) return ex;
+  }
+  // [NEW] Inventory & Assets drill-down. One-word "assetlookup" token.
+  if (/\bassetlookup\b/.test(q)) {
+    const as = await _liveAssets(institutionId, q, asker);
+    if (as) return as;
   }
   // [NEW] Reports drill-down (cards / classexams). One-word "reportlookup"
   // token can't match the flat gate below.
@@ -21339,6 +22498,9 @@ const _MOD_PERF    = 'Performance';       // confirmed (Modules.js)
 const _T_MARKS     = 'student_marks';     // confirmed (offline marks)
 const _T_STM       = 'subject_teacher_map'; // confirmed (teacher assignments)
 const _T_EXTYPES   = 'exam_types';        // confirmed (name, class_id, exam_order, kind)
+const _T_EXPV        = 'expense_vouchers';  // confirmed (Daily Expenses / Account Assistant)
+const _T_ASSETS      = 'assets';            // confirmed (Inventory & Assets)
+const _T_ASSET_HEADS = 'asset_heads';       // confirmed (Inventory & Assets heads)
 const _T_SUBJECTS  = 'subjects';          // confirmed (id, name)
 const _T_EXMAX     = 'exam_max_marks';    // confirmed (class_id, exam_type_id, subject_id, max_marks)
 const _MOD_FEE   = 'FeeManagement';       // confirmed (FeeManagement.js MODULE_NAME)
@@ -21869,7 +23031,12 @@ async function _liveExamsAsk(institutionId, q, asker) {
 // ===== PTM — parent-teacher meetings =====
 //  Student/parent: meetings for their class/section (or whole-school ones).
 //  Teacher / staff: only the meetings they're assigned to. Super Admin / Admin: all.
-async function _livePTM(institutionId, q, asker) {
+// =====================================================================
+//  [FIX - DUPLICATE NAME RESOLVED]  Renamed  _livePTM -> _livePTMAsk
+//  Original flat resolver ("upcoming parent-teacher meetings"). The NEW
+//  drill-down resolver higher up is now canonical; this is the fallback.
+// =====================================================================
+async function _livePTMAsk(institutionId, q, asker) {
   if (!(await _smartyCan(asker, institutionId, _MOD_PTM))) return null;
   const role = (asker.role || '').toLowerCase();
   const isStudentParent = role.includes('student') || role.includes('parent');
@@ -21903,7 +23070,13 @@ async function _livePTM(institutionId, q, asker) {
 //  Everyone with Meals read access sees the same weekly menu. Defaults to
 //  TODAY (IST); "tomorrow", a named weekday, "week", or a meal-slot name
 //  (lunch/breakfast/…) narrow it. Kitchen/Store stock isn't exposed here.
-async function _liveMeals(institutionId, q, asker) {
+// =====================================================================
+//  [FIX - DUPLICATE NAME RESOLVED]  Renamed  _liveMeals -> _liveMealsAsk
+//  Original flat resolver (weekly menu, "what's for lunch today", a named
+//  day/slot). The NEW drill-down resolver higher up is now canonical; this
+//  is the fallback.
+// =====================================================================
+async function _liveMealsAsk(institutionId, q, asker) {
   if (!(await _smartyCan(asker, institutionId, _MOD_MEALS))) return null;
   const [slots] = await db.execute(`SELECT id, name FROM ${_T_SLOTS} WHERE institutionId = ? ORDER BY slot_order, id`, [institutionId]);
   if (!slots.length) return { answer: "The school hasn't set up its meal plan yet." };
@@ -22352,7 +23525,11 @@ async function _liveBusState(routeId) {
   } catch (_) { return { running: false, live: false, trip_type: null }; }
 }
 
-async function _liveTransport(institutionId, q, asker) {
+// [FIX - DUPLICATE NAME RESOLVED] renamed from _liveTransport → _liveTransportAsk.
+// The canonical _liveTransport is now the drill-down resolver (gated on the
+// one-word "transportlookup" token); this flat resolver still answers free-text
+// questions ("how many routes", "my bus", "which buses are running").
+async function _liveTransportAsk(institutionId, q, asker) {
   if (!(await _smartyCan(asker, institutionId, _MOD_TRANSPORT))) return null;
   const role = (asker.role || '').toLowerCase();
   const isStudentParent = role.includes('student') || role.includes('parent');
@@ -22493,7 +23670,11 @@ function _liveFmtDate(v) {
 //  Gallery is institution-wide (not per-student), so anyone with Gallery
 //  read permission sees the same albums — institution-scoped only.
 // -------------------------------------------------------------------
-async function _liveGallery(institutionId, q, asker) {
+// [FIX - DUPLICATE NAME RESOLVED] renamed from _liveGallery → _liveGalleryAsk.
+// The canonical _liveGallery is now the drill-down resolver (gated on the
+// one-word "gallerylookup" token); this flat resolver still answers free-text
+// questions ("how many albums", "latest album", "how many photos").
+async function _liveGalleryAsk(institutionId, q, asker) {
   if (!(await _smartyCan(asker, institutionId, _MOD_GALLERY))) return null;
   const isCount = /\bhow many\b|\bcount\b|\bnumber of\b|\btotal\b/.test(q);
 
@@ -22538,7 +23719,11 @@ async function _liveGallery(institutionId, q, asker) {
 //  Unread mirrors the app's badge: messages from others newer than the
 //  user's last-seen time for that group.
 // -------------------------------------------------------------------
-async function _liveGroupChat(institutionId, q, asker) {
+// [FIX - DUPLICATE NAME RESOLVED] renamed from _liveGroupChat → _liveGroupChatAsk.
+// The canonical _liveGroupChat is now the drill-down resolver (gated on the
+// one-word "groupchatlookup" token); this flat resolver still answers free-text
+// questions ("my groups", "unread messages", school-wide group count).
+async function _liveGroupChatAsk(institutionId, q, asker) {
   if (!(await _smartyCan(asker, institutionId, _MOD_GROUPCHAT))) return null;
   const role = (asker.role || '').toLowerCase();
   const isPriv = role === 'developer' || role === 'super admin' || role === 'admin';
@@ -22589,7 +23774,11 @@ async function _liveGroupChat(institutionId, q, asker) {
 //  same set — institution-scoped only. passout_year is the graduation
 //  label; created_at drives the module's own year filter.
 // -------------------------------------------------------------------
-async function _liveAlumni(institutionId, q, asker) {
+// [FIX - DUPLICATE NAME RESOLVED] renamed from _liveAlumni → _liveAlumniAsk.
+// The canonical _liveAlumni is now the drill-down resolver (gated on the
+// one-word "alumnilookup" token); this flat resolver still answers free-text
+// questions ("how many alumni", "class of 2024", "latest alumni").
+async function _liveAlumniAsk(institutionId, q, asker) {
   if (!(await _smartyCan(asker, institutionId, _MOD_ALUMNI))) return null;
 
   // A specific passout year ("class of 2024", "passed out in 2023").
@@ -22631,7 +23820,11 @@ async function _liveAlumni(institutionId, q, asker) {
 //  Statuses: open=Waiting, assigned=Assigned, active=In progress,
 //  closed=Closed. "my" narrows to tickets the asker opened.
 // -------------------------------------------------------------------
-async function _liveSupport(institutionId, q, asker) {
+// [FIX - DUPLICATE NAME RESOLVED] renamed from _liveSupport → _liveSupportAsk.
+// The canonical _liveSupport is now the drill-down resolver (gated on the
+// one-word "supportlookup" token); this flat resolver still answers free-text
+// questions ("how many open tickets", "my tickets", status counts).
+async function _liveSupportAsk(institutionId, q, asker) {
   if (!(await _smartyCan(asker, institutionId, _MOD_SUPPORT))) return null;
   const uid = asker.userId || 0;
   const mine = /\bmy\b|\bi raised\b|\bi opened\b|\bi created\b/.test(q);
@@ -22838,7 +24031,6 @@ app.post('/api/smarty/cache/clear', async (req, res) => {
 //  They're safe to call fire-and-forget. If you skip them, just press
 //  "Rebuild book index" in Smarty → Smarty AI after adding material.
 // =====================================================================
-
 
 
 
