@@ -250,7 +250,7 @@ const DEFAULT_MODULES = [
     'GroupChat',
     'Alumni',
     'InventoryAssets',
-    'LessonPlan',
+    // 'LessonPlan',
     'Support',
     'Library',
     'SmartyAdmin'
@@ -19073,8 +19073,18 @@ async function _liveStudyMaterials(institutionId, q, asker) {
     const classLabel = (c) => `${c.className || ''}${c.section ? ' - ' + c.section : ''}`.trim();
     const dmy = (d) => { if (!d) return ''; const x = new Date(String(d).includes('T') || String(d).includes(' ') ? d : d); if (isNaN(x)) return ''; const p = n => String(n).padStart(2, '0'); return `${p(x.getDate())}/${p(x.getMonth() + 1)}/${x.getFullYear()}`; };
 
-    const classId = (text.match(/classid(\d+)/) || [])[1];
+    let classId = (text.match(/classid(\d+)/) || [])[1];
     const subjectId = (text.match(/subjectid(\d+)/) || [])[1];   // '0' means "no subject"
+
+    // A student is never asked to pick a class — their own class is used,
+    // so they only ever pick the subject. (Parents follow their child's class.)
+    const _smRole = String((asker && (asker.role || asker.roleName)) || '').toLowerCase();
+    if (!classId && (_smRole.includes('student') || _smRole.includes('parent'))) {
+        const uid = (asker && asker.userId) || 0;
+        const [u] = uid ? await db.query('SELECT class_id FROM users WHERE id = ? LIMIT 1', [uid]) : [[]];
+        if (u.length && u[0].class_id) classId = String(u[0].class_id);
+        else return reply("You're not assigned to a class yet, so there are no study materials to show. Please check with your class teacher.");
+    }
 
     // ---- STEP 1: pick a Class -----------------------------------------
     if (!classId) {
@@ -22176,9 +22186,10 @@ async function _liveTimetable(institutionId, q, asker) {
     const text = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
     if (/\b(how many|count|total|number of)\b/.test(text)) return null;
 
-    let intent = (text.match(/\btimetable (class|teacher|cell)\b/) || [])[1] || null;
+    let intent = (text.match(/\btimetable (class|teacher|cell|mine)\b/) || [])[1] || null;
     if (!intent) {
-        if (/which subject|subject .*(day|period)|teacher for (a )?period|on a day and period/.test(text)) intent = 'cell';
+        if (/\bmy timetable\b|\bmy schedule\b|\bmy class timetable\b/.test(text)) intent = 'mine';
+        else if (/which subject|subject .*(day|period)|teacher for (a )?period|on a day and period/.test(text)) intent = 'cell';
         else if (/teacher'?s timetable|timetable for a teacher|teacher timetable/.test(text)) intent = 'teacher';
         else if (/timetable for a class|class timetable|weekly timetable|timetable for the class/.test(text)) intent = 'class';
     }
@@ -22193,10 +22204,32 @@ async function _liveTimetable(institutionId, q, asker) {
     const classLabel = (c) => `${c.className || ''}${c.section ? ' - ' + c.section : ''}`.trim();
     const fmtTime = (t) => { if (!t) return ''; const [h, m] = String(t).split(':'); const hh = parseInt(h, 10); if (isNaN(hh)) return ''; const ap = hh >= 12 ? 'PM' : 'AM'; const h12 = ((hh + 11) % 12) + 1; return `${h12}:${m || '00'} ${ap}`; };
 
-    const classId   = (text.match(/classid(\d+)/) || [])[1];
-    const teacherId = (text.match(/teacherid(\d+)/) || [])[1];
+    let classId     = (text.match(/classid(\d+)/) || [])[1];
+    let teacherId   = (text.match(/teacherid(\d+)/) || [])[1];
     const dayId     = (text.match(/dayid(\d+)/) || [])[1];
     const periodId  = (text.match(/periodid(\d+)/) || [])[1];
+
+    // ---- Student / teacher "my timetable", and student auto-class ------
+    // A student is NEVER asked to pick a class — their own class is used.
+    // A teacher's "my timetable" is their own teaching grid.
+    const _ttRole = String((asker && (asker.role || asker.roleName)) || '').toLowerCase();
+    const _ttIsStudent = _ttRole.includes('student') || _ttRole.includes('parent');
+    const _ttIsTeacher = !_ttIsStudent && _ttRole.includes('teacher');
+    const _ttUid = (asker && asker.userId) || 0;
+    const _ttMyClass = async () => {
+        if (!_ttUid) return null;
+        const [r] = await db.query('SELECT class_id FROM users WHERE id = ? LIMIT 1', [_ttUid]);
+        return r.length ? r[0].class_id : null;
+    };
+    if (intent === 'mine') {
+        if (_ttIsTeacher) { intent = 'teacher'; if (!teacherId) teacherId = String(_ttUid); }
+        else { intent = 'class'; }
+    }
+    if (_ttIsStudent && (intent === 'class' || intent === 'cell') && !classId) {
+        const cid = await _ttMyClass();
+        if (!cid) return reply("You're not assigned to a class yet, so there's no timetable to show. Please check with your class teacher.");
+        classId = String(cid);
+    }
 
     // shared loads
     const loadDays = async () => {
@@ -22329,9 +22362,57 @@ async function _attActiveYear(institutionId) {
 async function _liveAttendance(institutionId, q, asker) {
     const text = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
 
-    // staff only
     const role = (typeof asker === 'string' ? asker : (asker && (asker.role || asker.roleName)) || '').toLowerCase();
-    if (role === 'student' || role === 'parent') return null;
+
+    // ---- STUDENT / PARENT: their OWN attendance (never a class picker) --
+    //   mystatus → a date (default today)   myhistory → whole-year summary
+    //   mymonth  → this month's %           myyear    → active-year %
+    if (role === 'student' || role === 'parent') {
+        const selfIntent = (text.match(/\battendance (mystatus|myhistory|mymonth|myyear)\b/) || [])[1] || null;
+        if (!selfIntent) return null;
+        const replyS = (answer) => ({ ok: true, source: 'smarty', live: true, answer, link: 'attendance', linkLabel: 'Open Attendance' });
+        const uid = (asker && asker.userId) || 0;
+        if (!uid) return null;
+        const yrS = await _attActiveYear(institutionId);
+        if (!yrS) return replyS('No active academic year yet, so there is no attendance to show.');
+        const istNow = new Date(Date.now() + 5.5 * 3600 * 1000);
+        const dmy = (s) => { const [y, m, d] = String(s).slice(0, 10).split('-'); return (d && m && y) ? `${d}/${m}/${y}` : String(s); };
+
+        if (selfIntent === 'mystatus') {
+            const dateTok = (text.match(/\b(\d{4}-\d{2}-\d{2})\b/) || [])[1] || istNow.toISOString().slice(0, 10);
+            const [r] = await db.query(
+                'SELECT status FROM attendance WHERE user_id = ? AND attendance_date = ? AND academic_year_id = ? LIMIT 1',
+                [uid, dateTok, yrS.id]);
+            if (!r.length) return replyS(`You have no attendance marked for ${dmy(dateTok)} — it may be a holiday, a weekend, or a day attendance wasn't taken.`);
+            const st = r[0].status === 'P' ? 'Present ✅' : r[0].status === 'A' ? 'Absent ❌' : r[0].status;
+            return replyS(`On ${dmy(dateTok)} you were marked **${st}**.`);
+        }
+
+        const summ = async (extraWhere, params) => {
+            const [[s]] = await db.query(
+                `SELECT COUNT(*) AS total, SUM(status = 'P') AS present, SUM(status = 'A') AS absent
+                   FROM attendance WHERE user_id = ? AND academic_year_id = ?${extraWhere}`,
+                [uid, yrS.id, ...params]);
+            const total = Number(s.total) || 0, present = Number(s.present) || 0, absent = Number(s.absent) || 0;
+            return { total, present, absent, pct: total > 0 ? Math.round((present / total) * 1000) / 10 : null };
+        };
+
+        if (selfIntent === 'mymonth') {
+            const curYm = istNow.toISOString().slice(0, 7);
+            const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+            const [yy, mm] = curYm.split('-');
+            const s = await summ(' AND attendance_date LIKE ?', [curYm + '%']);
+            if (!s.total) return replyS(`No attendance has been marked for you in ${MONTHS[Number(mm) - 1]} ${yy} yet.`);
+            return replyS(`**${MONTHS[Number(mm) - 1]} ${yy}** attendance: **${s.pct}%** — ${s.present} present, ${s.absent} absent across ${s.total} marked day${s.total === 1 ? '' : 's'}.`);
+        }
+
+        const s = await summ('', []);
+        if (!s.total) return replyS(`No attendance has been marked for you this year (${yrS.name}) yet.`);
+        if (selfIntent === 'myyear') {
+            return replyS(`Your attendance for **${yrS.name}**: **${s.pct}%** — ${s.present} present, ${s.absent} absent across ${s.total} marked day${s.total === 1 ? '' : 's'}.`);
+        }
+        return replyS(`Your attendance history (${yrS.name}): **${s.pct}%** overall — ${s.present} present and ${s.absent} absent across ${s.total} marked day${s.total === 1 ? '' : 's'}.`);
+    }
 
     // Direct count questions ("how many present in Class 5 today") are answered
     // by the existing live resolver — don't hijack them into a drill-down.
