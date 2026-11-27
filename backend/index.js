@@ -18448,12 +18448,25 @@ app.post('/api/smarty/ask', async (req, res) => {
     //      there's a match. A fresh AI answer is badged AI; once cached it's Smarty.
     const provider = SMARTY_DEFAULT_MODEL[cfg.provider] ? cfg.provider : 'gemini';
     const model = SMARTY_DEFAULT_MODEL[provider];
-    let promptQuestion = question;
+
+    // Tell the model what TODAY is (IST). Without it the model assumes its own
+    // training cut-off is "now" and wrongly calls a date that has already passed
+    // "the future" (e.g. "the 2026 IPL hasn't happened yet" when it's Nov 2026).
+    // It still can't KNOW events after its training data — so we also tell it to
+    // say so plainly instead of guessing, rather than pretend they're upcoming.
+    const _istNow = new Date(Date.now() + 5.5 * 3600 * 1000);
+    const _todayStr = _istNow.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    const _dateCtx =
+      `Today's date is ${_todayStr} (India). Treat any date on or before today as already in the past, not the future. ` +
+      `If answering needs information about events after your training data (recent news, results or scores), do NOT guess or say it "hasn't happened yet" — say plainly you may not have up-to-date information on it and suggest checking a current source.`;
+
+    let promptQuestion = `${_dateCtx}\n\nQUESTION: ${question}`;
     let grounded = false;
     if (ctx.length && relevant) {
       grounded = true;
       const joined = ctx.map((c, i) => `[${i + 1}] ${c.title}: ${c.content}`).join('\n\n').slice(0, 7000);
       promptQuestion =
+        _dateCtx + "\n\n" +
         "Use the school's textbook excerpts below to answer the question when they cover it. " +
         "Answer as fully as the question needs — a line or two for a simple question, and a complete, " +
         "step-by-step or detailed explanation for a bigger one. Never cut the answer off; finish it. " +

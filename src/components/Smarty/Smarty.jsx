@@ -119,10 +119,6 @@ function freqLoad(uid) { try { return JSON.parse(localStorage.getItem('smy_freq_
 function freqBump(uid, id) { if (!uid || !id) return; try { const f = freqLoad(uid); f[id] = (f[id] || 0) + 1; localStorage.setItem('smy_freq_' + uid, JSON.stringify(f)); } catch (_) {} }
 function freqTop(uid, n) { const f = freqLoad(uid); return Object.keys(f).sort((a, b) => f[b] - f[a]).slice(0, n || 3); }
 
-// tiny stopword set so free-text matching scores on meaningful words only
-const STOP = new Set(['the', 'a', 'an', 'is', 'are', 'do', 'i', 'my', 'me', 'to', 'of', 'for', 'in', 'on', 'any', 'have', 'has', 'can', 'you', 'what', 'when', 'where', 'how', 'and', 'please', 'show', 'tell', 'get', 'there', 'this', 'that']);
-const tokenize = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w && w.length > 2 && !STOP.has(w));
-
 // ---- intent detection: greetings / small talk, caught BEFORE keyword match
 //      so "hello smarty, how are you?" never hits the "Manage Smarty" button.
 const RE_HOWRU  = /(how\s*(are|r)\s*(you|u|ya)|how'?s it going|how is it going|how do you do|what'?s up|wassup|\bsup\b|are you (ok|there|fine)|you there)/i;
@@ -755,19 +751,21 @@ export default function Smarty({ onNavigate }) {
     // by typing; built-in module how-tos/openers are tap-only (see BUILTIN_IDS).
     const pool = buildPool(boot).filter(e => LIVE_SET.has(e.id) || !BUILTIN_IDS.has(e.id));
     const newsKw = ['whats new', 'what is new', 'updates', 'news', 'latest', 'announcement'];
-    // 1) strongest exact phrase match (longest matching keyword wins)
+    // Exact PHRASE match only (longest matching keyword wins). The whole
+    // keyword phrase must appear in the text, so a general question only lands
+    // on a card when it genuinely contains that card's phrase.
+    //
+    // The old fuzzy single-word fallback is deliberately GONE: it matched on one
+    // common word (e.g. "next" in "who will win the next election" → the "next
+    // holiday" card), which is exactly the mis-routing we don't want. A typed
+    // question that doesn't exactly contain a card's phrase now falls through to
+    // the backend (textbook search → general AI), which is where general and
+    // textbook questions belong.
     let best = null, score = 0;
     const scan = (id, kws) => (kws || []).forEach(k => { if (k && t.includes(k) && k.length > score) { score = k.length; best = id; } });
     pool.forEach(e => scan(e.id, e.keywords));
     scan('news', newsKw);
-    if (best) return best;
-    // 2) fuzzy fallback: overlap of meaningful words, so free-text still lands
-    const toks = tokenize(t); if (!toks.length) return null;
-    let fid = null, fscore = 0;
-    const consider = (id, words) => { const set = new Set(words); let s = 0; toks.forEach(w => { if (set.has(w)) s += 1; }); if (s > fscore) { fscore = s; fid = id; } };
-    pool.forEach(e => consider(e.id, tokenize([e.q || '', ...(e.keywords || [])].join(' '))));
-    consider('news', tokenize(newsKw.join(' ')));
-    return fscore >= 1 ? fid : null;
+    return best;
   };
 
   const onSend = (e) => { e.preventDefault(); submitText(input); };
