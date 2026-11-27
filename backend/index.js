@@ -21242,6 +21242,20 @@ async function _liveAdmLookup(institutionId, q, asker) {
 async function _smartyLiveAnswer(institutionId, question, asker) {
   const q = ' ' + String(question || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim() + ' ';
 
+  // [NEW] Academic Calendar drill-down (month / range / upcoming / find /
+  // details). One-word "calendarlookup" token → never collides with the
+  // client-side calendar cards or any flat gate below.
+  if (/\bcalendarlookup\b/.test(q)) {
+    const c = await _liveCalendar(institutionId, q, asker);
+    if (c) return c;
+  }
+  // [NEW] Notifications drill-down (all / unread / read / range / find /
+  // details / bytype). One-word "notiflookup" token; scoped to the asker.
+  if (/\bnotiflookup\b/.test(q)) {
+    const nf = await _liveNotifications(institutionId, q, asker);
+    if (nf) return nf;
+  }
+
     if (/\bactive users\b|\bregistered users\b|\bhow many users\b|\bstudents enrolled\b|\bhow many students\b|\bhow many teachers\b|\bteachers and staff\b|\bstaff members\b|\bacademic year\b|\bdashboard summary\b|\bschool dashboard\b|\bdashboard information\b|\boverall (?:academic )?performance\b|\bperformance summary\b|\btop performing students\b|\btop performers\b|\bhighest and lowest\b|\bperformance distribution\b|\bperformance range\b|\bhow many students fall\b|\bneeding (?:academic )?support\b|\bacademic support\b|\bclass toppers?\b|\bclass wise performance\b|\bcompare classes?\b|\bhighest[- ]scoring\b/.test(q)) {
     const ov = await _liveOverview(institutionId, q, asker);
     if (ov) return ov;
@@ -22685,6 +22699,168 @@ async function _liveAttendance(institutionId, q, asker) {
     }
 
     return null;
+}
+
+
+// =====================================================================
+//  _liveCalendar — dynamic drill-down for the Academic Calendar module.
+//  School-wide (every role sees the same events), so NO role scoping.
+//  Gated on the one-word "calendarlookup" token so it never collides with
+//  the client-side calendar cards. Reads calendar_events directly.
+// =====================================================================
+async function _liveCalendar(institutionId, q, asker) {
+    const text = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const intent = (text.match(/\bcalendarlookup (month|range|upcoming|find|details)\b/) || [])[1] || null;
+    if (!intent) return null;
+
+    const LINK = { link: 'academic-calendar', linkLabel: 'Open Academic Calendar' };
+    const reply = (answer, options) => ({ ok: true, source: 'smarty', live: true, answer, ...(options ? { options } : {}), ...LINK });
+
+    const CAL_EMOJI = { Holiday: '🏖️', Festival: '🎉', Exam: '📝', Meeting: '👥', Event: '🎪', Other: '📌' };
+    const istNow = new Date(Date.now() + 5.5 * 3600 * 1000);
+    const todayKey = istNow.toISOString().slice(0, 10);
+    const dmy = (s) => { const [y, m, d] = String(s).slice(0, 10).split('-'); return (d && m && y) ? `${d}/${m}/${y}` : String(s); };
+    const fmtEv = (e) => `${CAL_EMOJI[e.type] || '📌'} **${e.name}** — ${dmy(e.event_date)}${e.time ? ` · ${e.time}` : ''} (${e.type})`;
+    const eventId = (text.match(/eventid(\d+)/) || [])[1];
+
+    // DETAILS / FIND → both drill to one event (chips → the event's full card).
+    if (intent === 'details' || intent === 'find') {
+        if (eventId) {
+            const [rows] = await db.query(
+                'SELECT id, name, event_date, time, description, type FROM calendar_events WHERE id = ? AND institutionId = ? LIMIT 1',
+                [eventId, institutionId]);
+            if (!rows.length) return reply('That event could not be found — it may have been removed.');
+            const e = rows[0];
+            const lines = [
+                `${CAL_EMOJI[e.type] || '📌'} **${e.name}**`,
+                `📅 ${dmy(e.event_date)}${e.time ? ` · ${e.time}` : ''}`,
+                `🏷️ ${e.type}`,
+                e.description ? `📝 ${e.description}` : null
+            ].filter(Boolean);
+            return reply(lines.join('\n'));
+        }
+        const [rows] = await db.query(
+            `SELECT id, name, event_date, type FROM calendar_events
+              WHERE institutionId = ?
+              ORDER BY (event_date >= ?) DESC, ABS(DATEDIFF(event_date, ?)) ASC
+              LIMIT 40`,
+            [institutionId, todayKey, todayKey]);
+        if (!rows.length) return reply('No events on the calendar yet.');
+        return reply(intent === 'find' ? 'Pick an event to see its details:' : 'Which event?',
+            rows.map(e => ({ label: `${e.name} · ${dmy(e.event_date)}`, send: `calendarlookup details eventid${e.id}` })));
+    }
+
+    // MONTH → this calendar month's events.
+    if (intent === 'month') {
+        const ym = todayKey.slice(0, 7);
+        const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+        const [yy, mm] = ym.split('-');
+        const [rows] = await db.query(
+            `SELECT name, event_date, time, type FROM calendar_events
+              WHERE institutionId = ? AND DATE_FORMAT(event_date, '%Y-%m') = ?
+              ORDER BY event_date, time`,
+            [institutionId, ym]);
+        if (!rows.length) return reply(`No events on the calendar for ${MONTHS[Number(mm) - 1]} ${yy}.`);
+        return reply(`**${MONTHS[Number(mm) - 1]} ${yy}** — ${rows.length} event${rows.length === 1 ? '' : 's'}:\n${rows.map(fmtEv).join('\n')}`);
+    }
+
+    // UPCOMING → the next events & holidays from today forward.
+    if (intent === 'upcoming') {
+        const [rows] = await db.query(
+            `SELECT name, event_date, time, type FROM calendar_events
+              WHERE institutionId = ? AND event_date >= ?
+              ORDER BY event_date, time LIMIT 10`,
+            [institutionId, todayKey]);
+        if (!rows.length) return reply('No upcoming events or holidays on the calendar right now.');
+        return reply(`Upcoming events & holidays:\n${rows.map(fmtEv).join('\n')}`);
+    }
+
+    // RANGE → a 60-day window (30 days back to 30 days ahead).
+    if (intent === 'range') {
+        const back = new Date(istNow.getTime() - 30 * 86400000).toISOString().slice(0, 10);
+        const fwd = new Date(istNow.getTime() + 30 * 86400000).toISOString().slice(0, 10);
+        const [rows] = await db.query(
+            `SELECT name, event_date, time, type FROM calendar_events
+              WHERE institutionId = ? AND event_date BETWEEN ? AND ?
+              ORDER BY event_date, time`,
+            [institutionId, back, fwd]);
+        if (!rows.length) return reply(`No events on the calendar between ${dmy(back)} and ${dmy(fwd)}.`);
+        return reply(`Events from ${dmy(back)} to ${dmy(fwd)} (${rows.length}):\n${rows.map(fmtEv).join('\n')}`);
+    }
+
+    return null;
+}
+
+
+// =====================================================================
+//  _liveNotifications — dynamic drill-down for the Notifications module.
+//  Notifications are PERSONAL, so everything is scoped to asker.userId
+//  (the same recipient_id rule the Notifications API enforces). Gated on
+//  the one-word "notiflookup" token.
+// =====================================================================
+async function _liveNotifications(institutionId, q, asker) {
+    const text = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const intent = (text.match(/\bnotiflookup (all|unread|read|range|find|details|bytype)\b/) || [])[1] || null;
+    if (!intent) return null;
+
+    const LINK = { link: 'notifications', linkLabel: 'Open Notifications' };
+    const reply = (answer, options) => ({ ok: true, source: 'smarty', live: true, answer, ...(options ? { options } : {}), ...LINK });
+    const uid = (asker && asker.userId) || 0;
+    if (!uid) return reply('Please sign in to see your notifications.');
+
+    const istNow = new Date(Date.now() + 5.5 * 3600 * 1000);
+    // created_at is a naive UTC string — tag UTC, then render in IST.
+    const dmy = (s) => {
+        const d = new Date(String(s).replace(' ', 'T') + 'Z');
+        if (isNaN(d.getTime())) return '';
+        const ist = new Date(d.getTime() + 5.5 * 3600 * 1000);
+        const p = n => String(n).padStart(2, '0');
+        return `${p(ist.getUTCDate())}/${p(ist.getUTCMonth() + 1)}/${ist.getUTCFullYear()} ${p(ist.getUTCHours())}:${p(ist.getUTCMinutes())}`;
+    };
+    const TYPE_LABEL = { homework: 'Homework', event: 'Event', timetable: 'Timetable', attendance: 'Attendance', result: 'Result', exam: 'Exam', lab: 'Lab', lesson_plan: 'Lesson Plan', online_class: 'Online Class', group_chat: 'Group', syllabus: 'Syllabus', study_material: 'Study Material', ptm: 'PTM', gallery: 'Gallery', meals: 'Food Menu', fee: 'Fee', library: 'Library' };
+    const lbl = (t) => TYPE_LABEL[t] || 'Notification';
+    const notifId = (text.match(/notifid(\d+)/) || [])[1];
+
+    // DETAILS / FIND → drill to one notification (chips → the full card).
+    if (intent === 'details' || intent === 'find') {
+        if (notifId) {
+            const [rows] = await db.query(
+                'SELECT id, type, title, body, is_read, created_at FROM notifications WHERE id = ? AND recipient_id = ? LIMIT 1',
+                [notifId, uid]);
+            if (!rows.length) return reply('That notification could not be found.');
+            const n = rows[0];
+            const lines = [`🔔 **${n.title}**`, n.body ? n.body : null, `🏷️ ${lbl(n.type)} · ${n.is_read ? 'Read' : 'Unread'}`, `🕒 ${dmy(n.created_at)}`].filter(Boolean);
+            return reply(lines.join('\n'));
+        }
+        const [rows] = await db.query(
+            'SELECT id, title, created_at FROM notifications WHERE recipient_id = ? ORDER BY created_at DESC LIMIT 30', [uid]);
+        if (!rows.length) return reply('You have no notifications yet.');
+        return reply(intent === 'find' ? 'Pick a notification to open it:' : 'Which notification?',
+            rows.map(n => ({ label: n.title, send: `notiflookup details notifid${n.id}` })));
+    }
+
+    // BYTYPE → a breakdown of how many notifications of each kind you have.
+    if (intent === 'bytype') {
+        const [rows] = await db.query(
+            "SELECT type, COUNT(*) AS c, SUM(is_read = 0) AS u FROM notifications WHERE recipient_id = ? GROUP BY type ORDER BY c DESC", [uid]);
+        if (!rows.length) return reply('You have no notifications yet.');
+        const lines = rows.map(r => `• ${lbl(r.type)}: ${r.c}${Number(r.u) > 0 ? ` (${r.u} unread)` : ''}`);
+        return reply(`Your notifications by type:\n${lines.join('\n')}`);
+    }
+
+    // LIST intents: all / unread / read / range.
+    let where = 'recipient_id = ?'; const params = [uid]; let lead = 'Your notifications';
+    if (intent === 'unread') { where += ' AND is_read = 0'; lead = 'Your unread notifications'; }
+    else if (intent === 'read') { where += ' AND is_read = 1'; lead = 'Your read notifications'; }
+    else if (intent === 'range') { const back = new Date(istNow.getTime() - 30 * 86400000).toISOString().slice(0, 10); where += ' AND created_at >= ?'; params.push(back + ' 00:00:00'); lead = 'Notifications from the last 30 days'; }
+    const [rows] = await db.query(
+        `SELECT id, type, title, is_read, created_at FROM notifications WHERE ${where} ORDER BY created_at DESC LIMIT 10`, params);
+    if (!rows.length) return reply(intent === 'unread' ? "You're all caught up — no unread notifications. 🎉" : 'No notifications found for that.');
+    const lines = rows.map(n => `${n.is_read ? '•' : '🔵'} **${n.title}** — ${lbl(n.type)} · ${dmy(n.created_at)}`);
+    const [[c]] = await db.query('SELECT SUM(is_read = 0) AS u FROM notifications WHERE recipient_id = ?', [uid]);
+    const unread = Number(c.u || 0);
+    const head = `${lead}${intent !== 'unread' && unread > 0 ? ` (${unread} unread)` : ''}:`;
+    return reply(`${head}\n${lines.join('\n')}`);
 }
 
 
