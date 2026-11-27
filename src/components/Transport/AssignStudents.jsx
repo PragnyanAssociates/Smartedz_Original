@@ -82,13 +82,17 @@ export default function AssignStudents({ user, canEdit, canDelete }) {
 
   const assign = async () => {
     if (!picked.size) return alert('Select at least one student.');
+    // Pickup and drop points are REQUIRED — a student can't board or alight
+    // without both, so never save an assignment that is missing either one.
+    if (!pickupPt) return alert('Select a pickup point.');
+    if (!dropPt) return alert('Select a drop point.');
     setSaving(true);
     try {
       const res = await fetch(`${API_BASE_URL}/transport/route-students`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           institutionId: user.institutionId, route_id: routeId, student_ids: [...picked],
-          pickup_point_id: pickupPt || null, drop_point_id: dropPt || null,
+          pickup_point_id: pickupPt, drop_point_id: dropPt,
           userId: user?.id ?? null, userName: user?.name ?? null
         })
       });
@@ -177,19 +181,21 @@ export default function AssignStudents({ user, canEdit, canDelete }) {
                     </div>
 
                     <div className="grid grid-cols-2 gap-2 mt-3">
-                      <Field label="Pickup point (optional)">
+                      <Field label="Pickup point" required>
                         <div className="relative">
-                          <select value={pickupPt} onChange={e => setPickupPt(e.target.value)} className={`${inputCls} appearance-none pr-8 cursor-pointer text-xs`}>
-                            <option value="">-</option>
+                          <select value={pickupPt} onChange={e => setPickupPt(e.target.value)}
+                            className={`${inputCls} appearance-none pr-8 cursor-pointer text-xs ${pickupPt ? '' : 'border-red-300 focus:ring-red-100 focus:border-red-400'}`}>
+                            <option value="">Select pickup point...</option>
                             {pickupOpts.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
                           </select>
                           <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                         </div>
                       </Field>
-                      <Field label="Drop point (optional)">
+                      <Field label="Drop point" required>
                         <div className="relative">
-                          <select value={dropPt} onChange={e => setDropPt(e.target.value)} className={`${inputCls} appearance-none pr-8 cursor-pointer text-xs`}>
-                            <option value="">-</option>
+                          <select value={dropPt} onChange={e => setDropPt(e.target.value)}
+                            className={`${inputCls} appearance-none pr-8 cursor-pointer text-xs ${dropPt ? '' : 'border-red-300 focus:ring-red-100 focus:border-red-400'}`}>
+                            <option value="">Select drop point...</option>
                             {dropOpts.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
                           </select>
                           <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -197,9 +203,14 @@ export default function AssignStudents({ user, canEdit, canDelete }) {
                       </Field>
                     </div>
 
-                    <button onClick={assign} disabled={saving || !picked.size} className="w-full mt-4 inline-flex items-center justify-center gap-1.5 bg-primary text-white h-9 px-6 rounded-md text-xs font-semibold hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-60">
+                    <button onClick={assign} disabled={saving || !picked.size || !pickupPt || !dropPt} className="w-full mt-4 inline-flex items-center justify-center gap-1.5 bg-primary text-white h-9 px-6 rounded-md text-xs font-semibold hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-60 disabled:cursor-not-allowed">
                       <Plus className="size-4" /> {saving ? 'Assigning...' : `Assign ${picked.size || ''} to route`}
                     </button>
+                    {picked.size > 0 && (!pickupPt || !dropPt) && (
+                      <p className="mt-2 text-[11px] font-medium text-red-500 text-center">
+                        Select a pickup and drop point to assign.
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
@@ -255,11 +266,13 @@ export default function AssignStudents({ user, canEdit, canDelete }) {
 const inputCls = 'w-full rounded-md border border-zinc-200 bg-white px-3 h-9 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-shadow';
 
 // Form Fields updated strictly to use Micro-labels
-function Field({ label, children }) { 
+function Field({ label, required, children }) {
   return (
     <div className="flex flex-col">
-      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1.5">{label}</label>
+      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1.5">
+        {label}{required && <span className="text-red-500 ml-0.5">*</span>}
+      </label>
       {children}
     </div>
-  ); 
+  );
 }
