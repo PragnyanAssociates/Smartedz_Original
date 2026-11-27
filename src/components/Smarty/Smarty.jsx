@@ -43,6 +43,15 @@ const ALWAYS_VISIBLE = new Set(['overview', ...MODULES.filter(m => m.alwaysVisib
 // out — it then falls back to the "Open <module>" shortcut.
 const MODULES_WITH_CARDS = new Set();
 BUILTINS.forEach(e => { if (e.module) MODULES_WITH_CARDS.add(_modId(e.module) || e.module); });
+// Decider for TYPED questions. Module help is reached by TAPPING a module, so a
+// typed free-text question is only ever one of two things: the school's own
+// custom Q&A, or a general / textbook question for the backend. Typed text must
+// therefore match ONLY live-data cards (next class, attendance, calendar…) and
+// custom questions — never a built-in module how-to/opener card. Otherwise a
+// general question like "who is Virat Kohli" wrongly hijacks a built-in card
+// instead of going to the backend (textbook search → general AI).
+const BUILTIN_IDS = new Set(BUILTINS.map(e => e.id));
+const LIVE_SET = new Set(LIVE_IDS);
 const toneVar = { sky: '--sky', amber: '--amber', emerald: '--emerald', rose: '--rose', violet: '--violet', brand: '--brand' };
 // Browse-by-module cards: a relevant icon + a rotating accent colour per module.
 const MOD_ICON = { overview: '🏠', 'manage-login': '🔑', DailyExpenses: '🧾', FeeManagement: '💰', Transport: '🚌', timetable: '📅', 'academic-calendar': '🗓️', attendance: '✅', Exams: '📝', reports: '📄', Performance: '📈', Directory: '👥', Gallery: '🖼️', Homework: '📚', Meals: '🍽️', PTM: '🧑‍🏫', OnlineClasses: '💻', DigitalLabs: '🔬', PreAdmissions: '🗂️', Admissions: '🎓', StudyMaterials: '📖', Syllabus: '📘', GroupChat: '💬', Alumni: '🎓', InventoryAssets: '📦', Support: '🛟', Library: '📚', notifications: '🔔', profile: '👤' };
@@ -742,7 +751,9 @@ export default function Smarty({ onNavigate }) {
 
   const match = (text) => {
     const t = text.toLowerCase();
-    const pool = buildPool(boot);
+    // Only live-data cards and the school's own custom questions are matchable
+    // by typing; built-in module how-tos/openers are tap-only (see BUILTIN_IDS).
+    const pool = buildPool(boot).filter(e => LIVE_SET.has(e.id) || !BUILTIN_IDS.has(e.id));
     const newsKw = ['whats new', 'what is new', 'updates', 'news', 'latest', 'announcement'];
     // 1) strongest exact phrase match (longest matching keyword wins)
     let best = null, score = 0;

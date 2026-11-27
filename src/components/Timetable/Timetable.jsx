@@ -273,9 +273,9 @@ function AdminTimetable({ user, canEdit, canDelete, isManager, fullAccess }) {
   const tabProps = { data, fetchData, user, canEdit, ttAllowed };
 
   return (
-    <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12">
+    <div className="w-full pt-3 lg:pt-4 pb-6 lg:pb-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12">
       {/* 1. Page Header */}
-      <header className="mb-6 flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+      <header className="mb-4 flex flex-col sm:flex-row sm:items-start justify-between gap-3">
         <div className="flex flex-col gap-2">
           <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Timetable</h1>
           <p className="text-sm text-zinc-500 max-w-[56ch]">
@@ -294,7 +294,7 @@ function AdminTimetable({ user, canEdit, canDelete, isManager, fullAccess }) {
       </header>
 
       {/* Segmented Tabs - Horizontally Scrollable on Mobile */}
-      <div className="flex items-center gap-2 mb-6 sm:mb-8 border-b border-zinc-200 pb-4 overflow-x-auto custom-scrollbar w-full">
+      <div className="flex items-center gap-2 mb-5 sm:mb-6 border-b border-zinc-200 pb-3 overflow-x-auto custom-scrollbar w-full">
         {tabs.map(t => (
           <button
             key={t.id}
@@ -345,7 +345,8 @@ function SetupTab({ data, fetchData, user, canEdit }) {
         const s = split24((p.start_time || '').slice(0, 5));
         const e = split24((p.end_time   || '').slice(0, 5));
         return {
-          period_index: p.period_index,
+          id: p.id,                       // keep the DB row id so a save edits
+          period_index: p.period_index,   // this period in place (entries survive)
           name: p.name,
           start12: s.t12, start_ap: s.ap,
           end12:   e.t12, end_ap:   e.ap,
@@ -398,11 +399,11 @@ function SetupTab({ data, fetchData, user, canEdit }) {
       if (!start_time || !end_time) return alert(`"${p.name}" needs a valid start and end time. Enter as HH:MM (e.g. 09:00) and pick AM/PM.`);
       if (start_time >= end_time)   return alert(`"${p.name}" end time must be after start time.`);
 
-      prepared.push({ period_index: prepared.length + 1, name: p.name, start_time, end_time, is_break: p.is_break });
+      prepared.push({ id: p.id ?? null, period_index: prepared.length + 1, name: p.name, start_time, end_time, is_break: p.is_break });
     }
 
     if (prepared.length === 0) return alert('Add at least one period.');
-    if (!window.confirm('Saving will update the working days and the bell schedule. Any timetable entries that no longer match the period list will be cleared. Continue?')) return;
+    if (!window.confirm('Saving will update the working days and the bell schedule. Your existing class timetables are kept — only a period you removed clears its own entries. Continue?')) return;
 
     setSaving(true);
     try {
@@ -714,13 +715,6 @@ function GridTab({ data, fetchData, user, canEdit, ttAllowed }) {
 
   return (
     <div className="space-y-6">
-      <div className="bg-blue-50/50 border border-blue-100 rounded-md p-4 flex gap-3 text-[11px] text-blue-700 leading-relaxed">
-        <AlertCircle className="size-4 shrink-0 text-blue-500 mt-0.5" />
-        <p>
-          <strong className="font-semibold text-blue-900">Tip:</strong> Pick a subject first — the teacher dropdown then shows only teachers assigned to that subject. If a teacher is already teaching another class at the same time, a red note appears so you can resolve the clash. Manage subjects in <em>Manage Logins → Subjects</em>.
-        </p>
-      </div>
-
       {/* Top action bar */}
       <div className="flex flex-col sm:flex-row gap-4 justify-between sm:items-end">
         <div className="flex flex-col gap-1.5 w-full sm:w-auto">

@@ -2785,11 +2785,42 @@ app.post('/api/admin/timetable/days', async (req, res) => {
         const yearId = await resolveYearId(institutionId, req.body.academic_year_id);
         if (!yearId) throw new Error('No academic year. Create one first.');
         await conn.beginTransaction();
-        await conn.execute('DELETE FROM timetable_days WHERE institutionId = ? AND academic_year_id = ?', [institutionId, yearId]);
-        for (const d of days) {
-            await conn.execute('INSERT INTO timetable_days (institutionId, academic_year_id, day_index, day_name, is_working) VALUES (?, ?, ?, ?, ?)',
-                [institutionId, yearId, d.day_index, d.day_name, d.is_working ? 1 : 0]);
+
+        // Id-STABLE save. The old code deleted every day row and re-inserted,
+        // which handed each day a brand-new auto-increment id — and because
+        // timetable_entries.day_id points at those ids, every saved entry was
+        // orphaned and the grid looked wiped. Instead, match each incoming day
+        // by its stable day_index (0-6) and UPDATE the existing row in place,
+        // so its id (and the entries hanging off it) survive the save.
+        const [existingDays] = await conn.execute(
+            'SELECT id, day_index FROM timetable_days WHERE institutionId = ? AND academic_year_id = ?',
+            [institutionId, yearId]
+        );
+        const dayIdByIndex = new Map(existingDays.map(r => [Number(r.day_index), r.id]));
+        const incomingDayIdx = new Set((days || []).map(d => Number(d.day_index)));
+
+        for (const d of (days || [])) {
+            const idx = Number(d.day_index);
+            if (dayIdByIndex.has(idx)) {
+                await conn.execute(
+                    'UPDATE timetable_days SET day_name = ?, is_working = ? WHERE id = ?',
+                    [d.day_name, d.is_working ? 1 : 0, dayIdByIndex.get(idx)]
+                );
+            } else {
+                await conn.execute(
+                    'INSERT INTO timetable_days (institutionId, academic_year_id, day_index, day_name, is_working) VALUES (?, ?, ?, ?, ?)',
+                    [institutionId, yearId, idx, d.day_name, d.is_working ? 1 : 0]
+                );
+            }
         }
+
+        // Drop only the day rows that are genuinely gone (none, normally — the
+        // UI always sends all seven), clearing their now-dangling entries too.
+        for (const r of existingDays.filter(r => !incomingDayIdx.has(Number(r.day_index)))) {
+            await conn.execute('DELETE FROM timetable_entries WHERE day_id = ? AND institutionId = ? AND academic_year_id = ?', [r.id, institutionId, yearId]);
+            await conn.execute('DELETE FROM timetable_days WHERE id = ?', [r.id]);
+        }
+
         await conn.commit();
         res.json({ success: true });
     } catch (err) {
@@ -2805,11 +2836,51 @@ app.post('/api/admin/timetable/periods', async (req, res) => {
         const yearId = await resolveYearId(institutionId, req.body.academic_year_id);
         if (!yearId) throw new Error('No academic year. Create one first.');
         await conn.beginTransaction();
-        await conn.execute('DELETE FROM timetable_periods WHERE institutionId = ? AND academic_year_id = ?', [institutionId, yearId]);
-        for (const p of periods) {
-            await conn.execute('INSERT INTO timetable_periods (institutionId, academic_year_id, period_index, name, start_time, end_time, is_break) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                [institutionId, yearId, p.period_index, p.name, p.start_time, p.end_time, p.is_break ? 1 : 0]);
+
+        // Id-STABLE save (same fix as the days route). Previously every period
+        // was deleted and re-inserted, so each one got a fresh id and all the
+        // timetable_entries that referenced the old period_id were orphaned —
+        // which is why editing or adding a single period wiped the whole grid.
+        // Now the UI sends each period's existing `id` (null for a brand-new
+        // row). We UPDATE existing periods in place (their id — and entries —
+        // survive), INSERT only the new ones, and delete just the periods the
+        // admin actually removed (clearing their own entries).
+        const [existingPeriods] = await conn.execute(
+            'SELECT id FROM timetable_periods WHERE institutionId = ? AND academic_year_id = ?',
+            [institutionId, yearId]
+        );
+        const existingIds = new Set(existingPeriods.map(r => Number(r.id)));
+        const keptIds = new Set();
+
+        for (const p of (periods || [])) {
+            const pid = p.id ? Number(p.id) : null;
+            if (pid && existingIds.has(pid)) {
+                await conn.execute(
+                    'UPDATE timetable_periods SET period_index = ?, name = ?, start_time = ?, end_time = ?, is_break = ? WHERE id = ? AND institutionId = ? AND academic_year_id = ?',
+                    [p.period_index, p.name, p.start_time, p.end_time, p.is_break ? 1 : 0, pid, institutionId, yearId]
+                );
+                keptIds.add(pid);
+                // A slot that is now a break can never hold a lesson — clear any
+                // stale entries left on it from when it was a teaching period.
+                if (p.is_break) {
+                    await conn.execute('DELETE FROM timetable_entries WHERE period_id = ? AND institutionId = ? AND academic_year_id = ?', [pid, institutionId, yearId]);
+                }
+            } else {
+                await conn.execute(
+                    'INSERT INTO timetable_periods (institutionId, academic_year_id, period_index, name, start_time, end_time, is_break) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                    [institutionId, yearId, p.period_index, p.name, p.start_time, p.end_time, p.is_break ? 1 : 0]
+                );
+            }
         }
+
+        // Remove only the periods the admin deleted, along with their entries.
+        for (const r of existingPeriods) {
+            if (!keptIds.has(Number(r.id))) {
+                await conn.execute('DELETE FROM timetable_entries WHERE period_id = ? AND institutionId = ? AND academic_year_id = ?', [r.id, institutionId, yearId]);
+                await conn.execute('DELETE FROM timetable_periods WHERE id = ?', [r.id]);
+            }
+        }
+
         await conn.commit();
         res.json({ success: true });
     } catch (err) {
@@ -22192,6 +22263,20 @@ async function _ttActiveYear(institutionId) {
     return r.length ? r[0] : null;
 }
 
+// The class ids a teacher is actually assigned to — taken from their
+// timetable_entries, exactly like the Attendance → Teachers view. Used so
+// that in Smarty a teacher's class pickers (Timetable / Attendance) list ONLY
+// their own classes, never every class in the school. Returns an array of ids.
+async function _smartyTeacherClassIds(institutionId, teacherUserId) {
+    if (!teacherUserId) return [];
+    const [rows] = await db.query(
+        `SELECT DISTINCT te.class_id
+           FROM timetable_entries te
+          WHERE te.institutionId = ? AND te.teacher_id = ? AND te.class_id IS NOT NULL`,
+        [institutionId, teacherUserId]);
+    return rows.map(r => r.class_id);
+}
+
 async function _liveTimetable(institutionId, q, asker) {
     const text = String(q || '').toLowerCase().replace(/\s+/g, ' ').trim();
     if (/\b(how many|count|total|number of)\b/.test(text)) return null;
@@ -22241,6 +22326,15 @@ async function _liveTimetable(institutionId, q, asker) {
         classId = String(cid);
     }
 
+    // A TEACHER only sees the classes they actually teach. _ttTeacherSet is a
+    // Set of their class ids (null for anyone who isn't a teacher, e.g. admins,
+    // who keep the full list). It scopes the class pickers below.
+    let _ttTeacherSet = null;
+    if (_ttIsTeacher && _ttUid) {
+        const _tc = await _smartyTeacherClassIds(institutionId, _ttUid);
+        _ttTeacherSet = new Set((_tc || []).map(String));
+    }
+
     // shared loads
     const loadDays = async () => {
         const [d] = await db.query(
@@ -22258,11 +22352,13 @@ async function _liveTimetable(institutionId, q, asker) {
     // ---- CLASS: pick a class → weekly grid -----------------------------
     if (intent === 'class') {
         if (!classId) {
-            const [classes] = await db.query('SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section', [institutionId]);
-            if (!classes.length) return reply('No classes created yet.');
+            let [classes] = await db.query('SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section', [institutionId]);
+            if (_ttTeacherSet) classes = classes.filter(c => _ttTeacherSet.has(String(c.id)));
+            if (!classes.length) return reply(_ttTeacherSet ? "You don't have any classes assigned in the timetable yet, so there's nothing to show." : 'No classes created yet.');
             classes.sort((a, b) => classLabel(a).localeCompare(classLabel(b), undefined, { numeric: true }));
             return reply(`Which class's timetable? (${yr.name})`, classes.map(c => ({ label: classLabel(c), send: base(` classid${c.id}`) })));
         }
+        if (_ttTeacherSet && !_ttTeacherSet.has(String(classId))) return reply("You can only view the timetable for a class you're assigned to.");
         const days = await loadDays(), periods = await loadPeriods();
         if (!days.length || !periods.length) return reply('The bell schedule is not set up yet (Days & Periods).');
         const [rows] = await db.query(
@@ -22324,11 +22420,13 @@ async function _liveTimetable(institutionId, q, asker) {
     // ---- CELL: Class → Day → Period → the one slot ---------------------
     if (intent === 'cell') {
         if (!classId) {
-            const [classes] = await db.query('SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section', [institutionId]);
-            if (!classes.length) return reply('No classes created yet.');
+            let [classes] = await db.query('SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section', [institutionId]);
+            if (_ttTeacherSet) classes = classes.filter(c => _ttTeacherSet.has(String(c.id)));
+            if (!classes.length) return reply(_ttTeacherSet ? "You don't have any classes assigned in the timetable yet, so there's nothing to show." : 'No classes created yet.');
             classes.sort((a, b) => classLabel(a).localeCompare(classLabel(b), undefined, { numeric: true }));
             return reply('Pick a class:', classes.map(c => ({ label: classLabel(c), send: base(` classid${c.id}`) })));
         }
+        if (_ttTeacherSet && !_ttTeacherSet.has(String(classId))) return reply("You can only view the timetable for a class you're assigned to.");
         if (!dayId) {
             const days = await loadDays();
             if (!days.length) return reply('No working days are set up yet.');
@@ -22467,10 +22565,22 @@ async function _liveAttendance(institutionId, q, asker) {
     const classLabel = (c) => `${c.className || ''}${c.section ? ' - ' + c.section : ''}`.trim();
     const classId = (text.match(/classid(\d+)/) || [])[1];
 
+    // A TEACHER only checks attendance for the classes they teach (same scope
+    // as the Attendance → Teachers view). _attTeacherSet is their class ids;
+    // null for admins/super admins, who keep the full class list.
+    const _attIsTeacher = role.includes('teacher');
+    const _attUid = (asker && asker.userId) || 0;
+    let _attTeacherSet = null;
+    if (_attIsTeacher && _attUid) {
+        const _tc = await _smartyTeacherClassIds(institutionId, _attUid);
+        _attTeacherSet = new Set((_tc || []).map(String));
+    }
+
     // every remaining intent drills to a class first
     if (!classId) {
-        const [classes] = await db.query('SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section', [institutionId]);
-        if (!classes.length) return reply('No classes created yet.');
+        let [classes] = await db.query('SELECT id, className, section FROM classes WHERE institutionId = ? ORDER BY className, section', [institutionId]);
+        if (_attTeacherSet) classes = classes.filter(c => _attTeacherSet.has(String(c.id)));
+        if (!classes.length) return reply(_attTeacherSet ? "You don't have any classes assigned yet, so there's no attendance to check." : 'No classes created yet.');
         classes.sort((a, b) => classLabel(a).localeCompare(classLabel(b), undefined, { numeric: true }));
         const lead = {
             today: "Which class's attendance today?",
@@ -22481,6 +22591,7 @@ async function _liveAttendance(institutionId, q, asker) {
         }[intent] || 'Pick a class:';
         return reply(lead, classes.map(c => ({ label: classLabel(c), send: `attendance ${intent} classid${c.id}` })));
     }
+    if (_attTeacherSet && !_attTeacherSet.has(String(classId))) return reply("You can only check attendance for a class you're assigned to.");
 
     // active students of this class
     const [students] = await db.query(

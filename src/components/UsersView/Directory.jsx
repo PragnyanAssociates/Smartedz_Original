@@ -96,6 +96,17 @@ export default function Directory() {
     [data.users]
   );
 
+  // Head-count per role tab (and the All total). Built from the active roll
+  // only, so the numbers stay stable regardless of the search box — this is
+  // what powers the "(218)" badges next to each tab.
+  const roleCounts = useMemo(() => {
+    const counts = { All: activeUsers.length };
+    for (const u of activeUsers) {
+      if (u.role) counts[u.role] = (counts[u.role] || 0) + 1;
+    }
+    return counts;
+  }, [activeUsers]);
+
   // Logic: Filter + sort
   const filteredUsers = useMemo(() => {
     let list = activeUsers;
@@ -142,7 +153,12 @@ export default function Directory() {
       <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div className="flex flex-col">
           <h1 className="text-xl font-semibold text-zinc-900 tracking-tight">Institution Directory</h1>
-          <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">Browse and view profiles of all members.</p>
+          <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">
+            Browse and view profiles of all members.
+            {!loading && (
+              <> Showing <span className="font-semibold text-zinc-700">{filteredUsers.length}</span> of {activeUsers.length} members.</>
+            )}
+          </p>
         </div>
 
         <div className="flex items-center gap-2 w-full md:w-auto">
@@ -163,17 +179,24 @@ export default function Directory() {
       {/* Role Tabs */}
       <div className="flex justify-start">
         <div className="inline-flex bg-zinc-100/80 p-1 rounded-md overflow-x-auto custom-scrollbar max-w-full">
-          {['All', ...data.roles.map(r => r.role_name)].map(role => (
-            <button
-              key={role}
-              onClick={() => { setActiveRole(role); setActiveClass('all'); }}
-              className={`flex-1 sm:flex-none px-4 py-1.5 rounded text-[11px] font-semibold uppercase tracking-wider transition-colors whitespace-nowrap ${
-                activeRole === role ? 'bg-white text-zinc-900 shadow-sm ring-1 ring-black/5' : 'text-zinc-500 hover:text-zinc-700'
-              }`}
-            >
-              {role}
-            </button>
-          ))}
+          {['All', ...data.roles.map(r => r.role_name)].map(role => {
+            const isActive = activeRole === role;
+            const count = roleCounts[role] || 0;
+            return (
+              <button
+                key={role}
+                onClick={() => { setActiveRole(role); setActiveClass('all'); }}
+                className={`flex-1 sm:flex-none px-4 py-1.5 rounded text-[11px] font-semibold uppercase tracking-wider transition-colors whitespace-nowrap ${
+                  isActive ? 'bg-white text-zinc-900 shadow-sm ring-1 ring-black/5' : 'text-zinc-500 hover:text-zinc-700'
+                }`}
+              >
+                {role}
+                <span className={`ml-1.5 tabular-nums ${isActive ? 'text-primary' : 'text-zinc-400'}`}>
+                  ({count})
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -216,12 +239,16 @@ export default function Directory() {
         </div>
       ) : filteredUsers.length > 0 ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-6">
-          {filteredUsers.map(u => (
+          {filteredUsers.map((u, idx) => (
             <div
               key={u.id}
               onClick={() => setSelected(u)}
-              className="bg-white p-4 sm:p-5 rounded-lg ring-1 ring-black/5 shadow-sm hover:ring-zinc-300 transition-all cursor-pointer group flex flex-col items-center text-center"
+              className="relative bg-white p-4 sm:p-5 rounded-lg ring-1 ring-black/5 shadow-sm hover:ring-zinc-300 transition-all cursor-pointer group flex flex-col items-center text-center"
             >
+              {/* Serial number — renumbers with the current filter/sort */}
+              <span className="absolute top-2 left-2 inline-flex items-center justify-center min-w-[1.2rem] h-5 px-1.5 rounded-full bg-zinc-100 text-zinc-500 text-[8px] font-bold tabular-nums ring-1 ring-black/5 group-hover:bg-primary/10 group-hover:text-primary transition-colors">
+                {idx + 1}
+              </span>
               <div className="relative mb-3 sm:mb-4">
                 {u.profile_pic ? (
                   <img src={u.profile_pic} className="size-20 sm:size-24 rounded-full object-cover ring-1 ring-black/5 shadow-sm" alt={u.name} />
@@ -264,7 +291,7 @@ const DIRECTORY_GUIDE = {
   title: 'Institution Directory',
   steps: [
     ['1 · Who you see', 'Every active member of the school — students, teachers and staff. Passed-out (alumni) students are left out, so this is always the current roll.'],
-    ['2 · Filter by role', 'The tabs across the top switch between All and each role (Student, Teacher, and any custom roles your school has set up).'],
+    ['2 · Filter by role', 'The tabs across the top switch between All and each role (Student, Teacher, and any custom roles your school has set up). The number beside each tab is its head-count.'],
     ['3 · Narrow students by class', 'Pick the Student tab and a class filter appears — handy for finding one class quickly. Students are listed roll-number-wise; everyone else alphabetically.'],
     ['4 · Search', 'Type a name, username or email to jump straight to someone across every role at once.'],
     ['5 · Open a profile', 'Click any card for the full profile: Basic Info for everyone, plus Performance and Attendance for students and teachers.'],

@@ -25,6 +25,21 @@ export default function SmartyAdmin() {
   const [tab, setTab] = useState('questions');
   const [help, setHelp] = useState(false);
 
+  // "Who sees it" must offer the SCHOOL'S OWN roles (the ones from the Roles
+  // tab), not a hard-coded guess. They come from /admin/data, exactly like the
+  // Directory and Permissions screens. 'all' (Everyone) is always first.
+  const [roleOptions, setRoleOptions] = useState(ROLE_OPTIONS);
+  useEffect(() => {
+    if (!instId) return;
+    fetch(`${API_BASE_URL}/admin/data/${instId}`)
+      .then(r => (r.ok ? r.json() : {}))
+      .then(d => {
+        const names = Array.isArray(d.roles) ? d.roles.map(r => r.role_name).filter(Boolean) : [];
+        setRoleOptions(['all', ...names]);
+      })
+      .catch(() => {});
+  }, [instId]);
+
   return (
     <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 space-y-6">
       <header className="flex items-start gap-3">
@@ -50,8 +65,8 @@ export default function SmartyAdmin() {
         ))}
       </div>
 
-      {tab === 'questions' ? <QuestionsTab instId={instId} />
-        : tab === 'updates' ? <UpdatesTab instId={instId} />
+      {tab === 'questions' ? <QuestionsTab instId={instId} roleOptions={roleOptions} />
+        : tab === 'updates' ? <UpdatesTab instId={instId} roleOptions={roleOptions} />
         : <AiSettingsTab instId={instId} />}
     </div>
   );
@@ -126,7 +141,7 @@ function SmartyHelpModal({ tab, onClose }) {
 // ------------------------------------------------------------------ Questions
 const BLANK_Q = { id: null, category: '', question: '', answer: '', roles: 'all', link: '', keywords: '', is_active: 1 };
 
-function QuestionsTab({ instId }) {
+function QuestionsTab({ instId, roleOptions = ROLE_OPTIONS }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState(BLANK_Q);
@@ -174,20 +189,23 @@ function QuestionsTab({ instId }) {
         <div className="grid grid-cols-2 gap-3">
           <Field label="Who sees it">
             <select value={form.roles} onChange={e => setForm({ ...form, roles: e.target.value })} className={inp}>
-              {ROLE_OPTIONS.map(r => <option key={r} value={r === 'all' ? 'all' : r}>{r === 'all' ? 'Everyone' : r}</option>)}
+              {roleOptions.map(r => <option key={r} value={r}>{r === 'all' ? 'Everyone' : r}</option>)}
             </select>
           </Field>
-          <Field label="Open button (optional)">
-            <select value={form.link} onChange={e => setForm({ ...form, link: e.target.value })} className={inp}>
-              <option value="">No button</option>
+          {/* One "Module" control: picking a module files the Q&A UNDER that
+              module's questions in Smarty (category) AND gives it an Open button
+              (link). "General" = a standalone answer tied to no module. */}
+          <Field label="Module">
+            <select value={form.link} onChange={e => setForm({ ...form, link: e.target.value, category: e.target.value })} className={inp}>
+              <option value="">General question (no module)</option>
               {LINKABLE.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
             </select>
           </Field>
         </div>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Category (optional)"><input value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} className={inp} /></Field>
-          <Field label="Extra match words (comma)"><input value={form.keywords} onChange={e => setForm({ ...form, keywords: e.target.value })} placeholder="ptm, meeting" className={inp} /></Field>
-        </div>
+        <p className="text-[11px] text-zinc-500 -mt-1 leading-relaxed">
+          Pick a <strong>module</strong> and this Q&amp;A appears under that module's questions in Smarty, with an Open button. Leave it on <strong>General</strong> for a standalone answer people reach by asking.
+        </p>
+        <Field label="Extra match words (comma)"><input value={form.keywords} onChange={e => setForm({ ...form, keywords: e.target.value })} placeholder="ptm, meeting" className={inp} /></Field>
         <div className="flex items-center gap-3 pt-1">
           <button onClick={save} disabled={saving} className="h-9 px-4 rounded-md bg-primary text-white text-xs font-semibold inline-flex items-center gap-1.5 disabled:bg-zinc-300">
             {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />} {form.id ? 'Update' : 'Add'}
@@ -212,8 +230,7 @@ function QuestionsTab({ instId }) {
                     <div className="text-xs text-zinc-500 line-clamp-2 mt-0.5">{r.answer}</div>
                     <div className="flex flex-wrap gap-1.5 mt-1.5">
                       <Pill>{r.roles === 'all' ? 'Everyone' : r.roles}</Pill>
-                      {r.link && <Pill>↳ {r.link}</Pill>}
-                      {r.category && <Pill>{r.category}</Pill>}
+                      <Pill>{r.link || r.category || 'General'}</Pill>
                     </div>
                   </div>
                   <div className="flex gap-1.5 shrink-0">
@@ -232,7 +249,7 @@ function QuestionsTab({ instId }) {
 // ------------------------------------------------------------------ Updates
 const BLANK_U = { id: null, title: '', body: '', link: '', roles: 'all', is_active: 1 };
 
-function UpdatesTab({ instId }) {
+function UpdatesTab({ instId, roleOptions = ROLE_OPTIONS }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState(BLANK_U);
@@ -269,12 +286,12 @@ function UpdatesTab({ instId }) {
         <div className="grid grid-cols-2 gap-3">
           <Field label="Who sees it">
             <select value={form.roles} onChange={e => setForm({ ...form, roles: e.target.value })} className={inp}>
-              {ROLE_OPTIONS.map(r => <option key={r} value={r === 'all' ? 'all' : r}>{r === 'all' ? 'Everyone' : r}</option>)}
+              {roleOptions.map(r => <option key={r} value={r}>{r === 'all' ? 'Everyone' : r}</option>)}
             </select>
           </Field>
           <Field label="Open button (optional)">
             <select value={form.link} onChange={e => setForm({ ...form, link: e.target.value })} className={inp}>
-              <option value="">No button</option>
+              <option value="">No screen to open</option>
               {LINKABLE.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
             </select>
           </Field>
