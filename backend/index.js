@@ -243,7 +243,7 @@ const DEFAULT_MODULES = [
     'PTM',
     'OnlineClasses',
     'DigitalLabs',
-    'PreAdmissions',
+    // 'PreAdmissions',
     'Admissions',
     'StudyMaterials',
     'Syllabus',

@@ -18,7 +18,7 @@ import Homework from '../components/Homework/Homework';
 import DigitalLabs from '../components/Labs/DigitalLabs';
 import Meals from '../components/Meals/Meals';
 import PTM from '../components/PTM/PTM';
-import PreAdmissions from '../components/preadmissions/PreAdmissions';
+// import PreAdmissions from '../components/preadmissions/PreAdmissions';
 import Admissions from '../components/Admissions/Admissions';
 import StudyMaterialsScreen from '../components/study-materials/StudyMaterialsScreen';
 import Syllabus from '../components/Syllabus/Syllabus';
@@ -174,7 +174,7 @@ function DashboardShell() {
       case 'PTM':               return <PTM />;
       case 'OnlineClasses':     return <OnlineClasses/>;
       case 'DigitalLabs':       return <DigitalLabs/>;
-      case 'PreAdmissions':     return <PreAdmissions/>;
+      // case 'PreAdmissions':     return <PreAdmissions/>;
       case 'Admissions':        return <Admissions/>;
       case 'StudyMaterials':    return <StudyMaterialsScreen/>;
       case 'Syllabus':          return <Syllabus/>;

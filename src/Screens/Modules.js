@@ -179,14 +179,14 @@ export const MODULES = [
     imageSource: 'https://cdn-icons-png.flaticon.com/128/19011/19011142.png', 
     navigateTo: '/DigitalLabs'
   },
-  {
-    id: 'PreAdmissions',
-    module_name: 'PreAdmissions',
-    label: 'Pre Admissions',
-    title: 'Pre Admissions',
-    imageSource: 'https://cdn-icons-png.flaticon.com/128/10220/10220958.png',
-    navigateTo: '/PreAdmissionsScreen'
-  },
+  // {
+  //   id: 'PreAdmissions',
+  //   module_name: 'PreAdmissions',
+  //   label: 'Pre Admissions',
+  //   title: 'Pre Admissions',
+  //   imageSource: 'https://cdn-icons-png.flaticon.com/128/10220/10220958.png',
+  //   navigateTo: '/PreAdmissionsScreen'
+  // },
   {
     id: 'Admissions',
     module_name: 'Admissions',

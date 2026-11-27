@@ -2,9 +2,9 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import {
-  Phone, Calendar, IdCard, User, FileText, MapPin, Edit, Trash2,
+  Phone, Calendar, IdCard, User, Users, FileText, MapPin, Edit, Trash2,
   GraduationCap, X, Check, School, Search, Loader2, ChevronDown,
-  Download, HelpCircle, ShieldCheck, CalendarRange, Camera
+  Download, HelpCircle, ShieldCheck, CalendarRange, Camera, Plus, Clock
 } from 'lucide-react';
 import { usePermissions } from '../../Screens/PermissionsContext';
 
@@ -39,6 +39,7 @@ const normGrade = (s) => String(s ?? '').trim().toLowerCase().replace(/^class\s*
 
 const StatusPill = ({ status }) => {
   const styles = {
+    Pending: 'bg-amber-50 text-amber-700 ring-amber-600/20',
     Approved: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20',
     Rejected: 'bg-red-50 text-red-700 ring-red-600/20',
   };
@@ -49,6 +50,8 @@ const StatusPill = ({ status }) => {
   );
 };
 
+const TABS = ['Pending', 'Approved', 'Rejected'];
+
 export default function AdmissionsScreen() {
   const { user } = useAuth();
   const { can, isAllAccess } = usePermissions();
@@ -58,57 +61,97 @@ export default function AdmissionsScreen() {
   const isAdmin = isAllAccess;
   const canAct = canEdit || isAdmin;
 
+  const [tab, setTab] = useState('Pending');            // 'Pending' | 'Approved' | 'Rejected'
   const [data, setData] = useState([]);
   const [classes, setClasses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedItem, setSelectedItem] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(null);
   const [downloading, setDownloading] = useState(false);
+  const [counts, setCounts] = useState({ Pending: 0, Approved: 0, Rejected: 0 });
 
-  // Edit modal
+  // Add / Edit modal
   const [modalVisible, setModalVisible] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [currentItem, setCurrentItem] = useState(null);
   const [formData, setFormData] = useState({});
   const [selectedImage, setSelectedImage] = useState(null);
 
   // Filters
-  const currentYear = String(new Date().getFullYear());
   const [searchText, setSearchText] = useState('');
-  const [filterStatus, setFilterStatus] = useState('Approved'); // 'Approved' | 'Rejected'
-  const [years, setYears] = useState([]);              // calendar years present in admissions
-  const [filterYear, setFilterYear] = useState('');    // selected year, or 'all'
-  const [filterJoiningClass, setFilterJoiningClass] = useState(''); // '' = all classes
+  const [years, setYears] = useState([]);              // [{id, name, isActive}]
+  const [filterYear, setFilterYear] = useState('');    // academic_year_id (string) or 'all'
+  const [filterJoiningClass, setFilterJoiningClass] = useState('');
 
-  // Guards against an out-of-order response (an earlier tab's fetch
-  // resolving after a later one and overwriting it).
+  // The active tab decides which endpoint feeds the list:
+  //   Pending  → /admin/preadmissions  (status = Pending)
+  //   Approved / Rejected → /admin/admissions?status=…
   const reqSeq = useRef(0);
   const fetchData = useCallback(async () => {
     if (!user?.institutionId || (!canRead && !isAdmin)) return;
     const seq = ++reqSeq.current;
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (searchText) params.append('search', searchText);
-      if (filterStatus) params.append('status', filterStatus);
-      if (filterYear && filterYear !== 'all') params.append('academic_year_id', filterYear);
-      const res = await fetch(`${API_BASE_URL}/admin/admissions/${user.institutionId}?${params.toString()}`);
+      const p = new URLSearchParams();
+      if (searchText) p.append('search', searchText);
+      if (filterYear && filterYear !== 'all') p.append('academic_year_id', filterYear);
+      let url;
+      if (tab === 'Pending') {
+        p.append('userId', user.id);
+        url = `${API_BASE_URL}/admin/preadmissions/${user.institutionId}?${p.toString()}`;
+      } else {
+        p.append('status', tab);
+        url = `${API_BASE_URL}/admin/admissions/${user.institutionId}?${p.toString()}`;
+      }
+      const res = await fetch(url);
       const records = await res.json();
       if (seq === reqSeq.current) setData(Array.isArray(records) ? records : []);
     } catch (e) { console.error(e); }
     finally { if (seq === reqSeq.current) setLoading(false); }
-  }, [user, isAdmin, canRead, searchText, filterStatus, filterYear]);
+  }, [user, isAdmin, canRead, searchText, filterYear, tab]);
+
+  // Counts for the summary cards: Pending + Approved + Rejected under the SAME
+  // year / search / joining-class filters as the list, so the cards always
+  // agree with the tab totals.
+  const countSeq = useRef(0);
+  const fetchCounts = useCallback(async () => {
+    if (!user?.institutionId || (!canRead && !isAdmin)) return;
+    const seq = ++countSeq.current;
+    const base = () => {
+      const p = new URLSearchParams();
+      if (searchText) p.append('search', searchText);
+      if (filterYear && filterYear !== 'all') p.append('academic_year_id', filterYear);
+      return p;
+    };
+    const pendQS = () => { const p = base(); p.append('userId', user.id); return p.toString(); };
+    const admQS = (status) => { const p = base(); p.append('status', status); return p.toString(); };
+    try {
+      const [pdRes, apRes, rjRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/admin/preadmissions/${user.institutionId}?${pendQS()}`),
+        fetch(`${API_BASE_URL}/admin/admissions/${user.institutionId}?${admQS('Approved')}`),
+        fetch(`${API_BASE_URL}/admin/admissions/${user.institutionId}?${admQS('Rejected')}`),
+      ]);
+      const [pd, ap, rj] = await Promise.all([pdRes.json(), apRes.json(), rjRes.json()]);
+      if (seq !== countSeq.current) return;
+      const byClass = (arr) => {
+        const list = Array.isArray(arr) ? arr : [];
+        return filterJoiningClass
+          ? list.filter(it => normGrade(it.joining_grade) === normGrade(filterJoiningClass))
+          : list;
+      };
+      setCounts({ Pending: byClass(pd).length, Approved: byClass(ap).length, Rejected: byClass(rj).length });
+    } catch (e) { console.error('counts load:', e); }
+  }, [user, isAdmin, canRead, searchText, filterYear, filterJoiningClass]);
 
   const loadMeta = useCallback(async () => {
     if (!user?.institutionId) return;
-    // classes (for the grade dropdowns)
     try {
       const res = await fetch(`${API_BASE_URL}/admin/data/${user.institutionId}`);
       const d = await res.json();
       setClasses(d.classes || []);
     } catch (e) { console.error('meta load:', e); }
-    // distinct calendar years present in admissions
-        try {
+    try {
       const res2 = await fetch(`${API_BASE_URL}/admin/admissions/${user.institutionId}/years`);
       const yr = await res2.json();
       setYears(Array.isArray(yr) ? yr : []);
@@ -117,21 +160,17 @@ export default function AdmissionsScreen() {
 
   useEffect(() => { loadMeta(); }, [loadMeta]);
   useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => { fetchCounts(); }, [fetchCounts]);
 
-  // Default the year filter to the current calendar year once meta loads;
-  // if there's nothing this year but earlier years have records, show the
-  // most recent one.
+  // Default the year filter to the active academic year once meta loads.
   useEffect(() => {
     if (filterYear || !years.length) return;
     const active = years.find(y => y.isActive) || years[0];
     if (active) setFilterYear(String(active.id));
   }, [years, filterYear]);
 
-  // Year dropdown: every year present, plus the current year, newest first.
-   const selYearName = (years.find(y => String(y.id) === String(filterYear)) || {}).name || '';
+  const selYearName = (years.find(y => String(y.id) === String(filterYear)) || {}).name || '';
 
-  // Keep the order /admin/data returns — it already follows the school-wide
-  // class sort direction (ascending / descending), same as Pre-Admissions.
   const classOptions = useMemo(
     () => Array.from(new Set((classes || []).map(c => c.className).filter(Boolean))), [classes]);
   const gradeSelectOptions = useMemo(
@@ -153,19 +192,29 @@ export default function AdmissionsScreen() {
     try {
       const params = new URLSearchParams();
       params.set('academic_year_id', filterYear || 'all');
-      if (filterStatus) params.set('status', filterStatus);
-      const res = await fetch(`${API_BASE_URL}/admin/admissions/${user.institutionId}/export?${params.toString()}`);
+      let url, fallback;
+      if (tab === 'Pending') {
+        params.set('scope', 'pending');
+        url = `${API_BASE_URL}/admin/preadmissions/${user.institutionId}/export?${params.toString()}`;
+        fallback = 'PreAdmissions';
+      } else {
+        params.set('status', tab);
+        url = `${API_BASE_URL}/admin/admissions/${user.institutionId}/export?${params.toString()}`;
+        fallback = `Admissions_${tab}`;
+      }
+      const res = await fetch(url);
       if (!res.ok) throw new Error('Could not generate the Excel file.');
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
+      const href = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url;
-            a.download = `Admissions_${(filterYear === 'all' || !selYearName) ? 'AllYears' : selYearName.replace(/[^a-z0-9\-]/gi, '_')}.xlsx`;
+      a.href = href;
+      const yearBit = (filterYear === 'all' || !selYearName) ? 'AllYears' : selYearName.replace(/[^a-z0-9\-]/gi, '_');
+      a.download = `${fallback}_${yearBit}.xlsx`;
       document.body.appendChild(a); a.click(); a.remove();
-      URL.revokeObjectURL(url);
+      URL.revokeObjectURL(href);
     } catch (e) { alert(e.message || 'Download failed.'); }
     setDownloading(false);
-  }, [user, filterYear, filterStatus]);
+  }, [user, filterYear, tab, selYearName]);
 
   if (!canRead && !isAdmin) {
     return (
@@ -179,8 +228,13 @@ export default function AdmissionsScreen() {
     );
   }
 
+  const openAdd = () => {
+    setSelectedImage(null); setIsEditing(false); setCurrentItem(null);
+    setFormData({ status: 'Pending' });
+    setModalVisible(true);
+  };
   const openEdit = (item) => {
-    setSelectedImage(null); setCurrentItem(item);
+    setSelectedImage(null); setIsEditing(true); setCurrentItem(item);
     setFormData({ ...item, dob: toYYYYMMDD(item.dob), school_joined_date: toYYYYMMDD(item.school_joined_date) });
     setModalVisible(true);
   };
@@ -194,10 +248,21 @@ export default function AdmissionsScreen() {
     reader.readAsDataURL(file);
   };
 
+  const validateForm = () => {
+    if (!formData.admission_no || !formData.student_name || !formData.joining_grade) { alert('Admission No, Name, and Joining Grade are required.'); return false; }
+    if (formData.phone_no && !/^[1-9][0-9]{9}$/.test(formData.phone_no)) { alert('Phone must be exactly 10 digits and cannot start with 0.'); return false; }
+    if (formData.pen_no && !/^[a-zA-Z0-9]{6,20}$/.test(formData.pen_no)) { alert('Pen No must be 6-20 alphanumeric characters.'); return false; }
+    if (formData.aadhar_no && !/^[0-9]{12}$/.test(formData.aadhar_no)) { alert('Aadhar must be exactly 12 digits.'); return false; }
+    return true;
+  };
+
+  // Only a record that was already decided can have its status flipped here;
+  // a new record or a Pending one keeps/gets 'Pending' (decisions happen via
+  // the Approve / Reject buttons).
+  const showStatusSelector = isEditing && currentItem && currentItem.status !== 'Pending';
+
   const handleSave = async () => {
-    if (!formData.admission_no || !formData.student_name || !formData.joining_grade) return alert('Admission No, Name, and Joining Grade are required.');
-    if (formData.phone_no && !/^[1-9][0-9]{9}$/.test(formData.phone_no)) return alert('Phone must be exactly 10 digits and cannot start with 0.');
-    if (formData.aadhar_no && !/^[0-9]{12}$/.test(formData.aadhar_no)) return alert('Aadhar must be exactly 12 digits.');
+    if (!validateForm()) return;
     setIsSaving(true);
     try {
       const payload = { institutionId: user.institutionId };
@@ -205,29 +270,60 @@ export default function AdmissionsScreen() {
         'previous_grade', 'pen_no', 'aadhar_no', 'parent_name', 'parent_phone', 'address', 'status',
         'school_joined_date', 'tc_number', 'photo_url'];
       allowed.forEach(k => { const v = formData[k]; if (v !== null && v !== undefined && v !== '') payload[k] = v; });
-      const res = await fetch(`${API_BASE_URL}/admin/preadmissions/${currentItem.id}`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+
+      if (!isEditing) payload.status = 'Pending';                    // new → Pending
+      else if (currentItem?.status === 'Pending') delete payload.status; // editing a pending record never changes status
+      // else: editing a decided record → keep the chosen Approved/Rejected status
+
+      const url = isEditing
+        ? `${API_BASE_URL}/admin/preadmissions/${currentItem.id}`
+        : `${API_BASE_URL}/admin/preadmissions`;
+      const res = await fetch(url, {
+        method: isEditing ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
       });
-      if (!res.ok) { const err = await res.json(); throw new Error(err.message || 'Save failed'); }
-      setModalVisible(false); setSelectedItem(null); fetchData();
+      if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.message || 'Save failed'); }
+      setModalVisible(false); setSelectedItem(null); fetchData(); fetchCounts();
     } catch (e) { alert(e.message); }
     finally { setIsSaving(false); }
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm("Delete this admission permanently?")) return;
+    if (!window.confirm('Delete this application permanently?')) return;
     try {
       await fetch(`${API_BASE_URL}/admin/preadmissions/${id}`, { method: 'DELETE' });
-      setSelectedItem(null); fetchData();
+      setSelectedItem(null); fetchData(); fetchCounts();
     } catch (e) { alert('Failed to delete.'); }
   };
 
-  const statusTab = (s) => {
-    const on = filterStatus === s;
-    const base = 'px-3 h-8 text-[10px] font-semibold rounded-md transition-colors flex-1 ';
-    if (!on) return base + 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200';
-    return base + (s === 'Approved' ? 'bg-emerald-500 text-white shadow-sm' : 'bg-red-500 text-white shadow-sm');
+  // Approve / Reject a pending record → it leaves Pending and joins the
+  // Approved / Rejected tab.
+  const handleDecide = async (id, status) => {
+    const label = status === 'Approved' ? 'Approve' : 'Reject';
+    if (!window.confirm(`${label} this application?`)) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/preadmissions/${id}/decide`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status })
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.message || 'Failed to update.'); }
+      setSelectedItem(null); fetchData(); fetchCounts();
+    } catch (e) { alert(e.message); }
   };
+
+  const switchTab = (s) => { setTab(s); setSelectedItem(null); };
+
+  const tabCls = (s) => {
+    const on = tab === s;
+    const base = 'px-3 h-8 text-[11px] font-semibold rounded-md transition-colors flex-1 ';
+    if (!on) return base + 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200';
+    const active = s === 'Pending' ? 'bg-amber-500 text-white shadow-sm'
+      : s === 'Approved' ? 'bg-emerald-500 text-white shadow-sm'
+      : 'bg-red-500 text-white shadow-sm';
+    return base + active;
+  };
+
+  // Summary-card figures.
+  const totalCount = counts.Pending + counts.Approved + counts.Rejected;
+  const pct = (n) => (totalCount ? Math.round((n / totalCount) * 100) : 0);
 
   return (
     <div className="w-full py-6 lg:py-8 px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12 space-y-4 sm:space-y-6 animate-in fade-in duration-300 flex flex-col flex-1 min-h-[calc(100vh-64px)]">
@@ -235,12 +331,12 @@ export default function AdmissionsScreen() {
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-2 sm:mb-0">
         <header className="flex flex-col">
           <h1 className="text-xl font-semibold text-zinc-900 tracking-tight flex items-center gap-2">
-            <GraduationCap className="text-primary size-5" /> Admissions
+            <GraduationCap className="text-primary size-5" /> Admission
           </h1>
-          <p className="text-sm text-zinc-500 mt-1 max-w-[56ch]">Approved &amp; rejected applications, by academic year.</p>
+          <p className="text-sm text-zinc-500 mt-1 max-w-[60ch]">Enter applications in Pending, then Approve or Reject them — all by academic year.</p>
         </header>
         <div className="flex items-center gap-2 shrink-0 self-start sm:self-auto flex-wrap">
-          <AdmissionsHelp canEdit={canAct} />
+          <AdmissionHelp canEdit={canAct} />
           <button onClick={handleDownload} disabled={downloading}
             className="h-9 px-4 bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm transition-colors shrink-0">
             {downloading ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
@@ -249,29 +345,43 @@ export default function AdmissionsScreen() {
         </div>
       </div>
 
+      {/* Summary cards — Total / Pending / Approved / Rejected.
+          grid: 1-up on phones, 2-up on small, 4-up on large. */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
+        <StatCard icon={Users} tone="primary" label="Total Applications" value={totalCount}
+          badge={filterYear === 'all' ? 'All Years' : (selYearName || null)} />
+        <StatCard icon={Clock} tone="amber" label="Pending" value={counts.Pending}
+          badge={totalCount ? `${pct(counts.Pending)}% of total` : null} />
+        <StatCard icon={Check} tone="emerald" label="Approved" value={counts.Approved}
+          badge={totalCount ? `${pct(counts.Approved)}% of total` : null} />
+        <StatCard icon={X} tone="red" label="Rejected" value={counts.Rejected}
+          badge={totalCount ? `${pct(counts.Rejected)}% of total` : null} />
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 flex-1">
         {/* LEFT: List */}
         <div className={`lg:col-span-4 xl:col-span-5 flex flex-col gap-4 ${selectedItem ? 'hidden lg:flex' : 'flex'}`}>
           <div className="bg-white p-2 rounded-lg shadow-sm ring-1 ring-black/5 flex flex-col gap-2">
-            <div className="flex gap-2">
-              <div className="relative flex-1">
+            <div className="flex flex-col sm:flex-row gap-2">
+              <div className="relative flex-1 min-w-0">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 size-4" />
                 <input type="text" value={searchText} onChange={e => setSearchText(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && fetchData()} placeholder="Search name or ID..."
                   className="h-9 w-full bg-zinc-50/50 border border-transparent rounded-md pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:bg-white transition-colors placeholder:text-zinc-400" />
               </div>
-              <div className="relative shrink-0">
-                  <select value={filterYear} onChange={e => { setFilterYear(e.target.value); setSelectedItem(null); }}
-                  className="h-9 bg-zinc-50/50 border border-transparent rounded-md pl-3 pr-8 text-sm font-semibold text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer appearance-none max-w-[170px]">
+              <div className="relative w-full sm:w-auto shrink-0">
+                <select value={filterYear} onChange={e => { setFilterYear(e.target.value); setSelectedItem(null); }}
+                  className="h-9 w-full sm:w-auto min-w-[9.5rem] bg-zinc-50/50 border border-transparent rounded-md pl-3 pr-9 text-sm font-semibold text-zinc-700 outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer appearance-none">
                   {years.map(y => (<option key={y.id} value={String(y.id)}>{y.name}{y.isActive ? ' (current)' : ''}</option>))}
                   <option value="all">All Years</option>
                 </select>
                 <ChevronDown className="size-4 text-zinc-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
             </div>
+            {/* Pending / Approved / Rejected tabs */}
             <div className="flex gap-1">
-              {['Approved', 'Rejected'].map(s => (
-                <button key={s} onClick={() => { setFilterStatus(s); setSelectedItem(null); }} className={statusTab(s)}>{s}</button>
+              {TABS.map(s => (
+                <button key={s} onClick={() => switchTab(s)} className={tabCls(s)}>{s}</button>
               ))}
             </div>
             {/* Joining Class filter */}
@@ -292,14 +402,21 @@ export default function AdmissionsScreen() {
 
           <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm overflow-hidden flex flex-col h-[70vh]">
             <div className="p-4 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 shrink-0">
-              <h2 className="font-semibold text-zinc-800 text-sm">{filterStatus} ({displayData.length})</h2>
+              <h2 className="font-semibold text-zinc-800 text-sm">{tab} ({displayData.length})</h2>
+              {/* Add is only available in the Pending tab (that's the intake) */}
+              {tab === 'Pending' && canAct && (
+                <button onClick={openAdd} title="New application"
+                  className="h-8 px-3 bg-primary hover:bg-primary/90 text-white rounded-md text-xs font-semibold inline-flex items-center gap-1.5 shadow-sm transition-colors">
+                  <Plus className="size-3.5" /> Add
+                </button>
+              )}
             </div>
             <div className="overflow-y-auto custom-scrollbar flex-1 divide-y divide-zinc-100">
               {loading ? (
                 <div className="p-10 flex justify-center"><Loader2 className="animate-spin text-primary size-6" /></div>
               ) : displayData.length === 0 ? (
                 <div className="p-10 text-center text-zinc-400 font-medium text-sm">
-                  {filterJoiningClass ? `No ${filterStatus.toLowerCase()} admissions for ${filterJoiningClass}.` : `No ${filterStatus.toLowerCase()} admissions.`}
+                  {filterJoiningClass ? `No ${tab.toLowerCase()} applications for ${filterJoiningClass}.` : `No ${tab.toLowerCase()} applications.`}
                 </div>
               ) : (
                 displayData.map((item, idx) => (
@@ -311,7 +428,22 @@ export default function AdmissionsScreen() {
                       <h4 className={`font-semibold text-sm truncate ${selectedItem?.id === item.id ? 'text-primary' : 'text-zinc-900'}`}>{item.student_name}</h4>
                       <p className="text-xs text-zinc-500 font-medium mt-0.5">Grade: {item.joining_grade} {'•'} ID: {item.admission_no}</p>
                     </div>
-                    <StatusPill status={item.status} />
+                    {tab === 'Pending' ? (
+                      canAct && (
+                        <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
+                          <button onClick={() => handleDecide(item.id, 'Approved')} title="Approve"
+                            className="size-7 rounded-md bg-emerald-50 text-emerald-600 hover:bg-emerald-100 ring-1 ring-emerald-600/15 flex items-center justify-center transition-colors">
+                            <Check className="size-3.5" />
+                          </button>
+                          <button onClick={() => handleDecide(item.id, 'Rejected')} title="Reject"
+                            className="size-7 rounded-md bg-red-50 text-red-600 hover:bg-red-100 ring-1 ring-red-600/15 flex items-center justify-center transition-colors">
+                            <X className="size-3.5" />
+                          </button>
+                        </div>
+                      )
+                    ) : (
+                      <StatusPill status={item.status} />
+                    )}
                   </div>
                 ))
               )}
@@ -320,32 +452,48 @@ export default function AdmissionsScreen() {
         </div>
 
         {/* RIGHT: Details */}
-        <div className={`lg:col-span-8 xl:col-span-7 ${!selectedItem ? 'hidden lg:block' : 'block'}`}>
+        <div className={`lg:col-span-8 xl:col-span-7 flex flex-col ${!selectedItem ? 'hidden lg:flex' : 'flex'}`}>
           {!selectedItem ? (
-            <div className="bg-white rounded-lg ring-1 ring-black/5 border-dashed h-[70vh] flex flex-col items-center justify-center text-center p-8 mt-[52px]">
+            <div className="bg-white rounded-lg ring-1 ring-black/5 border-dashed flex-1 min-h-[60vh] flex flex-col items-center justify-center text-center p-8">
               <GraduationCap className="size-12 text-zinc-200 mb-3" />
-              <h3 className="text-base font-semibold text-zinc-400">Select an Admission</h3>
-              <p className="text-zinc-400 font-medium text-sm mt-1">Choose a record to view the full profile.</p>
+              <h3 className="text-base font-semibold text-zinc-400">Select an Application</h3>
+              <p className="text-zinc-400 font-medium text-sm mt-1">
+                {tab === 'Pending' ? 'Choose an applicant to review, then Approve or Reject.' : 'Choose a record to view the full profile.'}
+              </p>
             </div>
           ) : (
-            <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm h-[80vh] flex flex-col mt-[52px] lg:mt-0">
-              <div className="p-5 border-b border-zinc-100 flex items-start sm:items-center gap-4 bg-zinc-50/50 rounded-t-lg shrink-0">
-                <button onClick={() => setSelectedItem(null)} className="lg:hidden p-1.5 bg-white rounded-md shadow-sm ring-1 ring-black/5 text-zinc-500 hover:text-zinc-900 transition-colors mt-1 sm:mt-0"><X className="size-4" /></button>
-                <img src={resolvePhoto(selectedItem.photo_url)} alt=""
-                  onClick={() => selectedItem.photo_url && setPhotoPreview(resolvePhoto(selectedItem.photo_url))}
-                  className="size-16 rounded-lg object-cover bg-zinc-100 ring-1 ring-black/5 shadow-sm shrink-0 cursor-zoom-in hover:ring-primary/40 transition-all" />
-                <div className="flex-1 min-w-0 mt-1 sm:mt-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <h3 className="text-lg font-semibold text-zinc-900 truncate">{selectedItem.student_name}</h3>
-                    <StatusPill status={selectedItem.status} />
+            <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm flex-1 min-h-[60vh] flex flex-col">
+              <div className="p-5 border-b border-zinc-100 flex flex-col sm:flex-row items-start sm:items-center gap-4 bg-zinc-50/50 rounded-t-lg shrink-0">
+                <div className="flex items-center gap-4 flex-1 min-w-0 w-full">
+                  <button onClick={() => setSelectedItem(null)} className="lg:hidden p-1.5 bg-white rounded-md shadow-sm ring-1 ring-black/5 text-zinc-500 hover:text-zinc-900 transition-colors"><X className="size-4" /></button>
+                  <img src={resolvePhoto(selectedItem.photo_url)} alt=""
+                    onClick={() => selectedItem.photo_url && setPhotoPreview(resolvePhoto(selectedItem.photo_url))}
+                    className="size-16 rounded-lg object-cover bg-zinc-100 ring-1 ring-black/5 shadow-sm shrink-0 cursor-zoom-in hover:ring-primary/40 transition-all" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="text-lg font-semibold text-zinc-900 truncate">{selectedItem.student_name}</h3>
+                      <StatusPill status={selectedItem.status} />
+                    </div>
+                    <p className="text-xs font-medium text-zinc-500 mt-1 truncate">
+                      Grade: {selectedItem.joining_grade} - ID: {selectedItem.admission_no}
+                      {selectedItem.admission_year ? ` • ${selectedItem.admission_year}` : ''}
+                    </p>
                   </div>
-                  <p className="text-xs font-medium text-zinc-500 mt-1 truncate">
-                    Grade: {selectedItem.joining_grade} - ID: {selectedItem.admission_no}
-                    {selectedItem.admission_year ? ` • ${selectedItem.admission_year}` : ''}
-                  </p>
                 </div>
                 {canAct && (
-                  <div className="flex gap-2 shrink-0 self-start sm:self-center">
+                  <div className="flex flex-wrap gap-2 shrink-0 w-full sm:w-auto">
+                    {selectedItem.status === 'Pending' && (
+                      <>
+                        <button onClick={() => handleDecide(selectedItem.id, 'Approved')}
+                          className="h-8 px-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-md text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-colors">
+                          <Check className="size-3.5" /> Approve
+                        </button>
+                        <button onClick={() => handleDecide(selectedItem.id, 'Rejected')}
+                          className="h-8 px-3 bg-red-500 hover:bg-red-600 text-white rounded-md text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-colors">
+                          <X className="size-3.5" /> Reject
+                        </button>
+                      </>
+                    )}
                     <button onClick={() => openEdit(selectedItem)} title="Edit" className="h-8 w-8 bg-white hover:bg-zinc-50 text-zinc-600 hover:text-primary rounded-md flex items-center justify-center shadow-sm ring-1 ring-black/5 transition-colors"><Edit className="size-4" /></button>
                     {(canDelete || isAdmin) && (
                       <button onClick={() => handleDelete(selectedItem.id)} title="Delete" className="h-8 w-8 bg-white hover:bg-zinc-50 text-zinc-600 hover:text-red-600 rounded-md flex items-center justify-center shadow-sm ring-1 ring-black/5 transition-colors"><Trash2 className="size-4" /></button>
@@ -357,11 +505,15 @@ export default function AdmissionsScreen() {
               <div className="p-5 sm:p-6 overflow-y-auto custom-scrollbar space-y-6">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <AuditRow icon={User} label="Created By" name={selectedItem.created_by_name} time={fmtIST(selectedItem.submission_date)} />
-                  <AuditRow
-                    icon={selectedItem.status === 'Approved' ? Check : X}
-                    label={`${selectedItem.status} By`} name={selectedItem.verified_by_name}
-                    time={fmtIST(selectedItem.verified_at)} tone={selectedItem.status === 'Approved' ? 'emerald' : 'red'} />
-                  <AuditRow icon={CalendarRange} label="Admission Year" name={selectedItem.admission_year || '—'} time="" />
+                  {selectedItem.status !== 'Pending' && (
+                    <AuditRow
+                      icon={selectedItem.status === 'Approved' ? Check : X}
+                      label={`${selectedItem.status} By`} name={selectedItem.verified_by_name}
+                      time={fmtIST(selectedItem.verified_at)} tone={selectedItem.status === 'Approved' ? 'emerald' : 'red'} />
+                  )}
+                  {selectedItem.status !== 'Pending' && (
+                    <AuditRow icon={CalendarRange} label="Admission Year" name={selectedItem.admission_year || '—'} time="" />
+                  )}
                   {selectedItem.updated_by_name && (
                     <AuditRow icon={Edit} label="Last Updated By" name={selectedItem.updated_by_name} time={fmtIST(selectedItem.updated_at)} />
                   )}
@@ -401,7 +553,7 @@ export default function AdmissionsScreen() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4">
           <div className="bg-white rounded-lg ring-1 ring-black/5 w-full max-w-4xl shadow-xl relative max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
             <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50/50 rounded-t-lg shrink-0">
-              <h2 className="text-lg font-semibold text-zinc-900">Edit Admission</h2>
+              <h2 className="text-lg font-semibold text-zinc-900">{isEditing ? 'Edit Application' : 'New Application'}</h2>
               <button onClick={() => setModalVisible(false)} className="text-zinc-400 hover:text-zinc-700 transition-colors p-1.5 hover:bg-zinc-100 rounded-md"><X className="size-4" /></button>
             </div>
             <div className="p-5 sm:p-6 overflow-y-auto custom-scrollbar">
@@ -420,7 +572,7 @@ export default function AdmissionsScreen() {
                 <div className="md:col-span-2"><Field label="Student Name" required value={formData.student_name} onChange={v => setFormData(p => ({ ...p, student_name: v.replace(/[^a-zA-Z\s]/g, '') }))} /></div>
                 <Field label="Date of Birth" type="date" value={formData.dob} onChange={v => setFormData(p => ({ ...p, dob: v }))} />
                 <Field label="Student Phone" type="tel" placeholder="10 Digits" value={formData.phone_no} onChange={v => setFormData(p => ({ ...p, phone_no: v.replace(/[^0-9]/g, '').slice(0, 10) }))} />
-                <Field label="Pen No" value={formData.pen_no} onChange={v => setFormData(p => ({ ...p, pen_no: v.replace(/[^a-zA-Z0-9]/g, '') }))} />
+                <Field label="Pen No" placeholder="Alphanumeric" value={formData.pen_no} onChange={v => setFormData(p => ({ ...p, pen_no: v.replace(/[^a-zA-Z0-9]/g, '') }))} />
                 <Field label="Aadhar No" placeholder="12 Digits" value={formData.aadhar_no} onChange={v => setFormData(p => ({ ...p, aadhar_no: v.replace(/[^0-9]/g, '').slice(0, 12) }))} />
                 <div className="md:col-span-2 mt-2"><h3 className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider border-b border-zinc-100 pb-2">Parent Information</h3></div>
                 <Field label="Parent Name" value={formData.parent_name} onChange={v => setFormData(p => ({ ...p, parent_name: v.replace(/[^a-zA-Z\s]/g, '') }))} />
@@ -431,22 +583,24 @@ export default function AdmissionsScreen() {
                 <Field label="Previous Grade" type="select" options={gradeOptionsWith(formData.previous_grade)} value={formData.previous_grade} onChange={v => setFormData(p => ({ ...p, previous_grade: v }))} />
                 <Field label="School Joined Date" type="date" value={formData.school_joined_date} onChange={v => setFormData(p => ({ ...p, school_joined_date: v }))} />
                 <Field label="TC Number" value={formData.tc_number} onChange={v => setFormData(p => ({ ...p, tc_number: v.replace(/[^a-zA-Z0-9]/g, '') }))} />
-                {/* Status — only Approved / Rejected in this module */}
-                <div className="md:col-span-2 mt-2">
-                  <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-2 block">Status</label>
-                  <div className="flex gap-2 sm:gap-3">
-                    {['Approved', 'Rejected'].map(s => {
-                      const on = formData.status === s;
-                      const act = s === 'Approved' ? 'bg-emerald-500 text-white ring-emerald-600 shadow-sm' : 'bg-red-500 text-white ring-red-600 shadow-sm';
-                      return (
-                        <button key={s} type="button" onClick={() => setFormData(p => ({ ...p, status: s }))}
-                          className={`h-9 flex-1 rounded-md text-xs font-semibold transition-colors ring-1 ring-inset flex items-center justify-center ${on ? act : 'bg-white text-zinc-600 ring-black/5 hover:bg-zinc-50'}`}>
-                          {s}
-                        </button>
-                      );
-                    })}
+                {/* Status selector only when editing an already-decided record */}
+                {showStatusSelector && (
+                  <div className="md:col-span-2 mt-2">
+                    <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-2 block">Status</label>
+                    <div className="flex gap-2 sm:gap-3">
+                      {['Approved', 'Rejected'].map(s => {
+                        const on = formData.status === s;
+                        const act = s === 'Approved' ? 'bg-emerald-500 text-white ring-emerald-600 shadow-sm' : 'bg-red-500 text-white ring-red-600 shadow-sm';
+                        return (
+                          <button key={s} type="button" onClick={() => setFormData(p => ({ ...p, status: s }))}
+                            className={`h-9 flex-1 rounded-md text-xs font-semibold transition-colors ring-1 ring-inset flex items-center justify-center ${on ? act : 'bg-white text-zinc-600 ring-black/5 hover:bg-zinc-50'}`}>
+                            {s}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             </div>
             <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
@@ -462,6 +616,35 @@ export default function AdmissionsScreen() {
     </div>
   );
 }
+
+const StatCard = ({ icon: Icon, label, value, tone, badge }) => {
+  const tones = {
+    primary: { wash: 'from-primary/15',     circle: 'from-primary to-primary/80',      ring: 'ring-primary/10',     badge: 'bg-primary/10 text-primary' },
+    amber:   { wash: 'from-amber-500/15',   circle: 'from-amber-400 to-amber-600',     ring: 'ring-amber-500/10',   badge: 'bg-amber-50 text-amber-700' },
+    emerald: { wash: 'from-emerald-500/15', circle: 'from-emerald-400 to-emerald-600', ring: 'ring-emerald-500/10', badge: 'bg-emerald-50 text-emerald-700' },
+    red:     { wash: 'from-red-500/15',     circle: 'from-red-400 to-red-600',         ring: 'ring-red-500/10',     badge: 'bg-red-50 text-red-700' },
+    violet:  { wash: 'from-violet-500/15',  circle: 'from-violet-400 to-violet-600',   ring: 'ring-violet-500/10',  badge: 'bg-violet-50 text-violet-700' },
+  };
+  const t = tones[tone] || tones.primary;
+  return (
+    <div className="group relative overflow-hidden bg-white rounded-xl ring-1 ring-black/5 shadow-sm hover:shadow-md transition-all duration-300 px-4 py-3 min-w-0">
+      {/* soft corner colour wash */}
+      <div className={`pointer-events-none absolute -top-8 -right-8 size-20 rounded-full bg-gradient-to-br ${t.wash} to-transparent blur-2xl opacity-70 group-hover:opacity-100 transition-opacity`} />
+      <div className="relative flex items-center gap-3">
+        <div className={`size-9 rounded-lg bg-gradient-to-br ${t.circle} text-white flex items-center justify-center shrink-0 shadow-sm ring-2 ${t.ring}`}>
+          <Icon className="size-[1.1rem]" strokeWidth={2.4} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-[9.5px] font-semibold text-zinc-400 uppercase tracking-[0.08em] truncate">{label}</p>
+          <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
+            <span className="text-lg font-bold text-zinc-900 tabular-nums tracking-tight truncate">{value}</span>
+            {badge && <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded whitespace-nowrap shrink-0 ${t.badge}`}>{badge}</span>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const InfoRow = ({ icon: Icon, label, value }) => (
   <div className="flex items-center gap-3 bg-white p-3 rounded-md ring-1 ring-black/5 shadow-sm">
@@ -512,28 +695,29 @@ function Field({ label, value, onChange, type = 'text', required, placeholder, o
 // --- How to use -----------------------------------------------------
 const GUIDES = {
   manage: {
-    title: 'Admissions',
+    title: 'Admission',
     steps: [
-      ['1 · What this is', 'Applications that were Approved or Rejected in Pre-Admissions land here, stamped with the calendar year the decision was made in.'],
-      ['2 · Approved / Rejected', 'Switch between the Approved and Rejected lists with the tabs. Each list is numbered (S.No).'],
-      ['3 · By year & class', 'Pick a year and, if you like, a Joining Class to narrow the list. The year defaults to the current year and is a saved plain value — never linked to the Academics module, so deleting an academic year never affects these records.'],
-      ['4 · Edit & delete', 'Open a record to edit its details, flip Approved ↔ Rejected, or delete it.'],
-      ['5 · Download', 'Export the current year (or All Years, grouped by year) to Excel.'],
+      ['1 · One place, three tabs', 'Pending holds new applications; Approved and Rejected hold the decided ones. The cards up top count all three for the selected year.'],
+      ['2 · Add in Pending', 'In the Pending tab, use the + button to enter an applicant. Admission No, Student Name and Joining Grade are required.'],
+      ['3 · Approve or Reject', 'On a Pending row, or inside the profile, use Approve / Reject. The record leaves Pending and appears under the matching tab, stamped with the active academic year.'],
+      ['4 · Edit & delete', 'Open any record to edit it. A decided record can also be flipped Approved ↔ Rejected from its Edit form; delete removes it everywhere.'],
+      ['5 · Filter & download', 'Search by name or ID, pick a Year and a Joining Class, and Download exports the current tab to Excel.'],
     ],
-    note: 'Decisions are made in Pre-Admissions; this module is where decided records live and are managed year-wise.'
+    note: 'Pending is the intake and where decisions are made. Approved and Rejected are the record of what was decided, by academic year.'
   },
   view: {
-    title: 'Admissions',
+    title: 'Admission',
     steps: [
-      ['1 · Browse', 'Pick a record to see the full profile and the decision audit.'],
-      ['2 · Filter', 'Switch Approved / Rejected, pick a year and a joining class, and search by name or ID.'],
-      ['3 · Download', 'Export the selection to a spreadsheet.'],
+      ['1 · Browse the tabs', 'Switch between Pending, Approved and Rejected to see each list.'],
+      ['2 · Open a record', 'Pick an application to see the full profile and its audit trail.'],
+      ['3 · Filter', 'Search by name or ID, pick a Year and a Joining Class.'],
+      ['4 · Download', 'Export the current tab to a spreadsheet.'],
     ],
-    note: 'Read-only view — editing and deleting needs the right permissions.'
+    note: 'Read-only view — adding, deciding, editing and deleting applications needs the right permissions.'
   }
 };
 
-function AdmissionsHelp({ canEdit = false }) {
+function AdmissionHelp({ canEdit = false }) {
   const [open, setOpen] = useState(false);
   const content = canEdit ? GUIDES.manage : GUIDES.view;
   return (
