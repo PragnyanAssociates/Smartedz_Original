@@ -22042,6 +22042,10 @@ async function _liveLibrary(institutionId, q, asker) {
 
     const role = (typeof asker === 'string' ? asker : (asker && (asker.role || asker.roleName)) || '').toLowerCase();
 
+    // Permission guard — only answer for someone who can actually see Library.
+    // (The flat fallback already checks this; the drill-down didn't.)
+    if (asker && typeof asker === 'object' && !(await _smartyCan(asker, institutionId, 'Library'))) return null;
+
     // ---- which intent? ----
     let intent = (text.match(/\blibrary (online|copies|issues)\b/) || [])[1] || null;
     if (!intent) {
@@ -22856,7 +22860,7 @@ async function _liveLibraryAsk(institutionId, q, asker) {
   const wantList = /\blist\b|\bshow\b|\bwhich\b|\bwhat\b|\btitles?\b/.test(q);
 
   if (/\boverdue\b/.test(q)) {
-    if (!isPriv) return null;
+    if (!isPriv && !role.includes('teacher')) return null;   // Admin + Teacher may see overdue
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
     const [rows] = await db.execute(
       `SELECT b.title AS book_title, i.due_date, COALESCE(u.name, i.borrower_name) AS borrower
